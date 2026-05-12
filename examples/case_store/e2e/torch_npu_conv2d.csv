@@ -1,0 +1,3 @@
+testcase_name,api_name,tensor_view_shapes,tensor_dtypes,tensor_formats,attributes,output_tensor_indexes,golden_api
+npu_conv2d_f16,torch_npu.npu_conv2d,"((1,3,224,224),(64,3,7,7),(64,))","('float16','float16','float16')","(29,4,2)","{'stride':[2,2],'padding':[3,3],'dilation':[1,1],'groups':1}",,torch.nn.functional.conv2d
+npu_conv2d_f32,torch_npu.npu_conv2d,"((1,3,32,32),(16,3,3,3),(16,))","('float32','float32','float32')","(29,4,2)","{'stride':[1,1],'padding':[1,1],'dilation':[1,1],'groups':1}",,torch.nn.functional.conv2d

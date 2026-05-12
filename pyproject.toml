@@ -1,0 +1,103 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ttk"
+version = "3.0.0"
+description = "TTK — Tensor Tool Kit, Ascend NPU single-operator testing framework"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "CANN Open Software License Agreement v2.0" }
+authors = [
+    { name = "Huawei Technologies Co., Ltd." },
+]
+keywords = ["ascend", "npu", "tbe", "operator-test", "cann"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Testing",
+    "Private :: Do Not Upload",
+]
+
+dependencies = [
+    "numpy>=1.19,<2.0",
+    "psutil>=5.7",
+    "attrs>=21",
+    "decorator>=4",
+    "six>=1.15",
+    "sympy",
+    "pandas",
+]
+
+[project.optional-dependencies]
+gpu-tf = ["tensorflow>=2.12"]
+gpu-torch = ["torch>=2.0"]
+e2e-npu = ["torch>=2.0", "torch_npu>=2.1"]
+e2e-gpu = ["torch>=2.0"]
+dev = [
+    "pytest>=7",
+    "pytest-cov",
+    "mypy",
+    "ruff",
+]
+all = [
+    "ttk[gpu-tf]",
+    "ttk[gpu-torch]",
+    "ttk[e2e-npu]",
+]
+
+[project.scripts]
+ttk = "ttk.cli:main"
+
+[project.urls]
+Homepage = "https://gitee.com/ascend/ttk"
+Documentation = "https://gitee.com/ascend/ttk/docs"
+Issues = "https://gitee.com/ascend/ttk/issues"
+
+[tool.setuptools]
+packages = { find = { include = ["ttk*"], exclude = ["tests*", "examples*"] } }
+include-package-data = true
+
+[tool.setuptools.cmdclass]
+build_py = "ttk._version.BuildPyWithBuild"
+
+[tool.setuptools.package-data]
+"ttk" = [
+    "user_defined_modules/**/*.json",
+    "user_defined_modules/**/*.yaml",
+    "user_defined_modules/**/*.cce",
+    "core_modules/**/*.json",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py38"
+extend-exclude = [
+    "examples",
+    "ops-decoupling-workspace",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.8"
+ignore_missing_imports = true
+files = ["ttk"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests", "ttk/core_modules/plugin_loader/tests"]
+python_files = ["test_*.py"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
+markers = [
+    "slow: mark test as slow (deselect with '-m \"not slow\"')",
+    "device: test requires NPU device attached",
+]

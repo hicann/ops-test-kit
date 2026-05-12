@@ -1,0 +1,10 @@
+psutil~=5.7.2
+sympy
+numpy~=1.19.1
+pandas
+attrs
+decorator
+tensorflow
+torch
+six
+clang
