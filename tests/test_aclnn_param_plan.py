@@ -6,14 +6,14 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """
-Tests for AclnnParamPlan and ApiTestcaseStructure.get_param_plan().
+Tests for AclnnParamPlan and TestcaseAclnn.get_param_plan().
 """
 
 import pytest
 from collections import OrderedDict
 from unittest.mock import patch, MagicMock
 
-from ttk.core_modules.testcase_manager.testcase_api import AclnnParamPlan
+from ttk.core_modules.testcase_manager.testcase_aclnn import AclnnParamPlan
 from ttk.core_modules.aclnn.op_api_info_keeper import OpApiInfo
 
 
@@ -181,8 +181,8 @@ class TestGetParamPlan:
         info = _make_op_api_info([
             ("x", {"type": "aclTensor*", "default": None}),
         ])
-        from ttk.core_modules.testcase_manager.testcase_api import ApiTestcaseStructure
-        case = ApiTestcaseStructure()
+        from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+        case = TestcaseAclnn()
         case.api_name = "aclnnAdd"
         plan = AclnnParamPlan("aclnnAdd", info)
         case._param_plan_cache = plan
@@ -190,8 +190,8 @@ class TestGetParamPlan:
         assert case.get_param_plan() is plan
 
     def test_plan_none_for_no_api(self):
-        from ttk.core_modules.testcase_manager.testcase_api import ApiTestcaseStructure
-        case = ApiTestcaseStructure()
+        from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+        case = TestcaseAclnn()
         case.api_name = None
         assert case.get_param_plan() is None
 
@@ -200,8 +200,8 @@ class TestGetParamPlan:
             ("x", {"type": "aclTensor*", "default": None}),
             ("alpha", {"type": "float", "default": "1.0"}),
         ])
-        from ttk.core_modules.testcase_manager.testcase_api import ApiTestcaseStructure
-        case = ApiTestcaseStructure()
+        from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+        case = TestcaseAclnn()
         case.api_name = "aclnnAddAlpha"
         plan = AclnnParamPlan("aclnnAddAlpha", info)
         case._param_plan_cache = plan

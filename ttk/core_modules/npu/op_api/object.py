@@ -23,7 +23,7 @@ from typing import Set, Any
 # Third-Party Packages
 from .profiling_structure import ApiProfilingReturnStructure
 from .profiling import profile_process
-from ...testcase_manager import TestcaseBase, ApiTestcaseStructure
+from ...testcase_manager import TestcaseBase, TestcaseAclnn
 from ...tbe_multiprocessing import SimpleCommandProcess
 from ...infra import TaskA, TaskType, TaskKeeper, ProfileObject
 
@@ -49,7 +49,7 @@ class ApiProfileObject(ProfileObject):
                                           (t, grant_events, granted_indices),
                                           TaskType.PROFILE))
 
-    def apply_profile_success_result(self, testcase: ApiTestcaseStructure, result: Any) -> tuple:
+    def apply_profile_success_result(self, testcase: TestcaseAclnn, result: Any) -> tuple:
         if not isinstance(result, ApiProfilingReturnStructure):
             raise RuntimeError(f"Only ApiProfilingReturnStructure is valid. "
                                f"But got {type(result)}")

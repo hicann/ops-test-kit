@@ -21,14 +21,14 @@ import numpy
 
 # Third-party Packages
 from .profiling_structure import ApiComparisonResult
-from ...testcase_manager import ApiTestcaseStructure
+from ...testcase_manager import TestcaseAclnn
 from ...comparison import compare
 from ....utilities import get, get_global_storage
 from ....utilities import numpy_to_torch_tensor, resolve_custom_numpy_dtypes
 
 
 class Comparator:
-    def __init__(self, context: ApiTestcaseStructure):
+    def __init__(self, context: TestcaseAclnn):
         self._ctx = context
         if self._ctx.precision_tolerances is None:
             rtol, ptol = None, None

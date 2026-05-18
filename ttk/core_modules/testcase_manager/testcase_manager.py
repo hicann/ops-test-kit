@@ -289,14 +289,14 @@ class UniversalTestcaseFactory:
                     break
 
             if first_api and not first_api.lower().startswith('aclnn'):
-                from .testcase_framework_api import FrameworkApiTestcaseStructure
-                self.testcase_instance = FrameworkApiTestcaseStructure()
+                from .testcase_e2e import TestcaseE2e
+                self.testcase_instance = TestcaseE2e()
             else:
-                from .testcase_api import ApiTestcaseStructure
-                self.testcase_instance = ApiTestcaseStructure()
+                from .testcase_aclnn import TestcaseAclnn
+                self.testcase_instance = TestcaseAclnn()
         else:
-            from .testcase_op import UniversalTestcaseStructure
-            self.testcase_instance = UniversalTestcaseStructure()
+            from .testcase_op import TestcaseOp
+            self.testcase_instance = TestcaseOp()
 
         set_thread_name("HeaderCheckUnidentifiedHeaders")
         ignored_headers = []

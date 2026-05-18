@@ -20,13 +20,15 @@ from typing import Dict, Tuple, List
 class PluginScanner:
     """Scan plugin declarations using AST without importing modules"""
     
-    def __init__(self, scan_dir: Tuple[Path], plugin_type: str, field_name: str):
+    def __init__(self, scan_dir, plugin_type: str, field_name: str):
         """
         Args:
-            scan_dir: Directory or file to scan
+            scan_dir: Directory or file to scan (str, Path, or tuple of them)
             plugin_type: "golden" or "input"
             field_name: "__golden__" or "__input__"
         """
+        if isinstance(scan_dir, (str, Path)):
+            scan_dir = (scan_dir,)
         self.scan_dir = scan_dir
         self.plugin_type = plugin_type
         self.field_name = field_name

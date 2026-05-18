@@ -17,7 +17,7 @@ import numpy
 import os
 from typing import Any, Optional, Sequence, Tuple, Union
 # Third-party Packages
-from ...testcase_manager import UniversalTestcaseStructure
+from ...testcase_manager import TestcaseOp
 from ....utilities import BaseCompilationResult
 from ....utilities import (
     get_global_storage,
@@ -395,7 +395,7 @@ class ProfilingReturnStructure:
         self.soc = get_global_storage().dev_plat
 
     # noinspection DuplicatedCode
-    def construct(self, context: UniversalTestcaseStructure,
+    def construct(self, context: TestcaseOp,
                   compare_result: "ComparisonResult",
                   passed):
         """Construct the structure with context"""

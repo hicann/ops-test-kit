@@ -24,6 +24,7 @@ from ..dsmi import DSMIInterface
 from ..infra import InstanceBase
 from ..operator import Opc
 from ...utilities import cpu_count
+from ...utilities.platform import get_npu_hw_info
 
 
 class NpuInstance(InstanceBase):
@@ -62,12 +63,15 @@ class NpuInstance(InstanceBase):
                 try:
                     self.switches.dev_plat = DSMIInterface().get_chip_info(0).get_complete_platform()
                 except:
-                    if self.switches.compile_only:
+                    if self.switches.compile_only or self.switches.validate_only:
                         raise RuntimeError(f"Try to get Ascend platform failed. "
                                            f"Please specify it with option like: --plat=Ascend910A")
                     else:
                         raise
-        self.switches.short_soc_version = Opc().soc_info.get("short_soc_version")
+        hw_info = get_npu_hw_info(self.switches.dev_plat)
+        self.switches.short_soc_version = hw_info.get("short_soc_version")
+        os.environ["TTK_FULL_SOC_VERSION"] = self.switches.dev_plat
+        os.environ["TTK_SHORT_SOC_VERSION"] = self.switches.short_soc_version
 
     def setup_profile_object(self):
         params = tuple([self.task_keeper, self.mp_context])

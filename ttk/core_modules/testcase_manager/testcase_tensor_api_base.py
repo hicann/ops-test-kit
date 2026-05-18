@@ -24,11 +24,11 @@ class TensorApiTestcaseBase(TestcaseBase):
     field normalization, and per-index accessors.
 
     Inherited by:
-      - ApiTestcaseStructure (aclnn)
-      - FrameworkApiTestcaseStructure (framework_api / e2e)
+      - TestcaseAclnn (aclnn)
+      - TestcaseE2e (framework_api / e2e)
 
     Not used by:
-      - UniversalTestcaseStructure (kernel-level, no tensor fields)
+      - TestcaseOp (kernel-level, no tensor fields)
     """
 
     __slots__ = (

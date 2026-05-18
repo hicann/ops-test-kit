@@ -16,7 +16,7 @@ import pathlib
 import subprocess
 from typing import Optional, Union
 # Third-Party Packages
-from .....utilities import platform2arch_dict
+from .....utilities.platform import get_npu_hw_info
 
 
 def normalize_mode(mode: str):
@@ -50,7 +50,7 @@ class CceManualCompile:
         ccec_cmd.extend(["-o", i_obj_file,
                          "-mllvm", "--cce-aicore-jump-expand=true",
                          "-mllvm", "-cce-aicore-addr-transform"])
-        if platform not in ("Ascend950", "MC62CM12A"):
+        if get_npu_hw_info(platform).get("short_soc_version") not in ("Ascend950", "MC62CM12A"):
             ccec_cmd.extend(["-mllvm", "-cce-aicore-function-stack-size=16000",
                              "-mllvm", "-cce-aicore-record-overflow=true"])
         else:
@@ -149,4 +149,6 @@ class CceManualCompile:
         else:
             core_type = "cube"
 
-        return platform2arch_dict[platform_name].replace("$core_type", core_type)
+        hw_info = get_npu_hw_info(platform_name)
+        arch = hw_info.get("ccec_aic_version", "")
+        return arch.replace("$core_type", core_type)

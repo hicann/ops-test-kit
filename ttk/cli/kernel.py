@@ -22,7 +22,7 @@ def _add_kernel_args(parser):
     parser.add_argument("-c", "--const", nargs="?", const=True, default=None,
                         help="Enable const shape test; use -c=false to disable")
     parser.add_argument("-b", "--binary", nargs="?", const=True, default=None,
-                        help="Enable binary test; --binary=release for released kernel")
+                        help="Enable binary test (only --binary=release supported)")
     parser.add_argument("--cce", nargs="?", const=True, default=None,
                         help="Compile CCE file, e.g. --cce or --cce=d,s")
     parser.add_argument("--co", "--compile-only", dest="compile_only", action="store_true",

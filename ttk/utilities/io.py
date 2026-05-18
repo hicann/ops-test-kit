@@ -143,12 +143,12 @@ def __set_const(switches: SWITCHES, secondary_param: str):
         raise RuntimeError("Invalid const shape mode: %s" % secondary_param)
 
 
-@register_param(["-b", "--binary"], "Enable or disable binary test. Default is disabled.\n"
-                                    "-b=false to disable. -b or -b=true to compile online.\n"
-                                    "-b=release to match the released kernel installed skipping online compile.")
+@register_param(["-b", "--binary"], "Enable binary test with released kernel.\n"
+                                    "-b=release to match the released kernel installed skipping online compile.\n"
+                                    "Note: -b or -b=true (online compile) is not supported currently.")
 def __set_binary(switches: SWITCHES, secondary_param: str):
     if secondary_param is None or secondary_param.lower() == "true":
-        switches.bin_switches.enabled = True
+        raise RuntimeError("Binary online compile (-b or -b=true) is not supported. Use -b=release for released kernel.")
     elif secondary_param.lower() == "false":
         switches.bin_switches.enabled = False
     elif secondary_param.lower() == "release":

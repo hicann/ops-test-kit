@@ -104,8 +104,11 @@ def apply_kernel_args(sw, args):
         if args.binary == "release":
             sw.bin_switches.enabled = True
             sw.bin_switches.realtime = "release"
-        else:
-            sw.bin_switches.enabled = args.binary
+        elif args.binary is not True:
+            val = args.binary
+            if isinstance(val, str):
+                val = val.lower() not in ('false', '0', 'no', 'off')
+            sw.bin_switches.enabled = val
     if hasattr(args, 'compile_only') and args.compile_only:
         sw.compile_only = True
     if hasattr(args, 'compile_opts') and args.compile_opts:

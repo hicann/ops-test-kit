@@ -18,7 +18,7 @@ __all__ = ["ApiProfilingReturnStructure", "ApiComparisonResult", "ApiProfilingRe
 # Standard Packages
 from typing import Optional, Union, Tuple, List
 # Third-party Packages
-from ...testcase_manager import ApiTestcaseStructure
+from ...testcase_manager import TestcaseAclnn
 from ....utilities import get_global_storage
 
 
@@ -86,7 +86,7 @@ class ApiProfilingReturnStructure:
         self.soc = get_global_storage().dev_plat
 
     # noinspection DuplicatedCode
-    def construct(self, context: ApiTestcaseStructure,
+    def construct(self, context: TestcaseAclnn,
                   compare_result: ApiComparisonResult):
         """Construct the structure with context"""
         # Check prof_results and construct one if necessary

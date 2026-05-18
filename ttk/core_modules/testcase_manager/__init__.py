@@ -13,13 +13,13 @@ Testcase manager Module
 
 
 __all__ = ["TestcaseBase", "UniversalTestcaseFactory",
-           "UniversalTestcaseStructure",
-           "ApiTestcaseStructure",
+           "TestcaseOp",
+           "TestcaseAclnn",
            "TensorApiTestcaseBase"]
 
 
 from .testcase_base import TestcaseBase
 from .testcase_tensor_api_base import TensorApiTestcaseBase
 from .testcase_manager import UniversalTestcaseFactory
-from .testcase_op import UniversalTestcaseStructure
-from .testcase_api import ApiTestcaseStructure
+from .testcase_op import TestcaseOp
+from .testcase_aclnn import TestcaseAclnn

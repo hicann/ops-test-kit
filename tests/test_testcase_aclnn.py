@@ -6,12 +6,12 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """
-Tests for ttk.core_modules.testcase_manager.testcase_api: nested tensor structure,
+Tests for ttk.core_modules.testcase_manager.testcase_aclnn: nested tensor structure,
 flat properties, compression, and parameter validation.
 """
 
 import pytest
-from ttk.core_modules.testcase_manager.testcase_api import ApiTestcaseStructure
+from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
 from ttk.utilities.container_utils import flatten_nested_sequence
 
 
@@ -23,22 +23,22 @@ class TestFlattenByDistribution:
     """Tests for _flatten_by_distribution static method."""
 
     def test_flat_values_flat_dist(self):
-        assert ApiTestcaseStructure._flatten_by_distribution(("a", "b"), (0, 0)) == ("a", "b")
+        assert TestcaseAclnn._flatten_by_distribution(("a", "b"), (0, 0)) == ("a", "b")
 
     def test_expand_tuple_list(self):
-        result = ApiTestcaseStructure._flatten_by_distribution(("a", ("b", "c")), (0, 2))
+        result = TestcaseAclnn._flatten_by_distribution(("a", ("b", "c")), (0, 2))
         assert result == ("a", "b", "c")
 
     def test_broadcast_single_in_list(self):
-        result = ApiTestcaseStructure._flatten_by_distribution(("a", ("b",)), (0, 2))
+        result = TestcaseAclnn._flatten_by_distribution(("a", ("b",)), (0, 2))
         assert result == ("a", "b", "b")
 
     def test_broadcast_scalar_to_list(self):
-        result = ApiTestcaseStructure._flatten_by_distribution(("a", "b"), (2, 0))
+        result = TestcaseAclnn._flatten_by_distribution(("a", "b"), (2, 0))
         assert result == ("a", "a", "b")
 
     def test_mixed(self):
-        result = ApiTestcaseStructure._flatten_by_distribution(
+        result = TestcaseAclnn._flatten_by_distribution(
             (("x", "y"), "z"), (2, 0))
         assert result == ("x", "y", "z")
 
@@ -207,16 +207,16 @@ class TestIsTensorListElement:
     """Tests for _is_tensor_list_element static method."""
 
     def test_tensor_list(self):
-        assert ApiTestcaseStructure._is_tensor_list_element(((3, 3), (3, 2))) is True
+        assert TestcaseAclnn._is_tensor_list_element(((3, 3), (3, 2))) is True
 
     def test_single_tensor(self):
-        assert ApiTestcaseStructure._is_tensor_list_element((3, 5)) is False
+        assert TestcaseAclnn._is_tensor_list_element((3, 5)) is False
 
     def test_none(self):
-        assert ApiTestcaseStructure._is_tensor_list_element(None) is False
+        assert TestcaseAclnn._is_tensor_list_element(None) is False
 
     def test_empty(self):
-        assert ApiTestcaseStructure._is_tensor_list_element(()) is False
+        assert TestcaseAclnn._is_tensor_list_element(()) is False
 
 
 class TestOutputProperties:
@@ -378,19 +378,19 @@ class TestIsScalarListElement:
     """Tests for _is_scalar_list_element static method."""
 
     def test_scalar_list_is_not_nested(self):
-        assert ApiTestcaseStructure._is_scalar_list_element(("float32", "int8")) is False
+        assert TestcaseAclnn._is_scalar_list_element(("float32", "int8")) is False
 
     def test_scalar_list_nested(self):
-        assert ApiTestcaseStructure._is_scalar_list_element((("float32", "int8"),)) is True
+        assert TestcaseAclnn._is_scalar_list_element((("float32", "int8"),)) is True
 
     def test_single_scalar(self):
-        assert ApiTestcaseStructure._is_scalar_list_element("float32") is False
+        assert TestcaseAclnn._is_scalar_list_element("float32") is False
 
     def test_none(self):
-        assert ApiTestcaseStructure._is_scalar_list_element(None) is False
+        assert TestcaseAclnn._is_scalar_list_element(None) is False
 
     def test_empty(self):
-        assert ApiTestcaseStructure._is_scalar_list_element(()) is False
+        assert TestcaseAclnn._is_scalar_list_element(()) is False
 
 
 class TestIsFieldAlreadyNested:
@@ -399,32 +399,32 @@ class TestIsFieldAlreadyNested:
     def test_fully_nested_matches_dist(self):
         field = (('float32', 'float32'), 'float32')
         dist = (2, 0)
-        assert ApiTestcaseStructure._is_field_already_nested(field, dist) is True
+        assert TestcaseAclnn._is_field_already_nested(field, dist) is True
 
     def test_compressed_not_nested(self):
         field = ('float32',)
         dist = (2, 0)
-        assert ApiTestcaseStructure._is_field_already_nested(field, dist) is False
+        assert TestcaseAclnn._is_field_already_nested(field, dist) is False
 
     def test_len_mismatch(self):
         field = ('float32', 'float32')
         dist = (3,)
-        assert ApiTestcaseStructure._is_field_already_nested(field, dist) is False
+        assert TestcaseAclnn._is_field_already_nested(field, dist) is False
 
     def test_inner_len_mismatch(self):
         field = (('float32',), 'float32')
         dist = (2, 0)
-        assert ApiTestcaseStructure._is_field_already_nested(field, dist) is False
+        assert TestcaseAclnn._is_field_already_nested(field, dist) is False
 
     def test_all_single_tensors(self):
         field = ('float32', 'float32')
         dist = (0, 0)
-        assert ApiTestcaseStructure._is_field_already_nested(field, dist) is True
+        assert TestcaseAclnn._is_field_already_nested(field, dist) is True
 
     def test_single_tensorlist(self):
         field = (('a', 'b', 'c'),)
         dist = (3,)
-        assert ApiTestcaseStructure._is_field_already_nested(field, dist) is True
+        assert TestcaseAclnn._is_field_already_nested(field, dist) is True
 
 
 class TestNormalizeSkipsAlreadyNested:
@@ -506,7 +506,7 @@ class TestNormalizeInputDataRanges:
     """Tests for _normalize_input_data_ranges: TensorList broadcast/pad/truncate."""
 
     def _make_case(self, shapes, ranges=None):
-        case = ApiTestcaseStructure()
+        case = TestcaseAclnn()
         case.tensor_view_shapes = shapes
         case.tensor_dtypes = ('float32',) * len(flatten_nested_sequence(shapes))
         if ranges is not None:
@@ -515,7 +515,7 @@ class TestNormalizeInputDataRanges:
         return case
 
     def test_empty_ranges_unchanged(self):
-        case = ApiTestcaseStructure()
+        case = TestcaseAclnn()
         case.tensor_view_shapes = ((3, 4), (5, 6))
         case.tensor_dtypes = ('float32', 'float32')
         case.input_data_ranges = None
@@ -599,7 +599,7 @@ class TestNonePlaceholderInStrideOffsetStorage:
     """
 
     def _make_case(self, strides=None, offsets=None, storage_shapes=None):
-        case = ApiTestcaseStructure()
+        case = TestcaseAclnn()
         case.tensor_view_shapes = ((3, 4), (5, 6), (7, 8))
         case.tensor_dtypes = ('float32', 'float32', 'float32')
         if strides is not None:

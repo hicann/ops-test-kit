@@ -44,7 +44,7 @@ from .rts_sequence import rts_profiling
 from ...runtime import RTSInterface, RTSInterfaceBase
 from ...tbe_logging import default_logging_config
 from ...tbe_multiprocessing import get_process_context, DeviceLock
-from ...testcase_manager import UniversalTestcaseStructure
+from ...testcase_manager import TestcaseOp
 from ...operator import OpInfoKeeper
 from ....utilities import resolve_custom_numpy_dtypes, get, get_global_storage, get_str_tiling_data
 from ....utilities import parse_tiling_data, table_print, deep_flatten
@@ -89,7 +89,7 @@ def prof_end(context, print_content):
     return return_structure
 
 
-def prof_compile_fail_end(context: UniversalTestcaseStructure):
+def prof_compile_fail_end(context: TestcaseOp):
     construct_compile_result(context)
     passed = handle_profiling_result(context)
     compare_result = ComparisonResult(passed).set(context.dyn_compile_result.compile_result,
@@ -102,7 +102,7 @@ def prof_compile_fail_end(context: UniversalTestcaseStructure):
     return return_structure
 
 
-def prof_compile_only_end(context: UniversalTestcaseStructure):
+def prof_compile_only_end(context: TestcaseOp):
     construct_compile_result(context)
     compare_result = ComparisonResult("COMPILE_ONLY")
     return_structure = ProfilingReturnStructure()
@@ -111,7 +111,7 @@ def prof_compile_only_end(context: UniversalTestcaseStructure):
     return return_structure
 
 
-def profile_process(context: UniversalTestcaseStructure,
+def profile_process(context: TestcaseOp,
                     device_grant_events: dict,
                     device_granted_indices: dict,
                     dev_id: int) -> ProfilingReturnStructure:
@@ -208,7 +208,7 @@ def profile_process(context: UniversalTestcaseStructure,
     return return_structure
 
 
-def __profiling_end_print(context: UniversalTestcaseStructure,
+def __profiling_end_print(context: TestcaseOp,
                           compare_result: ComparisonResult, passed: str):
     c = compare_result
     logging.info("\n########################\n"
@@ -227,7 +227,7 @@ def __profiling_end_print(context: UniversalTestcaseStructure,
                  "########################\n")
 
 
-def __compile_only_end_print(context: UniversalTestcaseStructure):
+def __compile_only_end_print(context: TestcaseOp):
     def __normalize(compile_time, tiling_time, tiling_key, block_dim, local_memory, kernel_name):
         if isinstance(tiling_time, (tuple, list)):
             tiling_time = numpy.median(tiling_time[1:]) if len(tiling_time) > 1 else tiling_time[0]
@@ -247,7 +247,7 @@ def __compile_only_end_print(context: UniversalTestcaseStructure):
     logging.info("\n" + table_print(lines))
 
 
-def __parse_binary_tiling_data(context: UniversalTestcaseStructure):
+def __parse_binary_tiling_data(context: TestcaseOp):
     # noinspection PyBroadException
     try:
         context.bin_tiling_data_bytes, context.bin_tuple_tiling_data = \
@@ -260,7 +260,7 @@ def __parse_binary_tiling_data(context: UniversalTestcaseStructure):
         context.bin_compile_result.compile_result = "TILING_PARSE_FAILURE"
 
 
-def __parse_dynamic_tiling_data(context: UniversalTestcaseStructure):
+def __parse_dynamic_tiling_data(context: TestcaseOp):
     # noinspection PyBroadException
     try:
         context.dyn_tiling_data_bytes, context.dyn_tuple_tiling_data = \
@@ -273,7 +273,7 @@ def __parse_dynamic_tiling_data(context: UniversalTestcaseStructure):
         context.dyn_compile_result.compile_result = "TILING_PARSE_FAILURE"
 
 
-def __parse_manual_params(context: UniversalTestcaseStructure):
+def __parse_manual_params(context: TestcaseOp):
     switches = get_global_storage()
 
     def __apply_manual_block_dim(container):
@@ -310,7 +310,7 @@ def __print_get_dtype(golden):
     return golden.dtype if hasattr(golden, 'dtype') else golden
 
 
-def __profiling_print(context: UniversalTestcaseStructure):
+def __profiling_print(context: TestcaseOp):
     if not (context.input_arrays or context.output_arrays):
         raise TypeError("Input or Output Data is not available, please check your custom function")
     flat_input_arrays = tuple(deep_flatten(context.input_arrays)) if context.input_arrays else ()
@@ -328,8 +328,7 @@ def __profiling_print(context: UniversalTestcaseStructure):
         f"BlockDim: {context.dyn_compile_result.block_dim}\n"
         f"Workspace Bytes: {context.dyn_compile_result.workspaces}\n"
         f"Tiling Data Parsed Dict: {context.dyn_str_tiling_data}\n"
-        f"Tiling Data Parsed Tuple: {context.dyn_tuple_tiling_data}\n"
-        f"Tiling Data RAW: {context.dyn_tiling_data_bytes}\n"
+        f"Tiling Data Parsed Tuple(int32): {context.dyn_tuple_tiling_data}\n"
         f"Tiling Key: {context.dyn_compile_result.tiling_key} ({context.str_tiling_key()})\n"
         f"Clear Atomic: {context.dyn_clear_atomic}\n"
         f"Simt UB: {context.dyn_compile_result.simt_ub_size} Bytes\n"
@@ -346,8 +345,7 @@ def __profiling_print(context: UniversalTestcaseStructure):
         f"BlockDim: {context.bin_compile_result.block_dim}\n"
         f"Workspace Bytes: {context.bin_compile_result.workspaces}\n"
         f"Tiling Data Parsed Dict: {context.bin_str_tiling_data}\n"
-        f"Tiling Data Parsed Tuple: {context.bin_tuple_tiling_data}\n"
-        f"Tiling Data RAW: {context.bin_tiling_data_bytes}\n"
+        f"Tiling Data Parsed Tuple(int32): {context.bin_tuple_tiling_data}\n"
         f"Tiling Key: {context.bin_compile_result.tiling_key} ({context.str_tiling_key(True)})\n"
         f"Clear Atomic: {context.bin_clear_atomic}\n"
         f"Simt UB: {context.bin_compile_result.simt_ub_size} Bytes\n"
@@ -375,7 +373,7 @@ def __dump_to_file(data: Union[numpy.ndarray, bytes], file_name: str, dtype: Opt
                  dtype=dtype)
 
 
-def __dump_input(context: UniversalTestcaseStructure, force: bool = False) -> NoReturn:
+def __dump_input(context: TestcaseOp, force: bool = False) -> NoReturn:
     dump_input_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_input_enabled():
         logging.info("Dump Dynamic Input data....")
@@ -386,7 +384,7 @@ def __dump_input(context: UniversalTestcaseStructure, force: bool = False) -> No
         __dump_to_file(context.bin_tiling_data_bytes, f"{dump_input_name}_bin_tiling_data")
 
 
-def __dump_output(context: UniversalTestcaseStructure, force: bool = False) -> NoReturn:
+def __dump_output(context: TestcaseOp, force: bool = False) -> NoReturn:
     dump_output_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_output_enabled():
         output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
@@ -397,7 +395,7 @@ def __dump_output(context: UniversalTestcaseStructure, force: bool = False) -> N
                 __dump_to_file(_output, f"{dump_output_name}_{typ}_output_{idx}", get(output_dtypes, idx))
 
 
-def __dump_golden(context: UniversalTestcaseStructure, force: bool = False) -> NoReturn:
+def __dump_golden(context: TestcaseOp, force: bool = False) -> NoReturn:
     dump_output_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_golden_enabled():
         logging.info(f"Dump Golden data....")
@@ -405,7 +403,7 @@ def __dump_golden(context: UniversalTestcaseStructure, force: bool = False) -> N
             __dump_to_file(golden, f"{dump_output_name}_golden_{idx}")
 
 
-def __dump_on_fail(context: UniversalTestcaseStructure) -> NoReturn:
+def __dump_on_fail(context: TestcaseOp) -> NoReturn:
     switches = get_global_storage()
     if not switches.dump_config.is_input_enabled():
         __dump_input(context, force=True)
@@ -415,7 +413,7 @@ def __dump_on_fail(context: UniversalTestcaseStructure) -> NoReturn:
         __dump_golden(context, force=True)
 
 
-def __construct_profiling_param(context: UniversalTestcaseStructure, mode: str,
+def __construct_profiling_param(context: TestcaseOp, mode: str,
                                 output_placeholder: bool = True) -> tuple:
     flat_input_arrays = tuple(deep_flatten(context.input_arrays or ()))
     if mode == "dynamic":
@@ -483,7 +481,7 @@ def _get_rts_interface(device_id: int, testcase_name: str, test_mode: str) -> RT
     return device
 
 
-def do_profiling(context: UniversalTestcaseStructure, mode: str) -> RTSProfilingResult:
+def do_profiling(context: TestcaseOp, mode: str) -> RTSProfilingResult:
     """
     RTS Profiling wrapper
     """
@@ -514,7 +512,7 @@ def do_profiling(context: UniversalTestcaseStructure, mode: str) -> RTSProfiling
     return result
 
 
-def __adapt_output_shape_unknown(context: UniversalTestcaseStructure):
+def __adapt_output_shape_unknown(context: TestcaseOp):
     """
     Detect and transfer npu output shape tensor from uint32 to uint64 encoding.
     """
@@ -553,7 +551,7 @@ def __adapt_output_shape_unknown(context: UniversalTestcaseStructure):
             x_output_bytes[-1] = np_array
 
 
-def handle_profiling_result(context: UniversalTestcaseStructure):
+def handle_profiling_result(context: TestcaseOp):
     """
     Returns parsed cycle counts and passing state
     :param context:

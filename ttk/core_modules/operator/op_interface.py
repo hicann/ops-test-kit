@@ -34,7 +34,7 @@ from importlib import util as importlib_util
 # Third-Party Packages
 from .tbe_interface import Opc
 from .op_info_keeper import OpInfoKeeper
-from ..testcase_manager import UniversalTestcaseStructure
+from ..testcase_manager import TestcaseOp
 from ...utilities import BinaryCompilationResult, DynamicCompilationResult, Singleton
 from ...utilities import ceil_div, get, get_global_storage, lcm
 from ...utilities import param_transformation, read_file, tuple_flatten
@@ -118,7 +118,7 @@ class OperatorInterface(metaclass=Singleton):
         return result
 
     @staticmethod
-    def prepare_operator_parameters(testcase: UniversalTestcaseStructure,
+    def prepare_operator_parameters(testcase: TestcaseOp,
                                     mode: str) -> Tuple[tuple, tuple]:
         """
         This method is intended to construct operator input / output dict
@@ -186,12 +186,12 @@ class OperatorInterface(metaclass=Singleton):
                 "name": key,
                 "const_value": tuple_flatten(my_value.tolist())}
 
-    def prepare_operator_parameters_const(self, testcase: UniversalTestcaseStructure) -> Tuple[tuple, tuple]:
+    def prepare_operator_parameters_const(self, testcase: TestcaseOp) -> Tuple[tuple, tuple]:
         """
         This method is intended to construct operator dict inputs for const.
         TensorList positions produce a tuple of dicts (matching dyn_tensor_dict format).
         """
-        _elim = UniversalTestcaseStructure._eliminate_scalar_shapes_nested
+        _elim = TestcaseOp._eliminate_scalar_shapes_nested
         self._input_dtypes = testcase.input_dtypes
         self._input_formats = testcase.input_formats
         self._input_ori_formats = testcase.input_ori_formats
@@ -282,7 +282,7 @@ class OperatorInterface(metaclass=Singleton):
                 if "range" in pt:
                     del pt["range"]
 
-    def prepare_tiling_params(self, testcase: UniversalTestcaseStructure) -> Tuple[tuple, tuple, tuple]:
+    def prepare_tiling_params(self, testcase: TestcaseOp) -> Tuple[tuple, tuple, tuple]:
         attrs = self.construct_optiling_attrs(testcase.op_name, testcase.attributes or {})
         ipt, opt = self.prepare_operator_parameters_const(testcase)
         self._remove_range_keys(ipt)
@@ -297,7 +297,7 @@ class OperatorInterface(metaclass=Singleton):
         return self
 
     def compile_dynamic_shape(self, dyn_params: tuple,
-                              testcase: UniversalTestcaseStructure,
+                              testcase: TestcaseOp,
                               kernel_name: str,
                               mode: str = "Dyn") -> Union[None, Tuple[str, dict, float, Tuple[str], str, str, str]]:
         """
@@ -335,7 +335,7 @@ class OperatorInterface(metaclass=Singleton):
 
     def call_const_op_tiling(self,
                              compile_result: Union[DynamicCompilationResult, BinaryCompilationResult],
-                             testcase: UniversalTestcaseStructure) -> dict:
+                             testcase: TestcaseOp) -> dict:
         """
         Dynamic shape op_tiling
         """
@@ -562,7 +562,7 @@ class OperatorInterface(metaclass=Singleton):
         return tuple(result)
 
     @staticmethod
-    def add_compile_info_to_op_context(cxt, testcase: UniversalTestcaseStructure):
+    def add_compile_info_to_op_context(cxt, testcase: TestcaseOp):
         other_x_params = testcase.attributes or {}
         if isinstance(cxt, dict):
             cxt["_sgt_cube_vector_core_type"] = testcase.core_type
@@ -593,7 +593,7 @@ class OperatorInterface(metaclass=Singleton):
                 private_attrs.update(ta)
         op_info.private_attrs = private_attrs
 
-    def set_common_compile_context(self, cxt, testcase: UniversalTestcaseStructure,
+    def set_common_compile_context(self, cxt, testcase: TestcaseOp,
                                    operator_func: Optional[Callable], kernel_name: str):
         cxt.add_addition("master_pid", testcase.kb_pid)
         attrs = testcase.attributes or {}
@@ -603,7 +603,7 @@ class OperatorInterface(metaclass=Singleton):
         cxt.add_op_info(op_info)
         self.add_addition_to_op_context(cxt, attrs, op_info)
 
-    def set_dynamic_compile_context(self, cxt, testcase: UniversalTestcaseStructure,
+    def set_dynamic_compile_context(self, cxt, testcase: TestcaseOp,
                                     operator_func: Optional[Callable], kernel_name: str,
                                     dyn_params):
         self.set_common_compile_context(cxt, testcase, operator_func, kernel_name)
@@ -617,7 +617,7 @@ class OperatorInterface(metaclass=Singleton):
             self.add_private_attr_to_op_info(tiling_attrs, attrs, op_info)
             self.add_compile_info_to_op_context(cxt, testcase)
 
-    def get_dyn_operator(self, testcase: UniversalTestcaseStructure, search_user_defined: bool = False):
+    def get_dyn_operator(self, testcase: TestcaseOp, search_user_defined: bool = False):
         op_name = testcase.op_name
         if op_name in DYN_OP_FUNC_CACHE:
             self._switch_opc(DYN_OP_IMPL_TYPE[op_name])
@@ -729,7 +729,7 @@ class OperatorInterface(metaclass=Singleton):
             DYN_OP_SELECT_FORMAT_FUNC_CACHE[op_file_name] = func
         return func
 
-def adapter_before_tiling(testcase: UniversalTestcaseStructure,
+def adapter_before_tiling(testcase: TestcaseOp,
                           compile_result: Union[DynamicCompilationResult, BinaryCompilationResult],
                           final_inputs: tuple, final_outputs: tuple):
     if compile_result.compile_info.setdefault("tiling_type") == 'binary' and \

@@ -1,6 +1,6 @@
-# 🚀 TTK (ops-test-kit) 算子测试工具
+# 🚀 TTK —— 算子测试工具
 
-TTK（Ops Tensor Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库提供的全链路、自动化、批量化算子测试框架，帮助开发者快速完成算子批量功能验证、性能评估以及Golden值比对，提升算子开发质量和效率。
+TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库提供的全链路、自动化、批量化算子测试框架，帮助开发者快速完成算子批量功能验证、性能评估以及Golden值比对，提升算子开发质量和效率。
 
 * **支持丰富的算子测试类型**：支持Kernel（AscendC）、ACLNN（aclnn* C API）、E2E（PyTorch/torch_npu框架API）等算子测试
 * **支持多种硬件类型**：E2E 模式经统一 Backend 抽象层支持 NPU、GPU、CPU 作为待测或标杆设备

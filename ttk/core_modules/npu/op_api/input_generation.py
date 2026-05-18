@@ -22,14 +22,14 @@ import os
 from typing import Optional, List
 
 # Third-party Packages
-from ...testcase_manager import ApiTestcaseStructure
+from ...testcase_manager import TestcaseAclnn
 from ...aclnn import OpApiInfoKeeper, OpApiInfo
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, numpy_to_torch_tensor, tuple_flatten
 from ....utilities import get, get_global_storage, RandomData
 from ...plugin_loader import get_plugin_function
 
 class InputGenerator:
-    def __init__(self, context: ApiTestcaseStructure):
+    def __init__(self, context: TestcaseAclnn):
         self._ctx = context
         self._switch = get_global_storage()
 

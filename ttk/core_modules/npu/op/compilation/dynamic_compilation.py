@@ -18,7 +18,7 @@ import time
 import numpy
 from typing import NoReturn
 # Third-Party Packages
-from ....testcase_manager import UniversalTestcaseStructure
+from ....testcase_manager import TestcaseOp
 from .....utilities import get_global_storage, process_kernel_string, OPTestSwitch, compilation_result
 from .....utilities import DynamicCompilationResult, DynamicOpTilingResult, KernelJsonInfo
 from ....operator.op_interface import OperatorInterface, CaseNotSupportedError
@@ -28,7 +28,7 @@ from .common import normalize_mode
 from .common import CceManualCompile
 
 
-def dynamic_compilation(testcase: UniversalTestcaseStructure, mode_name: str = "Dyn"):
+def dynamic_compilation(testcase: TestcaseOp, mode_name: str = "Dyn"):
     # Check mode name
     switches = get_global_storage()
     mode_name = normalize_mode(mode_name)
@@ -149,7 +149,7 @@ def dyn_manual_compile(result: DynamicCompilationResult) -> NoReturn:
         # reset kernel_json_info to sub-kernel
         result.kernel_json_info = KernelJsonInfo.from_file(f"{sub_kernel_path}.json")
         cce_compile_result = CceManualCompile.compile(sub_kernel_path, result.kernel_json_info.kernel_name,
-                                                      switches.short_soc_version,
+                                                      switches.dev_plat,
                                                       result.kernel_json_info.core_type,
                                                       result.kernel_json_info.task_ration)
         result.compile_result = cce_compile_result
@@ -157,13 +157,13 @@ def dyn_manual_compile(result: DynamicCompilationResult) -> NoReturn:
         result.kernel_dir = kernel_path
     else:
         cce_compile_result = CceManualCompile.compile(str(kernel_path), result.kernel_json_info.kernel_name,
-                                                      switches.short_soc_version,
+                                                      switches.dev_plat,
                                                       result.kernel_json_info.core_type,
                                                       result.kernel_json_info.task_ration)
         result.compile_result = cce_compile_result
 
 
-def dyn_compile(interface: OperatorInterface, testcase: UniversalTestcaseStructure,
+def dyn_compile(interface: OperatorInterface, testcase: TestcaseOp,
                 result: DynamicCompilationResult, mode: str) -> NoReturn:
     """
     Wrapper function for op_interface dynamic operator compilation sequence
@@ -203,7 +203,7 @@ def dyn_compile(interface: OperatorInterface, testcase: UniversalTestcaseStructu
 
 
 def dyn_do_tiling(interface: OperatorInterface,
-                  testcase: UniversalTestcaseStructure,
+                  testcase: TestcaseOp,
                   result: DynamicCompilationResult) -> NoReturn:
     """
     Wrapper function for op_interface dynamic operator op_tiling sequence

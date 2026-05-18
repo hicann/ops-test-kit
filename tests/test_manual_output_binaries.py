@@ -8,7 +8,7 @@ Mirrors TestNormalizeManualBinaries but for output side.
 import pytest
 from unittest.mock import patch
 
-from ttk.core_modules.testcase_manager.testcase_op import UniversalTestcaseStructure
+from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
 def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
@@ -16,7 +16,7 @@ def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
                    output_shapes=((8,),),
                    output_dtypes=("float16",),
                    **kwargs):
-    case = UniversalTestcaseStructure()
+    case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
     case.input_shapes = input_shapes

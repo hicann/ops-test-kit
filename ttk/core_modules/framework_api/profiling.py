@@ -157,7 +157,7 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
     Framework API profiling process — executed in subprocess.
 
     Args:
-        testcase: FrameworkApiTestcaseStructure
+        testcase: TestcaseE2e
         device_grant_events: dict of device_id → Manager().Event()
         device_granted_indices: dict of device_id → Manager().Value('i', -1)
         dev_id: device ID (passed as kwarg by ProcessGroup)

@@ -17,7 +17,7 @@ import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock, PropertyMock
 
-from ttk.core_modules.testcase_manager.testcase_op import UniversalTestcaseStructure
+from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
 def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
@@ -25,7 +25,7 @@ def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
                    output_shapes=((8,),),
                    output_dtypes=("float16",),
                    **kwargs):
-    case = UniversalTestcaseStructure()
+    case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
     case.input_shapes = input_shapes
@@ -186,53 +186,53 @@ class TestTensorDictProperties:
 class TestShapeInference:
 
     def test_elewise_inference(self):
-        result = UniversalTestcaseStructure._do_shape_inference(
+        result = TestcaseOp._do_shape_inference(
             ((8,), (8,)), "ELEWISE", {})
         assert result == ((8,),)
 
     def test_reduce_inference_with_axis(self):
-        result = UniversalTestcaseStructure._do_shape_inference(
+        result = TestcaseOp._do_shape_inference(
             ((8, 16),), "REDUCE", {"axis": (1,)})
         assert result is not None
 
     def test_reduce_inference_with_axes(self):
-        result = UniversalTestcaseStructure._do_shape_inference(
+        result = TestcaseOp._do_shape_inference(
             ((8, 16, 32),), "REDUCE", {"axes": (1, 2)})
         assert result is not None
 
     def test_reduce_inference_no_axis(self):
-        result = UniversalTestcaseStructure._do_shape_inference(
+        result = TestcaseOp._do_shape_inference(
             ((8, 16),), "REDUCE", {})
         assert result is not None
 
     def test_elewise_with_args(self):
-        result = UniversalTestcaseStructure._do_shape_inference(
+        result = TestcaseOp._do_shape_inference(
             ((8,), (8,)), "ELEWISE(1, None)", {})
         assert result is not None
 
     def test_none_in_inputs_raises(self):
         with pytest.raises(ValueError, match="None input"):
-            UniversalTestcaseStructure._do_shape_inference(
+            TestcaseOp._do_shape_inference(
                 (None,), "ELEWISE", {})
 
     def test_invalid_inference_raises(self):
         with pytest.raises(ValueError, match="Invalid"):
-            UniversalTestcaseStructure._do_shape_inference(
+            TestcaseOp._do_shape_inference(
                 ((8,),), "INVALID_TYPE", {})
 
 
 class TestExpandIndices:
 
     def test_simple_expand(self):
-        result = UniversalTestcaseStructure._expand_indices(3, (), [0, 1, 2])
+        result = TestcaseOp._expand_indices(3, (), [0, 1, 2])
         assert result == [0, 1, 2]
 
     def test_with_none(self):
-        result = UniversalTestcaseStructure._expand_indices(3, (), [0, None, 2])
+        result = TestcaseOp._expand_indices(3, (), [0, None, 2])
         assert result == [0, None, 2]
 
     def test_with_list_distribution(self):
-        result = UniversalTestcaseStructure._expand_indices(5, (2, 0, 0), [0, 1])
+        result = TestcaseOp._expand_indices(5, (2, 0, 0), [0, 1])
         assert len(result) == 3
 
 
@@ -328,7 +328,7 @@ class TestConstInputIndexesOpInfo:
 class TestSupportedRerunTitle:
 
     def test_returns_expected_titles(self):
-        titles = UniversalTestcaseStructure.supported_rerun_title()
+        titles = TestcaseOp.supported_rerun_title()
         assert "dyn_perf_us" in titles
         assert "precision_status" in titles
 
@@ -336,7 +336,7 @@ class TestSupportedRerunTitle:
 class TestHashCasesToGroups:
 
     def test_empty_input(self):
-        result = UniversalTestcaseStructure.hash_cases_to_groups(set())
+        result = TestcaseOp.hash_cases_to_groups(set())
         assert result == {}
 
     def test_groups_by_hash(self):
@@ -344,7 +344,7 @@ class TestHashCasesToGroups:
         case2 = _make_testcase()
         _validate(case1)
         _validate(case2)
-        result = UniversalTestcaseStructure.hash_cases_to_groups({case1, case2})
+        result = TestcaseOp.hash_cases_to_groups({case1, case2})
         assert len(result) == 1
         assert len(list(result.values())[0]) == 2
 

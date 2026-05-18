@@ -25,7 +25,7 @@ from typing import Optional, Set, Any
 # Third-Party Packages
 from .compilation import compilation_process
 from .profiling import profile_process, ProfilingReturnStructure
-from ...testcase_manager import UniversalTestcaseStructure
+from ...testcase_manager import TestcaseOp
 from ...operator import knowledge_base_sequence
 from ...tbe_multiprocessing import SimpleCommandProcess
 from ...infra import TaskA, TaskType, TaskKeeper, ProfileObject
@@ -49,10 +49,10 @@ class OpProfileObject(ProfileObject):
         """ return all result titles as per current command options """
         return ProfilingReturnStructure.get_titles()
 
-    def init_tasks(self, testcases: Set[UniversalTestcaseStructure]):
+    def init_tasks(self, testcases: Set[TestcaseOp]):
         for case in testcases:
             case.kb_pid = self.kb.get_pid()
-        grouped_testcases = UniversalTestcaseStructure.hash_cases_to_groups(testcases)
+        grouped_testcases = TestcaseOp.hash_cases_to_groups(testcases)
         for cases in grouped_testcases.values():
             is_first = True
             for t in cases:
@@ -83,19 +83,19 @@ class OpProfileObject(ProfileObject):
                 time.sleep(1)
             self.kb.close()
 
-    def apply_compile_fail_result(self, testcase: UniversalTestcaseStructure,
+    def apply_compile_fail_result(self, testcase: TestcaseOp,
                                   fail_info: str, task_sub_type: str):
         result = construct_crash_compilation_result(fail_info, task_sub_type)
         testcase.apply_compile_result(result)
 
-    def apply_compile_success_result(self, testcase: UniversalTestcaseStructure,
+    def apply_compile_success_result(self, testcase: TestcaseOp,
                                      result: Any):
         if not isinstance(result, BaseCompilationResult):
             raise RuntimeError(f"Only subtype of BaseCompilationResult is valid. "
                                f"But got {type(result)}")
         testcase.apply_compile_result(result)
 
-    def apply_profile_success_result(self, testcase: UniversalTestcaseStructure,
+    def apply_profile_success_result(self, testcase: TestcaseOp,
                                      result: Any) -> tuple:
         if not isinstance(result, ProfilingReturnStructure):
             raise RuntimeError(f"Only ProfilingReturnStructure is valid. "
@@ -103,7 +103,7 @@ class OpProfileObject(ProfileObject):
         # if profiling fail, check to restart process to clear ErrorMessage
         return result.pick_data(self.case_result_title), result.kernel_execute_failed()
 
-    def compile_done(self, testcase: UniversalTestcaseStructure):
+    def compile_done(self, testcase: TestcaseOp):
         if testcase.ready_for_profile():
             self._send_to_profiling(testcase)
 
@@ -132,17 +132,17 @@ class OpProfileObject(ProfileObject):
     @staticmethod
     def _compile_invalid_case(task: TaskA):
         # only when testcase is invalid
-        if not isinstance(task.testcase, UniversalTestcaseStructure):
-            raise RuntimeError(f"Only UniversalTestcaseStructure instance is valid. "
+        if not isinstance(task.testcase, TestcaseOp):
+            raise RuntimeError(f"Only TestcaseOp instance is valid. "
                                f"But got {type(task.testcase)}")
-        testcase: UniversalTestcaseStructure = task.testcase
+        testcase: TestcaseOp = task.testcase
         reason = testcase.fail_reason
         logging.warning(f"Compilation process of mode {task.sub_type} skipped for "
                         f"testcase {testcase.testcase_name} because of {reason}")
         result = construct_crash_compilation_result(reason, task.sub_type)
         testcase.apply_compile_result(result)
 
-    def _send_to_profiling(self, testcase: UniversalTestcaseStructure):
+    def _send_to_profiling(self, testcase: TestcaseOp):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
         self.task_keeper.append(TaskA(testcase, profile_process,

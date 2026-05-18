@@ -1,6 +1,6 @@
-# TTK (ops-test-kit) Operator Test Framework
+# TTK —— Operator Test Framework
 
-TTK (Tensor Tool Kit) is a full-pipeline, automated, batch operator testing framework provided by the [CANN](https://hiascend.com/software/cann) operator library. It helps developers quickly perform batch operator functional verification, performance evaluation, and Golden value comparison, improving operator development quality and efficiency.
+TTK (ops Test Tool Kit) is a full-pipeline, automated, batch operator testing framework provided by the [CANN](https://hiascend.com/software/cann) operator library. It helps developers quickly perform batch operator functional verification, performance evaluation, and Golden value comparison, improving operator development quality and efficiency.
 
 * **Rich operator test types**: Supports Kernel (AscendC), ACLNN (aclnn\* C API), and E2E (PyTorch/torch\_npu framework API) testing
 * **Multiple hardware backends**: E2E mode runs through a unified Backend abstraction supporting NPU, GPU, and CPU as device under test or reference

@@ -25,6 +25,7 @@ import os
 from typing import Union
 # Third-Party Packages
 from ...utilities import get_ascend_scene_info, get_builtin_opp_path, get_custom_opp_paths
+from ...utilities.platform import get_builtin_tiling_path, get_custom_tiling_paths
 
 
 def _load_tiling_from_opp_impl(opp_impl_path, scene_os, scene_arch):
@@ -66,18 +67,15 @@ def _load_tiling_from_opp_impl(opp_impl_path, scene_os, scene_arch):
 def load_op_registries():
     try:
         opp_path = get_builtin_opp_path()
-        new_built_in = os.path.abspath(os.path.join(opp_path, "built-in", "op_impl"))
-        old_built_in = os.path.abspath(os.path.join(opp_path, "op_impl", "built-in"))
-        opp_impl_path = new_built_in if os.path.exists(new_built_in) else old_built_in
-
         scene_os, scene_arch = get_ascend_scene_info(opp_path)
 
         # Load built-in tiling registries
-        _load_tiling_from_opp_impl(opp_impl_path, scene_os, scene_arch)
+        builtin_impl = get_builtin_tiling_path()
+        if os.path.isdir(builtin_impl):
+            _load_tiling_from_opp_impl(builtin_impl, scene_os, scene_arch)
 
         # Load custom tiling registries from ASCEND_CUSTOM_OPP_PATH
-        for custom_path in get_custom_opp_paths():
-            custom_impl = os.path.join(custom_path, "op_impl")
+        for custom_impl in get_custom_tiling_paths():
             if os.path.isdir(custom_impl):
                 logging.info(f"Loading custom tiling registries from: {custom_impl}")
                 _load_tiling_from_opp_impl(custom_impl, scene_os, scene_arch)

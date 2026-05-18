@@ -19,12 +19,12 @@ import os
 from ...plugin_loader import get_plugin_function
 from ...operator.op_info_keeper import OpInfoKeeper
 from ...infershape import format_transformation
-from ...testcase_manager import UniversalTestcaseStructure
+from ...testcase_manager import TestcaseOp
 from ....utilities import resolve_custom_numpy_dtypes, eliminate_scalar_shapes, load_numpy_data
 from ....utilities import get, get_global_storage, param_transformation, RandomData, input_apply_as_list, deep_flatten
 
 
-def __use_manual_input(context: UniversalTestcaseStructure):
+def __use_manual_input(context: TestcaseOp):
     logging.info("Using manually configured input data")
 
     flat_binaries = context.flat_manual_input_binaries
@@ -53,6 +53,10 @@ def __assign_tensor_value(arr, val, label):
     spec = numpy.array(val, dtype=arr.dtype)
     if arr.ndim == 0:
         arr[...] = spec.item()
+    elif spec.shape == arr.shape:
+        arr[:] = spec
+    elif spec.size == arr.size:
+        arr[:] = spec.reshape(arr.shape)
     else:
         arr[:] = spec
 
@@ -102,7 +106,7 @@ def __transform_single_to_ori(context, arr, nested_ori, group_idx, sub_idx):
         nested_ori[group_idx][:] = transformed
 
 
-def __override_inputs_from_attributes(context: UniversalTestcaseStructure):
+def __override_inputs_from_attributes(context: TestcaseOp):
     if not context.attributes:
         return
     op_info = OpInfoKeeper().info_of(context.op_name)
@@ -154,7 +158,7 @@ def __override_inputs_from_attributes(context: UniversalTestcaseStructure):
         context.original_input_arrays = tuple(nested_ori_arrays)
 
 
-def __transform_to_original_format(context: UniversalTestcaseStructure):
+def __transform_to_original_format(context: TestcaseOp):
     switches = get_global_storage()
     if switches.golden_mode == "Disable" or context.manual_golden_binaries:
         return
@@ -189,7 +193,7 @@ def __transform_to_original_format(context: UniversalTestcaseStructure):
     context.original_input_arrays = tuple(input_apply_as_list(ori_arrays, context.input_distribution))
 
 
-def __realtime_random_input(context: UniversalTestcaseStructure):
+def __realtime_random_input(context: TestcaseOp):
     """Realtime Input Data Generation (Default)"""
     switches = get_global_storage()
     flat_shapes = eliminate_scalar_shapes(context.flat_input_shapes)
@@ -239,7 +243,7 @@ def __realtime_random_input(context: UniversalTestcaseStructure):
     context.actual_input_data_ranges = tuple(actual_input_data_ranges)
 
 
-def __gen_input(context: UniversalTestcaseStructure):
+def __gen_input(context: TestcaseOp):
     switches = get_global_storage()
 
     if context.manual_input_binaries:
@@ -278,7 +282,7 @@ def __gen_input(context: UniversalTestcaseStructure):
             context.input_arrays = tuple(input_apply_as_list(flat, context.input_distribution))
 
 
-def __collect_dynamic_kwargs(context: UniversalTestcaseStructure):
+def __collect_dynamic_kwargs(context: TestcaseOp):
     switches = get_global_storage()
     kwargs = context.attributes.copy()
     # delete internal attributes

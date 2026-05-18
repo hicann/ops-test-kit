@@ -7,7 +7,7 @@ Tests for dyn_* nested refactor:
 import pytest
 from unittest.mock import patch
 
-from ttk.core_modules.testcase_manager.testcase_op import UniversalTestcaseStructure
+from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
 def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
@@ -16,7 +16,7 @@ def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
                    output_dtypes=("float16",),
                    const_input_indexes=None,
                    **kwargs):
-    case = UniversalTestcaseStructure()
+    case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
     case.input_shapes = input_shapes
@@ -76,7 +76,7 @@ class TestDynInputsNested:
         assert case.dyn_inputs[1] is None
 
     def test_dynamicize_nested_negative_dims(self):
-        result = UniversalTestcaseStructure._dynamicize_nested(((-2,), (8,)), (0, 0))
+        result = TestcaseOp._dynamicize_nested(((-2,), (8,)), (0, 0))
         assert result == ((-2,), (-1,))
 
 
@@ -218,15 +218,15 @@ class TestDynTensorDictNested:
     def test_eliminate_scalar_shapes_nested_static(self):
         """Test _eliminate_scalar_shapes_nested handles TensorList nesting."""
         shapes = (((), (8,)), ((),))
-        result = UniversalTestcaseStructure._eliminate_scalar_shapes_nested(shapes)
+        result = TestcaseOp._eliminate_scalar_shapes_nested(shapes)
         assert result == (((1,), (8,)), ((1,),))
 
     def test_eliminate_scalar_shapes_nested_none(self):
         shapes = (None, (8,))
-        result = UniversalTestcaseStructure._eliminate_scalar_shapes_nested(shapes)
+        result = TestcaseOp._eliminate_scalar_shapes_nested(shapes)
         assert result[0] is None
         assert result[1] == (8,)
 
     def test_eliminate_scalar_shapes_nested_empty(self):
-        result = UniversalTestcaseStructure._eliminate_scalar_shapes_nested(())
+        result = TestcaseOp._eliminate_scalar_shapes_nested(())
         assert result == ()

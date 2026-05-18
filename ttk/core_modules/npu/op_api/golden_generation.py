@@ -31,14 +31,14 @@ except ImportError:
 
 # Third-party Packages
 from ...plugin_loader import get_plugin_function
-from ...testcase_manager import ApiTestcaseStructure
+from ...testcase_manager import TestcaseAclnn
 from ...aclnn import OpApiInfoKeeper, OpApiInfo
 from ....utilities import get_global_storage
 from ....utilities import camel_to_snake, acl_to_torch_dtype
 
 
 class GoldenGenerator:
-    def __init__(self, context: ApiTestcaseStructure):
+    def __init__(self, context: TestcaseAclnn):
         self._ctx = context
         self._switch = get_global_storage()
 

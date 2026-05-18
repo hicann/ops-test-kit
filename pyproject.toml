@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ttk"
 version = "3.0.0"
-description = "TTK — Tensor Tool Kit, Ascend NPU single-operator testing framework"
+description = "TTK — ops Test Tool Kit, Ascend NPU single-operator/aclnn/e2e testing framework"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "CANN Open Software License Agreement v2.0" }
@@ -55,9 +55,9 @@ all = [
 ttk = "ttk.cli:main"
 
 [project.urls]
-Homepage = "https://gitee.com/ascend/ttk"
-Documentation = "https://gitee.com/ascend/ttk/docs"
-Issues = "https://gitee.com/ascend/ttk/issues"
+Homepage = "https://gitcode.com/cann/ops-test-kit"
+Documentation = "https://gitcode.com/cann/ops-test-kit/blob/master/README.md"
+Issues = "https://gitcode.com/cann/ops-test-kit/issues"
 
 [tool.setuptools]
 packages = { find = { include = ["ttk*"], exclude = ["tests*", "examples*"] } }
@@ -93,7 +93,7 @@ files = ["ttk"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-testpaths = ["tests", "ttk/core_modules/plugin_loader/tests"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 xfail_strict = true

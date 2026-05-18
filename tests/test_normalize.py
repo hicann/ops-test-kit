@@ -12,7 +12,7 @@ Tests for normalize refactoring in testcase_op.py:
 import pytest
 from unittest.mock import patch
 
-from ttk.core_modules.testcase_manager.testcase_op import UniversalTestcaseStructure
+from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
 def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
@@ -21,7 +21,7 @@ def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
                    output_dtypes=("float16",),
                    const_input_indexes=None,
                    **kwargs):
-    case = UniversalTestcaseStructure()
+    case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
     case.input_shapes = input_shapes
@@ -615,34 +615,34 @@ class TestIsFieldAlreadyNested:
     def test_fully_nested_matches_dist(self):
         field = (("float16", "float16"), "float16")
         dist = (2, 0)
-        assert UniversalTestcaseStructure._is_field_already_nested(field, dist) is True
+        assert TestcaseOp._is_field_already_nested(field, dist) is True
 
     def test_compressed_not_nested(self):
         field = ("float16",)
         dist = (2, 0)
-        assert UniversalTestcaseStructure._is_field_already_nested(field, dist) is False
+        assert TestcaseOp._is_field_already_nested(field, dist) is False
 
     def test_len_mismatch(self):
         field = ("float16", "float16")
         dist = (3,)
-        assert UniversalTestcaseStructure._is_field_already_nested(field, dist) is False
+        assert TestcaseOp._is_field_already_nested(field, dist) is False
 
     def test_inner_len_mismatch(self):
         """Per-TensorList compressed: inner len != dist count → not already nested."""
         field = (("float16",), "float16")
         dist = (2, 0)
-        assert UniversalTestcaseStructure._is_field_already_nested(field, dist) is False
+        assert TestcaseOp._is_field_already_nested(field, dist) is False
 
     def test_all_single_tensors(self):
         """Flat (no TensorList) — all-zero dist, matching length → already nested."""
         field = ("float16", "float16")
         dist = (0, 0)
-        assert UniversalTestcaseStructure._is_field_already_nested(field, dist) is True
+        assert TestcaseOp._is_field_already_nested(field, dist) is True
 
     def test_single_tensorlist(self):
         field = (("a", "b", "c"),)
         dist = (3,)
-        assert UniversalTestcaseStructure._is_field_already_nested(field, dist) is True
+        assert TestcaseOp._is_field_already_nested(field, dist) is True
 
 
 # =====================================================================
@@ -653,25 +653,25 @@ class TestFlattenByDistribution:
     """Tests for _flatten_by_distribution static method."""
 
     def test_flat_values_flat_dist(self):
-        result = UniversalTestcaseStructure._flatten_by_distribution(("a", "b"), (0, 0))
+        result = TestcaseOp._flatten_by_distribution(("a", "b"), (0, 0))
         assert result == ("a", "b")
 
     def test_expand_tuple_list(self):
-        result = UniversalTestcaseStructure._flatten_by_distribution(("a", ("b", "c")), (0, 2))
+        result = TestcaseOp._flatten_by_distribution(("a", ("b", "c")), (0, 2))
         assert result == ("a", "b", "c")
 
     def test_broadcast_single_in_list(self):
         """('b',) at dist=2 position → broadcast to ('b','b')."""
-        result = UniversalTestcaseStructure._flatten_by_distribution(("a", ("b",)), (0, 2))
+        result = TestcaseOp._flatten_by_distribution(("a", ("b",)), (0, 2))
         assert result == ("a", "b", "b")
 
     def test_scalar_to_tensorlist(self):
         """Scalar at dist=2 position → broadcast to 2 copies."""
-        result = UniversalTestcaseStructure._flatten_by_distribution(("a", "b"), (2, 0))
+        result = TestcaseOp._flatten_by_distribution(("a", "b"), (2, 0))
         assert result == ("a", "a", "b")
 
     def test_mixed(self):
-        result = UniversalTestcaseStructure._flatten_by_distribution(
+        result = TestcaseOp._flatten_by_distribution(
             (("x", "y"), "z"), (2, 0))
         assert result == ("x", "y", "z")
 

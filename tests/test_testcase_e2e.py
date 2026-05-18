@@ -6,12 +6,12 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """
-Tests for ttk.core_modules.testcase_manager.testcase_framework_api:
+Tests for ttk.core_modules.testcase_manager.testcase_e2e:
 nested tensor structure, flat properties, compression, normalize, and validate.
 """
 
 import pytest
-from ttk.core_modules.testcase_manager.testcase_framework_api import FrameworkApiTestcaseStructure
+from ttk.core_modules.testcase_manager.testcase_e2e import TestcaseE2e
 from ttk.utilities.simple_param_extractor import APIParamInfo, ParamInfo, _MANUAL_OVERRIDES, OverloadInfo
 from ttk.core_modules.framework_api.framework_api_info_keeper import FrameworkApiInfoKeeper
 
@@ -22,7 +22,7 @@ TENSORLIST_SHAPES = (((2, 3), (2, 5), (2, 1)),)
 
 
 def _make(api_name="torch.dummy", **kwargs):
-    case = FrameworkApiTestcaseStructure()
+    case = TestcaseE2e()
     case.api_name = api_name
     case.is_valid = True
     case.fail_reason = None
@@ -181,7 +181,7 @@ class TestValidateFrameworkApi:
                  ParamInfo(name="other", type="Tensor")],
                 [ParamInfo(name="tensors", type="List[Tensor]")],
             ])
-        with patch.object(FrameworkApiTestcaseStructure, 'get_api_info', return_value=info):
+        with patch.object(TestcaseE2e, 'get_api_info', return_value=info):
             yield
 
     def test_valid_flat(self, make_testcase):
@@ -221,12 +221,12 @@ class TestValidateFrameworkApi:
 class TestFlattenByDistributionFramework:
 
     def test_already_nested(self):
-        result = FrameworkApiTestcaseStructure._flatten_by_distribution(
+        result = TestcaseE2e._flatten_by_distribution(
             (((None, 1.0), (-1.0, 1.0)), 'x'), (2, 0))
         assert result == ((None, 1.0), (-1.0, 1.0), 'x')
 
     def test_scalar_broadcast(self):
-        result = FrameworkApiTestcaseStructure._flatten_by_distribution(
+        result = TestcaseE2e._flatten_by_distribution(
             ('x',), (3,))
         assert result == ('x', 'x', 'x')
 
@@ -236,12 +236,12 @@ class TestIsFieldAlreadyNestedFramework:
     def test_matches(self):
         field = (('float32', 'float32', 'float32'),)
         dist = (3,)
-        assert FrameworkApiTestcaseStructure._is_field_already_nested(field, dist) is True
+        assert TestcaseE2e._is_field_already_nested(field, dist) is True
 
     def test_not_matches(self):
         field = ('float32',)
         dist = (3,)
-        assert FrameworkApiTestcaseStructure._is_field_already_nested(field, dist) is False
+        assert TestcaseE2e._is_field_already_nested(field, dist) is False
 
 
 class TestCheckTensorConfiguration:
@@ -612,11 +612,11 @@ class TestInplaceTensorMethod:
         _MANUAL_OVERRIDES.clear()
 
     def test_is_inplace_tensor_method_static(self):
-        assert FrameworkApiTestcaseStructure._is_inplace_tensor_method("torch.Tensor.add_")
-        assert FrameworkApiTestcaseStructure._is_inplace_tensor_method("torch.Tensor.relu_")
-        assert not FrameworkApiTestcaseStructure._is_inplace_tensor_method("torch.Tensor.add")
-        assert not FrameworkApiTestcaseStructure._is_inplace_tensor_method("torch.add")
-        assert not FrameworkApiTestcaseStructure._is_inplace_tensor_method("")
+        assert TestcaseE2e._is_inplace_tensor_method("torch.Tensor.add_")
+        assert TestcaseE2e._is_inplace_tensor_method("torch.Tensor.relu_")
+        assert not TestcaseE2e._is_inplace_tensor_method("torch.Tensor.add")
+        assert not TestcaseE2e._is_inplace_tensor_method("torch.add")
+        assert not TestcaseE2e._is_inplace_tensor_method("")
 
     def test_auto_fill_output_for_inplace(self, make_testcase):
         FrameworkApiInfoKeeper().register("torch.Tensor.fake_add_", [

@@ -12,7 +12,7 @@ OP Testcase Structure
 """
 
 
-__all__ = ["UniversalTestcaseStructure"]
+__all__ = ["TestcaseOp"]
 
 
 # Standard Packages
@@ -36,7 +36,7 @@ from ...utilities import parse_dtype, DynamicOpTilingResult, input_apply_as_list
 from ...utilities.container_utils import pickup_by_names
 
 
-class UniversalTestcaseStructure(TestcaseBase):
+class TestcaseOp(TestcaseBase):
     """
     Structure for Op Profiling
     """
@@ -583,7 +583,7 @@ class UniversalTestcaseStructure(TestcaseBase):
         return "dyn_perf_us", "cst_perf_us", "bin_perf_us", "perf_status", "precision_status"
 
     @staticmethod
-    def hash_cases_to_groups(testcases: Set["UniversalTestcaseStructure"]) -> Dict[int, set]:
+    def hash_cases_to_groups(testcases: Set["TestcaseOp"]) -> Dict[int, set]:
         testcase_group_dict = {}
         if not testcases:
             return testcase_group_dict

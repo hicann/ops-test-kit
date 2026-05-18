@@ -45,7 +45,7 @@ from .input_generation import InputGenerator
 from .golden_generation import GoldenGenerator
 from .profiling_structure import ApiComparisonResult, ApiProfilingReturnStructure, ApiProfilingResult
 from .comparison import Comparator
-from ...testcase_manager import ApiTestcaseStructure
+from ...testcase_manager import TestcaseAclnn
 from ...tbe_multiprocessing import get_process_context, DeviceLock
 from ...tbe_logging import default_logging_config
 from ...aclnn import AclInterface, OpApiInfoKeeper, OpApiInfo
@@ -54,7 +54,7 @@ from ....utilities import get_global_storage, get, waiting_for_memory, frameless
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file
 
 
-def __profiling_end_print(context: ApiTestcaseStructure,
+def __profiling_end_print(context: TestcaseAclnn,
                           compare_result: ApiComparisonResult):
     c = compare_result
     logging.info("\n########################\n"
@@ -75,7 +75,7 @@ def __print_get_dtype(golden):
     return golden
 
 
-def __profiling_print(context: ApiTestcaseStructure, dev_id: int):
+def __profiling_print(context: TestcaseAclnn, dev_id: int):
     attr_list = []
     for k, v in context.pure_attrs.items():
         attr_list.append(f"{k}: {v}")
@@ -162,7 +162,7 @@ class Phase1ParamBuilder:
         "double": ctypes.c_double,
     }
 
-    def __init__(self, context: ApiTestcaseStructure, device: AclInterface):
+    def __init__(self, context: TestcaseAclnn, device: AclInterface):
         self._ctx = context
         self._dvc = device
         self._flatten_acl_tensor: tuple = ()
@@ -287,7 +287,7 @@ class Phase1ParamBuilder:
 
 
 class AclOpExecutor:
-    def __init__(self, context: ApiTestcaseStructure, device: AclInterface):
+    def __init__(self, context: TestcaseAclnn, device: AclInterface):
         self._switches = get_global_storage()
         self._phase1_param_builder = Phase1ParamBuilder(context, device)
         self._run_time = self._switches.run_time
@@ -437,7 +437,7 @@ class AclOpExecutor:
         return api_prof, op_prof
 
 
-def do_profiling(context: ApiTestcaseStructure, dev_id: int) -> ApiProfilingResult:
+def do_profiling(context: TestcaseAclnn, dev_id: int) -> ApiProfilingResult:
     """
     Profiling wrapper
     """
@@ -463,7 +463,7 @@ def __dump_to_file(data, file_name: str, dtype: Optional[str] = None):
                  dtype=dtype)
 
 
-def __dump_input(context: ApiTestcaseStructure, force: bool = False):
+def __dump_input(context: TestcaseAclnn, force: bool = False):
     dump_input_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_input_enabled():
         logging.info("Dump Input Tensor data....")
@@ -473,7 +473,7 @@ def __dump_input(context: ApiTestcaseStructure, force: bool = False):
             __dump_to_file(t, f"{dump_input_name}_input_tensor_{idx}")
 
 
-def __dump_output(context: ApiTestcaseStructure, force: bool = False):
+def __dump_output(context: TestcaseAclnn, force: bool = False):
     dump_output_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_output_enabled():
         output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
@@ -484,7 +484,7 @@ def __dump_output(context: ApiTestcaseStructure, force: bool = False):
                            get(output_dtypes, idx))
 
 
-def __dump_golden(context: ApiTestcaseStructure, force: bool = False):
+def __dump_golden(context: TestcaseAclnn, force: bool = False):
     dump_golden_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_golden_enabled():
         logging.info(f"Dump Golden data....")
@@ -492,7 +492,7 @@ def __dump_golden(context: ApiTestcaseStructure, force: bool = False):
             __dump_to_file(golden, f"{dump_golden_name}_golden_{idx}")
 
 
-def __dump_on_fail(context: ApiTestcaseStructure):
+def __dump_on_fail(context: TestcaseAclnn):
     switches = get_global_storage()
     if not switches.dump_config.is_input_enabled():
         __dump_input(context, force=True)
@@ -502,7 +502,7 @@ def __dump_on_fail(context: ApiTestcaseStructure):
         __dump_golden(context, force=True)
 
 
-def profile_process(context: ApiTestcaseStructure,
+def profile_process(context: TestcaseAclnn,
                     device_grant_events: dict,
                     device_granted_indices: dict,
                     dev_id: int):

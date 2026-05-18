@@ -12,7 +12,7 @@ API Testcase Structure
 """
 
 
-__all__ = ["ApiTestcaseStructure", "AclnnParamPlan"]
+__all__ = ["TestcaseAclnn", "AclnnParamPlan"]
 
 
 # Standard Packages
@@ -102,7 +102,7 @@ class AclnnParamPlan:
         return args
 
 
-class ApiTestcaseStructure(TensorApiTestcaseBase):
+class TestcaseAclnn(TensorApiTestcaseBase):
     """
     Structure for Op Api Profiling
     """

@@ -17,10 +17,8 @@ from ttk.core_modules.testcase_manager.param_plan import ParamPlan, match_overlo
 from ttk.utilities import get, shape_stride
 from ttk.utilities.container_utils import flatten_nested_sequence
 
-logger = logging.getLogger(__name__)
 
-
-class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
+class TestcaseE2e(TensorApiTestcaseBase):
     """Testcase structure for framework-level API testing (torch/tf).
 
     Supports nested tensor_view_shapes for TensorList grouping:
@@ -399,7 +397,7 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
         if input_count > max_input:
             self.is_valid = False
             self.fail_reason = "INPUT_COUNT_EXCEEDED"
-            logger.error(
+            logging.error(
                 f"[{self.testcase_name}] API [{self.api_name}] has at most {max_input} input tensor "
                 f"parameters (excluding out), but testcase configured {input_count} "
                 f"input tensor(s) (excluding {len(out_indices)} output tensor(s)). "
@@ -431,7 +429,7 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
             for ov in info.overloads)
         self.is_valid = False
         self.fail_reason = "ALL_TENSORS_MARKED_OUTPUT"
-        logger.error(
+        logging.error(
             f"[{self.testcase_name}] API [{self.api_name}] requires at least {required_min} input tensor "
             f"parameters (excluding out), but all {top_count} tensor(s) are "
             f"marked as output (output_tensor_indexes={sorted(out_indices)}). "
@@ -478,7 +476,7 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
         if count_matched[0]:
             self.is_valid = False
             self.fail_reason = "PARAM_TYPE_MISMATCH"
-            logger.error(
+            logging.error(
                 f"API [{self.api_name}] input tensor count matches an overload, "
                 f"but type (Tensor/TensorList) does not. "
                 f"nested={nested_flags}. "
@@ -486,7 +484,7 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
         elif input_count > info.tensor_count:
             self.is_valid = False
             self.fail_reason = "TENSOR_COUNT_MISMATCH"
-            logger.error(
+            logging.error(
                 f"API [{self.api_name}] has at most {info.tensor_count} tensor parameters "
                 f"in any overload, but testcase configured {input_count} input tensors "
                 f"(excluding {len(out_indices)} output tensors). "
@@ -494,7 +492,7 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
         else:
             self.is_valid = False
             self.fail_reason = "TENSOR_COUNT_MISMATCH"
-            logger.error(
+            logging.error(
                 f"API [{self.api_name}] requires at least {required_min} input tensor "
                 f"parameters (excluding out), but testcase configured {input_count}. "
                 f"(source: {info.source})")
@@ -545,7 +543,7 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
 
         self.is_valid = False
         self.fail_reason = "MISSING_REQUIRED_ATTR"
-        logger.error(
+        logging.error(
             f"[{self.testcase_name}] API [{self.api_name}] overload[{oidx}] requires "
             f"non-tensor attribute(s) {missing} but attributes only have "
             f"{sorted(attrs)}. (source: {info.source})")
@@ -568,7 +566,7 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
                 if any_out_required:
                     self.is_valid = False
                     self.fail_reason = "MISSING_REQUIRED_OUTPUT"
-                    logger.error(
+                    logging.error(
                         f"[{self.testcase_name}] API [{self.api_name}] has overloads "
                         f"with required 'out' parameter, but testcase provides no "
                         f"output_tensor_indexes. (source: {info.source})")
@@ -578,7 +576,7 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
         if out_of_range:
             self.is_valid = False
             self.fail_reason = "OUTPUT_INDEX_INVALID"
-            logger.error(
+            logging.error(
                 f"output_tensor_indexes {out_of_range} out of range [0, {top_count})"
             )
             return
@@ -619,14 +617,14 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
                                for ov in info.overloads if ov.layout.is_out_required)
                 self.is_valid = False
                 self.fail_reason = "OUTPUT_COUNT_MISMATCH"
-                logger.error(
+                logging.error(
                     f"[{self.testcase_name}] API [{self.api_name}] requires exactly "
                     f"{expected} output tensor(s) for Tensor[] 'out', but testcase "
                     f"provides {out_count}. (source: {info.source})")
             elif any_out_required:
                 self.is_valid = False
                 self.fail_reason = "OUTPUT_COUNT_MISMATCH"
-                logger.error(
+                logging.error(
                     f"[{self.testcase_name}] API [{self.api_name}] requires exactly "
                     f"1 output tensor, but testcase provides {out_count}. "
                     f"(source: {info.source})")
@@ -639,20 +637,20 @@ class FrameworkApiTestcaseStructure(TensorApiTestcaseBase):
         if len(self.tensor_dtypes) != top_count:
             self.is_valid = False
             self.fail_reason = "DTYPES_COUNT_MISMATCH"
-            logger.error(
+            logging.error(
                 f"[{self.testcase_name}] tensor_dtypes top-level count ({len(self.tensor_dtypes)}) "
                 f"!= tensor_view_shapes count ({top_count})")
             return
         if self.tensor_formats and len(self.tensor_formats) != top_count:
             self.is_valid = False
             self.fail_reason = "FORMATS_COUNT_MISMATCH"
-            logger.error(
+            logging.error(
                 f"[{self.testcase_name}] tensor_formats top-level count ({len(self.tensor_formats)}) "
                 f"!= tensor_view_shapes count ({top_count})")
             return
         if self.tensor_storage_shapes and len(self.tensor_storage_shapes) != top_count:
             self.is_valid = False
             self.fail_reason = "STORAGE_SHAPES_COUNT_MISMATCH"
-            logger.error(
+            logging.error(
                 f"[{self.testcase_name}] tensor_storage_shapes top-level count ({len(self.tensor_storage_shapes)}) "
                 f"!= tensor_view_shapes count ({top_count})")

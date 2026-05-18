@@ -16,7 +16,7 @@ import logging
 import pathlib
 from typing import NoReturn
 # Third-Party Packages
-from ....testcase_manager import UniversalTestcaseStructure
+from ....testcase_manager import TestcaseOp
 from .....utilities import get_global_storage, process_kernel_string, compilation_result
 from .....utilities import StaticCompilationResult, KernelJsonInfo
 from ....operator.op_interface import OperatorInterface, CaseNotSupportedError, OperatorNotFoundError
@@ -25,7 +25,7 @@ from .common import normalize_mode
 from .common import CceManualCompile
 
 
-def static_compilation(testcase: UniversalTestcaseStructure, mode_name: str = "Cst"):
+def static_compilation(testcase: TestcaseOp, mode_name: str = "Cst"):
     # Check mode name
     mode_name = normalize_mode(mode_name)
     get_process_context().notify_status(f"Init{mode_name}Compilation")
@@ -78,7 +78,7 @@ def cst_manual_compile(result: StaticCompilationResult) -> NoReturn:
     # Call ccec
     kernel_path = pathlib.Path(kernel_dir, kernel_name)
     cce_compile_result = CceManualCompile.compile(str(kernel_path), kernel_json_info.kernel_name,
-                                                  get_global_storage().short_soc_version,
+                                                  get_global_storage().dev_plat,
                                                   kernel_json_info.core_type,
                                                   kernel_json_info.task_ration)
     # set compilation result
@@ -87,7 +87,7 @@ def cst_manual_compile(result: StaticCompilationResult) -> NoReturn:
                         kernel_json_info, result.kernel_name)
 
 
-def cst_compile(interface: OperatorInterface, testcase: UniversalTestcaseStructure,
+def cst_compile(interface: OperatorInterface, testcase: TestcaseOp,
                 result: StaticCompilationResult, mode: str) -> NoReturn:
     """
     Wrapper function for op_interface const operator compilation sequence

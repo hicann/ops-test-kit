@@ -23,8 +23,8 @@ import os
 from typing import Dict, Union, Callable, List, Any
 
 # Third-Party Packages
-from .tbe_interface import Opc
-from ...utilities import Singleton, camel_to_snake, is_main_process, get_custom_opp_paths
+from ...utilities import Singleton, camel_to_snake, is_main_process
+from ...utilities.platform import get_builtin_impl_base_path, get_builtin_op_info_path, get_custom_op_info_paths, get_npu_hw_info
 
 
 class OpInfoKeeper(metaclass=Singleton):
@@ -32,7 +32,6 @@ class OpInfoKeeper(metaclass=Singleton):
     Singleton Class to keep ops info
     """
     def __init__(self):
-        self._opc = Opc()
         self._ops_info = None
 
     @property
@@ -43,7 +42,10 @@ class OpInfoKeeper(metaclass=Singleton):
 
     @property
     def short_soc_version(self):
-        return self._opc.soc_info["short_soc_version"]
+        full_soc = os.environ.get("TTK_FULL_SOC_VERSION")
+        if not full_soc:
+            return None
+        return get_npu_hw_info(full_soc).get("short_soc_version")
 
     def has_op(self, op_name: str) -> bool:
         return op_name in self.ops_info
@@ -61,7 +63,10 @@ class OpInfoKeeper(metaclass=Singleton):
         keys = ("coreType.value", "opInterface.value", "opFile.value", "op.pattern",
                 "dynamicShapeSupport.flag", "dynamicCompileStatic.flag", "dynamicRankSupport.flag",
                 "needCheckSupport.flag", "dynamicFormat.flag")
-        soc_lower = (self._opc.soc_info.get("short_soc_version") or "").lower()
+        full_soc = os.environ.get("TTK_FULL_SOC_VERSION")
+        hw_info = get_npu_hw_info(full_soc)
+        soc_lower = (hw_info.get("short_soc_version") or "").lower()
+        cv_split = hw_info.get("cv_split", False)
 
         # Collect all op info config files: built-in first, then custom (custom overrides built-in)
         all_op_info_paths = []
@@ -92,7 +97,7 @@ class OpInfoKeeper(metaclass=Singleton):
                 op_interface = op_info[op]["opInterface.value"] \
                     if op_info[op]["opInterface.value"] else camel_to_snake(op)
                 if not op_info[op]["coreType.value"]:
-                    op_info[op]["coreType.value"] = "VectorCore" if self._opc.soc_info.get("cv_split") else "AiCore"
+                    op_info[op]["coreType.value"] = "VectorCore" if cv_split else "AiCore"
                 elif len(op_info[op]["coreType.value"].split(',')) > 1:
                     #  AiCore,VectorCore or AiCore,AIV
                     op_info[op]["coreType.value"] = "AiCore"  # do not know exactly, consider it as AiCore
@@ -108,27 +113,24 @@ class OpInfoKeeper(metaclass=Singleton):
 
     def _find_builtin_op_info_paths(self, soc_lower: str) -> List[str]:
         """Find built-in op info config files."""
+        base = get_builtin_impl_base_path()
         # ini
         op_info_path = os.path.abspath(
-            os.path.join(self._opc.impl_path, "..", "op_info_cfg", "ai_core", soc_lower,
+            os.path.join(base, "op_info_cfg", "ai_core", soc_lower,
                          "aic-" + soc_lower + "-ops-info.ini")
         )
         if os.path.exists(op_info_path):
             return [op_info_path]
-        # json
-        op_info_path = os.path.abspath(
-            os.path.join(self._opc.impl_path, "..", "config", soc_lower,
-                         "aic-" + soc_lower + "-ops-info.json")
+        # json (single file or all in config dir)
+        config_dir = get_builtin_op_info_path(soc_lower)
+        single_json = os.path.abspath(
+            os.path.join(config_dir, "aic-" + soc_lower + "-ops-info.json")
         )
-        if os.path.exists(op_info_path):
-            return [op_info_path]
-        # all json files in config dir
-        json_lst_path = os.path.abspath(
-            os.path.join(self._opc.impl_path, "..", "config", soc_lower)
-        )
-        if os.path.isdir(json_lst_path):
-            paths = [os.path.join(json_lst_path, f) for f in os.listdir(json_lst_path)
-                     if f.endswith(".json") and os.path.isfile(os.path.join(json_lst_path, f))]
+        if os.path.exists(single_json):
+            return [single_json]
+        if os.path.isdir(config_dir):
+            paths = [os.path.join(config_dir, f) for f in os.listdir(config_dir)
+                     if f.endswith(".json") and os.path.isfile(os.path.join(config_dir, f))]
             if paths:
                 return paths
         logging.warning("Built-in op info config path does not exist for soc: %s" % soc_lower)
@@ -138,8 +140,7 @@ class OpInfoKeeper(metaclass=Singleton):
     def _find_custom_op_info_paths(soc_lower: str) -> List[str]:
         """Find op info config files from ASCEND_CUSTOM_OPP_PATH directories."""
         result = []
-        for custom_path in get_custom_opp_paths():
-            config_dir = os.path.join(custom_path, "op_impl", "ai_core", "tbe", "config", soc_lower)
+        for config_dir in get_custom_op_info_paths(soc_lower):
             if not os.path.isdir(config_dir):
                 continue
             for f in os.listdir(config_dir):

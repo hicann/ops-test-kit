@@ -36,8 +36,8 @@ def _register(api_name, params, source="test"):
 
 def _make_testcase(api_name, shapes, dtypes, attrs=None,
                    output_tensor_indexes=(), golden_api=None):
-    from ttk.core_modules.testcase_manager.testcase_framework_api import FrameworkApiTestcaseStructure
-    case = FrameworkApiTestcaseStructure()
+    from ttk.core_modules.testcase_manager.testcase_e2e import TestcaseE2e
+    case = TestcaseE2e()
     case.testcase_name = f"test_{api_name}"
     case.api_name = api_name
     case.is_valid = True

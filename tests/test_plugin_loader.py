@@ -11,13 +11,10 @@
 Test cases for plugin loader
 """
 
-import sys
 import os
 import tempfile
 import shutil
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from ttk.core_modules.plugin_loader import get_plugin_function, get_available_operators
 

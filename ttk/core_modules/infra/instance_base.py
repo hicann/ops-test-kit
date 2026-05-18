@@ -100,6 +100,8 @@ class InstanceBase(metaclass=ABCMeta):
         logging.info("TTK Profiling Start!")
         logging.info(f"Mode: {self.switches.mode.name}")
         self.env_prepare()
+        self.get_device_platform()
+        logging.info(f"Device Platform: {self.switches.dev_plat}")
         if self.switches.validate_only:
             self._validate_only()
             return
@@ -107,8 +109,6 @@ class InstanceBase(metaclass=ABCMeta):
         if self.switches.device_count <= 0:
             raise RuntimeError(f"Device count is invalid: {self.switches.device_count}")
         logging.info(f"Device Count: {self.switches.device_count}")
-        self.get_device_platform()
-        logging.info(f"Device Platform: {self.switches.dev_plat}")
         self._parse_testcases()
         self.setup_profile_object()
         self.profile_object.setup()

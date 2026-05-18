@@ -26,7 +26,7 @@ except ImportError:
 # Third-party Packages
 from ...plugin_loader import get_plugin_function
 from ...operator.op_info_keeper import OpInfoKeeper
-from ...testcase_manager import UniversalTestcaseStructure
+from ...testcase_manager import TestcaseOp
 from ....utilities import resolve_custom_numpy_dtypes, get, get_global_storage, get_dtype_range, numpy_bfloat16
 from ....utilities import load_numpy_data, shape_product, ceil_div, input_apply_as_list
 
@@ -40,7 +40,7 @@ DTYPE_PROMOTE_MAP: dict = {
 }
 
 
-def __promote_dtype(context: UniversalTestcaseStructure):
+def __promote_dtype(context: TestcaseOp):
     from ....utilities.container_utils import deep_flatten
 
     need_promote = [d in DTYPE_PROMOTE_MAP for d in context.flat_input_dtypes]
@@ -103,14 +103,14 @@ def __promote_dtype(context: UniversalTestcaseStructure):
 
 
 @contextlib.contextmanager
-def __golden_mode(mode: str, context: UniversalTestcaseStructure):
+def __golden_mode(mode: str, context: TestcaseOp):
     if mode != "Promote":
         yield
     else:
         yield from __promote_dtype(context)
 
 
-def __call_builtin_golden_func(context: UniversalTestcaseStructure, golden_func, golden_parameters,
+def __call_builtin_golden_func(context: TestcaseOp, golden_func, golden_parameters,
                                output_dtypes: list):
     switches = get_global_storage()
 
@@ -139,7 +139,7 @@ def __call_builtin_golden_func(context: UniversalTestcaseStructure, golden_func,
     return results
 
 
-def __call_custom_golden_func(context: UniversalTestcaseStructure, golden_func, golden_parameters):
+def __call_custom_golden_func(context: TestcaseOp, golden_func, golden_parameters):
     '''
     customized & decouple function like:
     def xx_xx(input0, input1, *, attr0, attr1, **kargs):
@@ -150,7 +150,7 @@ def __call_custom_golden_func(context: UniversalTestcaseStructure, golden_func, 
     return results
 
 
-def __generate_golden(context: UniversalTestcaseStructure, output_dtypes: list) -> list:
+def __generate_golden(context: TestcaseOp, output_dtypes: list) -> list:
     switches = get_global_storage()
 
     golden_func, src = get_plugin_function(context.op_name, "golden", "kernel", switches.plugin_path)
@@ -193,7 +193,7 @@ def __load_golden_from_file(fp: str, dtype: str, shape: Optional[Union[list, tup
     return load_numpy_data(fp, dtype, shape)
 
 
-def __gen_output(context: UniversalTestcaseStructure):
+def __gen_output(context: TestcaseOp):
     # Enable tensorflow numpy bfloat16 support
     output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
     switches = get_global_storage()
@@ -321,7 +321,7 @@ def __nan_to_num(golden_array: numpy.ndarray, op: str, npu_dtype):
     return golden_array
 
 
-def __correct_kwargs_for_golden(context: UniversalTestcaseStructure, golden_parameters: list):
+def __correct_kwargs_for_golden(context: TestcaseOp, golden_parameters: list):
     attributes = context.attributes.copy()
     # Remove input names — already passed positionally via *context.input_arrays
     op_info = OpInfoKeeper().info_of(context.op_name)
@@ -334,7 +334,7 @@ def __correct_kwargs_for_golden(context: UniversalTestcaseStructure, golden_para
     return attributes
 
 
-def __collect_dynamic_golden_kwargs(context: UniversalTestcaseStructure):
+def __collect_dynamic_golden_kwargs(context: TestcaseOp):
     switches = get_global_storage()
     kwargs = context.attributes.copy()
     # delete internal attributes
@@ -374,14 +374,14 @@ def __golden_flatten(golden_results):
             for x in deep_flatten(golden_results)]
 
 
-def __output_shape_needs_golden(context: UniversalTestcaseStructure, output_idx: int):
+def __output_shape_needs_golden(context: TestcaseOp, output_idx: int):
     if context.output_shape_unknown_indexes:
         raise RuntimeError(f"Golden must be supplied for {output_idx}th (count from 0) "
                            f"output of {context.op_name} "
                            f"since its shape depends on the value of input tensors.")
 
 
-def __append_out_shape_unknown_golden(context: UniversalTestcaseStructure,
+def __append_out_shape_unknown_golden(context: TestcaseOp,
                                       golden_arrays: list, output_arrays: list):
     """append output shape tensor to golden & output_arrays"""
     if not context.output_shape_unknown_indexes:

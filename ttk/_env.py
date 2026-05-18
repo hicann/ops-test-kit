@@ -10,8 +10,6 @@ import sys
 import time
 
 
-_logger = logging.getLogger(__name__)
-
 
 def setup_env():
     ascend_root = _find_ascend_root()

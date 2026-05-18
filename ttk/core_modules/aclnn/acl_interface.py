@@ -93,6 +93,7 @@ class AclInterface:
         self._rts_interface = RTSInterface(camodel=camodel,
                                            short_soc_version=short_soc_version)
         self._acl_dll = ctypes.CDLL(f"libascendcl.so")
+        self._opbase_dll = ctypes.CDLL(f"libnnopbase.so")
         self._op_api_dlls = self._load_op_api_dll()
         atexit.register(self._on_exit)
 
@@ -214,15 +215,15 @@ class AclInterface:
             c_storage_dims_num = ctypes.c_uint64(len(storage_shape))
         device_mem_addr = self._rts_interface.copy_torch_tensor_to_hbm(torch_tensor)
 
-        c_ptr = self._aclnn_api_call_with_ptr_return("aclCreateTensor",
-                                                     f"Args: view_shape={view_dims}, dtype={dtype_str}, "
-                                                     f"format={view_format}, stride={stride}, "
-                                                     f"offset={torch_tensor.storage_offset()}, "
-                                                     f"storage_shape={storage_shape}",
-                                                     c_view_dims, c_view_dims_num, c_acl_dtype,
-                                                     c_stride, c_offset, c_format,
-                                                     c_storage_dims, c_storage_dims_num,
-                                                     device_mem_addr)
+        c_ptr = self._opbase_api_call_with_ptr_return("aclCreateTensor",
+                                                      f"Args: view_shape={view_dims}, dtype={dtype_str}, "
+                                                      f"format={view_format}, stride={stride}, "
+                                                      f"offset={torch_tensor.storage_offset()}, "
+                                                      f"storage_shape={storage_shape}",
+                                                      c_view_dims, c_view_dims_num, c_acl_dtype,
+                                                      c_stride, c_offset, c_format,
+                                                      c_storage_dims, c_storage_dims_num,
+                                                      device_mem_addr)
         self._acl_tensor_to_device_mem[c_ptr.value] = device_mem_addr
         self._acl_tensors.add(c_ptr.value)
         return c_ptr
@@ -276,15 +277,15 @@ class AclInterface:
         # 拷贝原始 storage（连续内存）到 HBM
         device_mem_addr = self._rts_interface.copy_nparray_to_hbm(np_storage)
 
-        c_ptr = self._aclnn_api_call_with_ptr_return("aclCreateTensor",
-                                                     f"Args: view_shape={view_dims}, dtype={dtype_str}, "
-                                                     f"format={view_format}, stride={stride}, "
-                                                     f"offset={offset}, "
-                                                     f"storage_shape={storage_shape}",
-                                                     c_view_dims, c_view_dims_num, c_acl_dtype,
-                                                     c_stride, c_offset, c_format,
-                                                     c_storage_dims, c_storage_dims_num,
-                                                     device_mem_addr)
+        c_ptr = self._opbase_api_call_with_ptr_return("aclCreateTensor",
+                                                      f"Args: view_shape={view_dims}, dtype={dtype_str}, "
+                                                      f"format={view_format}, stride={stride}, "
+                                                      f"offset={offset}, "
+                                                      f"storage_shape={storage_shape}",
+                                                      c_view_dims, c_view_dims_num, c_acl_dtype,
+                                                      c_stride, c_offset, c_format,
+                                                      c_storage_dims, c_storage_dims_num,
+                                                      device_mem_addr)
         self._acl_tensor_to_device_mem[c_ptr.value] = device_mem_addr
         self._acl_tensors.add(c_ptr.value)
         return c_ptr
@@ -297,9 +298,9 @@ class AclInterface:
         cnt = len(acl_tensor_ptr_lst)
         c_size = ctypes.c_uint64(cnt)
         c_value = (ctypes.c_void_p * cnt)(*acl_tensor_ptr_lst)
-        c_ptr = self._aclnn_api_call_with_ptr_return("aclCreateTensorList",
-                                                     f"Args: value={acl_tensor_ptr_lst}, size={cnt}",
-                                                     c_value, c_size)
+        c_ptr = self._opbase_api_call_with_ptr_return("aclCreateTensorList",
+                                                      f"Args: value={acl_tensor_ptr_lst}, size={cnt}",
+                                                      c_value, c_size)
         self._acl_tensor_lists.update({c_ptr.value: tuple(acl_tensor_ptr_lst)})
         # aclTensor ptr now is managed by aclTensorList ptr
         for t in acl_tensor_ptr_lst:
@@ -330,9 +331,9 @@ class AclInterface:
             np_val = torch_to_numpy_tensor(val)
             c_val_ptr = ctypes.c_void_p(np_val.__array_interface__['data'][0])
 
-        c_ptr = self._aclnn_api_call_with_ptr_return("aclCreateScalar",
-                                                     f"Args: value={val}, dtype={scalar_dtype}",
-                                                     c_val_ptr, DATA_TYPE_DICT[scalar_dtype])
+        c_ptr = self._opbase_api_call_with_ptr_return("aclCreateScalar",
+                                                      f"Args: value={val}, dtype={scalar_dtype}",
+                                                      c_val_ptr, DATA_TYPE_DICT[scalar_dtype])
         self._acl_scalars.add(c_ptr.value)
         return c_ptr
 
@@ -344,9 +345,9 @@ class AclInterface:
         cnt = len(acl_scalar_ptr_lst)
         c_size = ctypes.c_uint64(cnt)
         c_value = (ctypes.c_void_p * cnt)(*acl_scalar_ptr_lst)
-        c_ptr = self._aclnn_api_call_with_ptr_return("aclCreateScalarList",
-                                                     f"Args: value={acl_scalar_ptr_lst}, size={cnt}",
-                                                     c_value, c_size)
+        c_ptr = self._opbase_api_call_with_ptr_return("aclCreateScalarList",
+                                                      f"Args: value={acl_scalar_ptr_lst}, size={cnt}",
+                                                      c_value, c_size)
         self._acl_scalar_lists.add(c_ptr.value)
         # aclScalar ptr now is managed by aclScalarList ptr
         for s in acl_scalar_ptr_lst:
@@ -368,9 +369,9 @@ class AclInterface:
             c_value = None
         else:
             c_value = (c_type * cnt)(*val_lst)
-        c_ptr = self._aclnn_api_call_with_ptr_return(f"aclCreate{typ}Array",
-                                                     f"Args: value={val_lst}, size={cnt}",
-                                                     c_value, c_size)
+        c_ptr = self._opbase_api_call_with_ptr_return(f"aclCreate{typ}Array",
+                                                      f"Args: value={val_lst}, size={cnt}",
+                                                      c_value, c_size)
         getattr(self, f"_acl_{typ.lower()}_arrays").add(c_ptr.value)
         return c_ptr
 
@@ -379,11 +380,11 @@ class AclInterface:
         c_view_dims_ptr_ptr = ctypes.byref(c_view_dims_ptr)
         c_view_dims_num = ctypes.c_uint64()
         c_view_dims_num_ptr = ctypes.byref(c_view_dims_num)
-        self._aclnn_api_call("aclGetViewShape", None,
-                             tensor, c_view_dims_ptr_ptr, c_view_dims_num_ptr)
+        self._opbase_api_call("aclGetViewShape", None,
+                              tensor, c_view_dims_ptr_ptr, c_view_dims_num_ptr)
         view_shape = tuple([c_view_dims_ptr[i] 
                             for i in range(c_view_dims_num.value)])
-        delete_array_func = self._get_op_api('_ZdaPv')
+        delete_array_func = self._get_opbase_dll('_ZdaPv')
         if delete_array_func:
             delete_array_func.argtypes = [ctypes.c_void_p]
             delete_array_func.restype = None
@@ -453,14 +454,14 @@ class AclInterface:
     def _free_acl_tensor(self, acl_tensor: Union[ctypes.c_void_p, int]):
         if not isinstance(acl_tensor, ctypes.c_void_p):
             acl_tensor = ctypes.c_void_p(acl_tensor)
-        self._aclnn_api_call("aclDestroyTensor", None, acl_tensor)
+        self._opbase_api_call("aclDestroyTensor", None, acl_tensor)
         self._free_device_memory(acl_tensor)
 
     def _free_acl_tensor_list(self, acl_tensor_list: Union[ctypes.c_void_p, int]):
         if not isinstance(acl_tensor_list, ctypes.c_void_p):
             acl_tensor_list = ctypes.c_void_p(acl_tensor_list)
         # NOTE: aclDestroyTensorList will remove elements in this list
-        self._aclnn_api_call("aclDestroyTensorList", None, acl_tensor_list)
+        self._opbase_api_call("aclDestroyTensorList", None, acl_tensor_list)
         acl_tensors: list = list(self._acl_tensor_lists[acl_tensor_list.value])
         del self._acl_tensor_lists[acl_tensor_list.value]
         while acl_tensors:
@@ -469,18 +470,18 @@ class AclInterface:
     def _free_acl_scalar(self, acl_scalar: Union[ctypes.c_void_p, int]):
         if not isinstance(acl_scalar, ctypes.c_void_p):
             acl_scalar = ctypes.c_void_p(acl_scalar)
-        self._aclnn_api_call("aclDestroyScalar", None, acl_scalar)
+        self._opbase_api_call("aclDestroyScalar", None, acl_scalar)
 
     def _free_acl_scalar_list(self, acl_scalar_list: Union[ctypes.c_void_p, int]):
         if not isinstance(acl_scalar_list, ctypes.c_void_p):
             acl_scalar_list = ctypes.c_void_p(acl_scalar_list)
         # NOTE: aclDestroyScalarList will remove elements in this list...
-        self._aclnn_api_call("aclDestroyScalarList", None, acl_scalar_list)
+        self._opbase_api_call("aclDestroyScalarList", None, acl_scalar_list)
 
     def _free_acl_array(self, acl_array: Union[ctypes.c_void_p, int], typ: str):
         if not isinstance(acl_array, ctypes.c_void_p):
             acl_array = ctypes.c_void_p(acl_array)
-        self._aclnn_api_call(f"aclDestroy{typ}Array", None, acl_array)
+        self._opbase_api_call(f"aclDestroy{typ}Array", None, acl_array)
 
     def _release_acl_memory(self):
         for tl_ptr in tuple(self._acl_tensor_lists.keys()):
@@ -524,12 +525,15 @@ class AclInterface:
     def _aclnn_api_call(self, api_name: str, extra_log: Optional[str], *api_args):
         self._api_call("ACLNN", api_name, extra_log, *api_args)
 
-    def _aclnn_api_call_with_ptr_return(self, api_name: str,
-                                        extra_log: Optional[str],
-                                        *api_args) -> ctypes.c_void_p:
+    def _opbase_api_call(self, api_name: str, extra_log: Optional[str], *api_args):
+        self._api_call("OPBASE", api_name, extra_log, *api_args)
+
+    def _opbase_api_call_with_ptr_return(self, api_name: str,
+                                         extra_log: Optional[str],
+                                         *api_args) -> ctypes.c_void_p:
         if extra_log is None:
             extra_log = ""
-        api = self._get_op_api(api_name)
+        api = self._get_opbase_dll(api_name)
         if not api:
             raise RuntimeError(f"ACL api [{api_name}] is not defined.")
         start_time = time.time()
@@ -544,7 +548,12 @@ class AclInterface:
     def _api_call(self, kind: str, api_name: str, extra_log: Optional[str], *api_args):
         if extra_log is None:
             extra_log = ""
-        api = self._get_acl_api(api_name) if kind == "ACL" else self._get_op_api(api_name)
+        if kind == "ACL":
+            api = self._get_acl_api(api_name)
+        elif kind == "OPBASE":
+            api = self._get_opbase_dll(api_name)
+        else:
+            api = self._get_op_api(api_name)
         if not api:
             raise RuntimeError(f"ACL api [{api_name}] is not defined.")
         start_time = time.time()
@@ -566,6 +575,9 @@ class AclInterface:
 
     def _get_acl_api(self, api_name):
         return getattr(self._acl_dll, api_name)
+
+    def _get_opbase_dll(self, api_name):
+        return getattr(self._opbase_dll, api_name)
 
     @staticmethod
     def _load_op_api_dll():

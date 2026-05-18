@@ -12,10 +12,11 @@ Knowledge Base Sequence for Universal testcases
 """
 # Standard Packages
 import logging
+import os
 import time
 from contextlib import contextmanager
 # Third-party Packages
-from ..operator.tbe_interface import Opc
+from ...utilities.platform import get_npu_hw_info
 from ..tbe_multiprocessing import get_process_context
 
 
@@ -40,8 +41,10 @@ class KnowledgeBaseInterface:
     def knowledge_base(self):
         if hasattr(self, 'interface'):
             try:
-                ret = self.interface.cann_kb_init({"core_num": Opc().soc_info.get("aic_cnt"),
-                                                   "soc_version": Opc().soc_info.get("full_soc_version")}, {}, {})
+                full_soc = os.environ.get("TTK_FULL_SOC_VERSION", "")
+                hw_info = get_npu_hw_info(full_soc) if full_soc else {}
+                ret = self.interface.cann_kb_init({"core_num": hw_info.get("ai_core_cnt"),
+                                                   "soc_version": full_soc}, {}, {})
                 logging.debug(f"Knowledge Base initialize [cann_kb_init] return: {ret}")
             except BaseException as e:
                 logging.critical(f"Knowledge Base initialize exception: {e}. The Knowledge Base process will exit.")

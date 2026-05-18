@@ -142,17 +142,17 @@ def parse_tiling_data(tiling_data: Any) -> Tuple[Optional[bytes], Optional[tuple
     :param tiling_data:
     :return:
     """
-    # big-endian mode uint32 Tiling data
-    be_int32 = numpy.dtype(numpy.int32)
-    be_int32 = be_int32.newbyteorder('<')
+    # little-endian int32 Tiling data
+    le_int32 = numpy.dtype(numpy.int32)
+    le_int32 = le_int32.newbyteorder('<')
     if isinstance(tiling_data, tuple):
-        tiling_data_np_array = numpy.array(tiling_data, dtype=be_int32)
+        tiling_data_np_array = numpy.array(tiling_data, dtype=le_int32)
         tiling_data_bytes = tiling_data_np_array.tobytes()
         tuple_tiling_data = tuple(tiling_data_np_array)
     elif isinstance(tiling_data, bytes):
         tiling_data_bytes = tiling_data
         if len(tiling_data) % 4 == 0:
-            tiling_data_np_array = numpy.frombuffer(tiling_data, dtype=be_int32)
+            tiling_data_np_array = numpy.frombuffer(tiling_data, dtype=le_int32)
             tuple_tiling_data = tuple(tiling_data_np_array)
         else:
             tuple_tiling_data = ("TILING_NOT_4BYTE_ALIGNED",)

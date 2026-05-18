@@ -12,52 +12,29 @@ Platform Related Utilities
 """
 
 
-__all__ = ["platform2arch_dict", "get_ascend_lib64_path",
+__all__ = ["get_ascend_lib64_path",
            "get_ascend_scene_info",
+           "get_builtin_opp_path",
            "get_custom_opp_paths",
+           "get_builtin_impl_base_path",
+           "get_builtin_tiling_path",
+           "get_custom_tiling_paths",
+           "get_builtin_op_info_path",
+           "get_custom_op_info_paths",
+           "get_builtin_kernel_path",
+           "get_custom_kernel_paths",
            "get_ascend_full_soc_version",
            "get_npu_hw_info",
            "get_npu_available_device_ids",
-           "NO_BF16_PLATFORM", "PLATFORM_BEFORE_DAVID"]
+           "PLATFORM_BEFORE_DAVID"]
 
 
 # Standard Packages
-import logging
 import os
 import re
 import shutil
 import subprocess
 from functools import lru_cache
-
-logger = logging.getLogger(__name__)
-
-
-platform2arch_dict = {
-    "Ascend031": "dav-m300",
-    "Ascend310": "dav-m100",
-    "Ascend310P": "dav-m200",
-    "Ascend310B": "dav-m300",
-    "Ascend950": "dav-c310-$core_type",
-    "Ascend610": "dav-m200",
-    "Ascend610Lite": "dav-m310",
-    "BS9SX1A": "dav-m201",
-    "MC62CM12A": "dav-510r2",
-    "Ascend910B": "dav-c220-$core_type",
-    "Ascend910_93": "dav-c220-$core_type",
-    "Ascend910": "dav-c100",
-    "Hi3796CV300CS": "dav-s200",
-    "Hi3796CV300ES": "dav-s200",
-    "OPTG": "dav-s200",
-    "SD3403": "dav-s200",
-    "TsnsC": "dav-s200",
-    "TsnsE": "dav-s200",
-}
-
-
-NO_BF16_PLATFORM = ("Ascend310", "Ascend310P", "Ascend910",
-                    "BS9SX1A", "Ascend610Lite", "Ascend610",
-                    "Hi3796CV300CS", "Hi3796CV300ES",
-                    "TsnsE", "TsnsC", "SD3403", "OPTG")
 
 PLATFORM_BEFORE_DAVID = ("Ascend031", "Ascend310", "Ascend310P", "Ascend310B",
                          "Ascend610", "Ascend610Lite", "BS9SX1A",
@@ -96,6 +73,49 @@ def get_builtin_opp_path():
     if not opp_path:
         raise RuntimeError("Environment `ASCEND_OPP_PATH` is not set.")
     return opp_path
+
+
+@lru_cache(maxsize=None)
+def get_builtin_impl_base_path():
+    return os.path.join(get_builtin_opp_path(), "built-in", "op_impl", "ai_core", "tbe")
+
+
+@lru_cache(maxsize=None)
+def get_builtin_tiling_path():
+    """Return {opp}/built-in/op_impl for tiling library loading."""
+    return os.path.join(get_builtin_opp_path(), "built-in", "op_impl")
+
+
+@lru_cache(maxsize=None)
+def get_custom_tiling_paths():
+    """Return list of {custom}/op_impl paths from ASCEND_CUSTOM_OPP_PATH."""
+    return [os.path.join(p, "op_impl") for p in get_custom_opp_paths()]
+
+
+@lru_cache(maxsize=None)
+def get_builtin_op_info_path(soc_lower: str) -> str:
+    """Return {impl_base}/config/{soc_lower} for built-in op info files."""
+    return os.path.join(get_builtin_impl_base_path(), "config", soc_lower)
+
+
+@lru_cache(maxsize=None)
+def get_custom_op_info_paths(soc_lower: str):
+    """Return list of {custom}/op_impl/ai_core/tbe/config/{soc_lower} paths."""
+    return [os.path.join(p, "op_impl", "ai_core", "tbe", "config", soc_lower)
+            for p in get_custom_opp_paths()]
+
+
+@lru_cache(maxsize=None)
+def get_builtin_kernel_path():
+    """Return {impl_base}/kernel for built-in binary kernel matching."""
+    return os.path.join(get_builtin_impl_base_path(), "kernel")
+
+
+@lru_cache(maxsize=None)
+def get_custom_kernel_paths():
+    """Return list of {custom}/op_impl/ai_core/tbe/kernel paths."""
+    return [os.path.join(p, "op_impl", "ai_core", "tbe", "kernel")
+            for p in get_custom_opp_paths()]
 
 
 @lru_cache(maxsize=None)
@@ -159,7 +179,6 @@ def get_npu_hw_info(full_soc_version):
     raw_fields = {
         "short_soc_version": ("version", "Short_SoC_version"),
         "ccec_aic_version": ("version", "CCEC_AIC_version"),
-        "npu_arch": ("version", "NpuArch"),
         "ai_core_cnt": ("SoCInfo", "ai_core_cnt"),
         "cube_core_cnt": ("SoCInfo", "cube_core_cnt"),
         "vector_core_cnt": ("SoCInfo", "vector_core_cnt"),
@@ -190,7 +209,7 @@ def get_npu_hw_info(full_soc_version):
         else:
             missing.append(option)
     if missing:
-        logger.warning(f"[{full_soc_version}] missing optional fields: {missing}")
+        raise RuntimeError(f"[{full_soc_version}] missing fields: {missing} in {ini_path}")
 
     ccec = result.get("ccec_aic_version", "")
     if ccec.endswith("cube"):
@@ -215,12 +234,9 @@ def get_npu_hw_info(full_soc_version):
     return result
 
 
-_AVAILABLE_STATUS = {"Healthy", "Warning", "Alarm"}
-
-
 @lru_cache(maxsize=None)
 def get_npu_available_device_ids():
-    """Get list of available Ascend device IDs (Healthy or Warning status).
+    """Get list of available Ascend device IDs.
 
     Returns:
         list of int: available device IDs, e.g. [0, 1, 2, 3]
@@ -248,8 +264,6 @@ def get_npu_available_device_ids():
         for i, p in enumerate(parts):
             if p.startswith("Device ID:"):
                 dev_id = int(p.split(":")[-1].strip())
-                status = parts[i + 1].strip() if i + 1 < len(parts) else ""
-                if status in _AVAILABLE_STATUS:
-                    available.append(dev_id)
+                available.append(dev_id)
                 break
     return available

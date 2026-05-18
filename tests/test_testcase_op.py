@@ -16,7 +16,7 @@ Tests for ttk.core_modules.testcase_manager.testcase_op:
 import pytest
 from unittest.mock import patch, MagicMock
 
-from ttk.core_modules.testcase_manager.testcase_op import UniversalTestcaseStructure
+from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
 def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
@@ -24,7 +24,7 @@ def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
                    output_shapes=((8,),),
                    output_dtypes=("float16",),
                    **kwargs):
-    case = UniversalTestcaseStructure()
+    case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
     case.input_shapes = input_shapes
@@ -461,43 +461,43 @@ class TestGetCompilationHash:
 class TestDynamicize:
 
     def test_positive_dims_become_minus1(self):
-        result = UniversalTestcaseStructure._dynamicize(((8, 16), (3, 224, 224)))
+        result = TestcaseOp._dynamicize(((8, 16), (3, 224, 224)))
         assert result == ((-1, -1), (-1, -1, -1))
 
     def test_already_minus1_stays(self):
-        result = UniversalTestcaseStructure._dynamicize(((-1,), (-1, -1)))
+        result = TestcaseOp._dynamicize(((-1,), (-1, -1)))
         assert result == ((-1,), (-1, -1))
 
     def test_minus2_stays(self):
-        result = UniversalTestcaseStructure._dynamicize(((-2,),))
+        result = TestcaseOp._dynamicize(((-2,),))
         assert result == ((-2,),)
 
     def test_zero_stays(self):
-        result = UniversalTestcaseStructure._dynamicize(((0,),))
+        result = TestcaseOp._dynamicize(((0,),))
         assert result == ((0,),)
 
     def test_none_stays(self):
-        result = UniversalTestcaseStructure._dynamicize((None,))
+        result = TestcaseOp._dynamicize((None,))
         assert result == (None,)
 
     def test_empty_shape_stays(self):
-        result = UniversalTestcaseStructure._dynamicize(((),))
+        result = TestcaseOp._dynamicize(((),))
         assert result == ((),)
 
     def test_scalar_shape_stays(self):
-        result = UniversalTestcaseStructure._dynamicize(((1,),))
+        result = TestcaseOp._dynamicize(((1,),))
         assert result == ((-1,),)
 
     def test_mixed_dims(self):
-        result = UniversalTestcaseStructure._dynamicize(((8, -1, 0),))
+        result = TestcaseOp._dynamicize(((8, -1, 0),))
         assert result == ((-1, -1, 0),)
 
     def test_multiple_tensors(self):
-        result = UniversalTestcaseStructure._dynamicize(((8,), (16, 32), (-1,)))
+        result = TestcaseOp._dynamicize(((8,), (16, 32), (-1,)))
         assert result == ((-1,), (-1, -1), (-1,))
 
     def test_empty_input(self):
-        result = UniversalTestcaseStructure._dynamicize(())
+        result = TestcaseOp._dynamicize(())
         assert result == ()
 
 

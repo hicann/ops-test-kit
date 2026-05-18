@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from enum import auto
 from enum import Enum
 from typing import Dict, List, Optional, Union, Tuple, Any
-from .platform import NO_BF16_PLATFORM
 
 
 # Third-party Packages
@@ -230,7 +229,13 @@ class SWITCHES:
 
     @property
     def overflow_mode(self) -> int:
-        return 0 if self.short_soc_version in NO_BF16_PLATFORM else 1
+        try:
+            from .platform import get_npu_hw_info
+            hw_info = get_npu_hw_info(self.dev_plat)
+            support_bf16 = hw_info.get('support_bf16', False)
+            return 1 if support_bf16 else 0
+        except:
+            return 1
 
     @property
     def run_time(self) -> int:
@@ -504,7 +509,7 @@ class BaseCompilationResult:
             json_parsed["kernel_dir"] = self.kernel_dir
         return json_parsed
 
-    def apply(self, testcase: "ttk.UniversalTestcaseStructure"): pass
+    def apply(self, testcase: "ttk.TestcaseOp"): pass
 
     def printf_enabled(self) -> bool:
         return False if not self._kernel_json_info else self._kernel_json_info.printf_enabled()
@@ -610,7 +615,7 @@ class DynamicCompilationResult(BaseCompilationResult):
         return (self.compile_info, self.tiling_op_type,
                 *self.base_standard_get())
 
-    def apply(self, testcase: "ttk.UniversalTestcaseStructure"):
+    def apply(self, testcase: "ttk.TestcaseOp"):
         """Apply dynamic result to testcase"""
         if testcase.dyn_func_params is None:
             testcase.dyn_func_params = self.func_params
@@ -683,7 +688,7 @@ class StaticCompilationResult(BaseCompilationResult):
         """Get standard value"""
         return self.base_standard_get()
 
-    def apply(self, testcase: "ttk.UniversalTestcaseStructure"):
+    def apply(self, testcase: "ttk.TestcaseOp"):
         pass
 
     def write_json(self, path: Optional[str]):
@@ -696,7 +701,7 @@ class StaticCompilationResult(BaseCompilationResult):
 class ConstCompilationResult(StaticCompilationResult):
     """For const Compilation"""
 
-    def apply(self, testcase: "ttk.UniversalTestcaseStructure"):
+    def apply(self, testcase: "ttk.TestcaseOp"):
         """Apply result to testcase"""
         if testcase.dyn_func_params is None:
             testcase.dyn_func_params = self.func_params
@@ -707,7 +712,7 @@ class ConstCompilationResult(StaticCompilationResult):
 class BinaryCompilationResult(DynamicCompilationResult):
     """For Binary Compilation"""
 
-    def apply(self, testcase: "ttk.UniversalTestcaseStructure"):
+    def apply(self, testcase: "ttk.TestcaseOp"):
         """Apply result to testcase"""
         if testcase.dyn_func_params is None:
             testcase.dyn_func_params = self.func_params

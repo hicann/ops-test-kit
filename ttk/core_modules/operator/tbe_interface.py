@@ -25,6 +25,7 @@ from typing import Optional
 import subprocess
 # Third-Party Packages
 from ...utilities import get_global_storage, Singleton
+from ...utilities.platform import get_npu_hw_info
 
 
 class NullApiConfig:
@@ -228,7 +229,6 @@ class Opc(metaclass=Singleton):
     OpcImplement: dict = {'tbe': TbeOpc, 'asc': AscOpc}
 
     def __init__(self):
-        self._soc_info = None
         self._core_type = None
         self._opc = None
 
@@ -236,52 +236,18 @@ class Opc(metaclass=Singleton):
             setattr(self, f"_{k}_opc", v())
 
         try:
-            # impl module path
-            self.impl_path = list(importlib_util.find_spec("impl").submodule_search_locations)[0]
-            logging.debug("module 'impl' locates: %s" % self.impl_path)
             self.core_type = get_global_storage().core_type
         except BaseException as e:
             logging.critical(f"Opc init failed: {e}")
             raise e
 
     def __getattribute__(self, item):
-        if item in ("get_soc_spec", "get_compile_info", "get_context", "get_tiling_op_type",
-                    "get_param_generalization", "do_op_tiling", "get_computes",
+        if item in ("get_compile_info", "get_tiling_op_type",
+                    "get_param_generalization", "do_op_tiling",
                     "build_config", "op_context", "op_info", "api_config"):
             return getattr(self._opc, item)
         else:
             return super().__getattribute__(item)
-
-    @property
-    def soc_info(self) -> dict:
-        if self._soc_info:
-            return self._soc_info
-
-        opc = self._get_any_opc()
-        cv_split = opc.get_soc_spec("cube_vector_combine")
-        if cv_split == 'unknown':
-            cv_split = opc.get_soc_spec("CUBE_VECTOR_SPLIT")
-        else:
-            if not isinstance(cv_split, (str, list, tuple)):
-                cv_split = str(cv_split)
-            if isinstance(cv_split, str):
-                cv_split = cv_split.split(",")
-            cv_split = 1 if 'split' in cv_split else 0
-        short_soc_version = opc.get_soc_spec("SHORT_SOC_VERSION")
-        full_soc_version = opc.get_soc_spec("FULL_SOC_VERSION")
-        # 310B not support set VectorCore
-        if short_soc_version in ("Ascend310B",):
-            cv_split = 0
-        aic_cnt = int(opc.get_soc_spec('ai_core_cnt'))
-        if cv_split:
-            cube_cnt = int(opc.get_soc_spec('cube_core_cnt'))
-            vec_cnt = int(opc.get_soc_spec('vector_core_cnt'))
-        else:
-            cube_cnt = vec_cnt = 0
-        self._soc_info = {"cv_split": cv_split, "full_soc_version": full_soc_version,
-                          "aic_cnt": aic_cnt, "cube_cnt": cube_cnt, "vec_cnt": vec_cnt,
-                          "short_soc_version": short_soc_version}
-        return self._soc_info
 
     @property
     def core_type(self) -> str:
@@ -309,7 +275,7 @@ class Opc(metaclass=Singleton):
             if os.path.exists(obj_file):
                 os.remove(obj_file)
             full_soc_version = opc.get_soc_spec("FULL_SOC_VERSION")
-            core_type = 'VectorCore' if self.soc_info.get('cv_split') else 'AiCore'
+            core_type = 'VectorCore' if get_npu_hw_info(full_soc_version).get('cv_split') else 'AiCore'
             clean_val = switches.force_clear_ub
             from .helper_kernels import clear_ub
             with opc.op_context.OpContext("pre-static") as cxt:

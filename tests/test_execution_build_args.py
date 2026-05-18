@@ -8,7 +8,7 @@
 """
 Tests for ttk.core_modules.framework_api.execution:
 _match_overload, _coerce_value, build_positional_args, ParamPlan.build_args,
-and ttk.core_modules.testcase_manager.testcase_framework_api: get_param_plan.
+and ttk.core_modules.testcase_manager.testcase_e2e: get_param_plan.
 """
 
 import pytest
@@ -507,8 +507,8 @@ class TestGetParamPlan:
     """Tests for testcase.get_param_plan() -- cached on testcase."""
 
     def _make_testcase(self, api_name, shapes, dtypes, attrs=None, output_indexes=()):
-        from ttk.core_modules.testcase_manager.testcase_framework_api import FrameworkApiTestcaseStructure
-        case = FrameworkApiTestcaseStructure()
+        from ttk.core_modules.testcase_manager.testcase_e2e import TestcaseE2e
+        case = TestcaseE2e()
         case.api_name = api_name
         case.tensor_view_shapes = shapes
         case.tensor_dtypes = dtypes
@@ -558,8 +558,8 @@ class TestNpuWeightQuantBatchmatmul:
 
     @staticmethod
     def _make_case(variant, shapes, dtypes, attrs=None):
-        from ttk.core_modules.testcase_manager.testcase_framework_api import FrameworkApiTestcaseStructure
-        case = FrameworkApiTestcaseStructure()
+        from ttk.core_modules.testcase_manager.testcase_e2e import TestcaseE2e
+        case = TestcaseE2e()
         case.api_name = 'torch_npu.npu_weight_quant_batchmatmul'
         case.tensor_view_shapes = shapes
         case.tensor_dtypes = dtypes
@@ -690,8 +690,8 @@ class TestCheckInputCountExceededVarPos:
     """Tests for _check_input_count_exceeded skipping VAR_POSITIONAL overloads."""
 
     def _make_testcase(self, api_name, shapes, dtypes, attrs=None, output_indexes=()):
-        from ttk.core_modules.testcase_manager.testcase_framework_api import FrameworkApiTestcaseStructure
-        case = FrameworkApiTestcaseStructure()
+        from ttk.core_modules.testcase_manager.testcase_e2e import TestcaseE2e
+        case = TestcaseE2e()
         case.api_name = api_name
         case.tensor_view_shapes = shapes
         case.tensor_dtypes = dtypes

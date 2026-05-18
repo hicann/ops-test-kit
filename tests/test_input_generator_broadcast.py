@@ -11,11 +11,6 @@
 Test cases for InputGenerator.is_broadcast
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
-
 import torch
 from ttk.core_modules.npu.op_api.input_generation import InputGenerator
 

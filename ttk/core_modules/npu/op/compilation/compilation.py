@@ -14,13 +14,13 @@ Operator compilation method for universal csv testcases
 import os
 
 # Third-Party Packages
-from ....testcase_manager import UniversalTestcaseStructure
+from ....testcase_manager import TestcaseOp
 from ....tbe_multiprocessing import get_process_context
 from .dynamic_compilation import dynamic_compilation
 from .static_compilation import static_compilation
 
 
-def compilation_process(testcase: UniversalTestcaseStructure, mode: str, **_):
+def compilation_process(testcase: TestcaseOp, mode: str, **_):
     """
     Universal Operator Compilation Sequence
     :param mode:

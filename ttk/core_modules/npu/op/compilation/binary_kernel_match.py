@@ -19,12 +19,13 @@ import os
 import pathlib
 from typing import Callable, List, Mapping, Optional, Tuple, Union
 # Third-Party Packages
-from ....testcase_manager import UniversalTestcaseStructure
+from ....testcase_manager import TestcaseOp
 from ....operator.op_interface import OperatorInterface, CaseNotSupportedError
 from ....operator import OpInfoKeeper
-from .....utilities import apply_as_list, get_global_storage, param_transformation
+from .....utilities import get_global_storage, param_transformation
 from .....utilities import camel_to_snake, DynamicCompilationResult, KernelJsonInfo, is_ndhwc_like, is_nchw_like
-from .....utilities import DATA_TYPE_DICT, FORMAT_DICT, get_custom_opp_paths
+from .....utilities import DATA_TYPE_DICT, FORMAT_DICT
+from .....utilities.platform import get_builtin_kernel_path as _get_builtin_kernel_path, get_custom_kernel_paths as _get_custom_kernel_paths_platform
 
 
 # cache
@@ -56,7 +57,7 @@ SUPPORT_SIMPLIFIEDKEY_ID_SET = (0, 1, 2)
 CANN_INSTALL_SCENARIO: Optional[str] = None
 
 
-def binary_kernel_match(interface: OperatorInterface, testcase: UniversalTestcaseStructure):
+def binary_kernel_match(interface: OperatorInterface, testcase: TestcaseOp):
     op_interface = testcase.op_name
     op_type = interface.get_op_type_from_ops_info(op_interface)
     binary_info = get_binary_info_config()
@@ -90,7 +91,7 @@ def binary_kernel_match(interface: OperatorInterface, testcase: UniversalTestcas
         return os.path.join(base_kernel_path, matched_bin_info["binInfo"]["jsonFilePath"])
 
 
-def parse_matched_bin_info(interface: OperatorInterface, testcase: UniversalTestcaseStructure,
+def parse_matched_bin_info(interface: OperatorInterface, testcase: TestcaseOp,
                            matched_bin_info: Union[str, pathlib.Path], result: DynamicCompilationResult) -> None:
     if not os.path.exists(matched_bin_info):
         raise RuntimeError(f"Binary kernel info json file not exist: {matched_bin_info}")
@@ -110,7 +111,7 @@ def parse_matched_bin_info(interface: OperatorInterface, testcase: UniversalTest
                         kernel_json_info, result.kernel_name, kernel_dir)
 
 
-def support_simplified_key_mode(op_type: str, binary_info: dict, testcase: UniversalTestcaseStructure):
+def support_simplified_key_mode(op_type: str, binary_info: dict, testcase: TestcaseOp):
     if not binary_info:
         return False
     op_info = OpInfoKeeper().info_of(testcase.op_name)
@@ -148,20 +149,16 @@ def get_kernel_path() -> Optional[str]:
             kernel_not_install_logged = True
         kernel_path = "NotInstalled"
         return None
-    kernel_path = os.path.join(env_kernel_path, "opp/built-in/op_impl/ai_core/tbe/kernel")
+    kernel_path = _get_builtin_kernel_path()
     return kernel_path
 
 
-def get_custom_kernel_paths() -> List[str]:
+def get_custom_kernel_paths_list() -> List[str]:
     """Get kernel paths from ASCEND_CUSTOM_OPP_PATH directories."""
     global custom_kernel_paths
     if custom_kernel_paths is not None:
         return custom_kernel_paths
-    custom_kernel_paths = []
-    for custom_path in get_custom_opp_paths():
-        kp = os.path.join(custom_path, "op_impl", "ai_core", "tbe", "kernel")
-        if os.path.isdir(kp):
-            custom_kernel_paths.append(kp)
+    custom_kernel_paths = [kp for kp in _get_custom_kernel_paths_platform() if os.path.isdir(kp)]
     return custom_kernel_paths
 
 
@@ -275,7 +272,7 @@ def get_binary_config(op_type: str, op_interface: str) -> Optional[dict]:
         return None
 
     # Search custom kernel paths first (higher priority)
-    for custom_kp in get_custom_kernel_paths():
+    for custom_kp in get_custom_kernel_paths_list():
         data = _get_binary_config_from_kernel_dir(custom_kp, op_type, op_interface)
         if data:
             logging.info(f"Found binary config for [{op_type}] in custom path: {custom_kp}")
@@ -291,15 +288,8 @@ def get_binary_config(op_type: str, op_interface: str) -> Optional[dict]:
     return data
 
 
-def gather_dynamic_tensors(interface: OperatorInterface, testcase: UniversalTestcaseStructure):
-    op_info = OpInfoKeeper().info_of(testcase.op_name)
-    ipt, opt = interface.prepare_operator_parameters(testcase, mode="dyn")
-    dyn_tensors = apply_as_list(ipt + opt, testcase.tensor_list_distribution)
-    op_inputs_size, op_outputs_size = len(op_info.get("inputs", ())), len(op_info.get("outputs", ()))
-    if len(dyn_tensors) != op_inputs_size + op_outputs_size:
-        raise RuntimeError(f"Dynamic input & output tensor's length mismatch with which in ops config: "
-                           f"{len(dyn_tensors)} vs {op_inputs_size + op_outputs_size}.")
-    return dyn_tensors[:op_inputs_size], dyn_tensors[op_inputs_size:]
+def gather_dynamic_tensors(interface: OperatorInterface, testcase: TestcaseOp):
+    return interface.prepare_operator_parameters(testcase, mode="dyn")
 
 
 def dtype_normalize(dtype_mode, dtype):
@@ -408,7 +398,7 @@ def get_binary_info_config():
         binary_info_config = {}
 
     # Merge custom configs (higher priority, overrides built-in)
-    for custom_kp in get_custom_kernel_paths():
+    for custom_kp in get_custom_kernel_paths_list():
         custom_cfg = _get_binary_info_config_from_kernel_dir(custom_kp)
         if custom_cfg:
             logging.info(f"Loading custom binary_info_config from: {custom_kp}")
@@ -430,7 +420,7 @@ def get_impl_mode_int(impl_mode: str) -> int:
     return IMPL_MODE_DICT.get(impl_mode, 0)
 
 
-def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: UniversalTestcaseStructure,
+def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: TestcaseOp,
                                     op_info: dict) -> Optional[str]:
     # GenerateAttrs
     attr_in_op_info = op_info.get("attr")
@@ -463,7 +453,7 @@ def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: Univ
     return ",".join(generalized_attr)
 
 
-def generate_simplified_key(interface: OperatorInterface, testcase: UniversalTestcaseStructure, binary_info: dict):
+def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, binary_info: dict):
     # GenerateSimpleKeyStr
     def _construct_dtype_format(xput_tensor: Union[List[dict], dict],
                                 _dtype_mode, _format_mode, explain: list):
@@ -551,7 +541,7 @@ def kernel_match_by_simplified_key(simplified_key: str, op_type: str, binary_inf
     return matched_bin
 
 
-def generalize_op(interface: OperatorInterface, testcase: UniversalTestcaseStructure):
+def generalize_op(interface: OperatorInterface, testcase: TestcaseOp):
     # GeneralizeOps
     dyn_inputs, dyn_outputs = gather_dynamic_tensors(interface, testcase)
     op_info = OpInfoKeeper().info_of(testcase.op_name)
@@ -584,7 +574,7 @@ def get_optional_input_indices(op_info: dict) -> list:
 
 
 def get_generalize_func_registered(interface: OperatorInterface,
-                                   testcase: UniversalTestcaseStructure) -> Optional[Callable]:
+                                   testcase: TestcaseOp) -> Optional[Callable]:
     if testcase.op_name in op_generalize_func:
         return op_generalize_func[testcase.op_name]
     op_func = interface.get_dyn_operator(testcase, search_user_defined=False)
@@ -597,7 +587,7 @@ def get_generalize_func_registered(interface: OperatorInterface,
     return generalize_func
 
 
-def generalize_with_default_rule(testcase: UniversalTestcaseStructure, op_info: dict,
+def generalize_with_default_rule(testcase: TestcaseOp, op_info: dict,
                                  dyn_func_params: Mapping[str, inspect.Parameter],
                                  dyn_inputs: Tuple[dict], dyn_outputs: Tuple[dict]):
     op_pattern = op_info.get("op.pattern", None)
@@ -631,7 +621,7 @@ def generalize_with_default_rule(testcase: UniversalTestcaseStructure, op_info: 
     return static_json, dynamic_json
 
 
-def generalize_with_register_func(testcase: UniversalTestcaseStructure,
+def generalize_with_register_func(testcase: TestcaseOp,
                                   dyn_func_params: Mapping[str, inspect.Parameter],
                                   dyn_inputs: Tuple[dict], dyn_outputs: Tuple[dict],
                                   generalize_func: Callable):
@@ -704,7 +694,7 @@ def feed_xput_directory(xput_tensor: Union[List[dict], dict]):
         return _construct_tensor_info(xput_tensor)
 
 
-def generalize_attr(testcase: UniversalTestcaseStructure, op_info: dict,
+def generalize_attr(testcase: TestcaseOp, op_info: dict,
                     dyn_func_params: Mapping[str, inspect.Parameter]):
     # GenerateNormalizeFusionAttrTmpJson
     attr_in_op_info = op_info.get("attr")
@@ -804,7 +794,7 @@ def parse_registered_generalize_result(registered_json: list, static_json: dict,
         _replace_info(dynamic_json, r, False)
 
 
-def kernel_match_by_static_key(testcase: UniversalTestcaseStructure, bin_cfg: dict,
+def kernel_match_by_static_key(testcase: TestcaseOp, bin_cfg: dict,
                                stc_generalize_info: dict, dyn_generalize_info: dict,
                                optional_input_indices: list = None):
     # BinaryMatchWithStaticKeyAndDynInfo
@@ -829,7 +819,7 @@ def kernel_match_by_static_key(testcase: UniversalTestcaseStructure, bin_cfg: di
     return matched_bin
 
 
-def generate_build_options(testcase: UniversalTestcaseStructure, stc_generalize_info: dict):
+def generate_build_options(testcase: TestcaseOp, stc_generalize_info: dict):
     # GenBuildOptions
     opt_json = {}
     # SocInfo_.l2Mode is skipped !!

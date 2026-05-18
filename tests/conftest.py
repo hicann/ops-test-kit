@@ -9,17 +9,11 @@
 Pytest configuration and shared fixtures for ttk tests.
 
 Provides:
-  - sys.path setup for ttk package imports
   - Device-free test isolation (autouse)
   - Shared helpers for constructing mock testcase structures
 """
 
-import sys
-from pathlib import Path
-
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +27,7 @@ def isolate_ttk_environment(monkeypatch):
 
 @pytest.fixture
 def make_testcase():
-    """Factory fixture to create ApiTestcaseStructure instances for testing.
+    """Factory fixture to create TestcaseAclnn instances for testing.
 
     Usage:
         case = make_testcase(
@@ -44,8 +38,8 @@ def make_testcase():
     """
 
     def _make(api_name="aclnnDummy", **kwargs):
-        from ttk.core_modules.testcase_manager.testcase_api import ApiTestcaseStructure
-        case = ApiTestcaseStructure()
+        from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+        case = TestcaseAclnn()
         case.api_name = api_name
         case.is_valid = True
         case.fail_reason = None

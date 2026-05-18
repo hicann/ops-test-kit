@@ -36,7 +36,7 @@ def generate_golden(testcase, raw_inputs, plugin_path=None, switches=None, backe
     Generate golden data using three-level fallback.
 
     Args:
-        testcase: FrameworkApiTestcaseStructure
+        testcase: TestcaseE2e
         raw_inputs: list of numpy arrays (flat, one per tensor)
         plugin_path: custom plugin path from SWITCHES
         switches: SWITCHES object
