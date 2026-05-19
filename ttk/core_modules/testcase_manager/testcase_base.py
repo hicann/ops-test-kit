@@ -25,6 +25,7 @@ except ImportError:
 from .field_types import FIELD_TYPES
 from .field_parser import *
 from ...utilities import get_global_storage
+from functools import partial
 
 
 type_processing_func: Dict[FIELD_TYPES, Callable] = {
@@ -46,11 +47,11 @@ type_processing_func: Dict[FIELD_TYPES, Callable] = {
     FIELD_TYPES.SHAPE_STRIDE: shape_stride,
     FIELD_TYPES.SHAPELIKE_STC_NESTED: shapelike_stc_nested,
     FIELD_TYPES.SHAPELIKE_STC_EX_NESTED: shapelike_stc_ex_nested,
-    FIELD_TYPES.STRING_CONTAINER_NESTED: string_container_nested,
-    FIELD_TYPES.INT_CONTAINER_NESTED: int_container_nested,
+    FIELD_TYPES.STRING_SCALAR_NESTED: partial(scalar_nested, allowed_type=str),
+    FIELD_TYPES.FLOAT_SCALAR_NESTED: partial(scalar_nested, allowed_type=(int, float)),
+    FIELD_TYPES.INT_CONTAINER_NESTED: partial(scalar_nested, allowed_type=int),
     FIELD_TYPES.SHAPELIKE_FLOAT_SIGNED_NESTED: shapelike_float_signed_nested,
     FIELD_TYPES.SHAPELIKE_FLOAT_NESTED: shapelike_float_nested,
-    FIELD_TYPES.FLOAT_OR_CONTAINER_NESTED: float_or_container_nested,
 }
 
 
@@ -87,7 +88,7 @@ class TestcaseBase(metaclass=ABCMeta):
     special_property_headers: Dict[str, tuple] = {
         "input_data_ranges": (FIELD_TYPES.SHAPELIKE_FLOAT_SIGNED_NESTED, None, ((None, None),)),
         "precision_tolerances": (FIELD_TYPES.SHAPELIKE_FLOAT_NESTED, None, None),
-        "absolute_precision": (FIELD_TYPES.FLOAT_OR_CONTAINER_NESTED, None, 1e-8),
+        "absolute_precision": (FIELD_TYPES.FLOAT_SCALAR_NESTED, None, 1e-8),
     }
     option_headers: Dict[str, tuple] = {
         # Manually controlled property

@@ -422,10 +422,7 @@ from ttk.core_modules.operator.op_interface import (
 
 @pytest.fixture
 def _clear_caches():
-    import ttk.core_modules.operator.op_interface as oi
-    oi.DYN_OP_FUNC_CACHE.clear()
-    oi.DYN_OP_IMPL_TYPE.clear()
-
+    pass
 
 class TestPrepareOperatorParameters:
 
@@ -538,9 +535,6 @@ class TestOpTypeFromSourceCode:
 
     def test_not_callable(self):
         assert OperatorInterface.get_op_type_from_source_code("not_a_func") is None
-
-    def test_get_op_impl_type_not_callable(self):
-        assert OperatorInterface.get_op_impl_type_from_source_code("not_a_func") == "tbe"
 
 
 class TestEnableShapeInt64:

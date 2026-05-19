@@ -19,9 +19,9 @@ __all__ = ["process_bool", "process_string",
            "rangelike", "shape_stride",
            "shapelike_stc_nested", "shapelike_stc_ex_nested",
            "shapelike_float_signed_nested", "shapelike_float_nested",
-           "float_or_container_nested",
-           "string_container", "string_container_nested",
-           "int_container", "int_container_nested",
+           "string_container",
+           "scalar_nested",
+           "int_container",
            "process_eval",
            "process_int", "process_float", "process_dict"]
 
@@ -371,19 +371,6 @@ def shapelike_float_nested(value: str):
     return tuple(result)
 
 
-def float_or_container_nested(value: str):
-    """Single float, flat float tuple, or nested float container.
-
-    1e-8                       → 1e-8 (backward compat)
-    (1e-8, 1e-8)               → ((1e-8, 1e-8),) (flat, wrapped)
-    ((1e-8, 1e-8), 1e-8)       → ((1e-8, 1e-8), 1e-8) (nested)
-    """
-    parsed = eval(value)
-    if isinstance(parsed, (int, float)):
-        return float(parsed)
-    return shapelike_float_nested(value)
-
-
 def rangelike(value: str):
     """
     For multiple shapelike ((None, 3), (55, None)
@@ -428,33 +415,49 @@ def string_container(value: str) -> tuple:
     return result
 
 
-def string_container_nested(value: str) -> tuple:
-    """String container with TensorList nesting support.
+def scalar_nested(value: str, allowed_type=None) -> tuple:
+    """Scalar field with TensorList nesting support.
 
-    ('float32','float32')                         → flat: ('float32', 'float32')
-    (('float32','float32'),'float32')             → nested: TensorList of 2 + single
-    ('float32',)                                  → expanded by distribution later
+    Handles string, float, and int element types.
+    'float32'                              → ('float32',)
+    1e-08                                  → (1e-08,)
+    ('float32', 'float32')                 → ('float32', 'float32')
+    (1e-08, 1e-08)                         → (1e-08, 1e-08)
+    (('float32','float32'), 'float32')     → (('float32','float32'), 'float32')
+    ''                                     → ()
+
+    :param allowed_type: type or tuple of types for element validation.
+                         None means no validation.
     """
+    if value == "":
+        return ()
     try:
         parsed = eval(value)
     except Exception:
-        return (value,)
+        raise TypeError("%s is not a valid scalar value!" % value)
     if not isinstance(parsed, (tuple, list)):
-        return (parsed,) if isinstance(parsed, str) else (value,)
+        if allowed_type and not isinstance(parsed, allowed_type):
+            raise TypeError(
+                "Value %r (type %s) is not %s" %
+                (parsed, type(parsed).__name__, allowed_type))
+        return (parsed,)
     result = []
     for element in parsed:
         if element is None:
             result.append(None)
         elif isinstance(element, (tuple, list)):
-            if len(element) == 0:
-                result.append(())
-            elif isinstance(element[0], (tuple, list)):
-                result.append(tuple(element))
-            else:
-                result.append(tuple(element))
-        elif isinstance(element, str):
-            result.append(element)
+            if allowed_type:
+                for e in element:
+                    if not isinstance(e, allowed_type):
+                        raise TypeError(
+                            "Element %r (type %s) in nested group is not %s" %
+                            (e, type(e).__name__, allowed_type))
+            result.append(tuple(element))
         else:
+            if allowed_type and not isinstance(element, allowed_type):
+                raise TypeError(
+                    "Element %r (type %s) is not %s" %
+                    (element, type(element).__name__, allowed_type))
             result.append(element)
     return tuple(result)
 
@@ -483,29 +486,7 @@ def int_container(value: str) -> tuple:
         return result
 
 
-def int_container_nested(value: str) -> tuple:
-    """Int container with TensorList nesting support.
 
-    (0, 1)                 → flat: (0, 1)
-    ((0, 1), 2)            → nested: TensorList of 2 + single
-    """
-    if value == "":
-        return ()
-    parsed = eval(value)
-    if not isinstance(parsed, (tuple, list)):
-        if isinstance(parsed, int):
-            return (parsed,)
-        raise TypeError("Invalid value %s for int_container_nested" % value)
-    result = []
-    for element in parsed:
-        if element is None:
-            result.append(None)
-        elif isinstance(element, (tuple, list)):
-            result.append(tuple(element))
-        elif isinstance(element, int):
-            result.append(element)
-        else:
-            raise TypeError("Invalid element %s in int_container_nested" % str(element))
     return tuple(result)
 
 

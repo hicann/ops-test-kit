@@ -18,7 +18,6 @@ __all__ = ["AclInterface"]
 # Standard Packages
 import atexit
 import ctypes
-import glob
 import logging
 import time
 
@@ -29,7 +28,7 @@ from typing import List, Optional, Union, Set, Dict, Tuple
 # Third-Party Packages
 from ...utilities import (
     DATA_TYPE_DICT, FORMAT_DICT,
-    torch_to_numpy_tensor, get_ascend_lib64_path
+    torch_to_numpy_tensor
 )
 from ..runtime import RTSInterface
 
@@ -94,7 +93,6 @@ class AclInterface:
                                            short_soc_version=short_soc_version)
         self._acl_dll = ctypes.CDLL(f"libascendcl.so")
         self._opbase_dll = ctypes.CDLL(f"libnnopbase.so")
-        self._op_api_dlls = self._load_op_api_dll()
         atexit.register(self._on_exit)
 
     def __del__(self):
@@ -566,12 +564,26 @@ class AclInterface:
         self.reset()
         self._acl_finalize()
 
+    # Shared across all AclInterface instances. ctypes.CDLL loads each SO once per process, so sharing is safe.
+    _SO_CACHE: dict = {}
+
     def _get_op_api(self, api_name):
-        for dll in self._op_api_dlls:
-            api = getattr(dll, api_name, None)
-            if api:
-                return api
-        return None
+        from .op_api_info_keeper import OpApiInfoKeeper
+        info = OpApiInfoKeeper().info_of(api_name)
+        if not info:
+            logging.error(f"API [{api_name}] not found in any header directory")
+            return None
+        if not info.so_path:
+            logging.error(f"API [{api_name}] has category=[{info.category}] but SO path is empty")
+            return None
+        dll = self._SO_CACHE.get(info.so_path)
+        if dll is None:
+            dll = ctypes.CDLL(info.so_path)
+            self._SO_CACHE[info.so_path] = dll
+        api = getattr(dll, api_name, None)
+        if not api:
+            logging.error(f"API [{api_name}] not found in SO [{info.so_path}]")
+        return api
 
     def _get_acl_api(self, api_name):
         return getattr(self._acl_dll, api_name)
@@ -579,16 +591,3 @@ class AclInterface:
     def _get_opbase_dll(self, api_name):
         return getattr(self._opbase_dll, api_name)
 
-    @staticmethod
-    def _load_op_api_dll():
-        lib64_path = get_ascend_lib64_path()
-        op_api_sub_so_lst = list(glob.glob(f"{lib64_path}/libopapi_*.so"))
-        if not op_api_sub_so_lst:
-            op_api_sub_so_lst = list(glob.glob(f"{lib64_path}/libopapi.so"))
-        if not op_api_sub_so_lst:
-            raise RuntimeError(f"Op Api library should be in {lib64_path}. "
-                               f"But not found.")
-        loaded_so = []
-        for so in op_api_sub_so_lst:
-            loaded_so.append(ctypes.CDLL(so))
-        return loaded_so

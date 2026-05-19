@@ -354,6 +354,16 @@ class TestFlatPropertiesAfterNormalize:
         _validate(case)
         assert case.flat_absolute_precision == (1e-5, 1e-6)
 
+    def test_flat_absolute_precision_per_output_no_double_wrap(self):
+        """Per-output tuple (e.g. from result CSV) must not be double-nested."""
+        case = _make_testcase(output_shapes=((8,), (9,), (10,)))
+        case.absolute_precision = (1e-5, 1e-5, 1e-5)
+        _validate(case)
+        assert case.flat_absolute_precision == (1e-5, 1e-5, 1e-5)
+        # Every element must be a scalar float, not a nested tuple
+        for val in case.flat_absolute_precision:
+            assert isinstance(val, float), f"Expected float, got {type(val)}: {val}"
+
     def test_flat_input_ori_shapes_nested(self):
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,)),

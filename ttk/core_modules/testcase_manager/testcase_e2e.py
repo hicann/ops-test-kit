@@ -48,11 +48,11 @@ class TestcaseE2e(TensorApiTestcaseBase):
 
     tensor_property_headers = {
         "tensor_view_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None),
-        "tensor_dtypes": (FIELD_TYPES.STRING_CONTAINER_NESTED, None),
+        "tensor_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None),
     }
 
     optional_tensor_headers = {
-        "tensor_formats": (FIELD_TYPES.STRING_CONTAINER_NESTED, None, ()),
+        "tensor_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ()),
         "tensor_storage_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
         "tensor_view_offsets": (FIELD_TYPES.INT_CONTAINER_NESTED, None, ()),
         "tensor_view_strides": (FIELD_TYPES.SHAPE_STRIDE, None, ()),

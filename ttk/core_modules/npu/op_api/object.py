@@ -16,7 +16,6 @@ __all__ = ["ApiProfileObject"]
 
 
 # Standard Packages
-import os
 from multiprocessing.context import BaseContext
 from typing import Set, Any
 
@@ -31,8 +30,6 @@ from ...infra import TaskA, TaskType, TaskKeeper, ProfileObject
 class ApiProfileObject(ProfileObject):
     def __init__(self, task_keeper: TaskKeeper, mp_context: BaseContext):
         super().__init__(task_keeper, mp_context)
-        if os.getenv("ASCEND_OPP_KERNEL_PATH") is None:
-            raise RuntimeError(f"Please install opp_kernel first.")
 
     def setup(self):
         pass

@@ -76,6 +76,56 @@ def _source_setenv_bash(ascend_root):
         pass
 
 
+def _get_custom_impl_parent_paths():
+    """Get op_impl/ai_core/tbe paths from ASCEND_CUSTOM_OPP_PATH."""
+    env_val = os.getenv("ASCEND_CUSTOM_OPP_PATH", "")
+    if not env_val:
+        return []
+    paths = []
+    for p in env_val.split(":"):
+        if not p:
+            continue
+        tbe = os.path.join(p, "op_impl", "ai_core", "tbe")
+        if os.path.isdir(tbe):
+            paths.append(tbe)
+    return paths
+
+
+def _get_vendor_impl_parent_paths(opp_path):
+    """Get op_impl/ai_core/tbe paths from vendors/config.ini."""
+    config_file = os.path.join(opp_path, "vendors", "config.ini")
+    if not os.path.isfile(config_file):
+        return []
+    paths = []
+    with open(config_file) as f:
+        for line in f:
+            if line.strip().startswith("load_priority="):
+                for name in line.split("=", 1)[1].split(","):
+                    name = name.strip()
+                    if name:
+                        tbe = os.path.join(opp_path, "vendors", name,
+                                           "op_impl", "ai_core", "tbe")
+                        if os.path.isdir(tbe):
+                            paths.append(tbe)
+                break
+    return paths
+
+
+def _get_builtin_impl_parent_path(opp_path):
+    """Get built-in op_impl/ai_core/tbe path."""
+    tbe = os.path.join(opp_path, "built-in", "op_impl", "ai_core", "tbe")
+    return tbe if os.path.isdir(tbe) else None
+
+
+def _prepend_to_pythonpath(paths):
+    """Prepend paths to PYTHONPATH env var."""
+    if not paths:
+        return
+    existing = os.getenv("PYTHONPATH", "")
+    new = ":".join(paths)
+    os.environ["PYTHONPATH"] = new + ":" + existing if existing else new
+
+
 def _setup_cann_paths(ascend_root):
     drv_info = "/etc/ascend_install.info"
     if os.path.isfile(drv_info):
@@ -94,13 +144,14 @@ def _setup_cann_paths(ascend_root):
     if os.path.isdir(opp_path):
         os.environ.setdefault("ASCEND_OPP_PATH", opp_path)
 
-        tbe_path = os.path.join(opp_path, "built-in", "op_impl", "ai_core", "tbe")
-        if os.path.isdir(tbe_path) and tbe_path not in os.getenv("PYTHONPATH", ""):
-            os.environ["PYTHONPATH"] = tbe_path + ":" + os.getenv("PYTHONPATH", "")
-
-    kernel_path = os.path.join(opp_path, "built-in", "op_impl", "ai_core", "tbe", "kernel")
-    if os.path.isdir(kernel_path):
-        os.environ.setdefault("ASCEND_OPP_KERNEL_PATH", ascend_root)
+        # Collect tbe paths in priority order: custom > vendors > built-in
+        tbe_paths = []
+        tbe_paths.extend(_get_custom_impl_parent_paths())
+        tbe_paths.extend(_get_vendor_impl_parent_paths(opp_path))
+        builtin_tbe = _get_builtin_impl_parent_path(opp_path)
+        if builtin_tbe:
+            tbe_paths.append(builtin_tbe)
+        _prepend_to_pythonpath(tbe_paths)
 
 
 def _setup_ascend_logging():
@@ -170,7 +221,6 @@ def _cleanup_old_logs():
 def _ensure_log_dirs():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     os.makedirs(os.path.expanduser("~/ascend/log"), exist_ok=True)
-    os.makedirs(os.path.join(base_dir, "gpu_json"), exist_ok=True)
 
     cutoff = time.time() - 15 * 86400
     for d in [os.path.expanduser("~/ascend/log/plog"), os.path.expanduser("~/ascend/log/debug/plog")]:

@@ -14,15 +14,10 @@ Platform Related Utilities
 
 __all__ = ["get_ascend_lib64_path",
            "get_ascend_scene_info",
-           "get_builtin_opp_path",
-           "get_custom_opp_paths",
-           "get_builtin_impl_base_path",
-           "get_builtin_tiling_path",
-           "get_custom_tiling_paths",
-           "get_builtin_op_info_path",
-           "get_custom_op_info_paths",
-           "get_builtin_kernel_path",
-           "get_custom_kernel_paths",
+           "get_opp_paths",
+           "get_op_impl_paths",
+           "get_impl_base_paths",
+           "get_op_info_paths",
            "get_ascend_full_soc_version",
            "get_npu_hw_info",
            "get_npu_available_device_ids",
@@ -35,6 +30,7 @@ import re
 import shutil
 import subprocess
 from functools import lru_cache
+from typing import Tuple
 
 PLATFORM_BEFORE_DAVID = ("Ascend031", "Ascend310", "Ascend310P", "Ascend310B",
                          "Ascend610", "Ascend610Lite", "BS9SX1A",
@@ -43,8 +39,74 @@ PLATFORM_BEFORE_DAVID = ("Ascend031", "Ascend310", "Ascend310P", "Ascend310B",
                          "OPTG", "SD3403", "TsnsC", "TsnsE")
 
 
+_VALID_SOURCES = ("builtin", "vendor", "custom")
+
+
 @lru_cache(maxsize=None)
-def get_ascend_scene_info(opp_path: str) -> tuple[str, str]:
+def get_opp_paths(source: str) -> list:
+    """Return opp root paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
+    if source == "builtin":
+        opp_path = os.getenv('ASCEND_OPP_PATH', '')
+        if not opp_path:
+            raise RuntimeError("Environment `ASCEND_OPP_PATH` is not set.")
+        return [opp_path]
+    elif source == "vendor":
+        opp_path = os.getenv('ASCEND_OPP_PATH', '')
+        if not opp_path:
+            return []
+        config_file = os.path.join(opp_path, "vendors", "config.ini")
+        if not os.path.isfile(config_file):
+            return []
+        vendors = []
+        with open(config_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith("load_priority="):
+                    continue
+                for name in line.split("=", 1)[1].split(","):
+                    name = name.strip()
+                    if not name:
+                        continue
+                    p = os.path.join(opp_path, "vendors", name)
+                    if os.path.isdir(p):
+                        vendors.append(p)
+                break
+        return vendors
+    elif source == "custom":
+        env_val = os.getenv('ASCEND_CUSTOM_OPP_PATH', '')
+        if not env_val:
+            return []
+        return [p for p in env_val.split(':') if p and os.path.isdir(p)]
+    raise ValueError(f"Unknown source: {source}, must be one of {_VALID_SOURCES}")
+
+
+@lru_cache(maxsize=None)
+def get_op_impl_paths(source: str) -> list:
+    """Return {opp}/op_impl paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
+    if source == "builtin":
+        return [os.path.join(get_opp_paths("builtin")[0], "built-in", "op_impl")]
+    elif source == "vendor":
+        return [os.path.join(p, "op_impl") for p in get_opp_paths("vendor")]
+    elif source == "custom":
+        return [os.path.join(p, "op_impl") for p in get_opp_paths("custom")]
+    raise ValueError(f"Unknown source: {source}, must be one of {_VALID_SOURCES}")
+
+
+@lru_cache(maxsize=None)
+def get_impl_base_paths(source: str) -> list:
+    """Return {opp}/op_impl/ai_core/tbe paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
+    if source == "builtin":
+        return [os.path.join(get_opp_paths("builtin")[0], "built-in", "op_impl", "ai_core", "tbe")]
+    elif source == "vendor":
+        return [os.path.join(p, "op_impl", "ai_core", "tbe") for p in get_opp_paths("vendor")]
+    elif source == "custom":
+        return [os.path.join(p, "op_impl", "ai_core", "tbe") for p in get_opp_paths("custom")]
+    raise ValueError(f"Unknown source: {source}, must be one of {_VALID_SOURCES}")
+
+
+@lru_cache(maxsize=None)
+def get_ascend_scene_info() -> Tuple[str, str]:
+    opp_path = get_opp_paths("builtin")[0]
     scene_file = os.path.abspath(os.path.join(opp_path, "scene.info"))
     scene_os, scene_arch = "", ""
     if os.path.isfile(scene_file):
@@ -59,69 +121,23 @@ def get_ascend_scene_info(opp_path: str) -> tuple[str, str]:
 
 
 @lru_cache(maxsize=None)
-def get_custom_opp_paths():
-    """Parse ASCEND_CUSTOM_OPP_PATH env var and return a list of valid directory paths."""
-    env_val = os.getenv('ASCEND_CUSTOM_OPP_PATH', '')
-    if not env_val:
-        return []
-    return [p for p in env_val.split(':') if p and os.path.isdir(p)]
-
-
-@lru_cache(maxsize=None)
-def get_builtin_opp_path():
-    opp_path = os.getenv('ASCEND_OPP_PATH', '')
-    if not opp_path:
-        raise RuntimeError("Environment `ASCEND_OPP_PATH` is not set.")
-    return opp_path
-
-
-@lru_cache(maxsize=None)
-def get_builtin_impl_base_path():
-    return os.path.join(get_builtin_opp_path(), "built-in", "op_impl", "ai_core", "tbe")
-
-
-@lru_cache(maxsize=None)
-def get_builtin_tiling_path():
-    """Return {opp}/built-in/op_impl for tiling library loading."""
-    return os.path.join(get_builtin_opp_path(), "built-in", "op_impl")
-
-
-@lru_cache(maxsize=None)
-def get_custom_tiling_paths():
-    """Return list of {custom}/op_impl paths from ASCEND_CUSTOM_OPP_PATH."""
-    return [os.path.join(p, "op_impl") for p in get_custom_opp_paths()]
-
-
-@lru_cache(maxsize=None)
-def get_builtin_op_info_path(soc_lower: str) -> str:
-    """Return {impl_base}/config/{soc_lower} for built-in op info files."""
-    return os.path.join(get_builtin_impl_base_path(), "config", soc_lower)
-
-
-@lru_cache(maxsize=None)
-def get_custom_op_info_paths(soc_lower: str):
-    """Return list of {custom}/op_impl/ai_core/tbe/config/{soc_lower} paths."""
-    return [os.path.join(p, "op_impl", "ai_core", "tbe", "config", soc_lower)
-            for p in get_custom_opp_paths()]
-
-
-@lru_cache(maxsize=None)
-def get_builtin_kernel_path():
-    """Return {impl_base}/kernel for built-in binary kernel matching."""
-    return os.path.join(get_builtin_impl_base_path(), "kernel")
-
-
-@lru_cache(maxsize=None)
-def get_custom_kernel_paths():
-    """Return list of {custom}/op_impl/ai_core/tbe/kernel paths."""
-    return [os.path.join(p, "op_impl", "ai_core", "tbe", "kernel")
-            for p in get_custom_opp_paths()]
+def get_op_info_paths(source: str, soc_lower: str) -> list:
+    """Return {impl_base}/config/{soc_lower} paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
+    if source == "builtin":
+        return [os.path.join(get_impl_base_paths("builtin")[0], "config", soc_lower)]
+    elif source == "vendor":
+        return [os.path.join(p, "op_impl", "ai_core", "tbe", "config", soc_lower)
+                for p in get_opp_paths("vendor")]
+    elif source == "custom":
+        return [os.path.join(p, "op_impl", "ai_core", "tbe", "config", soc_lower)
+                for p in get_opp_paths("custom")]
+    raise ValueError(f"Unknown source: {source}, must be one of {_VALID_SOURCES}")
 
 
 @lru_cache(maxsize=None)
 def get_ascend_lib64_path():
-    opp_path = get_builtin_opp_path()
-    scene_os, scene_arch = get_ascend_scene_info(opp_path)
+    opp_path = get_opp_paths("builtin")[0]
+    scene_os, scene_arch = get_ascend_scene_info()
     return os.path.abspath(
         os.path.join(opp_path, "..", f"{scene_arch}-{scene_os}", "lib64")
     )
@@ -165,8 +181,8 @@ def get_npu_hw_info(full_soc_version):
     """
     import configparser
 
-    opp_path = get_builtin_opp_path()
-    scene_os, scene_arch = get_ascend_scene_info(opp_path)
+    opp_path = get_opp_paths("builtin")[0]
+    scene_os, scene_arch = get_ascend_scene_info()
     config_dir = os.path.join(opp_path, "..", f"{scene_arch}-{scene_os}",
                               "data", "platform_config")
     ini_path = os.path.join(config_dir, f"{full_soc_version}.ini")

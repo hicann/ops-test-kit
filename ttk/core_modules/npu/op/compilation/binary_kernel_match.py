@@ -9,7 +9,6 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # Standard Packages
 import copy
-import glob
 import hashlib
 import inspect
 import json
@@ -20,22 +19,15 @@ import pathlib
 from typing import Callable, List, Mapping, Optional, Tuple, Union
 # Third-Party Packages
 from ....testcase_manager import TestcaseOp
-from ....operator.op_interface import OperatorInterface, CaseNotSupportedError
+from ....operator.op_interface import OperatorInterface
 from ....operator import OpInfoKeeper
-from .....utilities import get_global_storage, param_transformation
-from .....utilities import camel_to_snake, DynamicCompilationResult, KernelJsonInfo, is_ndhwc_like, is_nchw_like
+from .....utilities import param_transformation
+from .....utilities import DynamicCompilationResult, KernelJsonInfo, is_ndhwc_like, is_nchw_like
 from .....utilities import DATA_TYPE_DICT, FORMAT_DICT
-from .....utilities.platform import get_builtin_kernel_path as _get_builtin_kernel_path, get_custom_kernel_paths as _get_custom_kernel_paths_platform
 
 
 # cache
-op_binary_config: dict = {}
 op_generalize_func: dict = {}
-binary_info_config: Optional[dict] = None
-kernel_path = "InitUnknown"
-custom_kernel_paths: Optional[List] = None  # lazy init
-# log control
-kernel_not_install_logged = False
 # dtype mode
 DTYPE_MODE_NORMAL = "normal"
 DTYPE_MODE_BIT = "bit"
@@ -54,24 +46,24 @@ FORMAT_MODE_ND_AGNOSTIC = "nd_agnostic"
 FORMAT_MODE_STATIC_ND_AGNOSTIC = "static_nd_agnostic"
 # support simplifiedKey mode id
 SUPPORT_SIMPLIFIEDKEY_ID_SET = (0, 1, 2)
-CANN_INSTALL_SCENARIO: Optional[str] = None
 
 
 def binary_kernel_match(interface: OperatorInterface, testcase: TestcaseOp):
-    op_interface = testcase.op_name
-    op_type = interface.get_op_type_from_ops_info(op_interface)
-    binary_info = get_binary_info_config()
+    op_name = testcase.op_name  # snake_name
+    op_type = OpInfoKeeper().op_type_of(op_name)  # CamelName
+    if not op_type:
+        raise RuntimeError(f"[{op_name}] is not configured in [aic-*-ops-info.json]")
 
     matched_bin_info = None
-    if support_simplified_key_mode(op_type, binary_info, testcase):
-        simplified_key = generate_simplified_key(interface, testcase, binary_info)
-        matched_bin_info = kernel_match_by_simplified_key(simplified_key, op_type, binary_info)
+    if support_simplified_key_mode(op_type, testcase):
+        simplified_key = generate_simplified_key(interface, testcase)
+        matched_bin_info = kernel_match_by_simplified_key(simplified_key, op_name)
     if not matched_bin_info:
-        bin_cfg: dict = get_binary_config(op_type, op_interface)
+        bin_cfg: dict = OpInfoKeeper().binary_static_key_config_of(op_name)
         if not bin_cfg:
             return None
         stc_generalize_info, dynamic_generalize_info = generalize_op(interface, testcase)
-        optional_input_indices = get_optional_input_indices(OpInfoKeeper().info_of(op_interface))
+        optional_input_indices = get_optional_input_indices(op_name)
         matched_bin_info = kernel_match_by_static_key(testcase, bin_cfg, stc_generalize_info,
                                                       dynamic_generalize_info, optional_input_indices)
     if not matched_bin_info:
@@ -79,16 +71,11 @@ def binary_kernel_match(interface: OperatorInterface, testcase: TestcaseOp):
     if "binInfo" not in matched_bin_info:  # simplified key mode
         if "jsonPath" not in matched_bin_info:
             raise RuntimeError(f"Invalid binary_info_config.json for op [{op_type}]. no jsonPath in it.")
-        # Use source kernel_path from binary_info if available, otherwise fall back to built-in
-        base_kernel_path = matched_bin_info.get("_kernel_path") or get_kernel_path()
-        return os.path.join(base_kernel_path, matched_bin_info["jsonPath"])
+        return matched_bin_info["jsonPath"]
     else:  # static key mode
         if "jsonFilePath" not in matched_bin_info["binInfo"]:
             raise RuntimeError(f"Invalid binary info json of op [{op_type}]. no jsonFilePath in it.")
-        # Use source kernel_path from bin_cfg if available, otherwise fall back to built-in
-        bin_cfg = get_binary_config(op_type, op_interface)
-        base_kernel_path = (bin_cfg.get("_kernel_path") if bin_cfg else None) or get_kernel_path()
-        return os.path.join(base_kernel_path, matched_bin_info["binInfo"]["jsonFilePath"])
+        return matched_bin_info["binInfo"]["jsonFilePath"]
 
 
 def parse_matched_bin_info(interface: OperatorInterface, testcase: TestcaseOp,
@@ -99,9 +86,9 @@ def parse_matched_bin_info(interface: OperatorInterface, testcase: TestcaseOp,
         info: dict = json.load(f)
     result.kernel_name = info.get("binFileName")
     compile_info: dict = info.get("compileInfo")
-    tiling_op_type: str = interface.get_op_type_from_ops_info(testcase.op_name)
+    tiling_op_type: str = OpInfoKeeper().op_type_of(testcase.op_name)
     # it will never be None
-    op_func = interface.get_dyn_operator(testcase, False)
+    op_func = interface.get_dyn_operator(testcase)
     dyn_func_params = interface.get_op_func_params(op_func, testcase.op_name)
     kernel_dir = os.path.dirname(matched_bin_info)
     kernel_json_info = KernelJsonInfo.from_dict(info)
@@ -111,181 +98,26 @@ def parse_matched_bin_info(interface: OperatorInterface, testcase: TestcaseOp,
                         kernel_json_info, result.kernel_name, kernel_dir)
 
 
-def support_simplified_key_mode(op_type: str, binary_info: dict, testcase: TestcaseOp):
+def support_simplified_key_mode(op_type: str, testcase: TestcaseOp):
+    binary_info = OpInfoKeeper().binary_info_config_of(testcase.op_name)
     if not binary_info:
-        return False
-    op_info = OpInfoKeeper().info_of(testcase.op_name)
-    op_type_binary_info = binary_info.get(op_type, None)
-    if not op_type_binary_info:
         logging.info(f"OpType [{op_type}] is not configured in binary_info_config.json. "
                      f"SimplifiedKey mode is not supported.")
         return False
-    simplified_key_mode = op_type_binary_info.get("simplifiedKeyMode", -1)
+    simplified_key_mode = binary_info.get("simplifiedKeyMode", -1)
     if simplified_key_mode not in SUPPORT_SIMPLIFIEDKEY_ID_SET:
         logging.warning(f"SimplifiedKeyMode [{simplified_key_mode}] is not supported for {op_type}")
         return False
+    op_info = OpInfoKeeper().info_of(testcase.op_name)
     op_info_input_args_len = len(op_info.get("inputs", ()))
     op_info_output_args_len = len(op_info.get("outputs", ()))
-    config_input_args_len = len(op_type_binary_info.get("params", {}).get("inputs", ()))
-    config_output_args_len = len(op_type_binary_info.get("params", {}).get("outputs", ()))
+    config_input_args_len = len(binary_info.get("params", {}).get("inputs", ()))
+    config_output_args_len = len(binary_info.get("params", {}).get("outputs", ()))
     if op_info_input_args_len != config_input_args_len or op_info_output_args_len != config_output_args_len:
         logging.warning(f"Inputs or outputs count mismatch which in binary_info_config.json for [{op_type}]"
                         f", not support simplifiedKeyMode")
         return False
     return True
-
-
-def get_kernel_path() -> Optional[str]:
-    """Get built-in kernel path from ASCEND_OPP_KERNEL_PATH."""
-    global kernel_not_install_logged, kernel_path
-    if kernel_path not in ("NotInstalled", "InitUnknown"):
-        return kernel_path
-    elif kernel_path == "NotInstalled":
-        return None
-    env_kernel_path = os.getenv("ASCEND_OPP_KERNEL_PATH")
-    if not env_kernel_path:
-        if not kernel_not_install_logged:
-            logging.warning("Binary kernel [**-opp_kernel-*.run] is not installed!")
-            kernel_not_install_logged = True
-        kernel_path = "NotInstalled"
-        return None
-    kernel_path = _get_builtin_kernel_path()
-    return kernel_path
-
-
-def get_custom_kernel_paths_list() -> List[str]:
-    """Get kernel paths from ASCEND_CUSTOM_OPP_PATH directories."""
-    global custom_kernel_paths
-    if custom_kernel_paths is not None:
-        return custom_kernel_paths
-    custom_kernel_paths = [kp for kp in _get_custom_kernel_paths_platform() if os.path.isdir(kp)]
-    return custom_kernel_paths
-
-
-def _detect_install_scenario_for_path(kernel_inst_path: str) -> str:
-    """Detect V1/V2 install scenario for a given kernel path."""
-    short_soc_version = get_global_storage().short_soc_version.lower()
-    if bool(glob.glob(os.path.join(kernel_inst_path, "config",
-                                   short_soc_version, "ops_*/"))):
-        return "V2"
-    return "V1"
-
-
-def get_install_scenario():
-    global CANN_INSTALL_SCENARIO
-    if CANN_INSTALL_SCENARIO is not None:
-        return CANN_INSTALL_SCENARIO
-
-    kernel_inst_path = get_kernel_path()
-    if not kernel_inst_path:
-        return None
-
-    CANN_INSTALL_SCENARIO = _detect_install_scenario_for_path(kernel_inst_path)
-    return CANN_INSTALL_SCENARIO
-
-
-def get_binary_config_v1(kernel_dir: str, short_soc_version: str, op_type: str,
-                         op_interface: str, op_type_snake: str):
-    kernel_config_file = os.path.join(kernel_dir, f"config/{short_soc_version}/{op_type_snake}.json")
-    if not os.path.exists(kernel_config_file):
-        op_file = OpInfoKeeper().op_file_of(op_interface)
-        if not op_file or op_file == op_type_snake:  # default is snake op_type.
-            logging.info(f"Binary kernel config file {kernel_config_file} not exist for [{op_type}]")
-            return None
-        logging.info(f"Binary kernel config file {kernel_config_file} not exist for [{op_type}]. "
-                     f"Try to find it by opFile [{op_file}.json] configured in aic-ascend**-info.json.")
-        kernel_config_file = os.path.join(kernel_dir, f"config/{short_soc_version}/{op_file}.json")
-        if not os.path.exists(kernel_config_file):
-            logging.error(f"Binary kernel config file {kernel_config_file} not exist for [{op_type}]")
-            return None
-    with open(kernel_config_file, encoding="UTF-8") as f:
-        data: dict = json.load(f)
-    if not data or "binList" not in data:
-        logging.error(f"Invalid binary config file {kernel_config_file}: "
-                      f"it is empty or binList does not exist.")
-        return None
-    return data
-
-
-def get_binary_config_v2(kernel_dir: str, short_soc_version: str, op_type: str,
-                         op_interface: str, op_type_snake: str):
-    relative_to = os.path.join(kernel_dir, "config", short_soc_version)
-    kernel_config_files = glob.glob(f"{relative_to}/**/{op_type_snake}.json",
-                                    recursive=True)
-    if not kernel_config_files:
-        op_file = OpInfoKeeper().op_file_of(op_interface)
-        if not op_file or op_file == op_type_snake:  # default is snake op_type.
-            logging.info(f"Binary kernel config file {op_type_snake}.json not exist for [{op_type}] "
-                         f"under [{relative_to}]")
-            return None
-        logging.info(f"Binary kernel config file {op_type_snake}.json not exist for [{op_type}]. "
-                     f"Try to find it by opFile [{op_file}.json] configured in aic-ascend**-info.json.")
-        kernel_config_files = glob.glob(f"{relative_to}/**/{op_file}.json",
-                                        recursive=True)
-        if not kernel_config_files:
-            logging.error(f"Binary kernel config file {op_file}.json not exist for [{op_type}] "
-                          f"under [{relative_to}]")
-            return None
-
-    relative_paths = [os.path.relpath(p, relative_to)
-                      for p in kernel_config_files]
-    sorted_files = sorted(relative_paths,
-                          key=lambda x: 0 if 'legacy' in x.lower() else 1)
-    # read the last one.
-    last_file = sorted_files[-1]
-    relative_dir = os.path.dirname(last_file)
-    full_path = os.path.join(relative_to, last_file)
-    with open(full_path, encoding="UTF-8") as f:
-        data: dict = json.load(f)
-    if not data or "binList" not in data:
-        logging.error(f"Invalid binary config file {full_path}: "
-                      f"it is empty or binList does not exist.")
-        return None
-    data.update({'ops_repo': relative_dir})
-    return data
-
-
-def _get_binary_config_from_kernel_dir(kernel_dir: str, op_type: str,
-                                       op_interface: str) -> Optional[dict]:
-    """Search binary config in a specific kernel directory."""
-    short_soc_version = get_global_storage().short_soc_version.lower()
-    op_type_snake = camel_to_snake(op_type)
-    scenario = _detect_install_scenario_for_path(kernel_dir)
-    if scenario == "V1":
-        data = get_binary_config_v1(kernel_dir, short_soc_version, op_type,
-                                    op_interface, op_type_snake)
-    else:
-        data = get_binary_config_v2(kernel_dir, short_soc_version, op_type,
-                                    op_interface, op_type_snake)
-    if data is not None:
-        data['_kernel_path'] = kernel_dir
-    return data
-
-
-def get_binary_config(op_type: str, op_interface: str) -> Optional[dict]:
-    global op_binary_config
-    if op_interface in op_binary_config:
-        return op_binary_config[op_interface]
-    op_binary_config[op_interface] = None  # init as None first
-    if not op_type:
-        logging.error(f"Op type unknown or not configured in [aic-*-ops-info.json] for operator [{op_interface}]")
-        return None
-
-    # Search custom kernel paths first (higher priority)
-    for custom_kp in get_custom_kernel_paths_list():
-        data = _get_binary_config_from_kernel_dir(custom_kp, op_type, op_interface)
-        if data:
-            logging.info(f"Found binary config for [{op_type}] in custom path: {custom_kp}")
-            op_binary_config[op_interface] = data
-            return data
-
-    # Fall back to built-in
-    kernel_dir = get_kernel_path()
-    if not kernel_dir:
-        return None
-    data = _get_binary_config_from_kernel_dir(kernel_dir, op_type, op_interface)
-    op_binary_config[op_interface] = data
-    return data
 
 
 def gather_dynamic_tensors(interface: OperatorInterface, testcase: TestcaseOp):
@@ -328,85 +160,6 @@ def format_normalize(format_mode, tensor_format):
         return tensor_format
 
 
-def get_binary_info_config_v1(kernel_cfg_dir: str):
-    binary_info_config_file = os.path.join(kernel_cfg_dir, "binary_info_config.json")
-    if not os.path.exists(binary_info_config_file):
-        logging.error(f"Binary info config file {binary_info_config_file} not exists")
-        return None
-    with open(binary_info_config_file, encoding="UTF-8") as f:
-        data: dict = json.load(f)
-    return data
-
-
-def get_binary_info_config_v2(kernel_cfg_dir: str):
-    data = {}
-    binary_info_config_files = glob.glob(f"{kernel_cfg_dir}/**/binary_info_config.json",
-                                         recursive=True)
-    if not binary_info_config_files:
-        logging.error(f"Binary info config file [binary_info_config.json] "
-                      f"does not exist in [{kernel_cfg_dir}]")
-        return None
-    relative_paths = [os.path.relpath(p, kernel_cfg_dir)
-                      for p in binary_info_config_files]
-    sorted_files = sorted(relative_paths,
-                          key=lambda x: 0 if 'legacy' in x.lower() else 1)
-    for cfg in sorted_files:
-        relative_dir = os.path.dirname(cfg)
-        full_path = os.path.join(kernel_cfg_dir, cfg)
-        with open(full_path, encoding="UTF-8") as f:
-            json_content: dict = json.load(f)
-            for v in json_content.values():
-                # used to replace short_soc_version later
-                v.update({'ops_repo': relative_dir})
-        data.update(json_content)
-    return data
-
-
-def _get_binary_info_config_from_kernel_dir(kernel_dir: str) -> Optional[dict]:
-    """Load binary_info_config from a specific kernel directory."""
-    short_soc_version = get_global_storage().short_soc_version.lower()
-    kernel_cfg_dir = os.path.join(kernel_dir, "config", short_soc_version)
-    if not os.path.isdir(kernel_cfg_dir):
-        return None
-    scenario = _detect_install_scenario_for_path(kernel_dir)
-    if scenario == "V1":
-        data = get_binary_info_config_v1(kernel_cfg_dir)
-    else:
-        data = get_binary_info_config_v2(kernel_cfg_dir)
-    if data:
-        for v in data.values():
-            if isinstance(v, dict):
-                v['_kernel_path'] = kernel_dir
-    return data
-
-
-def get_binary_info_config():
-    global binary_info_config
-    if binary_info_config is not None:
-        return binary_info_config
-
-    # Load built-in first
-    kernel_dir = get_kernel_path()
-    if kernel_dir:
-        short_soc_version = get_global_storage().short_soc_version.lower()
-        kernel_cfg_dir = os.path.join(kernel_dir, "config", short_soc_version)
-        if get_install_scenario() == "V1":
-            binary_info_config = get_binary_info_config_v1(kernel_cfg_dir) or {}
-        else:
-            binary_info_config = get_binary_info_config_v2(kernel_cfg_dir) or {}
-    else:
-        binary_info_config = {}
-
-    # Merge custom configs (higher priority, overrides built-in)
-    for custom_kp in get_custom_kernel_paths_list():
-        custom_cfg = _get_binary_info_config_from_kernel_dir(custom_kp)
-        if custom_cfg:
-            logging.info(f"Loading custom binary_info_config from: {custom_kp}")
-            binary_info_config.update(custom_cfg)
-
-    return binary_info_config if binary_info_config else None
-
-
 def get_impl_mode_int(impl_mode: str) -> int:
     IMPL_MODE_DICT: dict = {
         "high_performance": 1,
@@ -429,7 +182,7 @@ def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: Test
     generalized_attr = []
     xput_num = len(op_info.get("inputs", ())) + len(op_info.get("outputs", ()))
     # fix axes, axis
-    op_func = interface.get_dyn_operator(testcase, False)
+    op_func = interface.get_dyn_operator(testcase)
     dyn_func_params = interface.get_op_func_parameter_dict(op_func, testcase.op_name)
     op_kwargs = param_transformation(testcase.spec_attrs, tuple(dyn_func_params))
     idx = 0
@@ -453,7 +206,7 @@ def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: Test
     return ",".join(generalized_attr)
 
 
-def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, binary_info: dict):
+def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp):
     # GenerateSimpleKeyStr
     def _construct_dtype_format(xput_tensor: Union[List[dict], dict],
                                 _dtype_mode, _format_mode, explain: list):
@@ -466,16 +219,17 @@ def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, 
         return f"{DATA_TYPE_DICT[dtype]},{FORMAT_DICT[fmt]}"
 
     # simplifiedKey: op_type/deterministic,impl_mode/required input dtype,format/output dtype,format
-    op_type = interface.get_op_type_from_ops_info(testcase.op_name)
+    op_type = OpInfoKeeper().op_type_of(testcase.op_name)
     deterministic = 1 if testcase.manual_dyn_build_config.get("enable_deterministic_mode", False) else 0
     impl_mode_str = testcase.attributes.get("impl_mode", "")
     impl_mode = get_impl_mode_int(impl_mode_str)
 
     op_info = OpInfoKeeper().info_of(testcase.op_name)
+    binary_info = OpInfoKeeper().binary_info_config_of(testcase.op_name)
     dyn_inputs, dyn_outputs = gather_dynamic_tensors(interface, testcase)
     case_xputs: dict = {"inputs": dyn_inputs, "outputs": dyn_outputs}
-    binary_info_params_value = binary_info[op_type].get('params', None)
-    simplified_key_mode = binary_info[op_type]["simplifiedKeyMode"]
+    binary_info_params_value = binary_info.get('params', None)
+    simplified_key_mode = binary_info["simplifiedKeyMode"]
     simplified_key = f"{op_type}/d={deterministic},p={impl_mode}/"
     key_explain = f"{op_type}/determination={deterministic},impl_mode={impl_mode_str}/"
     if simplified_key_mode == 2:
@@ -485,8 +239,8 @@ def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, 
                                                       op_type, inputs, outputs, attrs)
         logging.info(f"customized simplified_key is {simplified_key}")
         return simplified_key
-    optional_input_mode = binary_info[op_type].get("optionalInputMode", "no_placeholder")
-    dynamic_param_mode = binary_info[op_type].get("dynamicParamMode", "")
+    optional_input_mode = binary_info.get("optionalInputMode", "no_placeholder")
+    dynamic_param_mode = binary_info.get("dynamicParamMode", "")
     xput_key = []
     xput_key_exp = []
     for str_xpt in ('inputs', 'outputs'):
@@ -520,24 +274,13 @@ def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, 
     return simplified_key
 
 
-def kernel_match_by_simplified_key(simplified_key: str, op_type: str, binary_info: dict):
-    short_soc_version = get_global_storage().short_soc_version.lower()
-    op_binary_info = binary_info[op_type]
-    bin_list = op_binary_info.get("binaryList", ())
+def kernel_match_by_simplified_key(simplified_key: str, op_name: str):
+    binary_info = OpInfoKeeper().binary_info_config_of(op_name)
+    bin_list = binary_info.get("binaryList", ())
     matched_bin_list = [b for b in bin_list
                         if "simplifiedKey" in b and simplified_key in b["simplifiedKey"]]
     logging.debug(f"Simplified key of {simplified_key} matched bin count: {len(matched_bin_list)}")
     matched_bin = matched_bin_list[0] if matched_bin_list else None
-    if matched_bin is None:
-        return None
-    if 'ops_repo' in op_binary_info:
-        for k in ('binPath', 'jsonPath'):
-            if k in matched_bin and f"/{op_binary_info['ops_repo']}/" not in matched_bin[k]:
-                matched_bin[k] = matched_bin[k].replace(f"{short_soc_version}/",
-                                                        f"{short_soc_version}/{op_binary_info['ops_repo']}/")
-    # Propagate source kernel_path from op-level config to matched result
-    if '_kernel_path' in op_binary_info:
-        matched_bin['_kernel_path'] = op_binary_info['_kernel_path']
     return matched_bin
 
 
@@ -547,7 +290,7 @@ def generalize_op(interface: OperatorInterface, testcase: TestcaseOp):
     op_info = OpInfoKeeper().info_of(testcase.op_name)
 
     # it will never be None
-    op_func = interface.get_dyn_operator(testcase, False)
+    op_func = interface.get_dyn_operator(testcase)
     dyn_func_params = interface.get_op_func_parameter_dict(op_func, testcase.op_name)
     static_json, dynamic_json = generalize_with_default_rule(testcase, op_info, dyn_func_params,
                                                              dyn_inputs, dyn_outputs)
@@ -568,7 +311,8 @@ def generalize_op(interface: OperatorInterface, testcase: TestcaseOp):
     return static_json, dynamic_json
 
 
-def get_optional_input_indices(op_info: dict) -> list:
+def get_optional_input_indices(op_name: str) -> list:
+    op_info = OpInfoKeeper().info_of(op_name)
     inpts = op_info.get("inputs", ())
     return [idx for idx, inpt in enumerate(inpts) if inpt.get("paramType") == "optional"]
 
@@ -577,11 +321,11 @@ def get_generalize_func_registered(interface: OperatorInterface,
                                    testcase: TestcaseOp) -> Optional[Callable]:
     if testcase.op_name in op_generalize_func:
         return op_generalize_func[testcase.op_name]
-    op_func = interface.get_dyn_operator(testcase, search_user_defined=False)
+    op_func = interface.get_dyn_operator(testcase)
     if not op_func:
         generalize_func = None
     else:
-        op_type = interface.get_op_type_from_ops_info(testcase.op_name)
+        op_type = OpInfoKeeper().op_type_of(testcase.op_name)
         generalize_func = None if not op_type else interface.get_op_generalize_func(op_type)
     op_generalize_func[testcase.op_name] = generalize_func
     return generalize_func
@@ -807,15 +551,6 @@ def kernel_match_by_static_key(testcase: TestcaseOp, bin_cfg: dict,
     matched_bin = None
     if matched_bin_list:
         matched_bin = match_op_params(matched_bin_list, dyn_generalize_info, optional_input_indices)
-    if matched_bin is None:
-        return None
-    short_soc_version = get_global_storage().short_soc_version.lower()
-    if 'ops_repo' in bin_cfg:
-        bin_info = matched_bin["binInfo"]
-        for k in ('jsonFilePath',):
-            if k in bin_info and f"/{bin_cfg['ops_repo']}/" not in bin_info[k]:
-                bin_info[k] = bin_info[k].replace(f"{short_soc_version}/",
-                                                  f"{short_soc_version}/{bin_cfg['ops_repo']}/")
     return matched_bin
 
 

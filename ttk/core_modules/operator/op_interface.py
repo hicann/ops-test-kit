@@ -27,9 +27,9 @@ try:
 except ImportError:
     from collections import Callable
 from collections import OrderedDict
-from types import ModuleType
+
 from typing import Any, Optional, Sequence, Tuple, Union
-from importlib import util as importlib_util
+
 
 # Third-Party Packages
 from .tbe_interface import Opc
@@ -41,10 +41,6 @@ from ...utilities import param_transformation, read_file, tuple_flatten
 from ...utilities import get_dtype_width, resolve_custom_numpy_dtypes
 
 
-# cache operator functions
-DYN_OP_FUNC_CACHE: dict = {}
-DYN_OP_IMPL_TYPE: dict = {}
-DYN_OP_SELECT_FORMAT_FUNC_CACHE: dict = {}
 
 
 class CaseNotSupportedError(Exception):
@@ -63,59 +59,6 @@ class OperatorInterface(metaclass=Singleton):
 
     def __init__(self):
         self._opc = Opc()
-
-    @staticmethod
-    def get_operator_interface(module: str, op_file: str, interface: str = None,
-                               search_user_defined: bool = False) -> Optional[Callable]:
-        """
-        Get operator function
-        :param module: operator module name (usually impl or impl.dynamic)
-        :param op_file: operator file name without ".py"
-        :param interface: interface name, default considered to be same as op_file
-        :param search_user_defined: search user defined modules or not.
-        :return: operator function
-        """
-        # Try to get operator module and operator function in it
-        if not op_file:
-            return None
-        interface = op_file if not interface else interface
-        search_list = [f"{module}.{op_file}"]
-
-        as_module = None
-        for s in search_list:
-            try:
-                parent_module: ModuleType = __import__(s, fromlist=[interface])
-                logging.debug("Trying to get interface %s from %s" % (interface, parent_module.__file__))
-                as_module = getattr(parent_module, interface)
-                break
-            except ModuleNotFoundError as e:
-                if e.name.split('.')[-1] != op_file and not e.name.endswith('.dynamic'):
-                    raise RuntimeError(f"Module {s} exists, but some modules depended not found: {e.name}")
-                else:
-                    continue
-            except AttributeError:
-                continue
-            except Exception as e:
-                logging.exception("Operator import sequence for %s encountered a fatal error: %s", interface, e)
-
-        if not isinstance(as_module, Callable):
-            result = getattr(as_module, interface, None)
-        else:
-            result = as_module
-        if result is None and module in ("impl", "impl.dynamic"):
-            impl_path = list(importlib_util.find_spec("impl").submodule_search_locations)[0]
-            ops_dir = [x for x in os.listdir(impl_path) if x.startswith('ops_')]
-            ops_dir = sorted(ops_dir,
-                             key=lambda x: 1 if 'legacy' in x.lower() else 0)
-            module_splits = module.split('.')
-            for d in ops_dir:
-                new_module = module_splits.copy()
-                new_module.insert(1, d)
-                result = OperatorInterface.get_operator_interface(
-                    '.'.join(new_module), op_file, interface, search_user_defined=False)
-                if result is not None:
-                    break
-        return result
 
     @staticmethod
     def prepare_operator_parameters(testcase: TestcaseOp,
@@ -395,7 +338,7 @@ class OperatorInterface(metaclass=Singleton):
 
     def _construct_compile_context_op_info(self, operator_func: Optional[Callable], op_name: str,
                                            kernel_name: str, attrs: dict):
-        op_type = self.get_op_type_from_ops_info(op_name) or \
+        op_type = OpInfoKeeper().op_type_of(op_name) or \
                   self.get_op_type_from_source_code(operator_func)
         if not op_type:
             logging.warning("OpInfo not registered with @register_operator "
@@ -617,21 +560,12 @@ class OperatorInterface(metaclass=Singleton):
             self.add_private_attr_to_op_info(tiling_attrs, attrs, op_info)
             self.add_compile_info_to_op_context(cxt, testcase)
 
-    def get_dyn_operator(self, testcase: TestcaseOp, search_user_defined: bool = False):
+    def get_dyn_operator(self, testcase: TestcaseOp):
         op_name = testcase.op_name
-        if op_name in DYN_OP_FUNC_CACHE:
-            self._switch_opc(DYN_OP_IMPL_TYPE[op_name])
-            return DYN_OP_FUNC_CACHE[op_name]
-        # Get operator function from dynamic impl
-        op_file = OpInfoKeeper().op_file_of(op_name) or op_name
-        logging.debug("Importing operator %s from impl.dynamic.%s" % (op_name, op_file))
-        operator_func = self.get_operator_interface("impl.dynamic", op_file, op_name,
-                                                    search_user_defined=search_user_defined)
+        operator_func = OpInfoKeeper().get_operator_function(op_name)
         if operator_func is None:
             logging.warning(f'Get dynamic impl function for operator [{op_name}] failed.')
-        DYN_OP_IMPL_TYPE[op_name] = self.get_op_impl_type_from_source_code(operator_func)
-        DYN_OP_FUNC_CACHE[op_name] = operator_func
-        self._switch_opc(DYN_OP_IMPL_TYPE[op_name])
+        self._switch_opc(OpInfoKeeper().impl_type_of(op_name))
         return operator_func
 
     @staticmethod
@@ -648,23 +582,6 @@ class OperatorInterface(metaclass=Singleton):
         except OSError:
             return None
         return op_type
-
-    @staticmethod
-    def get_op_impl_type_from_source_code(operator_func: Callable) -> str:
-        if not isinstance(operator_func, Callable):
-            return "tbe"
-        try:
-            module = inspect.getmodule(operator_func)
-            return "asc" if getattr(module, '__version__', '1.0.0') == '2.0.0' else "tbe"
-        except:
-            return "tbe"
-
-    @staticmethod
-    def get_op_type_from_ops_info(op_interface: str) -> Optional[str]:
-        op_info = OpInfoKeeper().info_of(op_interface)
-        if not op_info:
-            return None
-        return op_info.get("op_type", None)
 
     @staticmethod
     def get_op_func_params(operator_func=None, op_name: str = None) -> tuple:
@@ -716,18 +633,6 @@ class OperatorInterface(metaclass=Singleton):
     @staticmethod
     def dtype_str_to_type(s):
         return list if s.startswith("list") else eval(s)
-
-    @staticmethod
-    def _get_op_select_format(op_file_name: str, is_dynamic: bool = False):
-        if is_dynamic:
-            if op_file_name in DYN_OP_SELECT_FORMAT_FUNC_CACHE:
-                return DYN_OP_SELECT_FORMAT_FUNC_CACHE[op_file_name]
-        module = "impl.dynamic" if is_dynamic else "impl"
-        func = OperatorInterface.get_operator_interface(module, op_file_name, "op_select_format",
-                                                        search_user_defined=False)
-        if is_dynamic:
-            DYN_OP_SELECT_FORMAT_FUNC_CACHE[op_file_name] = func
-        return func
 
 def adapter_before_tiling(testcase: TestcaseOp,
                           compile_result: Union[DynamicCompilationResult, BinaryCompilationResult],

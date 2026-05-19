@@ -242,6 +242,7 @@ def __gen_output(context: TestcaseOp):
             output_arrays.append(numpy.ones(output_shape, dtype=out_dtype))
     __append_out_shape_unknown_golden(context, golden_arrays, output_arrays)
     context.golden_arrays = golden_arrays
+    print("--->", [x.shape for x in golden_arrays])
     context.output_arrays = tuple(output_arrays)
 
 

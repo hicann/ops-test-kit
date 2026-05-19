@@ -133,20 +133,20 @@ class TestcaseOp(TestcaseBase):
         "op_name": (FIELD_TYPES.STRING, None),  # Required
     }
     non_platform_static_property_headers: Dict[str, tuple] = {
-        "input_dtypes": (FIELD_TYPES.STRING_CONTAINER_NESTED, None, ()),
+        "input_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ()),
         "input_ori_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, ("input_shapes",)),
         "output_ori_shapes": (FIELD_TYPES.SHAPELIKE_STC_EX_NESTED, ("output_shapes",), None),
-        "input_ori_formats": (FIELD_TYPES.STRING_CONTAINER_NESTED,
+        "input_ori_formats": (FIELD_TYPES.STRING_SCALAR_NESTED,
                                   ("input_formats",), ("ND",)),
-        "output_ori_formats": (FIELD_TYPES.STRING_CONTAINER_NESTED, ("output_formats",), ("ND",)),
+        "output_ori_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, ("output_formats",), ("ND",)),
         "attributes": (FIELD_TYPES.DICT, None, {}),
     }
     static_property_headers: Dict[str, tuple] = {
         "input_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
-        "output_dtypes": (FIELD_TYPES.STRING_CONTAINER_NESTED, None),
+        "output_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None),
         "output_shapes": (FIELD_TYPES.SHAPELIKE_STC_EX_NESTED, None, None),
-        "input_formats": (FIELD_TYPES.STRING_CONTAINER_NESTED, None, ("ND",)),
-        "output_formats": (FIELD_TYPES.STRING_CONTAINER_NESTED, ("output_ori_formats",), ("ND",)),
+        "input_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ("ND",)),
+        "output_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, ("output_ori_formats",), ("ND",)),
     }
     special_property_headers: Dict[str, tuple] = {
         **TestcaseBase.special_property_headers,

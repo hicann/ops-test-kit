@@ -76,9 +76,6 @@ def _mock_env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _mock_singleton():
-    oi_mod.DYN_OP_FUNC_CACHE.clear()
-    oi_mod.DYN_OP_IMPL_TYPE.clear()
-    oi_mod.DYN_OP_SELECT_FORMAT_FUNC_CACHE.clear()
     p = patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper')
     mock_cls = p.start()
     mock_cls.return_value.info_of.return_value = None
@@ -144,34 +141,6 @@ class TestDtypeStrToType:
 
     def test_int_type(self):
         assert OperatorInterface.dtype_str_to_type("int") == int
-
-
-class TestGetOpTypeFromOpsInfo:
-
-    def test_found(self):
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as m:
-            m.return_value.info_of.return_value = {"op_type": "AddOp"}
-            assert OperatorInterface.get_op_type_from_ops_info("Add") == "AddOp"
-
-    def test_not_found(self):
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as m:
-            m.return_value.info_of.return_value = None
-            assert OperatorInterface.get_op_type_from_ops_info("X") is None
-
-
-class TestGetOpImplTypeFromSourceCode:
-
-    def test_asc_version(self):
-        func = MagicMock()
-        module = MagicMock(__version__='2.0.0')
-        with patch('inspect.getmodule', return_value=module):
-            assert OperatorInterface.get_op_impl_type_from_source_code(func) == "asc"
-
-    def test_tbe_version(self):
-        func = MagicMock()
-        module = MagicMock(__version__='1.0.0')
-        with patch('inspect.getmodule', return_value=module):
-            assert OperatorInterface.get_op_impl_type_from_source_code(func) == "tbe"
 
 
 class TestGetOpTypeFromSourceCode:
@@ -245,14 +214,16 @@ class TestConstructCompileContextOpInfo:
 
     def test_with_op_type(self, _mock_singleton):
         oi = _mock_singleton
-        with patch.object(OperatorInterface, 'get_op_type_from_ops_info', return_value="AddOp"):
+        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as m:
+            m.return_value.op_type_of.return_value = "AddOp"
             oi._construct_compile_context_op_info(lambda: None, "Add", "kernel", {})
         oi._opc.op_info.OpInfo.assert_called_with("AddOp", "AddOp")
 
     def test_unknown_op_type(self, _mock_singleton):
         oi = _mock_singleton
-        with patch.object(OperatorInterface, 'get_op_type_from_ops_info', return_value=None), \
+        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as m, \
              patch.object(OperatorInterface, 'get_op_type_from_source_code', return_value=None):
+            m.return_value.op_type_of.return_value = None
             oi._construct_compile_context_op_info(lambda: None, "Add", "kernel", {})
         oi._opc.op_info.OpInfo.assert_called_with("UNKNOWN", "UNKNOWN")
 
@@ -260,7 +231,8 @@ class TestConstructCompileContextOpInfo:
         oi = _mock_singleton
         mock_oi = MagicMock()
         oi._opc.op_info.OpInfo.return_value = mock_oi
-        with patch.object(OperatorInterface, 'get_op_type_from_ops_info', return_value="AddOp"):
+        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as m:
+            m.return_value.op_type_of.return_value = "AddOp"
             oi._construct_compile_context_op_info(lambda: None, "Add", "kernel", {"impl_mode": "hp"})
         assert mock_oi.precision_mode == "hp"
 
@@ -299,7 +271,8 @@ class TestSetCommonCompileContext:
         cxt.get_op_mode.return_value = "dynamic"
         case = _make_testcase()
         case.kb_pid = 42
-        with patch.object(OperatorInterface, 'get_op_type_from_ops_info', return_value="AddOp"):
+        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as m:
+            m.return_value.op_type_of.return_value = "AddOp"
             oi.set_common_compile_context(cxt, case, MagicMock(), "kernel")
         cxt.add_addition.assert_any_call("master_pid", 42)
 
@@ -323,18 +296,10 @@ class TestSetDynamicCompileContext:
 
 class TestGetDynOperator:
 
-    def test_cached(self, _mock_singleton):
-        oi = _mock_singleton
-        mock_func = MagicMock()
-        oi_mod.DYN_OP_FUNC_CACHE["Add"] = mock_func
-        oi_mod.DYN_OP_IMPL_TYPE["Add"] = "tbe"
-        assert oi.get_dyn_operator(_make_testcase()) is mock_func
-
     def test_not_found(self, _mock_singleton):
         oi = _mock_singleton
-        with patch.object(OperatorInterface, 'get_operator_interface', return_value=None), \
-             patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as m:
-            m.return_value.op_file_of.return_value = None
+        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as m:
+            m.return_value.get_operator_function.return_value = None
             assert oi.get_dyn_operator(_make_testcase()) is None
 
 
@@ -595,15 +560,3 @@ class TestAdapterBeforeTiling:
         fi = [None, {"format": "NCHW", "shape": (16, 3, 3, 3)}]
         adapter_before_tiling(case, cr, fi, [None])
         assert fi[1]["format"] == "FRACTAL_Z"
-
-
-class TestGetOpSelectFormat:
-
-    def test_cached_dynamic(self):
-        mock_func = MagicMock()
-        oi_mod.DYN_OP_SELECT_FORMAT_FUNC_CACHE["Add"] = mock_func
-        assert OperatorInterface._get_op_select_format("Add", is_dynamic=True) is mock_func
-
-    def test_not_cached(self):
-        with patch.object(OperatorInterface, 'get_operator_interface', return_value=None):
-            assert OperatorInterface._get_op_select_format("NewOp", is_dynamic=True) is None

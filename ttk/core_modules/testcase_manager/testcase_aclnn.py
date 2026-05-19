@@ -148,8 +148,8 @@ class TestcaseAclnn(TensorApiTestcaseBase):
     }
     tensor_property_headers: Dict[str, tuple] = {
         "tensor_view_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
-        "tensor_formats": (FIELD_TYPES.STRING_CONTAINER_NESTED, None, ("ND",)),
-        "tensor_dtypes": (FIELD_TYPES.STRING_CONTAINER_NESTED, None, ()),
+        "tensor_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ("ND",)),
+        "tensor_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ()),
         "tensor_storage_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
         "tensor_view_offsets": (FIELD_TYPES.INT_CONTAINER_NESTED, None, ()),
         "tensor_view_strides": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
@@ -162,7 +162,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "attributes": (FIELD_TYPES.DICT, None, {}),
     }
     scalar_property_headers: Dict[str, tuple] = {
-        "scalar_dtypes": (FIELD_TYPES.STRING_CONTAINER_NESTED, None, ()),
+        "scalar_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ()),
     }
     special_property_headers: Dict[str, tuple] = {
         **TensorApiTestcaseBase.special_property_headers,

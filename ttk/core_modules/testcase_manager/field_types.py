@@ -40,8 +40,8 @@ class FIELD_TYPES(Enum):
     SHAPE_STRIDE = auto()  # shape stride
     SHAPELIKE_STC_NESTED = auto()  # static shape with TensorList nesting support
     SHAPELIKE_STC_EX_NESTED = auto()  # static shape with TensorList nesting + inference string support
-    STRING_CONTAINER_NESTED = auto()  # string container with TensorList nesting support
+    STRING_SCALAR_NESTED = auto()  # string scalar with TensorList nesting support
+    FLOAT_SCALAR_NESTED = auto()  # float/int scalar with TensorList nesting support
     INT_CONTAINER_NESTED = auto()  # int container with TensorList nesting support
     SHAPELIKE_FLOAT_SIGNED_NESTED = auto()  # signed float shapelike with TensorList nesting support
     SHAPELIKE_FLOAT_NESTED = auto()  # float shapelike with TensorList nesting support (positive only)
-    FLOAT_OR_CONTAINER_NESTED = auto()  # single float or nested float container (backward compat with FLOAT)

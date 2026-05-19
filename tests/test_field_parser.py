@@ -13,9 +13,11 @@ import pytest
 from ttk.core_modules.testcase_manager.field_parser import (
     shapelike_stc_nested,
     shapelike_float_signed_nested,
-    string_container_nested,
-    int_container_nested,
+    scalar_nested,
 )
+from functools import partial
+
+_int_container_nested = partial(scalar_nested, allowed_type=int)
 
 
 class TestShapelikeStcNested:
@@ -58,55 +60,65 @@ class TestShapelikeStcNested:
             shapelike_stc_nested("('abc',)")
 
 
-class TestStringContainerNested:
-    """Tests for string_container_nested parser."""
+class TestScalarNested:
+    """Tests for scalar_nested parser."""
 
     def test_flat_dtypes(self):
-        result = string_container_nested("('float32','float32')")
+        result = scalar_nested("('float32','float32')")
         assert result == ("float32", "float32")
 
     def test_nested_dtypes(self):
-        result = string_container_nested("(('float32','float32'),'float32')")
+        result = scalar_nested("(('float32','float32'),'float32')")
         assert result == (("float32", "float32"), "float32")
 
     def test_single_dtype(self):
-        result = string_container_nested("('float32',)")
+        result = scalar_nested("('float32',)")
         assert result == ("float32",)
 
     def test_with_none(self):
-        result = string_container_nested("(('float32','float32'),None)")
+        result = scalar_nested("(('float32','float32'),None)")
         assert result == (("float32", "float32"), None)
 
     def test_formats(self):
-        result = string_container_nested("('ND','ND','ND')")
+        result = scalar_nested("('ND','ND','ND')")
         assert result == ("ND", "ND", "ND")
 
     def test_compressed_tensor_list_format(self):
-        result = string_container_nested("(('ND',),'ND')")
+        result = scalar_nested("(('ND',),'ND')")
         assert result == (("ND",), "ND")
+
+    def test_float_tuple_no_double_wrap(self):
+        result = scalar_nested("(1e-08, 1e-08, 1e-08)")
+        assert result == (1e-08, 1e-08, 1e-08)
+        for val in result:
+            assert isinstance(val, float)
+
+    def test_single_float(self):
+        result = scalar_nested("1e-08")
+        assert result == (1e-08,)
 
 
 class TestIntContainerNested:
-    """Tests for int_container_nested parser."""
+    """Tests for int_container_nested (scalar_nested with allowed_type=int)."""
 
     def test_flat_offsets(self):
-        result = int_container_nested("(0, 1)")
+        result = _int_container_nested("(0, 1)")
         assert result == (0, 1)
 
     def test_nested_offsets(self):
-        result = int_container_nested("((0, 1), 2)")
+        result = _int_container_nested("((0, 1), 2)")
         assert result == ((0, 1), 2)
 
     def test_single_value(self):
-        result = int_container_nested("0")
+        result = _int_container_nested("0")
         assert result == (0,)
 
     def test_empty(self):
-        result = int_container_nested("")
+        result = _int_container_nested("")
         assert result == ()
 
     def test_with_none(self):
-        result = int_container_nested("(0, None, 2)")
+        result = _int_container_nested("(0, None, 2)")
         assert result == (0, None, 2)
 
 

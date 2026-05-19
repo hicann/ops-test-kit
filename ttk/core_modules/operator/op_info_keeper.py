@@ -17,14 +17,16 @@ __all__ = ["OpInfoKeeper"]
 # Standard Packages
 from collections import defaultdict
 from configparser import ConfigParser
+import glob
 import json
 import logging
 import os
-from typing import Dict, Union, Callable, List, Any
+from typing import Dict, Union, Callable, List, Optional, Any
 
 # Third-Party Packages
 from ...utilities import Singleton, camel_to_snake, is_main_process
-from ...utilities.platform import get_builtin_impl_base_path, get_builtin_op_info_path, get_custom_op_info_paths, get_npu_hw_info
+from ...utilities.platform import (get_impl_base_paths, get_op_info_paths,
+                                   get_npu_hw_info)
 
 
 class OpInfoKeeper(metaclass=Singleton):
@@ -33,6 +35,10 @@ class OpInfoKeeper(metaclass=Singleton):
     """
     def __init__(self):
         self._ops_info = None
+        self._op_func_cache = {}
+        self._kernel_info_cache = {}
+        self._binary_static_cache = {}
+        self._binary_info_cache = {}
 
     @property
     def ops_info(self) -> dict:
@@ -47,17 +53,177 @@ class OpInfoKeeper(metaclass=Singleton):
             return None
         return get_npu_hw_info(full_soc).get("short_soc_version")
 
-    def has_op(self, op_name: str) -> bool:
-        return op_name in self.ops_info
-
     def info_of(self, op_name: str) -> dict:
+        """Return full op_info dict, or None if not found."""
         return self.ops_info.get(op_name, None)
 
-    def op_file_of(self, op_name: str) -> str:
-        return "" if not self.has_op(op_name) else self.ops_info[op_name]["opFile.value"]
+    def op_type_of(self, op_name: str) -> Optional[str]:
+        """Return CamelCase op_type (e.g. 'GeGluV2') for a snake_case op_name (e.g. 'ge_glu_v2')."""
+        info = self.info_of(op_name)
+        return info["op_type"] if info else None
 
-    def op_output_defined(self, op_name: str):
-        return not self.has_op(op_name) or self.ops_info[op_name]["outputs"]
+    def op_output_defined(self, op_name: str) -> bool:
+        """Check if the operator has output definitions in op_info config."""
+        return op_name not in self.ops_info or self.ops_info[op_name]["outputs"]
+
+    def _resolve_path(self, relative_path: str, ki: dict) -> str:
+        """Resolve a relative binary path to absolute, inserting ops_group automatically."""
+        kernel_root = ki["kernel_root"]
+        ops_group = ki["ops_group"]
+        if ops_group and f"/{ops_group}/" not in relative_path:
+            parts = relative_path.split("/", 1)
+            if len(parts) == 2:
+                relative_path = parts[0] + "/" + ops_group + "/" + parts[1]
+        return os.path.join(kernel_root, relative_path)
+
+    def _resolve_bin_paths(self, bin_list: list, ki: dict):
+        """Resolve jsonPath/binPath/jsonFilePath in bin_list entries to absolute paths."""
+        if not bin_list:
+            return
+        for item in bin_list:
+            if not isinstance(item, dict):
+                continue
+            for key in ("jsonPath", "binPath"):
+                if key in item:
+                    item[key] = self._resolve_path(item[key], ki)
+            bin_info = item.get("binInfo")
+            if isinstance(bin_info, dict) and "jsonFilePath" in bin_info:
+                bin_info["jsonFilePath"] = self._resolve_path(bin_info["jsonFilePath"], ki)
+
+    def kernel_info_of(self, op_name: str) -> Optional[dict]:
+        """Return kernel path info for the operator's source. Cached per op_name."""
+        if op_name in self._kernel_info_cache:
+            return self._kernel_info_cache[op_name]
+        info = self.info_of(op_name)
+        if not info:
+            return None
+        impl_base = info["_impl_base_path"]
+        if not impl_base:
+            return None
+        ops_group = info["_ops_group"]
+        short_soc = (self.short_soc_version or "").lower()
+        kernel_root = os.path.join(impl_base, "kernel")
+        binary_base = os.path.join(kernel_root, short_soc)
+        if ops_group:
+            binary_base = os.path.join(binary_base, ops_group)
+        config_dir = os.path.join(kernel_root, "config", short_soc)
+        if ops_group:
+            config_dir = os.path.join(config_dir, ops_group)
+        result = {
+            "kernel_root": kernel_root,
+            "binary_config_dir": config_dir,
+            "binary_base": binary_base,
+            "ops_group": ops_group,
+        }
+        self._kernel_info_cache[op_name] = result
+        return result
+
+    def get_operator_function(self, op_name: str) -> Optional[Callable]:
+        """Load operator implementation function with cache."""
+        if op_name in self._op_func_cache:
+            return self._op_func_cache[op_name]
+        info = self.info_of(op_name)
+        if not info:
+            return None
+        impl_prefix = info["_impl_prefix"]
+        ops_group = info["_ops_group"]
+        op_file = info["opFile.value"]
+        parts = [f"{impl_prefix}impl"]
+        if ops_group:
+            parts.append(ops_group)
+        parts.extend(["dynamic", op_file])
+        module_path = ".".join(parts)
+        try:
+            module = __import__(module_path, fromlist=[""])
+            func_name = info["opInterface.value"] or op_file
+            func = getattr(module, func_name, None)
+            self._op_func_cache[op_name] = func
+            info["_impl_type"] = "asc" if getattr(module, '__version__', '1.0.0') == '2.0.0' else "tbe"
+            return func
+        except (ImportError, AttributeError) as e:
+            logging.error(f"Failed to load operator function for {op_name}: {e}")
+            self._op_func_cache[op_name] = None
+            return None
+
+    def impl_type_of(self, op_name: str) -> str:
+        """Return impl type ('asc' or 'tbe'), lazy-resolved on first call."""
+        info = self.info_of(op_name)
+        if not info:
+            return "tbe"
+        if "_impl_type" not in info:
+            func = self.get_operator_function(op_name)
+            if func is None:
+                return "tbe"
+            # get_operator_function sets info["_impl_type"] on success
+        return info.get("_impl_type", "tbe")
+
+    def binary_static_key_config_of(self, op_name: str) -> Optional[dict]:
+        """Lazy-load per-operator staticKey binary config with cache."""
+        if op_name in self._binary_static_cache:
+            return self._binary_static_cache[op_name]
+
+        ki = self.kernel_info_of(op_name)
+        if not ki:
+            self._binary_static_cache[op_name] = None
+            return None
+
+        config_dir = ki["binary_config_dir"]
+        op_info = self.info_of(op_name)  # None has been checked in `kernel_info_of``
+        op_type = op_info["op_type"]
+        op_type_snake = camel_to_snake(op_type)
+        op_file = op_info.get("opFile.value", "")
+
+        for search_name in (op_type_snake, op_file):
+            if not search_name:
+                continue
+            candidates = glob.glob(os.path.join(config_dir, "**", f"{search_name}.json"),
+                                   recursive=True)
+            if not candidates:
+                continue
+            sorted_candidates = sorted(candidates,
+                                       key=lambda x: 0 if 'legacy' in x.lower() else 1)
+            full_path = sorted_candidates[-1]
+            with open(full_path, encoding="UTF-8") as f:
+                data = json.load(f)
+            if data and "binList" in data:
+                self._resolve_bin_paths(data.get("binList", []), ki)
+                self._binary_static_cache[op_name] = data
+                return data
+
+        self._binary_static_cache[op_name] = None
+        return None
+
+    def binary_info_config_of(self, op_name: str) -> Optional[dict]:
+        """Lazy-load per-operator simplifiedKey binary info config with cache."""
+        if op_name in self._binary_info_cache:
+            return self._binary_info_cache[op_name]
+
+        ki = self.kernel_info_of(op_name)
+        if not ki:
+            self._binary_info_cache[op_name] = None
+            return None
+
+        config_dir = ki["binary_config_dir"]
+        op_type = self.op_type_of(op_name)
+
+        config_files = sorted(glob.glob(os.path.join(config_dir, "**", "binary_info_config.json"),
+                                        recursive=True))
+        if not config_files:
+            self._binary_info_cache[op_name] = None
+            return None
+
+        for cfg_path in config_files:
+            with open(cfg_path, encoding="UTF-8") as f:
+                content = json.load(f)
+            if op_type in content:
+                entry = content[op_type]
+                if isinstance(entry, dict):
+                    self._resolve_bin_paths(entry.get("binaryList", []), ki)
+                self._binary_info_cache[op_name] = entry
+                return entry
+
+        self._binary_info_cache[op_name] = None
+        return None
 
     def _load_op_info_cfg(self) -> dict:
         keys = ("coreType.value", "opInterface.value", "opFile.value", "op.pattern",
@@ -68,30 +234,43 @@ class OpInfoKeeper(metaclass=Singleton):
         soc_lower = (hw_info.get("short_soc_version") or "").lower()
         cv_split = hw_info.get("cv_split", False)
 
-        # Collect all op info config files: built-in first, then custom (custom overrides built-in)
+        # Collect all op info config files: built-in → vendors(reversed) → custom(reversed)
+        # Later loading overrides earlier = custom highest priority
+        # Each entry is (file_path, source_type, vendor_name)
         all_op_info_paths = []
 
         # 1. built-in op info
         builtin_op_info_path = self._find_builtin_op_info_paths(soc_lower)
         if builtin_op_info_path:
-            all_op_info_paths.extend(builtin_op_info_path)
+            all_op_info_paths.extend([(f, "builtin", "") for f in builtin_op_info_path])
 
-        # 2. custom op info from ASCEND_CUSTOM_OPP_PATH (higher priority, loaded last to override)
-        custom_op_info_paths = self._find_custom_op_info_paths(soc_lower)
-        all_op_info_paths.extend(custom_op_info_paths)
+        # 2. vendor op info (reversed: config.ini lists highest priority first)
+        vendor_op_info_paths = self._find_ext_op_info_paths("vendor", soc_lower)
+        for f in reversed(vendor_op_info_paths):
+            # extract vendor name from path: .../vendors/{vendor_name}/...
+            vendors_marker = os.sep + "vendors" + os.sep
+            vendor_name = ""
+            if vendors_marker in f:
+                vendor_name = f.split(vendors_marker)[1].split(os.sep)[0]
+            all_op_info_paths.append((f, "vendor", vendor_name))
+
+        # 3. custom op info from ASCEND_CUSTOM_OPP_PATH (reversed, highest priority)
+        custom_op_info_paths = self._find_ext_op_info_paths("custom", soc_lower)
+        all_op_info_paths.extend([(f, "custom", "") for f in reversed(custom_op_info_paths)])
 
         if not all_op_info_paths:
             logging.warning("No op info config found (built-in or custom).")
             return {}
 
-        # tikc op file list
-        op_info_snake: Dict[str, dict] = defaultdict(dict)
+        op_info_snake: Dict[str, dict] = {}
 
-        for f in all_op_info_paths:
+        for f, source_type, vendor_name in all_op_info_paths:
             if f.endswith(".ini"):
                 op_info = _get_op_info_from_ini_file(f, keys)
             else:
                 op_info = _get_op_info_from_json_file(f, keys)
+
+            source_info = self._derive_op_source(f, source_type, vendor_name)
 
             for op in op_info.keys():
                 op_interface = op_info[op]["opInterface.value"] \
@@ -108,12 +287,13 @@ class OpInfoKeeper(metaclass=Singleton):
                     op_info[op]["opFile.value"] = camel_to_snake(op)
                 op_info_snake[op_interface] = op_info[op]
                 op_info_snake[op_interface].update({"op_type": op})
+                op_info_snake[op_interface].update(source_info)
                 self._eval_attr_str(op_info_snake[op_interface]["attr"], op)
         return op_info_snake
 
     def _find_builtin_op_info_paths(self, soc_lower: str) -> List[str]:
         """Find built-in op info config files."""
-        base = get_builtin_impl_base_path()
+        base = get_impl_base_paths("builtin")[0]
         # ini
         op_info_path = os.path.abspath(
             os.path.join(base, "op_info_cfg", "ai_core", soc_lower,
@@ -122,7 +302,7 @@ class OpInfoKeeper(metaclass=Singleton):
         if os.path.exists(op_info_path):
             return [op_info_path]
         # json (single file or all in config dir)
-        config_dir = get_builtin_op_info_path(soc_lower)
+        config_dir = get_op_info_paths("builtin", soc_lower)[0]
         single_json = os.path.abspath(
             os.path.join(config_dir, "aic-" + soc_lower + "-ops-info.json")
         )
@@ -132,23 +312,44 @@ class OpInfoKeeper(metaclass=Singleton):
             paths = [os.path.join(config_dir, f) for f in os.listdir(config_dir)
                      if f.endswith(".json") and os.path.isfile(os.path.join(config_dir, f))]
             if paths:
-                return paths
+                return sorted(paths, key=lambda x: 0 if 'legacy' in x.lower() else 1)
         logging.warning("Built-in op info config path does not exist for soc: %s" % soc_lower)
         return []
 
     @staticmethod
-    def _find_custom_op_info_paths(soc_lower: str) -> List[str]:
-        """Find op info config files from ASCEND_CUSTOM_OPP_PATH directories."""
+    def _find_ext_op_info_paths(source: str, soc_lower: str) -> List[str]:
+        """Find op info config files from vendor/custom directories."""
         result = []
-        for config_dir in get_custom_op_info_paths(soc_lower):
+        for config_dir in get_op_info_paths(source, soc_lower):
             if not os.path.isdir(config_dir):
                 continue
             for f in os.listdir(config_dir):
                 full = os.path.join(config_dir, f)
                 if f.endswith(".json") and os.path.isfile(full):
-                    logging.info(f"Loading custom op info from: {full}")
+                    logging.info(f"Loading {source} op info from: {full}")
                     result.append(full)
         return result
+
+    @staticmethod
+    def _derive_op_source(config_file_path: str, source_type: str, vendor_name: str) -> dict:
+        """Derive impl_prefix, ops_group, _impl_base_path from config file path."""
+        impl_prefix = ""
+        if source_type == "vendor" and vendor_name:
+            impl_prefix = vendor_name + "_"
+
+        config_filename = os.path.basename(config_file_path)
+        ops_group = ""
+        if config_filename.startswith("aic-") and "-ops-info-" in config_filename:
+            category = config_filename.split("-ops-info-")[1].replace(".json", "")
+            if category:
+                ops_group = "ops_" + category
+
+        config_dir = os.path.dirname(config_file_path)
+        config_parent = os.path.dirname(config_dir)
+        impl_base_path = os.path.dirname(config_parent)
+
+        return {"_impl_prefix": impl_prefix, "_ops_group": ops_group,
+                "_impl_base_path": impl_base_path}
 
     def _eval_attr_str(self, attrs: List[dict], op_name: str):
         for attr in attrs:
