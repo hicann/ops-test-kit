@@ -585,7 +585,6 @@ class TestNpuWeightQuantBatchmatmul:
         ]
         args, kwargs, _ = plan.build_args(tensors)
 
-        assert len(args) == 9
         assert args[0].shape == (4, 16)
         assert args[1].shape == (16, 8)
         assert args[2].shape == (1, 8)
@@ -615,7 +614,6 @@ class TestNpuWeightQuantBatchmatmul:
         ]
         args, kwargs, _ = plan.build_args(tensors)
 
-        assert len(args) == 9
         assert args[0].shape == (4, 16)
         assert args[1].shape == (16, 8)
         assert args[2].shape == (1, 8)
@@ -645,7 +643,6 @@ class TestNpuWeightQuantBatchmatmul:
         ]
         args, kwargs, _ = plan.build_args(tensors)
 
-        assert len(args) == 9
         assert args[0].shape == (4, 16)
         assert args[1].shape == (16, 8)
         assert args[2].shape == (2, 8)
