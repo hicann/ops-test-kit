@@ -569,7 +569,10 @@ class AclInterface:
 
     def _get_op_api(self, api_name):
         from .op_api_info_keeper import OpApiInfoKeeper
-        info = OpApiInfoKeeper().info_of(api_name)
+        lookup_name = api_name
+        if lookup_name.endswith('GetWorkspaceSize'):
+            lookup_name = lookup_name[:-16]
+        info = OpApiInfoKeeper().info_of(lookup_name)
         if not info:
             logging.error(f"API [{api_name}] not found in any header directory")
             return None
