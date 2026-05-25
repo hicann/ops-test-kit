@@ -14,6 +14,10 @@ model_results/
 toml_data/
 model_*/
 models_*/
-libs/
+lib/
+LLMAnalysisTool/
 settings.local.json
+
 ttk/_build_hash.py
+csrc/build/
+csrc/*/build/

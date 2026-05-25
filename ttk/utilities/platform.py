@@ -32,12 +32,12 @@ import subprocess
 from functools import lru_cache
 from typing import Tuple
 
+
 PLATFORM_BEFORE_DAVID = ("Ascend031", "Ascend310", "Ascend310P", "Ascend310B",
                          "Ascend610", "Ascend610Lite", "BS9SX1A",
                          "Ascend910B", "Ascend910_93", "Ascend910",
                          "Hi3796CV300CS", "Hi3796CV300ES",
                          "OPTG", "SD3403", "TsnsC", "TsnsE")
-
 
 _VALID_SOURCES = ("builtin", "vendor", "custom")
 
@@ -56,7 +56,9 @@ def get_opp_paths(source: str) -> list:
             return []
         config_file = os.path.join(opp_path, "vendors", "config.ini")
         if not os.path.isfile(config_file):
-            return []
+            # fallback: no vendors config → treat as custom path
+            custom_path = os.path.join(opp_path, "op_impl", "custom")
+            return [custom_path] if os.path.isdir(custom_path) else []
         vendors = []
         with open(config_file) as f:
             for line in f:
@@ -80,11 +82,21 @@ def get_opp_paths(source: str) -> list:
     raise ValueError(f"Unknown source: {source}, must be one of {_VALID_SOURCES}")
 
 
+def _builtin_op_impl_rel():
+    """Return builtin op_impl relative path, compatible with both layouts:
+    - vendors/ exists → built-in/op_impl (newer CANN)
+    - vendors/ absent → op_impl/built-in (older CANN)
+    """
+    opp_path = get_opp_paths("builtin")[0]
+    vendors_dir = os.path.join(opp_path, "vendors")
+    return os.path.join("built-in", "op_impl") if os.path.isdir(vendors_dir) else os.path.join("op_impl", "built-in")
+
+
 @lru_cache(maxsize=None)
 def get_op_impl_paths(source: str) -> list:
     """Return {opp}/op_impl paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
     if source == "builtin":
-        return [os.path.join(get_opp_paths("builtin")[0], "built-in", "op_impl")]
+        return [os.path.join(get_opp_paths("builtin")[0], _builtin_op_impl_rel())]
     elif source == "vendor":
         return [os.path.join(p, "op_impl") for p in get_opp_paths("vendor")]
     elif source == "custom":
@@ -96,7 +108,7 @@ def get_op_impl_paths(source: str) -> list:
 def get_impl_base_paths(source: str) -> list:
     """Return {opp}/op_impl/ai_core/tbe paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
     if source == "builtin":
-        return [os.path.join(get_opp_paths("builtin")[0], "built-in", "op_impl", "ai_core", "tbe")]
+        return [os.path.join(get_opp_paths("builtin")[0], _builtin_op_impl_rel(), "ai_core", "tbe")]
     elif source == "vendor":
         return [os.path.join(p, "op_impl", "ai_core", "tbe") for p in get_opp_paths("vendor")]
     elif source == "custom":

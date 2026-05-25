@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ttk"
-version = "3.0.0"
-description = "TTK — ops Test Tool Kit, Ascend NPU single-operator/aclnn/e2e testing framework"
+version = "2.8.0"
+description = "TTK — Tensor Tool Kit, Ascend NPU single-operator testing framework"
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "CANN Open Software License Agreement v2.0" }
+license = { text = "Apache-2.0 AND CANN-OSL-2.0 (see LICENSE and LICENSE.CANN)" }
 authors = [
     { name = "Huawei Technologies Co., Ltd." },
 ]
@@ -55,9 +55,9 @@ all = [
 ttk = "ttk.cli:main"
 
 [project.urls]
-Homepage = "https://gitcode.com/cann/ops-test-kit"
-Documentation = "https://gitcode.com/cann/ops-test-kit/blob/master/README.md"
-Issues = "https://gitcode.com/cann/ops-test-kit/issues"
+Homepage = "https://gitee.com/ascend/ttk"
+Documentation = "https://gitee.com/ascend/ttk/docs"
+Issues = "https://gitee.com/ascend/ttk/issues"
 
 [tool.setuptools]
 packages = { find = { include = ["ttk*"], exclude = ["tests*", "examples*"] } }

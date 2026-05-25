@@ -1,0 +1,6 @@
+{
+    global:
+        ClearErrorManager;
+    local:
+        *;
+};

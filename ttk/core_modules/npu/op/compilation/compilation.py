@@ -27,6 +27,8 @@ def compilation_process(testcase: TestcaseOp, mode: str, **_):
     :param testcase:
     :return:
     """
+    from ...error_cleaner import clear_error_manager
+    clear_error_manager()
     get_process_context().notify_status("InitCompilation")
     get_process_context().change_name(testcase.testcase_name)
     if not testcase.is_valid:

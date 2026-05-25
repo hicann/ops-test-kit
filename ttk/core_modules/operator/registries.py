@@ -18,7 +18,9 @@ __all__ = ["customize_gen_simplified_key"]
 
 # Standard Packages
 import ctypes
+import json
 import logging
+import math
 import os
 from typing import Union
 # Third-Party Packages
@@ -114,190 +116,71 @@ def load_op_registries():
             raise
 
 
-_GERT_DTYPE_MAP = {
-    'float32': 1, 'float': 1,
-    'float16': 2,
-    'int8': 3,
-    'int16': 4,
-    'int32': 5, 'int': 5,
-    'int64': 9,
-    'uint8': 7,
-    'uint16': 8,
-    'uint32': 9,
-    'uint64': 10,
-    'bool': 11,
-    'double': 12, 'float64': 12,
-    'bf16': 13, 'bfloat16': 13,
-}
-
-_GERT_FORMAT_MAP = {
-    'ND': 0, 'NCHW': 1, 'NHWC': 2, 'NC1HWC0': 5,
-    'FRACTAL_Z': 4, 'FRACTAL_NZ': 12, 'NZ': 12,
-    'NDC1HWC0': 33, 'FRACTAL_Z_G': 34,
-    'ND_RNN_BIAS': 29, 'FRACTAL_ZN_LSTM': 30,
-    'NCDHW': 0, 'NDHWC': 0, 'DHWCN': 0,
-}
-
-
-class _TensorDesc(ctypes.Structure):
-    _fields_ = [("dtype", ctypes.c_int32), ("format", ctypes.c_int32)]
-
-
-class _AttrDesc(ctypes.Structure):
-    _fields_ = [("dtype", ctypes.c_char_p), ("value", ctypes.c_void_p),
-                ("value_type", ctypes.c_int32), ("value_count", ctypes.c_int32)]
-
-
-def _build_tensor_descs(tensors):
-    if not tensors:
-        return None, 0
-    descs = []
-    for t in tensors:
-        if t is None:
-            descs.append(_TensorDesc(0, 0))
-            continue
-        dtype_str = t.get("dtype", "float32")
-        fmt_str = t.get("format", "ND")
-        if isinstance(dtype_str, (list, tuple)):
-            dtype_str = dtype_str[0] if dtype_str else "float32"
-        if isinstance(fmt_str, (list, tuple)):
-            fmt_str = fmt_str[0] if fmt_str else "ND"
-        dtype_str = dtype_str.lower().replace("ge_", "")
-        gert_dtype = _GERT_DTYPE_MAP.get(dtype_str, 0)
-        gert_fmt = _GERT_FORMAT_MAP.get(fmt_str, 0)
-        descs.append(_TensorDesc(gert_dtype, gert_fmt))
-    arr = (_TensorDesc * len(descs))(*descs)
-    return arr, len(descs)
-
-
-_ATTR_VALUE_TYPE_INT64 = 0
-_ATTR_VALUE_TYPE_FLOAT = 1
-_ATTR_VALUE_TYPE_BOOL = 2
-_ATTR_VALUE_TYPE_STR = 3
-_ATTR_VALUE_TYPE_LIST_INT64 = 4
-_ATTR_VALUE_TYPE_LIST_FLOAT = 5
-_ATTR_VALUE_TYPE_LIST_BOOL = 6
-_ATTR_VALUE_TYPE_LIST_STR = 7
-
-
-def _build_attr_descs(attrs):
-    if not attrs:
-        return None, 0
-    descs = []
-    _holders = []
-    for a in attrs:
-        if not isinstance(a, dict):
-            continue
-        dtype_str = a.get("dtype", "int")
-        val = a.get("value")
-        if val is None:
-            descs.append(_AttrDesc(dtype_str.encode(), ctypes.c_void_p(0), 0, 0))
-            continue
-        is_list = dtype_str.startswith("list_")
-        base_dtype = dtype_str.replace("list_", "")
-        if base_dtype in ("int", "int64", "int32"):
-            if is_list:
-                vals = val if isinstance(val, (list, tuple)) else [val]
-                buf = (ctypes.c_int64 * len(vals))(*[int(v) for v in vals])
-                _holders.append(buf)
-                descs.append(_AttrDesc(dtype_str.encode(), ctypes.cast(buf, ctypes.c_void_p),
-                                       _ATTR_VALUE_TYPE_LIST_INT64, len(vals)))
-            else:
-                buf = ctypes.c_int64(int(val))
-                _holders.append(buf)
-                descs.append(_AttrDesc(dtype_str.encode(), ctypes.cast(ctypes.pointer(buf), ctypes.c_void_p),
-                                       _ATTR_VALUE_TYPE_INT64, 1))
-        elif base_dtype in ("float", "float32"):
-            if is_list:
-                vals = val if isinstance(val, (list, tuple)) else [val]
-                buf = (ctypes.c_float * len(vals))(*[float(v) for v in vals])
-                _holders.append(buf)
-                descs.append(_AttrDesc(dtype_str.encode(), ctypes.cast(buf, ctypes.c_void_p),
-                                       _ATTR_VALUE_TYPE_LIST_FLOAT, len(vals)))
-            else:
-                buf = ctypes.c_double(float(val))
-                _holders.append(buf)
-                descs.append(_AttrDesc(dtype_str.encode(), ctypes.cast(ctypes.pointer(buf), ctypes.c_void_p),
-                                       _ATTR_VALUE_TYPE_FLOAT, 1))
-        elif base_dtype == "bool":
-            if is_list:
-                vals = val if isinstance(val, (list, tuple)) else [val]
-                buf = (ctypes.c_bool * len(vals))(*[bool(v) for v in vals])
-                _holders.append(buf)
-                descs.append(_AttrDesc(dtype_str.encode(), ctypes.cast(buf, ctypes.c_void_p),
-                                       _ATTR_VALUE_TYPE_LIST_BOOL, len(vals)))
-            else:
-                buf = ctypes.c_bool(bool(val))
-                _holders.append(buf)
-                descs.append(_AttrDesc(dtype_str.encode(), ctypes.cast(ctypes.pointer(buf), ctypes.c_void_p),
-                                       _ATTR_VALUE_TYPE_BOOL, 1))
-        elif base_dtype in ("str", "string"):
-            encoded = str(val).encode('utf_8')
-            _holders.append(encoded)
-            descs.append(_AttrDesc(dtype_str.encode(), ctypes.cast(ctypes.c_char_p(encoded), ctypes.c_void_p),
-                                   _ATTR_VALUE_TYPE_STR, 1))
-        else:
-            buf = ctypes.c_int64(int(val) if val is not None else 0)
-            _holders.append(buf)
-            descs.append(_AttrDesc(dtype_str.encode(), ctypes.cast(ctypes.pointer(buf), ctypes.c_void_p),
-                                   _ATTR_VALUE_TYPE_INT64, 1))
-    if not descs:
-        return None, 0
-    arr = (_AttrDesc * len(descs))(*descs)
-    return arr, len(descs)
-
-
 _registries_loaded = False
-
-
-def _ensure_registries_loaded():
-    global _registries_loaded
-    if not _registries_loaded:
-        load_op_registries()
-        _registries_loaded = True
-
-
 _registry_accessor = None
+_handle_cache = {}
 
 
-def _get_registry_accessor():
-    global _registry_accessor
-    if _registry_accessor is None:
-        _registry_accessor = _load_registry_accessor()
-    return _registry_accessor
+def _ensure_loaded():
+    global _registries_loaded, _registry_accessor
+    if _registries_loaded:
+        return
+    load_op_registries()
+    from ...utilities.cext_loader import load_cext
+    _registry_accessor = load_cext("libttk_op_registry_accessor.so", "op_registry_accessor")
+    if not hasattr(_registry_accessor, "FindGenSimplifiedKeyFuncs"):
+        raise RuntimeError("Interface [FindGenSimplifiedKeyFuncs] is not found.")
+    if not hasattr(_registry_accessor, "InvokeGenSimplifiedKey"):
+        raise RuntimeError("Interface [InvokeGenSimplifiedKey] is not found.")
+    _registry_accessor.FindGenSimplifiedKeyFuncs.restype = ctypes.c_int
+    _registry_accessor.FindGenSimplifiedKeyFuncs.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
+    _registry_accessor.InvokeGenSimplifiedKey.restype = ctypes.c_int
+    _registry_accessor.InvokeGenSimplifiedKey.argtypes = [
+        ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+        ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
+    _registries_loaded = True
+
+
+def _find_funcs(op_type: str):
+    """Look up gen_simplifiedkey funcs for op_type, cached per op_type."""
+    cached = _handle_cache.get(op_type)
+    if cached is not None:
+        return cached
+    _ensure_loaded()
+    handle = ctypes.c_void_p()
+    ret = _registry_accessor.FindGenSimplifiedKeyFuncs(op_type.encode('utf_8'), ctypes.byref(handle))
+    if ret != 0:
+        _handle_cache[op_type] = False
+        return False
+    _handle_cache[op_type] = handle
+    return handle
 
 
 def customize_gen_simplified_key(simplified_key, op_type, inputs, outputs, attrs=None) -> str:
     """ invoke customize simplified key generator.
     simplified_key = f"{op_type}/d={deterministic},p={impl_mode}/xxxxx"
     """
-    _ensure_registries_loaded()
-    registry_accessor = _get_registry_accessor()
-    if not hasattr(registry_accessor, "GenerateCustomizeSimplifiedKey"):
-        raise RuntimeError(f"Interface [GenerateCustomizeSimplifiedKey] is not found.")
+    handle = _find_funcs(op_type)
+    if not handle:
+        raise RuntimeError(f"Customized simplified key generator function is not found for op [{op_type}].")
 
+    deterministic = int(simplified_key.split('/')[1].split(',')[0].split('=')[1])
+    extra_params = {"op_name": op_type, "deterministic": deterministic}
     _inputs_pre_process(inputs)
     _attrs_pre_process(attrs)
-
     op_type_c = op_type.encode('utf_8')
-    inputs_arr, num_inputs = _build_tensor_descs(inputs)
-    outputs_arr, num_outputs = _build_tensor_descs(outputs)
-    attrs_arr, num_attrs = _build_attr_descs(attrs)
+    inputs_c = json.dumps(inputs).encode('utf_8')
+    outputs_c = json.dumps(outputs).encode('utf_8')
+    extra_params_c = json.dumps(extra_params).encode('utf_8')
+    if not attrs:
+        attrs_c = None
+    else:
+        attrs_c = json.dumps(attrs).encode('utf_8')
 
     res_buf = ctypes.create_string_buffer(simplified_key.encode('utf_8'), 256)
 
-    func = getattr(registry_accessor, "GenerateCustomizeSimplifiedKey")
-    func.restype = ctypes.c_int
-    func.argtypes = [ctypes.c_char_p,
-                     ctypes.POINTER(_TensorDesc), ctypes.c_int,
-                     ctypes.POINTER(_TensorDesc), ctypes.c_int,
-                     ctypes.POINTER(_AttrDesc), ctypes.c_int,
-                     ctypes.c_char_p]
-    ret = func(op_type_c,
-               inputs_arr, num_inputs,
-               outputs_arr, num_outputs,
-               attrs_arr, num_attrs,
-               res_buf)
+    invoke_fn = _registry_accessor.InvokeGenSimplifiedKey
+    ret = invoke_fn(handle, op_type_c, inputs_c, outputs_c, attrs_c, extra_params_c, res_buf)
     if ret != 0:
         msg = _parse_c_return_code(ret)
         raise RuntimeError(f"invoke customized simplified key generator for op [{op_type}] failed: {msg}. "
@@ -312,14 +195,6 @@ def _parse_c_return_code(ret):
         3: "Invoke customized simplified key generator function failed"
     }
     return CODE_MAP.get(ret, f"Unknown return code: [{ret}]")
-
-
-def _load_registry_accessor():
-    try:
-        return ctypes.CDLL("libregistry_accessor.so")
-    except BaseException as e:
-        logging.critical(f"Load libregistry_accessor.so in libs failed: {e}")
-        raise e
 
 
 def _inputs_pre_process(inputs: Union[list, tuple]):
@@ -345,7 +220,7 @@ def _attrs_pre_process(attrs):
         if not isinstance(single_attr, dict):
             continue
         attr_dtype = single_attr.get("dtype")
-        if attr_dtype not in ("float", "float32", "list_float", "list_float32"):
+        if attr_dtype not in ("float", "float32", "float64", "double", "list_float", "list_float32", "list_float64", "list_double"):
             continue
         attr_value = single_attr.get("value")
         if attr_value is None:

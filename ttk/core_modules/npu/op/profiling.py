@@ -14,8 +14,6 @@ Profiling method for Universal testcases
 import os
 import logging
 import shutil
-import pathlib
-import multiprocessing.synchronize
 from typing import NoReturn, Optional, Tuple, Union
 
 try:
@@ -118,6 +116,8 @@ def profile_process(context: TestcaseOp,
     """
     Universal Testcase Profiling Entrance
     """
+    from ..error_cleaner import clear_error_manager
+    clear_error_manager()
 
     switches = get_global_storage()
     process_ctx = get_process_context()
