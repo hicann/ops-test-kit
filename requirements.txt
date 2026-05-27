@@ -1,10 +1,7 @@
-psutil~=5.7.2
+psutil>=5.7.2
 sympy
-numpy~=1.19.1
-pandas
+numpy>=1.19.1
 attrs
 decorator
-tensorflow
-torch
 six
 clang
