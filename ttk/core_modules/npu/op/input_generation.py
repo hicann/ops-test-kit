@@ -113,15 +113,16 @@ def __override_inputs_from_attributes(context: TestcaseOp):
     if not op_info:
         return
     input_names = [inp["name"] for inp in op_info["inputs"]]
-    attr_inputs = param_transformation(context.spec_tensors, context.dyn_func_params)
+    attr_inputs = param_transformation(context.spec_tensors, tuple(input_names))
     dist = context.input_distribution or ()
 
     nested_arrays = list(context.input_arrays)
     nested_ori_arrays = list(context.original_input_arrays) if context.original_input_arrays else None
 
+    assert len(nested_arrays) == len(input_names), \
+        f"input_arrays({len(nested_arrays)}) != input_names({len(input_names)})"
+
     for group_idx, name in enumerate(input_names):
-        if group_idx >= len(nested_arrays):
-            break
         if name not in attr_inputs:
             continue
         val = attr_inputs[name]

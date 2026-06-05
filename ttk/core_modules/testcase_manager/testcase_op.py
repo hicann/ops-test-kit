@@ -635,11 +635,13 @@ class TestcaseOp(TestcaseBase):
         super().validate()
         self.input_shapes = self.input_shapes or ()
         self._check_op_name()
+        self._check_input_count()
         self._check_attributes()
         # Step 1: input distribution → flat_input_shapes available
         self._compute_input_distribution()
         self._parse_input_dtypes()
         self._parse_output_shapes()
+        self._check_output_count()
         self._parse_output_ori_shapes()
         self._parse_output_dtypes()
         # Step 2: output distribution (output_shapes now resolved)
@@ -1612,6 +1614,36 @@ class TestcaseOp(TestcaseBase):
             self.is_valid = False
             self.fail_reason = "SOC_NOT_SUPPORT"
             logging.warning(f"Operator [{self.op_name}] is not supported on current SOC.")
+
+    def _check_input_count(self):
+        if not self.is_valid:
+            return
+        from ..operator.op_info_keeper import OpInfoKeeper
+        op_info = OpInfoKeeper().info_of(self.op_name)
+        if not op_info:
+            return
+        expected_in = len(op_info["inputs"])
+        actual_in = len(self.input_shapes) if self.input_shapes else 0
+        if actual_in != expected_in:
+            self.is_valid = False
+            self.fail_reason = "INPUT_COUNT_MISMATCH"
+            logging.error(f"Testcase [{self.testcase_name}] input count mismatch: "
+                          f"got {actual_in}, expected {expected_in} from op_info.")
+
+    def _check_output_count(self):
+        if not self.is_valid:
+            return
+        from ..operator.op_info_keeper import OpInfoKeeper
+        op_info = OpInfoKeeper().info_of(self.op_name)
+        if not op_info or not op_info.get("outputs"):
+            return
+        expected_out = len(op_info["outputs"])
+        actual_out = len(self.output_shapes) if self.output_shapes else 0
+        if actual_out != expected_out:
+            self.is_valid = False
+            self.fail_reason = "OUTPUT_COUNT_MISMATCH"
+            logging.error(f"Testcase [{self.testcase_name}] output count mismatch: "
+                          f"got {actual_out}, expected {expected_out} from op_info.")
 
     def _check_attributes(self):
         if not self.is_valid:

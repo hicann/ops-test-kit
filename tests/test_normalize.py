@@ -53,11 +53,13 @@ def _mock_op_info(monkeypatch):
 
 
 def _validate(case):
+    n_in = len(case.input_shapes) if case.input_shapes else 0
+    n_out = len(case.output_shapes) if case.output_shapes and not isinstance(case.output_shapes, str) else 0
     with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as mock:
         mock.return_value.info_of.return_value = {
             "coreType.value": "AiCore",
-            "inputs": [{"name": "x"}, {"name": "y"}],
-            "outputs": [{"name": "z"}],
+            "inputs": [{"name": f"i{i}"} for i in range(n_in)],
+            "outputs": [{"name": f"o{i}"} for i in range(n_out)],
         }
         case.validate()
 

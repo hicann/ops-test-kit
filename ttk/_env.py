@@ -118,12 +118,14 @@ def _get_builtin_impl_parent_path(opp_path):
 
 
 def _prepend_to_pythonpath(paths):
-    """Prepend paths to PYTHONPATH env var."""
+    """Prepend paths to PYTHONPATH env var and sys.path."""
     if not paths:
         return
     existing = os.getenv("PYTHONPATH", "")
     new = ":".join(paths)
     os.environ["PYTHONPATH"] = new + ":" + existing if existing else new
+    path_set = set(paths)
+    sys.path[:] = list(paths) + [p for p in sys.path if p not in path_set]
 
 
 def _setup_cann_paths(ascend_root):
