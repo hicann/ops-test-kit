@@ -127,11 +127,6 @@ def __set_dynamic(switches: SWITCHES, secondary_param: str):
         raise RuntimeError("Invalid dynamic shape mode: %s" % secondary_param)
 
 
-@register_param(["-s", "--static"], "Enable or disable static shape test. Default is enabled. Usage same as -d")
-def __set_static(switches: SWITCHES, secondary_param: str):
-    logging.info("-s optional is disabled.")
-    return
-
 
 @register_param(["-c", "--const"], "Enable or disable const shape test. Default is disabled. Usage same as -d")
 def __set_const(switches: SWITCHES, secondary_param: str):

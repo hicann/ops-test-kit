@@ -17,8 +17,6 @@ def register_kernel_command(subparsers):
 def _add_kernel_args(parser):
     parser.add_argument("-d", "--dynamic", nargs="?", const=True, default=None,
                         help="Enable dynamic shape test (default: enabled); use -d=false to disable")
-    parser.add_argument("-s", "--static", nargs="?", const=True, default=None,
-                        help="Enable static shape test; use -s=false to disable")
     parser.add_argument("-c", "--const", nargs="?", const=True, default=None,
                         help="Enable const shape test; use -c=false to disable")
     parser.add_argument("-b", "--binary", nargs="?", const=True, default=None,
