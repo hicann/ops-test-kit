@@ -55,7 +55,7 @@ add_01,,add,"((128, 1024), (1, 1024))","('float32', 'float32')","('ND',)","((128
 
 ```shell
 # Kernel模式：编译 + 执行 + 精度比对
-python3 -m ttk kernel -i add.csv
+python3 -m ttk kernel -i examples/case_store/kernel/add.csv
 
 # ACLNN模式
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv

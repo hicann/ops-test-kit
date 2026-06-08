@@ -22,6 +22,7 @@ from .singleton import Singleton
 from .dtypes import *
 from .plugin import CommonPlugin
 from .data import RandomData
+from .plog_utils import extract_plog_errors
 from .proc import *
 VERSION = "3.0.0"
 FAQ = ""

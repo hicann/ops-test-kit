@@ -26,6 +26,9 @@ from .field_types import FIELD_TYPES
 from .field_parser import *
 from ...utilities import get_global_storage
 from functools import partial
+import logging
+
+_NO_PAD = object()
 
 
 type_processing_func: Dict[FIELD_TYPES, Callable] = {
@@ -231,4 +234,213 @@ class TestcaseBase(metaclass=ABCMeta):
                     result.append((None, None))
                 else:
                     result.append((r[0], r[0]))
+        return tuple(result)
+
+    @classmethod
+    def _resolve_pad_value(cls, field_name, explicit_pad=_NO_PAD):
+        """Resolve per-tensor pad value.
+
+        If caller provides explicit_pad, use it directly.
+        Otherwise try to derive from complete_headers field default:
+          - default is None           → pad is None
+          - default is scalar         → pad is that scalar
+          - default is (val,) tuple   → pad is val (per-tensor default)
+          - no default / empty tuple  → no pad (_NO_PAD)
+        """
+        if explicit_pad is not _NO_PAD:
+            return explicit_pad
+        if field_name not in cls.complete_headers:
+            return _NO_PAD
+        entry = cls.complete_headers[field_name]
+        if len(entry) < 3:
+            return _NO_PAD
+        default = entry[2]
+        if default is None:
+            return None
+        if isinstance(default, tuple) and len(default) == 1:
+            return default[0]
+        if isinstance(default, (int, float)):
+            return default
+        return _NO_PAD
+
+    @classmethod
+    def _is_scalar_group(cls, v):
+        """Scalar group: tuple/list of atomic str/int/float values."""
+        return isinstance(v, (tuple, list))
+
+    @classmethod
+    def _is_range_group(cls, v):
+        """Range group: tuple/list where elements are also tuple/list."""
+        return bool(isinstance(v, (tuple, list)) and v and isinstance(v[0], (tuple, list)))
+
+    def _write_back_normalized(self, field_name, result):
+        """Write back normalized field and clear its flat cache."""
+        setattr(self, field_name, tuple(result))
+        cache_attr = f'_flat_{field_name}'
+        if hasattr(self, cache_attr):
+            setattr(self, cache_attr, None)
+
+    def _normalize_field_by_dist(self, field_name, dist, is_group_fn, pad_value=_NO_PAD):
+        """Normalize a field to match distribution nesting exactly.
+
+        Unified method serving both scalar and range fields. The is_group_fn
+        callback distinguishes the two semantics:
+          - Scalar (_is_scalar_group): any tuple/list is a group.
+          - Range  (_is_range_group): tuple/list with tuple/list elements is a group.
+
+        Leaf values are preserved atomically:
+          - Scalar: str/int/float values broadcast as-is.
+          - Range: (min,max) or (rtol,ptol) pairs are NOT destructed.
+
+        Caller must ensure field is a tuple/list (wrap bare scalar values before
+        calling). Empty/None fields should be handled by caller and not reach here.
+
+        Already-nested detection:
+          len(field) == len(dist), and at each position:
+            num>0: isinstance(val, tuple/list) and len(val) == num
+            num>1: is_group_fn(val) == True (prevents false positives where a
+                   non-group value happens to match the count).
+
+        Supported scenarios (len(field) relative to dist):
+          1. len==1, single value: broadcast to all positions, then expand
+             each TensorList position internally. (most common compressed form)
+          2. len==1, multi-element group: ambiguous → mark invalid.
+          3. 1 < len <= len(dist): pad missing positions with pad_value, then expand.
+          4. len > len(dist): ambiguous → mark invalid.
+
+        Rule 1 (TensorList internal, dist[i] > 0): accept only:
+          - Fully-specified group (len == num)
+          - Single-element group (g,) → broadcast g to num copies
+          - Bare value (not group) → broadcast to num copies
+          - Otherwise (group length mismatch) → mark invalid (CASE_FIELD_AMBIGUOUS)
+
+        Rule 2 (field-level padding): len(field) < len(dist) → pad with pad_value.
+        If pad_value is _NO_PAD and padding is needed → mark invalid.
+        """
+        if not self.is_valid:
+            return
+        field = getattr(self, field_name)
+        if not field:
+            return
+        # Already-nested check
+        if len(field) == len(dist):
+            nested = True
+            for val, num in zip(field, dist):
+                if num > 0:
+                    if not isinstance(val, (tuple, list)) or len(val) != num:
+                        nested = False
+                        break
+                    if num > 1 and not is_group_fn(val):
+                        nested = False
+                        break
+            if nested:
+                return
+        # Resolve pad value
+        pad_value = self._resolve_pad_value(field_name, pad_value)
+        # Branch by len(field) vs len(dist)
+        if len(field) > len(dist):
+            self.is_valid = False
+            self.fail_reason = "CASE_FIELD_AMBIGUOUS"
+            logging.error(f'Field [{field_name}] of [{self.testcase_name}] is invalid.')
+            return
+        if len(field) == 1:
+            val = field[0]
+            # Unwrap single-element group: (('NCHW',),) → 'NCHW'
+            if is_group_fn(val) and len(val) == 1:
+                val = val[0]
+            # Reject multi-element group: (('a','b'),) with dist=(2,0)
+            if is_group_fn(val) and len(val) > 1:
+                self.is_valid = False
+                self.fail_reason = "CASE_FIELD_AMBIGUOUS"
+                logging.error(f'Field [{field_name}] of [{self.testcase_name}] is invalid.')
+                return
+            per_param = [val] * len(dist)
+        elif len(field) < len(dist):
+            if pad_value is _NO_PAD:
+                self.is_valid = False
+                self.fail_reason = "CASE_FIELD_AMBIGUOUS"
+                logging.error(f'Field [{field_name}] of [{self.testcase_name}] is invalid.')
+                return
+            per_param = list(field) + [pad_value] * (len(dist) - len(field))
+        else:
+            per_param = list(field)
+        # Per-position expansion
+        result = []
+        for num in dist:
+            val = per_param[len(result)]
+            if num == 0:
+                result.append(val)
+            elif is_group_fn(val):
+                if len(val) == num:
+                    result.append(tuple(val))
+                elif len(val) == 1:
+                    result.append(tuple([val[0]] * num))
+                else:
+                    self.is_valid = False
+                    self.fail_reason = "CASE_FIELD_AMBIGUOUS"
+                    logging.error(f'Field [{field_name}] of [{self.testcase_name}] is invalid.')
+                    return
+            else:
+                result.append(tuple([val] * num))
+        self._write_back_normalized(field_name, result)
+
+    def _normalize_scalar_field_by_dist(self, field_name, dist):
+        """Normalize a scalar/string field to match distribution nesting exactly.
+
+        Bare value (1e-5) → wrapped to (1e-5,) → len==1 broadcast.
+        Delegates to _normalize_field_by_dist with _is_scalar_group.
+        """
+        if not self.is_valid:
+            return
+        field = getattr(self, field_name)
+        if not field:
+            return
+        if not isinstance(field, (tuple, list)):
+            # Bare scalar value — broadcast
+            per_param = [field] * len(dist)
+            result = []
+            for num in dist:
+                if num == 0:
+                    result.append(field)
+                else:
+                    result.append(tuple([field] * num))
+            self._write_back_normalized(field_name, result)
+            return
+        self._normalize_field_by_dist(field_name, dist, self._is_scalar_group)
+
+    def _normalize_range_field_by_dist(self, field_name, dist, pad_value=_NO_PAD):
+        """Normalize a range/pair field to match distribution nesting.
+
+        Range fields have atomic leaf values like (min,max) or (rtol,ptol) that
+        must NOT be destructed during expansion. Delegates to
+        _normalize_field_by_dist with _is_range_group for range-aware group
+        detection. See _normalize_field_by_dist for full documentation.
+        """
+        if not self.is_valid:
+            return
+        field = getattr(self, field_name)
+        if not field or not isinstance(field, (tuple, list)):
+            return
+        self._normalize_field_by_dist(field_name, dist, self._is_range_group, pad_value=pad_value)
+
+    @staticmethod
+    def _flatten_by_distribution(values, distribution):
+        """Flatten a distribution-aligned field to one-value-per-tensor."""
+        result = []
+        vi = 0
+        for num in distribution:
+            val = values[vi]
+            vi += 1
+            if num > 0:
+                if isinstance(val, (tuple, list)):
+                    if len(val) == num:
+                        result.extend(val)
+                    elif len(val) == 1:
+                        result.extend([val[0]] * num)
+                    else:
+                        result.extend(val)
+                else:
+                    result.extend([val] * num)
+            else:
+                result.append(val)
         return tuple(result)

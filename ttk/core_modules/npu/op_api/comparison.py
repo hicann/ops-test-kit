@@ -47,7 +47,7 @@ class Comparator:
             logging_data += "Comparing %s with golden\n" % self._ctx.testcase_name
             precision, _logging_data, passed = compare(self._ctx.prof_result.output_bytes,
                                                        self._ctx.golden_tensors,
-                                                        resolve_custom_numpy_dtypes(self._ctx.flat_output_dtypes),
+                                                       resolve_custom_numpy_dtypes(self._ctx.flat_output_dtypes),
                                                        method,
                                                        self._tol_options)
             logging_data += _logging_data

@@ -27,7 +27,7 @@ class ApiProfilingResult:
     RTS Profiling output
     """
 
-    def __init__(self, api_prof=None, op_prof=None,
+    def __init__(self, success: bool, api_prof=None, op_prof=None,
                  output_bytes=(None,), output_view_shapes=(None,),
                  oob: str = "UNKNOWN"):
         self.api_prof: Union[str, List[dict]] = api_prof
@@ -35,10 +35,11 @@ class ApiProfilingResult:
         self.output_bytes: Optional[Union[tuple, list]] = output_bytes
         self.output_view_shapes: Optional[Union[tuple, list]] = output_view_shapes
         self.oob: Optional[str] = oob
+        self.success = success
 
     @classmethod
     def fail(cls, fail_result: str) -> "ApiProfilingResult":
-        return cls(fail_result, fail_result,
+        return cls(False, fail_result, fail_result,
                    (fail_result,), ("NO_OUTPUT",),
                    "UNKNOWN")
 
@@ -48,6 +49,9 @@ class ApiProfilingResult:
             return "PASS"
         oob_lst = self.oob.split(',')
         return "FAIL" if "FAIL" in oob_lst else "PASS"
+
+    def failed(self):
+        return not self.success and self.api_prof != "SUPPRESSED"
 
 
 class ApiComparisonResult:

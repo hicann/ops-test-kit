@@ -241,7 +241,7 @@ def __realtime_random_input(context: TestcaseOp):
 
     context.input_arrays = tuple(input_apply_as_list(input_arrays, context.input_distribution))
     context.original_input_arrays = tuple(input_apply_as_list(ori_input_arrays, context.input_distribution))
-    context.actual_input_data_ranges = tuple(actual_input_data_ranges)
+    context.actual_input_data_ranges = tuple(input_apply_as_list(actual_input_data_ranges, context.input_distribution))
 
 
 def __gen_input(context: TestcaseOp):

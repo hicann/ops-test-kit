@@ -24,6 +24,7 @@ import logging
 import numpy
 import pathlib
 import shutil
+import time
 from typing import Tuple, Optional
 
 try:
@@ -51,7 +52,7 @@ from ...tbe_logging import default_logging_config
 from ...aclnn import AclInterface, OpApiInfoKeeper, OpApiInfo
 from ...msprof import MsProfiler, TtkMsProfType
 from ....utilities import get_global_storage, get, waiting_for_memory, frameless_table_print
-from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file
+from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file, extract_plog_errors
 
 
 def __profiling_end_print(context: TestcaseAclnn,
@@ -203,7 +204,7 @@ class Phase1ParamBuilder:
 
     def copy_output_from_hbm(self) -> list:
         output_byte_arrays = []
-        dist = self._ctx._get_tensor_list_distribution()
+        dist = self._ctx.tensor_list_dist
         for nested_idx in self._ctx.output_tensor_indexes:
             flat_idx = sum(max(d, 1) for d in dist[:nested_idx]) if dist else nested_idx
             acl_tensor: ctypes.c_void_p = self._flatten_acl_tensor[flat_idx]
@@ -230,7 +231,7 @@ class Phase1ParamBuilder:
 
     def collect_output_view_shapes(self) -> list:
         output_view_shapes = []
-        dist = self._ctx._get_tensor_list_distribution()
+        dist = self._ctx.tensor_list_dist
         for nested_idx in self._ctx.output_tensor_indexes:
             flat_idx = sum(max(d, 1) for d in dist[:nested_idx]) if dist else nested_idx
             acl_tensor: ctypes.c_void_p = self._flatten_acl_tensor[flat_idx]
@@ -253,7 +254,7 @@ class Phase1ParamBuilder:
                 ss = self._ctx.flat_storage_shape(idx)
                 ptr_lst.append(self._dvc.create_acl_tensor(tt, fmt, ss))
         self._flatten_acl_tensor = tuple(ptr_lst)
-        dist = self._ctx._get_tensor_list_distribution()
+        dist = self._ctx.tensor_list_dist
         if not dist:
             return ptr_lst
 
@@ -273,11 +274,11 @@ class Phase1ParamBuilder:
                 ptr_lst.append(None)
             else:
                 ptr_lst.append(self._dvc.create_acl_scalar(s))
-        if not self._ctx._get_scalar_list_distribution():
+        if not self._ctx.scalar_list_dist:
             return ptr_lst
 
         ptr_lst_lst = []
-        as_list = apply_as_list(ptr_lst, self._ctx._get_scalar_list_distribution())
+        as_list = apply_as_list(ptr_lst, self._ctx.scalar_list_dist)
         for maybe_lst in as_list:
             if not isinstance(maybe_lst, (list, tuple)):
                 ptr_lst_lst.append(maybe_lst)
@@ -324,7 +325,7 @@ class AclOpExecutor:
             # Model warmup
             self._dvc.warmup(self._switches)
             with self.rts_stream() as stm:
-                output_byte_arrays, output_view_shapes = self._acl_sequence(stm)
+                output_byte_arrays, output_view_shapes, success = self._acl_sequence(stm)
             # Cycle Analysis
             if self._dvc.is_model():
                 # TODO
@@ -333,7 +334,10 @@ class AclOpExecutor:
                 op_prof = "TOTAL_CYCLE_TODO"
             else:
                 api_prof, op_prof = self._process_total_cycles()
-            return ApiProfilingResult(api_prof, op_prof, output_byte_arrays, output_view_shapes)
+            return ApiProfilingResult(success, 
+                                      api_prof, op_prof, 
+                                      output_byte_arrays, 
+                                      output_view_shapes, )
 
     @staticmethod
     def _extract_csv_cell(filename, extract_cols,
@@ -356,6 +360,7 @@ class AclOpExecutor:
         # Profiling Preparation
         output_byte_arrays = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         output_view_shapes = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
+        status = "NOK"
         try:
             prof_start_at = 1 if self._run_time > 1 else 0
             with MsProfiler(self._dvc.device_id, result_path=self._prof_result_path,
@@ -376,8 +381,17 @@ class AclOpExecutor:
                         # call phase 2 interface
                         status = self._dvc.acl_execute(self._ctx.api_name, workspace_size,
                                                        c_executor, stream)
-                    except:
-                        logging.exception(f"aclnn interface {self._ctx.api_name} execute failed:")
+                    except Exception as e:
+                        time.sleep(0.5)
+                        plog_errors = extract_plog_errors()
+                        if plog_errors:
+                            logging.error(f"aclnn interface {self._ctx.api_name} execute failed: \n"
+                                          f"***************************************************************************\n"
+                                          f"{os.linesep.join(plog_errors)}\n"
+                                          f"***************************************************************************")
+                        else:
+                            error_detail = str(e)
+                            logging.exception(f"aclnn interface {self._ctx.api_name} execute failed:\n{error_detail}")
                         status = "ACLNN_EXECUTE_FAILED"
 
                     if repeat_idx == self._run_time - 1 and status == "OK":
@@ -389,7 +403,7 @@ class AclOpExecutor:
                         break
         finally:
             self._dvc.free_all_memory()
-        return output_byte_arrays, output_view_shapes
+        return output_byte_arrays, output_view_shapes, status == "OK"
 
     def _process_total_cycles(self):
         """
@@ -451,8 +465,9 @@ def do_profiling(context: TestcaseAclnn, dev_id: int) -> ApiProfilingResult:
             device = __get_aclnn_device(dev_id)
             return AclOpExecutor(context, device).do()
         except:
-            os.chdir(switches.root_path)
             raise RuntimeError("Profiling Sequence of mode %s failed" % switches.mode)
+        finally:
+            os.chdir(switches.root_path)
 
 
 def __dump_to_file(data, file_name: str, dtype: Optional[str] = None):
@@ -547,14 +562,17 @@ def profile_process(context: TestcaseAclnn,
         __profiling_print(context, dev_id)
         process_ctx.notify_status("OnProfiling")
         context.prof_result = do_profiling(context, dev_id)
-    process_ctx.notify_status("OnGenGolden")
-    # noinspection PyBroadException
-    try:
-        GoldenGenerator(context).gen()
-        process_ctx.notify_status("OnDumpGoldenDataIfRequired")
-        __dump_golden(context)
-    except:
-        logging.exception("Golden data generation failure")
+    if context.prof_result.failed():
+        context.golden_tensors = context.prof_result.api_prof
+    else:
+        process_ctx.notify_status("OnGenGolden")
+        # noinspection PyBroadException
+        try:
+            GoldenGenerator(context).gen()
+            process_ctx.notify_status("OnDumpGoldenDataIfRequired")
+            __dump_golden(context)
+        except:
+            logging.exception("Golden data generation failure")
     process_ctx.notify_status("OnDumpOutputDataIfRequired")
     __dump_output(context)
     process_ctx.notify_status("OnComparison")

@@ -304,7 +304,7 @@ def _execute_on_device(testcase, backend, dev_id, switches, plan, resolved, is_t
     dev_tensors = [backend.to_device(x, dev_id) if x is not None else None for x in raw_inputs]
     if testcase.tensor_formats and backend.device_name() == "npu":
         dev_tensors = apply_format_cast(dev_tensors, testcase.flat_tensor_formats)
-    dist = testcase._get_tensor_list_distribution()
+    dist = testcase.tensor_list_dist
     if dist:
         nested_tensors = apply_as_list(dev_tensors, dist)
     else:

@@ -14,7 +14,6 @@ Operator Compilation Interface
 # Standard Packages
 import copy
 import functools
-import glob
 import inspect
 import json
 import logging
@@ -37,7 +36,7 @@ from .op_info_keeper import OpInfoKeeper
 from ..testcase_manager import TestcaseOp
 from ...utilities import BinaryCompilationResult, DynamicCompilationResult, Singleton
 from ...utilities import ceil_div, get, get_global_storage, lcm
-from ...utilities import param_transformation, read_file, tuple_flatten
+from ...utilities import param_transformation, read_file, tuple_flatten, extract_plog_errors
 from ...utilities import get_dtype_width, resolve_custom_numpy_dtypes
 
 
@@ -310,22 +309,7 @@ class OperatorInterface(metaclass=Singleton):
                     if 'undefined symbol' in str(e):
                         raise e
                     time.sleep(0.5)
-                    # Trying to get plog path
-                    plog_home = os.path.expanduser("~/ascend/log/debug/plog")
-                    plog_possible_name = f"plog-{os.getpid()}_*.log"
-                    all_possible_logs = glob.glob(f"{plog_home}/{plog_possible_name}")
-                    error_logs = []
-                    if all_possible_logs:
-                        use_log = all_possible_logs[-1]
-                        log_content = read_file(use_log).decode("UTF-8").splitlines()
-                        filtered_list = [s for s in log_content if s.startswith("[ERROR]")]
-                        if filtered_list:
-                            error_logs.extend(filtered_list[-5:])
-                        else:
-                            error_logs.extend(log_content[-5:])
-                    else:
-                        error_logs.append(f"{tiling_op_type} OP Tiling C++ Func Call Failed, Ascend log parse Failed, "
-                                          f"please check ascend log or ascend logging print yourself for details")
+                    error_logs = extract_plog_errors()
                     raise RuntimeError(f"OPTILING_FAILURE: \n"
                                        f"***************************************************************************\n"
                                        f"{os.linesep.join(error_logs)}\n"

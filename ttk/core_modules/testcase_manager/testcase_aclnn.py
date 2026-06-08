@@ -31,7 +31,7 @@ from .field_types import FIELD_TYPES
 from ..aclnn import OpApiInfoKeeper, OpApiInfo
 from ...utilities import get, shape_stride, shape_product_with_strides
 from ...utilities import shape_product, parse_dtype, get_dtype_width
-from ...utilities.container_utils import infer_list_distribution_from_nesting, flatten_nested_sequence
+from ...utilities.container_utils import infer_list_distribution_from_nesting
 
 
 class AclnnParamPlan:
@@ -139,7 +139,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "_actual_scalar_data_ranges",
         "_pure_attrs",
         "_pure_output_indexes",
-        "_inferred_scalar_list_dist",
+        "_scalar_list_dist",
     )
 
     identity_headers: Dict[str, tuple] = {
@@ -213,7 +213,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self._actual_scalar_data_ranges = None
         self._pure_attrs: Optional[dict] = None
         self._pure_output_indexes: Optional[tuple] = None
-        self._inferred_scalar_list_dist: Optional[tuple] = None
+        self._scalar_list_dist: Optional[tuple] = None
 
     @property
     def tensor_bytes(self):
@@ -239,7 +239,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
           - TensorList → tuple of dtype strings
         """
         if self._output_dtypes is None:
-            dist = self._get_tensor_list_distribution()
+            dist = self.tensor_list_dist
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
@@ -251,16 +251,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
 
     @property
     def flat_output_dtypes(self):
-        """Flatten output dtypes to one-per-tensor, matching output_shapes order."""
+        """Flatten output dtypes to one-per-tensor. Assumes output_dtypes is correctly nested."""
         if not self.output_dtypes:
             return self.output_dtypes
-        result = []
-        for element in self.output_dtypes:
-            if isinstance(element, (tuple, list)) and element and isinstance(element[0], (tuple, list, str)) and not isinstance(element, str):
-                result.extend(element)
-            else:
-                result.append(element)
-        return tuple(result)
+        odist = self.output_dist
+        return self._flatten_by_distribution(self.output_dtypes, odist) if odist else self.output_dtypes
 
     @property
     def output_view_shapes(self) -> tuple:
@@ -269,7 +264,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         Returns nested structure matching output_tensor_indexes.
         """
         if self._output_view_shapes is None:
-            dist = self._get_tensor_list_distribution()
+            dist = self.tensor_list_dist
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
@@ -281,8 +276,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
 
     @property
     def flat_output_view_shapes(self):
-        """Flatten output view shapes to one-per-tensor, matching output_shapes order."""
-        return flatten_nested_sequence(self.output_view_shapes) if self.output_view_shapes else self.output_view_shapes
+        """Flatten output view shapes to one-per-tensor. Assumes output_view_shapes is correctly nested."""
+        if not self.output_view_shapes:
+            return self.output_view_shapes
+        odist = self.output_dist
+        return self._flatten_by_distribution(self.output_view_shapes, odist) if odist else self.output_view_shapes
 
     @property
     def output_view_offsets(self) -> tuple:
@@ -291,7 +289,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         Returns nested structure matching output_tensor_indexes.
         """
         if self._output_view_offsets is None:
-            dist = self._get_tensor_list_distribution()
+            dist = self.tensor_list_dist
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
@@ -305,16 +303,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
 
     @property
     def flat_output_view_offsets(self):
-        """Flatten output view offsets to one-per-tensor, matching output_shapes order."""
+        """Flatten output view offsets to one-per-tensor. Assumes output_view_offsets is correctly nested."""
         if not self.output_view_offsets:
             return self.output_view_offsets
-        result = []
-        for element in self.output_view_offsets:
-            if isinstance(element, (tuple, list)):
-                result.extend(element)
-            else:
-                result.append(element)
-        return tuple(result)
+        odist = self.output_dist
+        return self._flatten_by_distribution(self.output_view_offsets, odist) if odist else self.output_view_offsets
 
     @property
     def output_view_strides(self) -> tuple:
@@ -323,7 +316,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         Returns nested structure matching output_tensor_indexes.
         """
         if self._output_view_strides is None:
-            dist = self._get_tensor_list_distribution()
+            dist = self.tensor_list_dist
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
@@ -337,16 +330,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
 
     @property
     def flat_output_view_strides(self):
-        """Flatten output view strides to one-per-tensor, matching output_shapes order."""
+        """Flatten output view strides to one-per-tensor. Assumes output_view_strides is correctly nested."""
         if not self.output_view_strides:
             return self.output_view_strides
-        result = []
-        for element in self.output_view_strides:
-            if isinstance(element, (tuple, list)) and element and isinstance(element[0], (tuple, list)):
-                result.extend(element)
-            else:
-                result.append(element)
-        return tuple(result)
+        odist = self.output_dist
+        return self._flatten_by_distribution(self.output_view_strides, odist) if odist else self.output_view_strides
 
     @property
     def output_storage_shapes(self) -> tuple:
@@ -355,7 +343,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         Returns nested structure matching output_tensor_indexes.
         """
         if self._output_storage_shapes is None:
-            dist = self._get_tensor_list_distribution()
+            dist = self.tensor_list_dist
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
@@ -369,16 +357,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
 
     @property
     def flat_output_storage_shapes(self):
-        """Flatten output storage shapes to one-per-tensor, matching output_shapes order."""
+        """Flatten output storage shapes to one-per-tensor. Assumes output_storage_shapes is correctly nested."""
         if not self.output_storage_shapes:
             return self.output_storage_shapes
-        result = []
-        for element in self.output_storage_shapes:
-            if isinstance(element, (tuple, list)) and element and isinstance(element[0], (tuple, list)):
-                result.extend(element)
-            else:
-                result.append(element)
-        return tuple(result)
+        odist = self.output_dist
+        return self._flatten_by_distribution(self.output_storage_shapes, odist) if odist else self.output_storage_shapes
 
     @property
     def actual_scalar_data_ranges(self):
@@ -413,7 +396,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         expanded through distribution to flat indexes.
         """
         if self._pure_output_indexes is None:
-            dist = self._get_tensor_list_distribution()
+            dist = self.tensor_list_dist
             flat_output = set()
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
@@ -453,20 +436,17 @@ class TestcaseAclnn(TensorApiTestcaseBase):
           - Top-level: fully expanded, no len-1 broadcast
         e.g. tensor_dtypes ('float32',) with dist (2,0) -> (('float32','float32'),'float32')
         """
-        if not self.is_valid or not self.tensor_view_shapes:
+        if not self.is_valid:
             return
-        dist = self._get_tensor_list_distribution()
-        if dist:
-            for field_name in ('tensor_dtypes', 'tensor_formats', 'tensor_view_offsets',
-                               'tensor_view_strides', 'tensor_storage_shapes'):
-                self._normalize_field_by_dist(field_name, dist)
-            self._normalize_input_data_ranges(dist)
-        sdist = self._get_scalar_list_distribution()
+        sdist = self.scalar_list_dist
         if sdist:
-            self._normalize_field_by_dist('scalar_dtypes', sdist)
+            self._normalize_scalar_field_by_dist('scalar_dtypes', sdist)
+            self._normalize_range_field_by_dist('scalar_data_ranges', sdist)
+        super()._normalize_compressed_fields()
 
-    def _get_scalar_list_distribution(self):
-        """Derive ScalarList distribution from API info + scalar_dtypes.
+    @property
+    def scalar_list_dist(self):
+        """ScalarList distribution from API info + scalar_dtypes.
 
         Uses API info to determine which positions are aclScalarList*.
         For ScalarList positions, takes element count from scalar_dtypes.
@@ -474,10 +454,10 @@ class TestcaseAclnn(TensorApiTestcaseBase):
 
         Returns a tuple where each element corresponds to a top-level parameter:
           >0 means ScalarList with that many scalars, 0 means single scalar.
-        Cached in _inferred_scalar_list_dist.
+        Cached on first access.
         """
-        if self._inferred_scalar_list_dist is not None:
-            return self._inferred_scalar_list_dist
+        if self._scalar_list_dist is not None:
+            return self._scalar_list_dist
         if not self.api_name or not self.scalar_dtypes:
             return ()
         try:
@@ -494,81 +474,42 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 if isinstance(element, (tuple, list)):
                     result.append(len(element))
                 elif isinstance(element, str):
-                    # 单个 dtype string 视为 ScalarList 中包含 1 个 scalar
                     result.append(1)
                 else:
                     result.append(0)
             else:
                 result.append(0)
-        self._inferred_scalar_list_dist = tuple(result)
-        return self._inferred_scalar_list_dist
+        self._scalar_list_dist = tuple(result)
+        return self._scalar_list_dist
 
     @property
     def flat_scalar_dtypes(self):
-        """Flatten nested scalar_dtypes to per-scalar dtypes.
+        """Flatten normalized scalar_dtypes to per-scalar dtypes.
 
-        Uses API-derived distribution to distinguish ScalarList from Scalar.
-        ScalarList elements are flattened to individual dtype strings.
-        Scalar elements are kept as-is.
+        Assumes _normalize_compressed_fields has already expanded compressed
+        forms.  Simply flattens the normalized nested structure.
         """
         if not self.scalar_dtypes:
             return self.scalar_dtypes
-        dist = self._get_scalar_list_distribution()
-        if not dist:
-            return self.scalar_dtypes
-        flat_count = sum(max(d, 1) for d in dist)
-        if len(self.scalar_dtypes) == flat_count:
-            return self.scalar_dtypes
-        if len(self.scalar_dtypes) == len(dist):
-            result = []
-            for i, d in enumerate(dist):
-                element = self.scalar_dtypes[i]
-                if d > 0:
-                    if isinstance(element, (tuple, list)):
-                        result.extend(element)
-                    elif isinstance(element, str):
-                        result.append(element)
-                    else:
-                        result.append(element)
-                else:
-                    result.append(element)
-            return tuple(result)
-        if len(self.scalar_dtypes) == 1:
-            return (self.scalar_dtypes[0],) * flat_count
+        dist = self.scalar_list_dist
+        if dist:
+            return self._flatten_by_distribution(self.scalar_dtypes, dist)
         return self.scalar_dtypes
 
     @property
     def flat_scalar_data_ranges(self):
-        """Flatten nested scalar_data_ranges to per-scalar (min, max) pairs.
+        """Flatten normalized scalar_data_ranges to per-scalar (min, max) pairs.
 
-        Range tuples (None, 1.0) are atomic values, same as flat_input_data_ranges.
+        Assumes _normalize_compressed_fields has already expanded compressed
+        forms.  Simply flattens the normalized nested structure.
         """
         if not self.scalar_data_ranges:
             return self.scalar_data_ranges
-        dist = self._get_scalar_list_distribution()
-        if not dist:
-            return self.scalar_data_ranges
-        flat_count = sum(max(d, 1) for d in dist)
-        if len(self.scalar_data_ranges) == flat_count:
-            return self.scalar_data_ranges
-        if len(self.scalar_data_ranges) == 1:
-            return (self.scalar_data_ranges[0],) * flat_count
-        is_nested = any(
-            isinstance(e, (tuple, list)) and len(e) > 0 and isinstance(e[0], (tuple, list))
-            for e in self.scalar_data_ranges if e is not None
-        )
-        if is_nested:
-            return flatten_nested_sequence(self.scalar_data_ranges)
-        if len(self.scalar_data_ranges) == len(dist):
-            result = []
-            for i, num in enumerate(dist):
-                val = self.scalar_data_ranges[i]
-                if num > 0:
-                    result.extend([val] * num)
-                else:
-                    result.append(val)
-            return tuple(result)
-        return flatten_nested_sequence(self.scalar_data_ranges)
+        dist = self.scalar_list_dist
+        if dist:
+            return self._flatten_by_distribution(
+                self.scalar_data_ranges, dist)
+        return self.scalar_data_ranges
 
     @staticmethod
     def _expand_by_distribution(values, distribution):

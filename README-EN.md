@@ -55,7 +55,7 @@ add_01,,add,"((128, 1024), (1, 1024))","('float32', 'float32')","('ND',)","((128
 
 ```shell
 # Kernel mode: compile + execute + precision comparison
-python3 -m ttk kernel -i add.csv
+python3 -m ttk kernel -i examples/case_store/kernel/add.csv
 
 # ACLNN mode
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv

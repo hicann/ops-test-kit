@@ -863,15 +863,14 @@ class TestcaseOp(TestcaseBase):
         output_dist = self.output_distribution
         if input_dist:
             for f in ('input_dtypes', 'input_formats', 'input_ori_formats'):
-                self._normalize_field_by_dist(f, input_dist)
-            self._normalize_shape_field_by_dist('input_ori_shapes', input_dist)
-            self._normalize_range_field_by_dist('input_data_ranges', input_dist)
+                self._normalize_scalar_field_by_dist(f, input_dist)
+            for f in ('input_ori_shapes', 'input_data_ranges'):
+                self._normalize_range_field_by_dist(f, input_dist)
         if output_dist:
-            for f in ('output_dtypes', 'output_formats', 'output_ori_formats'):
-                self._normalize_field_by_dist(f, output_dist)
-            self._normalize_shape_field_by_dist('output_ori_shapes', output_dist)
-            self._normalize_range_field_by_dist('precision_tolerances', output_dist)
-            self._normalize_field_by_dist('absolute_precision', output_dist)
+            for f in ('output_dtypes', 'output_formats', 'output_ori_formats', 'absolute_precision'):
+                self._normalize_scalar_field_by_dist(f, output_dist)
+            for f in ('output_ori_shapes', 'precision_tolerances'):
+                self._normalize_range_field_by_dist(f, output_dist)
 
     def _check_manual_binaries(self):
         """Normalize, validate and reshape manual_input_binaries.
@@ -1318,55 +1317,6 @@ class TestcaseOp(TestcaseBase):
     # ========== Normalize helpers ==========
 
     @staticmethod
-    def _is_field_already_nested(field, dist):
-        if not field or len(field) != len(dist):
-            return False
-        for val, num in zip(field, dist):
-            if num > 0:
-                if not isinstance(val, (tuple, list)) or len(val) != num:
-                    return False
-        return True
-
-    @staticmethod
-    def _is_shape_field_already_nested(field, dist):
-        """Like _is_field_already_nested but for shape-valued fields (input_ori_shapes).
-
-        A shape tuple like (3,4) is a leaf value, while a nested entry
-        like ((3,4),(5,6)) has tuple-of-tuples. Only the latter is 'already nested'.
-        """
-        if not field or len(field) != len(dist):
-            return False
-        for val, num in zip(field, dist):
-            if num > 0:
-                if not isinstance(val, (tuple, list)) or len(val) != num:
-                    return False
-                if num > 0 and val:
-                    first = val[0]
-                    if first is not None and not isinstance(first, (tuple, list)):
-                        return False
-        return True
-
-    @staticmethod
-    def _is_range_field_already_nested(field, dist):
-        """Like _is_field_already_nested but for range/pair fields.
-
-        A range expression like (None, 1.0) has scalar elements,
-        while a range list like ((None, 1.0), (-1.0, 1.0)) has tuple elements.
-        Only the latter counts as 'already nested'.
-        """
-        if not field or len(field) != len(dist):
-            return False
-        for val, num in zip(field, dist):
-            if num > 0:
-                if not isinstance(val, (tuple, list)) or len(val) != num:
-                    return False
-                if num > 1 and val:
-                    first = val[0]
-                    if not isinstance(first, (tuple, list)):
-                        return False
-        return True
-
-    @staticmethod
     def _flatten_by_distribution(values, distribution):
         """Flatten a distribution-aligned field to one-value-per-tensor.
 
@@ -1426,163 +1376,13 @@ class TestcaseOp(TestcaseBase):
                 result.append(val)
         return tuple(result)
 
-    def _normalize_field_by_dist(self, field_name, dist):
-        """Normalize a string/scalar field to match distribution nesting exactly."""
-        field = getattr(self, field_name)
-        if not field:
-            return
-        if not isinstance(field, (tuple, list)):
-            # Single scalar (e.g. float absolute_precision) — broadcast to match dist
-            flat_count = sum(max(d, 1) for d in dist)
-            flat = (field,) * flat_count
-            result = []
-            idx = 0
-            for d in dist:
-                if d > 0:
-                    result.append(tuple(flat[idx:idx + d]))
-                    idx += d
-                else:
-                    result.append(flat[idx])
-                    idx += 1
-            setattr(self, field_name, tuple(result))
-            cache_attr = f'_flat_{field_name}'
-            if hasattr(self, cache_attr):
-                setattr(self, cache_attr, None)
-            return
-        if self._is_field_already_nested(field, dist):
-            return
-        flat_count = sum(max(d, 1) for d in dist)
-        if len(field) == flat_count:
-            flat = field
-        elif len(field) == 1:
-            val = field[0]
-            if isinstance(val, (tuple, list)) and len(val) == 1:
-                val = val[0]
-            flat = (val,) * flat_count
-        elif len(field) == len(dist):
-            flat = self._flatten_by_distribution(field, dist)
-        elif len(field) < len(dist):
-            padded = field + (field[-1],) * (len(dist) - len(field))
-            flat = self._flatten_by_distribution(padded, dist)
-        else:
-            # More values than params but not matching flat_count — leave as-is
-            return
-        result = []
-        idx = 0
-        for d in dist:
-            if d > 0:
-                result.append(tuple(flat[idx:idx + d]))
-                idx += d
-            else:
-                result.append(flat[idx])
-                idx += 1
-        setattr(self, field_name, tuple(result))
-        cache_attr = f'_flat_{field_name}'
-        if hasattr(self, cache_attr):
-            setattr(self, cache_attr, None)
-
-    def _normalize_shape_field_by_dist(self, field_name, dist):
-        """Normalize a shape-valued field (input_ori_shapes, output_ori_shapes).
-
-        Leaf values are shape tuples like (3,4) — must not be destructed.
-        A compressed entry is a single shape tuple at a TensorList position.
-        A nested entry is a tuple of shape tuples.
-        """
-        field = getattr(self, field_name)
-        if not field:
-            return
-        if self._is_shape_field_already_nested(field, dist):
-            return
-        flat_count = sum(max(d, 1) for d in dist)
-        if len(field) == flat_count:
-            flat = field
-        elif len(field) == 1:
-            val = field[0]
-            flat = (val,) * flat_count
-        elif len(field) == len(dist):
-            flat = self._flatten_by_distribution(field, dist)
-        elif len(field) < len(dist):
-            padded = field + (field[-1],) * (len(dist) - len(field))
-            flat = self._flatten_by_distribution(padded, dist)
-        else:
-            return
-        result = []
-        idx = 0
-        for d in dist:
-            if d > 0:
-                result.append(tuple(flat[idx:idx + d]))
-                idx += d
-            else:
-                result.append(flat[idx])
-                idx += 1
-        setattr(self, field_name, tuple(result))
-        cache_attr = f'_flat_{field_name}'
-        if hasattr(self, cache_attr):
-            setattr(self, cache_attr, None)
-
-    def _normalize_range_field_by_dist(self, field_name, dist):
-        """Normalize a range/pair field (input_data_ranges, precision_tolerances).
-
-        Leaf values are (min,max) or (rtol,ptol) pairs — must not be destructed.
-        """
-        field = getattr(self, field_name)
-        if not field or not isinstance(field, (tuple, list)):
-            return
-        if self._is_range_field_already_nested(field, dist):
-            return
-        flat_count = sum(max(d, 1) for d in dist)
-        if len(field) == flat_count:
-            flat = field
-        elif len(field) == 1:
-            val = field[0]
-            flat = (val,) * flat_count
-        elif len(field) < len(dist):
-            per_param = list(field) + [field[-1]] * (len(dist) - len(field))
-            # expand TensorList positions
-            result = []
-            for i, num in enumerate(dist):
-                val = per_param[i]
-                if num == 0:
-                    result.append(val)
-                elif isinstance(val, (tuple, list)) and val and isinstance(val[0], (tuple, list)):
-                    if len(val) >= num:
-                        result.append(tuple(val[:num]))
-                    else:
-                        result.append(tuple(val) + (val[0],) * (num - len(val)))
-                else:
-                    result.append(tuple([val] * num))
-            setattr(self, field_name, tuple(result))
-            cache_attr = f'_flat_{field_name}'
-            if hasattr(self, cache_attr):
-                setattr(self, cache_attr, None)
-            return
-        else:
-            # More values than params — may be flat or partially nested
-            flat = self._flatten_by_distribution(field, dist) if len(field) == len(dist) else field
-        if len(flat) != flat_count:
-            # Cannot normalize — leave as-is
-            return
-        result = []
-        idx = 0
-        for d in dist:
-            if d > 0:
-                result.append(tuple(flat[idx:idx + d]))
-                idx += d
-            else:
-                result.append(flat[idx])
-                idx += 1
-        setattr(self, field_name, tuple(result))
-        cache_attr = f'_flat_{field_name}'
-        if hasattr(self, cache_attr):
-            setattr(self, cache_attr, None)
-
     # ========== actual_input_data_ranges override ==========
 
     @TestcaseBase.actual_input_data_ranges.setter
     def actual_input_data_ranges(self, value):
         if value is not None and self.input_distribution:
             self._actual_input_data_ranges = value
-            self._normalize_range_field_by_dist('_actual_input_data_ranges', self.input_distribution)
+            self._normalize_range_field_by_dist('_actual_input_data_ranges', self.input_distribution, (None, None))
         else:
             self._actual_input_data_ranges = value
 

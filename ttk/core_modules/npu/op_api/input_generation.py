@@ -134,7 +134,7 @@ class InputGenerator:
             t_scalar = numpy_to_torch_tensor(np_arr, is_complex32="complex32" in str(dtype))
             scalars.append(t_scalar.squeeze())
         self._ctx.scalars = apply_as_list(scalars,
-                                          self._ctx._get_scalar_list_distribution())
+                                          self._ctx.scalar_list_dist)
 
     def _convert_np_to_torch_tensor(self):
         import torch
@@ -161,7 +161,7 @@ class InputGenerator:
                 torch_tensors.append(t_view)
         self._ctx.flatten_tensors = torch_tensors
         self._ctx.tensors = apply_as_list(torch_tensors,
-                                          self._ctx._get_tensor_list_distribution())
+                                          self._ctx.tensor_list_dist)
 
     def _package_scalars(self):
         """
@@ -224,7 +224,7 @@ class InputGenerator:
                     raise
         self._ctx.flatten_tensors = np_views
         self._ctx.tensors = apply_as_list(np_views,
-                                          self._ctx._get_tensor_list_distribution())
+                                          self._ctx.tensor_list_dist)
 
     def _package_scalars_numpy(self):
         """非 torch 原生 dtype 时，scalar 保持为 numpy scalar/ndarray"""

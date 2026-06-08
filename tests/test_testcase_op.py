@@ -35,7 +35,7 @@ def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
     case.output_ori_shapes = kwargs.pop("output_ori_shapes", output_shapes)
     case.attributes = kwargs.pop("attributes", {})
     n_in = len(input_shapes)
-    n_out = len(output_shapes or ())
+    n_out = len(output_shapes) if isinstance(output_shapes, (tuple, list)) else 1
     case.input_formats = kwargs.pop("input_formats", ("ND",) * n_in)
     case.input_ori_formats = kwargs.pop("input_ori_formats", ("ND",) * n_in)
     case.output_formats = kwargs.pop("output_formats", ("ND",) * n_out)
@@ -621,29 +621,17 @@ class TestNestedShapes:
         _validate(case2)
         assert case1.get_compilation_hash() != case2.get_compilation_hash()
 
-    def test_nested_precision_tolerances_outputs(self):
-        """Nested precision_tolerances for nested outputs gets flattened."""
+    def test_precision_tolerances_scalar_broadcast(self):
+        """Scalar precision_tolerances broadcast to TensorList output."""
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,)),
             input_dtypes=(("float16", "float16"), "float16"),
             output_shapes=(((8,), (8,)),),
             output_dtypes=(("float16", "float16"),),
         )
-        case.precision_tolerances = ((0.01, 0.02), (0.03, 0.04))
+        case.precision_tolerances = ((0.01, 0.02),)
         _validate(case)
-        assert case.flat_precision_tolerances == ((0.01, 0.02), (0.03, 0.04))
-
-    def test_nested_absolute_precision_outputs(self):
-        """Nested absolute_precision for nested outputs gets flattened."""
-        case = _make_testcase(
-            input_shapes=(((3, 4), (5, 4)), (8,)),
-            input_dtypes=(("float16", "float16"), "float16"),
-            output_shapes=(((8,), (8,)),),
-            output_dtypes=(("float16", "float16"),),
-        )
-        case.absolute_precision = (1e-5, 1e-6)
-        _validate(case)
-        assert case.flat_absolute_precision == (1e-5, 1e-6)
+        assert case.precision_tolerances == (((0.01, 0.02), (0.01, 0.02)),)
 
     def test_single_absolute_precision_stays(self):
         """Single float absolute_precision is normalized to tuple matching distribution."""
@@ -654,18 +642,16 @@ class TestNestedShapes:
         assert case.absolute_precision == (1e-05,)
         assert case.flat_absolute_precision == (1e-05,)
 
-    def test_nested_input_data_ranges_flattened(self):
-        """Nested input_data_ranges: original preserved, flat property returns flattened."""
+    def test_input_data_ranges_scalar_broadcast(self):
+        """Scalar input_data_ranges broadcast to TensorList input."""
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,)),
-            input_dtypes=(("float16", "float16"), "float16"),
+            input_dtypes=(("float16", "float16"), "float32"),
         )
-        case.input_data_ranges = (((None, 1.0), (-1.0, 1.0)), (0.0, 5.0))
+        case.input_data_ranges = ((None, 1.0),)
         _validate(case)
-        # Original field preserved
-        assert case.input_data_ranges == (((None, 1.0), (-1.0, 1.0)), (0.0, 5.0))
-        # Flat property returns flattened
-        assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (0.0, 5.0))
+        # Single range broadcast to all positions
+        assert case.input_data_ranges == (((None, 1.0), (None, 1.0)), (None, 1.0))
 
 
 class TestTensorApiFlatPrecision:
@@ -675,9 +661,10 @@ class TestTensorApiFlatPrecision:
         from ttk.core_modules.testcase_manager.testcase_tensor_api_base import TensorApiTestcaseBase
         case = TensorApiTestcaseBase()
         case.tensor_view_shapes = (((3, 4), (5, 4)), (8,))
-        # dist = (2, 0), first entry gets extended by _flatten_by_distribution
+        case.output_tensor_indexes = (0, 1)
+        # output_dist = (2, 0), first entry gets extended by _flatten_by_distribution
         case.precision_tolerances = (((0.01, 0.02), (0.03, 0.04)), (0.05, 0.06))
-        case._inferred_tensor_list_dist = None
+        case._tensor_list_dist = None
         assert case.flat_precision_tolerances == ((0.01, 0.02), (0.03, 0.04), (0.05, 0.06))
 
     def test_flat_absolute_precision_single_float(self):
@@ -691,8 +678,9 @@ class TestTensorApiFlatPrecision:
         from ttk.core_modules.testcase_manager.testcase_tensor_api_base import TensorApiTestcaseBase
         case = TensorApiTestcaseBase()
         case.tensor_view_shapes = (((3, 4), (5, 4)), (8,))
+        case.output_tensor_indexes = (0, 1)
         case.absolute_precision = ((1e-5, 1e-6), 1e-7)
-        case._inferred_tensor_list_dist = None
+        case._tensor_list_dist = None
         assert case.flat_absolute_precision == (1e-5, 1e-6, 1e-7)
 
 
@@ -868,18 +856,6 @@ class TestFlatPropertiesReturnFlattened:
         _validate(case)
         assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (0.0, 5.0))
 
-    def test_flat_precision_tolerances_nested_outputs(self):
-        """flat_precision_tolerances flattens for nested outputs."""
-        case = _make_testcase(
-            input_shapes=(((3, 4), (5, 4)), (8,)),
-            input_dtypes=(("float16", "float16"), "float16"),
-            output_shapes=(((8,), (8,)),),
-            output_dtypes=(("float16", "float16"),),
-        )
-        case.precision_tolerances = ((0.01, 0.02), (0.03, 0.04))
-        _validate(case)
-        assert case.flat_precision_tolerances == ((0.01, 0.02), (0.03, 0.04))
-
     def test_flat_absolute_precision_single_float(self):
         """Single float absolute_precision is normalized to tuple."""
         case = _make_testcase()
@@ -888,14 +864,14 @@ class TestFlatPropertiesReturnFlattened:
         assert case.flat_absolute_precision == (1e-05,)
 
     def test_flat_absolute_precision_nested(self):
-        """Nested absolute_precision tuple gets flattened."""
+        """Scalar absolute_precision broadcasts to TensorList output."""
         case = _make_testcase(
             output_shapes=(((8,), (8,)),),
             output_dtypes=(("float16", "float16"),),
         )
-        case.absolute_precision = (1e-5, 1e-6)
+        case.absolute_precision = 1e-5
         _validate(case)
-        assert case.flat_absolute_precision == (1e-5, 1e-6)
+        assert case.absolute_precision == ((1e-5, 1e-5),)
 
 
 class TestDynPropertiesUseFlat:

@@ -48,19 +48,19 @@ class TestGetTensorListDistribution:
 
     def test_flat_shapes(self, make_testcase):
         case = make_testcase(tensor_view_shapes=FLAT_SHAPES)
-        assert case._get_tensor_list_distribution() == (0, 0)
+        assert case.tensor_list_dist == (0, 0)
 
     def test_nested_shapes(self, make_testcase):
         case = make_testcase(tensor_view_shapes=NESTED_SHAPES)
-        assert case._get_tensor_list_distribution() == (2, 0)
+        assert case.tensor_list_dist == (2, 0)
 
     def test_all_nested(self, make_testcase):
         case = make_testcase(tensor_view_shapes=(((1,), (2,)), ((3,),)))
-        assert case._get_tensor_list_distribution() == (2, 1)
+        assert case.tensor_list_dist == (2, 1)
 
     def test_none(self, make_testcase):
         case = make_testcase(tensor_view_shapes=None)
-        assert case._get_tensor_list_distribution() == ()
+        assert case.tensor_list_dist == ()
 
 
 class TestFlatTensorViewShapes:
@@ -310,28 +310,26 @@ class TestFlatInputDataRanges:
         assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0))
 
     def test_nested_expanded(self, make_testcase):
+        """Flat input (len==flat_count > len(dist)) → invalid."""
         case = make_testcase(
             tensor_view_shapes=NESTED_SHAPES,
             input_data_ranges=((None, 1.0), (-1.0, 1.0), (0.0, 5.0)))
-        assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (0.0, 5.0))
+        case._normalize_compressed_fields()
+        assert case.is_valid is False
 
     def test_top_level_compression(self, make_testcase):
         case = make_testcase(
             tensor_view_shapes=NESTED_SHAPES,
             input_data_ranges=((-1.0, 1.0),))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0))
 
     def test_per_param_compression(self, make_testcase):
         case = make_testcase(
             tensor_view_shapes=NESTED_SHAPES,
             input_data_ranges=((None, 1.0), (-1.0, 1.0)))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((None, 1.0), (None, 1.0), (-1.0, 1.0))
-
-    def test_nested_tensor_list(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=NESTED_SHAPES,
-            input_data_ranges=(((None, 1.0), (-1.0, 1.0)), (0.0, 5.0)))
-        assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (0.0, 5.0))
 
     def test_none(self, make_testcase):
         case = make_testcase(tensor_view_shapes=((3, 3),), input_data_ranges=None)
@@ -352,21 +350,23 @@ class TestFlatScalarDataRanges:
         case = make_testcase(
             scalar_dtypes=(('int64', 'int64'), 'float32'),
             scalar_data_ranges=((-1.0, 1.0),))
-        case._inferred_scalar_list_dist = (2, 0)
+        case._scalar_list_dist = (2, 0)
+        case._normalize_compressed_fields()
         assert case.flat_scalar_data_ranges == ((-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0))
 
     def test_per_param_compression(self, make_testcase):
         case = make_testcase(
             scalar_dtypes=(('int64', 'int64'), 'float32'),
             scalar_data_ranges=((None, 1.0), (-1.0, 1.0)))
-        case._inferred_scalar_list_dist = (2, 0)
+        case._scalar_list_dist = (2, 0)
+        case._normalize_compressed_fields()
         assert case.flat_scalar_data_ranges == ((None, 1.0), (None, 1.0), (-1.0, 1.0))
 
     def test_nested_explicit(self, make_testcase):
         case = make_testcase(
             scalar_dtypes=(('int64', 'int64'), 'float32'),
             scalar_data_ranges=(((None, 1.0), (-1.0, 1.0)), (0.0, 5.0)))
-        case._inferred_scalar_list_dist = (2, 0)
+        case._scalar_list_dist = (2, 0)
         assert case.flat_scalar_data_ranges == ((None, 1.0), (-1.0, 1.0), (0.0, 5.0))
 
     def test_none(self, make_testcase):
@@ -394,37 +394,42 @@ class TestIsScalarListElement:
 
 
 class TestIsFieldAlreadyNested:
-    """Tests for _is_field_already_nested — prevents double-normalization."""
+    """Tests for already-nested detection via _normalize_field_by_dist with _is_scalar_group."""
+
+    def _assert_already_nested(self, field, dist):
+        """Verify scalar field is detected as already-nested (no modification)."""
+        case = TestcaseAclnn()
+        case.is_valid = True
+        case.tensor_dtypes = field
+        case._normalize_field_by_dist("tensor_dtypes", dist, TestcaseAclnn._is_scalar_group)
+        assert case.is_valid is True
+        assert case.tensor_dtypes == field
+
+    def _assert_not_already_nested(self, field, dist):
+        """Verify scalar field is NOT already-nested (gets normalized or rejected)."""
+        case = TestcaseAclnn()
+        case.is_valid = True
+        case.tensor_dtypes = field
+        case._normalize_field_by_dist("tensor_dtypes", dist, TestcaseAclnn._is_scalar_group)
+        assert case.tensor_dtypes != field or case.is_valid is False
 
     def test_fully_nested_matches_dist(self):
-        field = (('float32', 'float32'), 'float32')
-        dist = (2, 0)
-        assert TestcaseAclnn._is_field_already_nested(field, dist) is True
+        self._assert_already_nested((('float32', 'float32'), 'float32'), (2, 0))
 
     def test_compressed_not_nested(self):
-        field = ('float32',)
-        dist = (2, 0)
-        assert TestcaseAclnn._is_field_already_nested(field, dist) is False
+        self._assert_not_already_nested(('float32',), (2, 0))
 
     def test_len_mismatch(self):
-        field = ('float32', 'float32')
-        dist = (3,)
-        assert TestcaseAclnn._is_field_already_nested(field, dist) is False
+        self._assert_not_already_nested(('float32', 'float32'), (3,))
 
     def test_inner_len_mismatch(self):
-        field = (('float32',), 'float32')
-        dist = (2, 0)
-        assert TestcaseAclnn._is_field_already_nested(field, dist) is False
+        self._assert_not_already_nested((('float32',), 'float32'), (2, 0))
 
     def test_all_single_tensors(self):
-        field = ('float32', 'float32')
-        dist = (0, 0)
-        assert TestcaseAclnn._is_field_already_nested(field, dist) is True
+        self._assert_already_nested(('float32', 'float32'), (0, 0))
 
     def test_single_tensorlist(self):
-        field = (('a', 'b', 'c'),)
-        dist = (3,)
-        assert TestcaseAclnn._is_field_already_nested(field, dist) is True
+        self._assert_already_nested((('a', 'b', 'c'),), (3,))
 
 
 class TestNormalizeSkipsAlreadyNested:
@@ -508,7 +513,10 @@ class TestNormalizeInputDataRanges:
     def _make_case(self, shapes, ranges=None):
         case = TestcaseAclnn()
         case.tensor_view_shapes = shapes
-        case.tensor_dtypes = ('float32',) * len(flatten_nested_sequence(shapes))
+        case.tensor_dtypes = tuple(
+            tuple('float32' for _ in s) if isinstance(s, (tuple, list)) and s and isinstance(s[0], (tuple, list)) else 'float32'
+            for s in shapes
+        )
         if ranges is not None:
             case.input_data_ranges = ranges
         case._normalize_compressed_fields()
@@ -555,17 +563,15 @@ class TestNormalizeInputDataRanges:
         case = self._make_case(
             shapes=(((3, 4), (5, 6), (7, 8)), (9, 10)),
             ranges=(((0.0, 0.5), (0.5, 1.0)), (-1.0, 1.0)))
-        # TensorList(3) but only 2 ranges → pad (None, None)
-        assert case.input_data_ranges == (
-            ((0.0, 0.5), (0.5, 1.0), (None, None)), (-1.0, 1.0))
+        # TensorList(3) but range-list has only 2 entries — ambiguous, mark invalid.
+        assert case.is_valid is False
 
     def test_tensorlist_range_list_extra_truncated(self):
         case = self._make_case(
             shapes=(((3, 4), (5, 6)), (7, 8)),
             ranges=(((0.0, 0.5), (0.5, 1.0), (1.0, 2.0)), (-1.0, 1.0)))
-        # TensorList(2) but 3 ranges → truncate to 2
-        assert case.input_data_ranges == (
-            ((0.0, 0.5), (0.5, 1.0)), (-1.0, 1.0))
+        # TensorList(2) but range-list has 3 entries — ambiguous, mark invalid.
+        assert case.is_valid is False
 
     def test_tensorlist_single_element_list_broadcast(self):
         case = self._make_case(
@@ -662,13 +668,14 @@ class TestNonePlaceholderInStrideOffsetStorage:
 
 
 class TestFlatInputDataRangesPadding:
-    """Tests for flat_input_data_ranges: flatten/broadcast, then pad (None,None) at end if short."""
+    """Tests for flat_input_data_ranges: normalize then flatten — pad (None,None) at end if short."""
 
     def test_short_by_one_pads_none(self, make_testcase):
         case = make_testcase(
             tensor_view_shapes=((3, 3), (3, 2), (3, 5)),
             input_data_ranges=((None, 1.0), (-1.0, 1.0)),
             output_tensor_indexes=(2,))
+        case._normalize_compressed_fields()
         assert case.pure_output_indexes == [2]
         assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (None, None))
 
@@ -677,6 +684,7 @@ class TestFlatInputDataRangesPadding:
             tensor_view_shapes=((3, 3), (3, 2), (3, 5)),
             input_data_ranges=((None, 1.0), (-1.0, 1.0)),
             output_tensor_indexes=(1,))
+        case._normalize_compressed_fields()
         assert case.pure_output_indexes == [1]
         assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (None, None))
 
@@ -685,6 +693,7 @@ class TestFlatInputDataRangesPadding:
             tensor_view_shapes=((2, 3), (3, 4), (4, 5), (5, 6)),
             input_data_ranges=((None, 1.0), (0.0, 5.0)),
             output_tensor_indexes=(1, 3))
+        case._normalize_compressed_fields()
         assert case.pure_output_indexes == [1, 3]
         assert case.flat_input_data_ranges == ((None, 1.0), (0.0, 5.0), (None, None), (None, None))
 
@@ -693,6 +702,7 @@ class TestFlatInputDataRangesPadding:
             tensor_view_shapes=((3, 3), (3, 2), (3, 5)),
             input_data_ranges=((-1.0, 1.0), (0.0, 5.0)),
             output_tensor_indexes=(0,))
+        case._normalize_compressed_fields()
         assert case.pure_output_indexes == [0]
         assert case.flat_input_data_ranges == ((-1.0, 1.0), (0.0, 5.0), (None, None))
 
@@ -701,12 +711,14 @@ class TestFlatInputDataRangesPadding:
             tensor_view_shapes=((3, 3), (3, 2), (3, 5)),
             input_data_ranges=((None, 1.0), (-1.0, 1.0), (0.0, 5.0)),
             output_tensor_indexes=(2,))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (0.0, 5.0))
 
     def test_no_short_no_padding(self, make_testcase):
         case = make_testcase(
             tensor_view_shapes=((3, 3), (3, 2)),
             input_data_ranges=((None, 1.0), (-1.0, 1.0)))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0))
 
     def test_broadcast_fills_all_no_padding(self, make_testcase):
@@ -714,6 +726,7 @@ class TestFlatInputDataRangesPadding:
             tensor_view_shapes=((3, 3), (3, 2), (3, 5)),
             input_data_ranges=((-1.0, 1.0),),
             output_tensor_indexes=(2,))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0))
 
     def test_broadcast_fills_all_even_with_gap(self, make_testcase):
@@ -721,6 +734,7 @@ class TestFlatInputDataRangesPadding:
             tensor_view_shapes=((2, 3), (3, 4), (4, 5), (5, 6)),
             input_data_ranges=((None, 1.0),),
             output_tensor_indexes=())
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((None, 1.0), (None, 1.0), (None, 1.0), (None, 1.0))
 
     def test_expand_by_dist_fills_all_no_padding(self, make_testcase):
@@ -729,8 +743,8 @@ class TestFlatInputDataRangesPadding:
             input_data_ranges=((None, 1.0), (-1.0, 1.0)),
             output_tensor_indexes=(1,))
         # Must normalize first — flat_input_data_ranges assumes normalized structure.
-        dist = case._get_tensor_list_distribution()
-        case._normalize_input_data_ranges(dist)
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
         assert case.flat_input_data_ranges == ((None, 1.0), (None, 1.0), (-1.0, 1.0))
 
     def test_expand_by_dist_short_pads_none(self, make_testcase):
@@ -738,62 +752,32 @@ class TestFlatInputDataRangesPadding:
             tensor_view_shapes=(((3, 3), (3, 2)), (3, 5), (4, 5)),
             input_data_ranges=((None, 1.0), (-1.0, 1.0)),
             output_tensor_indexes=(2,))
-        dist = case._get_tensor_list_distribution()
-        case._normalize_input_data_ranges(dist)
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
         assert case.flat_input_data_ranges == ((None, 1.0), (None, 1.0), (-1.0, 1.0), (None, None))
 
-    def test_nested_ranges_flatten_short_then_pad(self, make_testcase):
+    def test_nested_ranges_single_expr_broadcast_and_pad(self, make_testcase):
+        """len==1 with single range expression: broadcast to all positions, then
+        TensorList internal broadcast, missing positions padded with pad_value."""
+        case = make_testcase(
+            tensor_view_shapes=(((3, 3), (3, 2)), (3, 5), (4, 5)),
+            input_data_ranges=((0.0, 5.0),),
+            output_tensor_indexes=(2,))
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        # len==1: single range expression (0.0,5.0) broadcast to all 3 positions,
+        # then TensorList position 0 internally broadcasts to 2 copies.
+        assert case.flat_input_data_ranges == ((0.0, 5.0), (0.0, 5.0), (0.0, 5.0), (0.0, 5.0))
+
+    def test_nested_ranges_single_range_list_invalid(self, make_testcase):
+        """len==1 with range-list value: cannot broadcast, mark invalid."""
         case = make_testcase(
             tensor_view_shapes=(((3, 3), (3, 2)), (3, 5), (4, 5)),
             input_data_ranges=(((0.0, 5.0), (1.0, 2.0)),),
             output_tensor_indexes=(2,))
-        dist = case._get_tensor_list_distribution()
-        case._normalize_input_data_ranges(dist)
-        # Single range-list broadcast: TensorList(2) gets exact match,
-        # non-TensorList params also get the broadcast range-list as-is.
-        assert case.flat_input_data_ranges == ((0.0, 5.0), (1.0, 2.0), ((0.0, 5.0), (1.0, 2.0)), ((0.0, 5.0), (1.0, 2.0)))
-
-
-class TestNormalizeInputDataRangesPadding:
-    """Tests for _normalize_input_data_ranges: expand, pad at end if short, then re-nest."""
-
-    def test_normalize_short_pads_none(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=((3, 3), (3, 2), (3, 5)),
-            input_data_ranges=((None, 1.0), (-1.0, 1.0)),
-            output_tensor_indexes=(2,))
-        dist = case._get_tensor_list_distribution()
-        case._normalize_input_data_ranges(dist)
-        assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (None, None))
-
-    def test_normalize_broadcast_fills_all(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=(((3, 3), (3, 2)), (3, 5)),
-            input_data_ranges=((0.0, 5.0),),
-            output_tensor_indexes=(0,))
-        dist = case._get_tensor_list_distribution()
-        case._normalize_input_data_ranges(dist)
-        assert case.flat_input_data_ranges == ((0.0, 5.0), (0.0, 5.0), (0.0, 5.0))
-
-    def test_normalize_expand_by_dist_fills_all(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=(((3, 3), (3, 2), (3, 4)), (3, 5)),
-            input_data_ranges=((None, 1.0), (-1.0, 1.0)),
-            output_tensor_indexes=(1,))
-        dist = case._get_tensor_list_distribution()
-        case._normalize_input_data_ranges(dist)
-        assert case.input_data_ranges == (((None, 1.0), (None, 1.0), (None, 1.0)), (-1.0, 1.0))
-        assert case.flat_input_data_ranges == ((None, 1.0), (None, 1.0), (None, 1.0), (-1.0, 1.0))
-
-    def test_normalize_expand_by_dist_short_pads_none(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=(((3, 3), (3, 2)), (3, 5), (4, 5)),
-            input_data_ranges=((None, 1.0), (-1.0, 1.0)),
-            output_tensor_indexes=(2,))
-        dist = case._get_tensor_list_distribution()
-        case._normalize_input_data_ranges(dist)
-        assert case.input_data_ranges == (((None, 1.0), (None, 1.0)), (-1.0, 1.0), (None, None))
-        assert case.flat_input_data_ranges == ((None, 1.0), (None, 1.0), (-1.0, 1.0), (None, None))
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.is_valid is False
 
 
 # ========== TensorList flattening edge-case tests ==========
@@ -886,3 +870,279 @@ class TestTensorListFlatStorageShapes:
             tensor_storage_shapes=((10, 10),))
         case._normalize_compressed_fields()
         assert case.flat_tensor_storage_shapes == ((10, 10), (10, 10), (10, 10))
+
+
+# ========== Comprehensive tests for _normalize_range_field_by_dist paths ==========
+
+
+class TestIsRangeFieldAlreadyNested:
+    """Tests for already-nested detection via _normalize_field_by_dist with _is_range_group."""
+
+    def _assert_already_nested(self, field, dist):
+        """Verify range field is detected as already-nested (no modification)."""
+        case = TestcaseAclnn()
+        case.is_valid = True
+        case.input_data_ranges = field
+        case._normalize_field_by_dist("input_data_ranges", dist, TestcaseAclnn._is_range_group)
+        assert case.is_valid is True
+        assert case.input_data_ranges == field
+
+    def _assert_not_already_nested(self, field, dist):
+        """Verify range field is NOT already-nested (gets normalized or rejected)."""
+        case = TestcaseAclnn()
+        case.is_valid = True
+        case.input_data_ranges = field
+        case._normalize_field_by_dist("input_data_ranges", dist, TestcaseAclnn._is_range_group)
+        assert case.input_data_ranges != field or case.is_valid is False
+
+    def test_fully_nested_range_list(self):
+        self._assert_already_nested(
+            (((0.0, 1.0), (-1.0, 1.0)), (0.5, 2.0)), (2, 0))
+
+    def test_len_mismatch_returns_false(self):
+        self._assert_not_already_nested(
+            ((0.0, 1.0), (-1.0, 1.0)), (2, 0))
+
+    def test_single_tensorlist_fully_nested(self):
+        self._assert_already_nested(
+            (((0.0, 1.0), (-1.0, 1.0), (0.5, 2.0)),), (3,))
+
+    def test_single_element_tensorlist_nested(self):
+        self._assert_already_nested(
+            (((0.0, 1.0),),), (1,))
+
+    def test_inner_len_mismatch_returns_false(self):
+        self._assert_not_already_nested(
+            (((0.0, 1.0),), (0.5, 2.0)), (2, 0))
+
+    def test_flat_values_in_tensorlist_position_returns_false(self):
+        # (0.0, 1.0) is a range expression, not a range list → not already nested
+        self._assert_not_already_nested(
+            ((0.0, 1.0), (-1.0, 1.0)), (2,))
+
+    def test_all_single_tensors_returns_true(self):
+        self._assert_already_nested(
+            ((0.0, 1.0), (-1.0, 1.0)), (0, 0))
+
+    def test_empty_field_returns_false(self):
+        case = TestcaseAclnn()
+        case.is_valid = True
+        case.input_data_ranges = ()
+        case._normalize_field_by_dist("input_data_ranges", (0,), TestcaseAclnn._is_range_group)
+        # Empty field is a no-op (early return), not a True/False result
+        assert case.input_data_ranges == ()
+
+    def test_none_field_returns_false(self):
+        case = TestcaseAclnn()
+        case.is_valid = True
+        case.input_data_ranges = None
+        case._normalize_field_by_dist("input_data_ranges", (0,), TestcaseAclnn._is_range_group)
+        # None field is a no-op (early return)
+        assert case.input_data_ranges is None
+
+
+class TestResolvePadValue:
+    """Direct unit tests for _resolve_pad_value class method."""
+
+    def test_explicit_pad_overrides_default(self):
+        # explicit_pad takes precedence
+        assert TestcaseAclnn._resolve_pad_value("input_data_ranges", explicit_pad=(0, 0)) == (0, 0)
+
+    def test_auto_resolve_from_header_none_default(self):
+        # input_data_ranges default is ((None, None),) → pad is (None, None)
+        result = TestcaseAclnn._resolve_pad_value("input_data_ranges")
+        assert result == (None, None)
+
+    def test_auto_resolve_from_header_scalar_default(self):
+        # absolute_precision default is 1e-8 (scalar float) → pad is 1e-8
+        result = TestcaseAclnn._resolve_pad_value("absolute_precision")
+        assert result == 1e-8
+
+    def test_auto_resolve_unknown_field_returns_no_pad(self):
+        # field not in complete_headers → _NO_PAD
+        from ttk.core_modules.testcase_manager.testcase_base import _NO_PAD
+        result = TestcaseAclnn._resolve_pad_value("nonexistent_field")
+        assert result is _NO_PAD
+
+
+class TestWriteBackNormalized:
+    """Tests for _write_back_normalized: field write-back and flat cache clearing."""
+
+    def test_writes_back_as_tuple(self, make_testcase):
+        case = make_testcase(
+            tensor_view_shapes=(((3, 4), (5, 6)), (7, 8)),
+            input_data_ranges=((0.0, 1.0),))
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert isinstance(case.input_data_ranges, tuple)
+
+    def test_clears_flat_cache(self, make_testcase):
+        case = make_testcase(
+            tensor_view_shapes=(((3, 4), (5, 6)), (7, 8)),
+            input_data_ranges=((0.0, 1.0), (-1.0, 1.0)))
+        # Manually populate cache (simulating prior access after normalize)
+        case._flat_input_data_ranges = ((0.0, 1.0), (-1.0, 1.0))
+        # Normalize should clear cache via _write_back_normalized
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case._flat_input_data_ranges is None
+
+
+class TestNormalizeRangeFieldNonTupleField:
+    """Tests for non-tuple/non-list field input → early return."""
+
+    def test_non_tuple_field_unchanged(self, make_testcase):
+        case = make_testcase(
+            tensor_view_shapes=((3, 4), (5, 6)),
+            input_data_ranges=((0.0, 1.0), (-1.0, 1.0)))
+        # Set to a non-tuple value
+        case.input_data_ranges = "not_a_tuple"
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.input_data_ranges == "not_a_tuple"
+
+    def test_empty_tuple_field_unchanged(self, make_testcase):
+        case = make_testcase(
+            tensor_view_shapes=((3, 4), (5, 6)),
+            input_data_ranges=())
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.input_data_ranges == ()
+
+    def test_none_field_unchanged(self, make_testcase):
+        case = make_testcase(
+            tensor_view_shapes=((3, 4), (5, 6)),
+            input_data_ranges=None)
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.input_data_ranges is None
+
+
+class TestNormalizeRangeFieldLenGtLenDist:
+    """len(field) > len(dist) → mark invalid (CASE_FIELD_AMBIGUOUS)."""
+
+    def test_flat_count_eq_len_dist_invalid(self, make_testcase):
+        # dist=(2,0), len(dist)=2, len(field)=3 > len(dist) → invalid
+        case = make_testcase(
+            tensor_view_shapes=(((3, 4), (5, 6)), (7, 8)),
+            input_data_ranges=((0.0, 1.0), (2.0, 3.0), (4.0, 5.0)))
+        dist = case.tensor_list_dist
+        assert dist == (2, 0)
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+    def test_len_gt_flat_count_invalid(self, make_testcase):
+        # dist=(2,0), len(dist)=2, len(field)=4 > len(dist) → invalid
+        case = make_testcase(
+            tensor_view_shapes=(((3, 4), (5, 6)), (7, 8)),
+            input_data_ranges=((0, 1), (2, 3), (4, 5), (6, 7)))
+        dist = case.tensor_list_dist
+        assert dist == (2, 0)
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+    def test_all_tensorlist_flat_count_invalid(self, make_testcase):
+        # dist=(2,3), len(dist)=2, len(field)=5 > len(dist) → invalid
+        case = make_testcase(
+            tensor_view_shapes=(((1,), (2,)), ((3,), (4,), (5,))),
+            input_data_ranges=((0, 1), (2, 3), (4, 5), (6, 7), (8, 9)))
+        dist = case.tensor_list_dist
+        assert dist == (2, 3)
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+
+class TestNormalizeRangeFieldLenEqLenDistNotNested:
+    """len(field)==len(dist) but not nested → per-param expand path.
+
+    Range expressions at TensorList positions get broadcast internally.
+    """
+
+    def test_range_expr_at_tensorlist_position(self, make_testcase):
+        # dist=(2,), len(field)=1==len(dist)=1
+        # Single range expr → broadcast to all, then TensorList expand
+        case = make_testcase(
+            tensor_view_shapes=(((3, 4), (5, 6)),),
+            input_data_ranges=((0.0, 1.0),))
+        dist = case.tensor_list_dist
+        assert dist == (2,)
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.input_data_ranges == (((0.0, 1.0), (0.0, 1.0)),)
+
+    def test_len_eq_dist_with_range_expr_at_tensorlist(self, make_testcase):
+        # dist=(2,0), len(field)=2==len(dist)=2
+        # field[0] is range expression (not range list) → per-param expand
+        case = make_testcase(
+            tensor_view_shapes=(((3, 4), (5, 6)), (7, 8)),
+            input_data_ranges=((0.0, 1.0), (-1.0, 1.0)))
+        dist = case.tensor_list_dist
+        assert dist == (2, 0)
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        # Position 0 (TensorList(2)): single range expr → broadcast to 2 copies
+        # Position 1 (single): keep as-is
+        assert case.input_data_ranges == (((0.0, 1.0), (0.0, 1.0)), (-1.0, 1.0))
+
+
+class TestNormalizeRangeFieldPadValueExplicit:
+    """Tests for explicit pad_value overriding header default."""
+
+    def test_explicit_pad_value_used(self, make_testcase):
+        # dist=(0,0,0), len(field)=2 → pad 3rd position with explicit value
+        case = make_testcase(
+            tensor_view_shapes=((3, 4), (5, 6), (7, 8)),
+            input_data_ranges=((0.0, 1.0), (-1.0, 1.0)))
+        dist = case.tensor_list_dist
+        assert dist == (0, 0, 0)
+        case._normalize_range_field_by_dist("input_data_ranges", dist, pad_value=(5.0, 10.0))
+        assert case.input_data_ranges == ((0.0, 1.0), (-1.0, 1.0), (5.0, 10.0))
+
+    def test_auto_resolve_pad_from_header_default(self, make_testcase):
+        # No explicit pad_value, 2 ranges for 3 params → pad 3rd with auto-resolved default
+        case = make_testcase(
+            tensor_view_shapes=((3, 4), (5, 6), (7, 8)),
+            input_data_ranges=((0.0, 1.0), (-1.0, 1.0)))
+        dist = case.tensor_list_dist
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        # auto-resolved pad for input_data_ranges is (None, None)
+        assert case.input_data_ranges == ((0.0, 1.0), (-1.0, 1.0), (None, None))
+
+
+class TestNormalizeRangeFieldMixedTensorList:
+    """Tests for mixed TensorList + single tensor scenarios."""
+
+    def test_all_tensorlist_positions(self, make_testcase):
+        # dist=(2,3): two TensorList params
+        case = make_testcase(
+            tensor_view_shapes=(((3, 4), (5, 6)), ((7, 8), (9, 10), (11, 12))),
+            input_data_ranges=((0.0, 1.0), (-1.0, 1.0)))
+        dist = case.tensor_list_dist
+        assert dist == (2, 3)
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.input_data_ranges == (
+            ((0.0, 1.0), (0.0, 1.0)),
+            ((-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0)))
+
+    def test_partial_range_list_at_tensorlist_invalid(self, make_testcase):
+        # dist=(2,0), len(field)=2==len(dist)=2
+        # field[0] is range-list with len 3 != num 2 → AMBIGUOUS
+        case = make_testcase(
+            tensor_view_shapes=(((3, 4), (5, 6)), (7, 8)),
+            input_data_ranges=(((0.0, 1.0), (2.0, 3.0), (4.0, 5.0)), (-1.0, 1.0)))
+        dist = case.tensor_list_dist
+        assert dist == (2, 0)
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+    def test_single_tensor_no_tensorlist(self, make_testcase):
+        # dist=(0,): single tensor, no TensorList
+        case = make_testcase(
+            tensor_view_shapes=((3, 4),),
+            input_data_ranges=((0.0, 1.0),))
+        dist = case.tensor_list_dist
+        assert dist == (0,)
+        case._normalize_range_field_by_dist("input_data_ranges", dist)
+        assert case.input_data_ranges == ((0.0, 1.0),)

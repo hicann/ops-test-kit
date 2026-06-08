@@ -46,7 +46,7 @@ def generate_golden(testcase, raw_inputs, plugin_path=None, switches=None, backe
         list of numpy arrays (golden outputs)
     """
     golden_api = getattr(testcase, 'golden_api', None)
-    dist = testcase._get_tensor_list_distribution()
+    dist = testcase.tensor_list_dist
     api_name = testcase.api_name
 
     # --- Priority 1: CSV golden_api column (different API) ---

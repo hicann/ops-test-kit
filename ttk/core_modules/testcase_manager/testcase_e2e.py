@@ -133,7 +133,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
                 input_count = sum(1 for i in range(top_count)
                                   if self.tensor_view_shapes[i] is not None and i not in out_indices)
 
-            dist = self._get_tensor_list_distribution()
+            dist = self.tensor_list_dist
             tensor_distribution = [d > 0 for d in dist] if dist else None
 
             params, oidx = match_overload(
@@ -177,7 +177,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
             return self.tensor_dtypes
         if len(self.tensor_dtypes) == flat_count:
             return self.tensor_dtypes
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist and len(self.tensor_dtypes) == len(dist):
             return self._flatten_by_distribution(self.tensor_dtypes, dist)
         if len(self.tensor_dtypes) == 1:
@@ -197,7 +197,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
             return self.tensor_formats
         if len(self.tensor_formats) == flat_count:
             return self.tensor_formats
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist and len(self.tensor_formats) == len(dist):
             return self._flatten_by_distribution(self.tensor_formats, dist)
         if len(self.tensor_formats) == 1:
@@ -224,7 +224,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
             return self.tensor_view_offsets
         if len(self.tensor_view_offsets) == flat_count:
             return self.tensor_view_offsets
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist and len(self.tensor_view_offsets) == len(dist):
             return self._flatten_by_distribution(self.tensor_view_offsets, dist)
         if len(self.tensor_view_offsets) == 1:
@@ -240,15 +240,6 @@ class TestcaseE2e(TensorApiTestcaseBase):
         if len(self.tensor_view_strides) == flat_count:
             return self.tensor_view_strides
         return flatten_nested_sequence(self.tensor_view_strides)
-
-    @property
-    def flat_input_data_ranges(self):
-        """Flatten nested input_data_ranges to per-tensor (min, max) pairs.
-
-        Delegates to the parent class implementation which handles
-        compressed / per-param structures via normalize + flatten.
-        """
-        return super().flat_input_data_ranges
 
     # ========== Per-flat-index accessors ==========
 

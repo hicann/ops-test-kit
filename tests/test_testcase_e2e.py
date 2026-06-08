@@ -41,19 +41,19 @@ class TestGetTensorListDistribution:
 
     def test_flat_shapes(self, make_testcase):
         case = make_testcase(tensor_view_shapes=FLAT_SHAPES)
-        assert case._get_tensor_list_distribution() == (0, 0)
+        assert case.tensor_list_dist == (0, 0)
 
     def test_nested_shapes(self, make_testcase):
         case = make_testcase(tensor_view_shapes=NESTED_SHAPES)
-        assert case._get_tensor_list_distribution() == (2, 0)
+        assert case.tensor_list_dist == (2, 0)
 
     def test_tensorlist_only(self, make_testcase):
         case = make_testcase(tensor_view_shapes=TENSORLIST_SHAPES)
-        assert case._get_tensor_list_distribution() == (3,)
+        assert case.tensor_list_dist == (3,)
 
     def test_none(self, make_testcase):
         case = make_testcase(tensor_view_shapes=None)
-        assert case._get_tensor_list_distribution() == ()
+        assert case.tensor_list_dist == ()
 
 
 class TestFlatTensorViewShapes:
@@ -127,24 +127,28 @@ class TestFlatInputDataRangesFramework:
         case = make_testcase(
             tensor_view_shapes=TENSORLIST_SHAPES,
             input_data_ranges=((-1.0, 1.0),))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0))
 
     def test_per_param(self, make_testcase):
         case = make_testcase(
             tensor_view_shapes=NESTED_SHAPES,
             input_data_ranges=((None, 1.0), (-1.0, 1.0)))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((None, 1.0), (None, 1.0), (-1.0, 1.0))
 
     def test_already_nested(self, make_testcase):
         case = make_testcase(
             tensor_view_shapes=NESTED_SHAPES,
             input_data_ranges=(((None, 1.0), (-1.0, 1.0)), (0.0, 5.0)))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (0.0, 5.0))
 
     def test_fully_nested_tensorlist(self, make_testcase):
         case = make_testcase(
             tensor_view_shapes=TENSORLIST_SHAPES,
             input_data_ranges=(((None, 1.0), (-1.0, 1.0), (0.0, 5.0)),))
+        case._normalize_compressed_fields()
         assert case.flat_input_data_ranges == ((None, 1.0), (-1.0, 1.0), (0.0, 5.0))
 
 
@@ -232,16 +236,30 @@ class TestFlattenByDistributionFramework:
 
 
 class TestIsFieldAlreadyNestedFramework:
+    """Tests for already-nested detection via _normalize_field_by_dist with _is_scalar_group."""
+
+    def _assert_already_nested(self, field, dist):
+        """Verify scalar field is detected as already-nested (no modification)."""
+        case = TestcaseE2e()
+        case.is_valid = True
+        case.tensor_dtypes = field
+        case._normalize_field_by_dist("tensor_dtypes", dist, TestcaseE2e._is_scalar_group)
+        assert case.is_valid is True
+        assert case.tensor_dtypes == field
+
+    def _assert_not_already_nested(self, field, dist):
+        """Verify scalar field is NOT already-nested (gets normalized or rejected)."""
+        case = TestcaseE2e()
+        case.is_valid = True
+        case.tensor_dtypes = field
+        case._normalize_field_by_dist("tensor_dtypes", dist, TestcaseE2e._is_scalar_group)
+        assert case.tensor_dtypes != field or case.is_valid is False
 
     def test_matches(self):
-        field = (('float32', 'float32', 'float32'),)
-        dist = (3,)
-        assert TestcaseE2e._is_field_already_nested(field, dist) is True
+        self._assert_already_nested((('float32', 'float32', 'float32'),), (3,))
 
     def test_not_matches(self):
-        field = ('float32',)
-        dist = (3,)
-        assert TestcaseE2e._is_field_already_nested(field, dist) is False
+        self._assert_not_already_nested(('float32',), (3,))
 
 
 class TestCheckTensorConfiguration:

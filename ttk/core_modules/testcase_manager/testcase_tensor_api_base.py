@@ -42,7 +42,8 @@ class TensorApiTestcaseBase(TestcaseBase):
         "output_tensor_indexes",
         "np_storages",
         "prof_result",
-        "_inferred_tensor_list_dist",
+        "_tensor_list_dist",
+        "_output_dist",
         "_param_plan_cache",
         "_flat_tensor_view_shapes",
         "_flat_tensor_dtypes",
@@ -57,8 +58,10 @@ class TensorApiTestcaseBase(TestcaseBase):
         "_is_torch_dtype_support",
     )
 
-    _normalized_tensor_fields = (
+    _scalar_tensor_fields = (
         'tensor_dtypes', 'tensor_formats', 'tensor_view_offsets',
+    )
+    _shape_tensor_fields = (
         'tensor_view_strides', 'tensor_storage_shapes',
     )
 
@@ -74,7 +77,8 @@ class TensorApiTestcaseBase(TestcaseBase):
         self.output_tensor_indexes = ()
         self.np_storages = None
         self.prof_result = None
-        self._inferred_tensor_list_dist = None
+        self._tensor_list_dist = None
+        self._output_dist = None
         self._param_plan_cache = None
         self._flat_tensor_view_shapes = None
         self._flat_tensor_dtypes = None
@@ -94,11 +98,30 @@ class TensorApiTestcaseBase(TestcaseBase):
 
     # ========== Distribution ==========
 
-    def _get_tensor_list_distribution(self):
-        if self._inferred_tensor_list_dist is None and self.tensor_view_shapes:
-            self._inferred_tensor_list_dist = infer_list_distribution_from_nesting(
+    @property
+    def tensor_list_dist(self):
+        """TensorList distribution inferred from tensor_view_shapes.
+
+        Cached on first access. Returns () when no tensor_view_shapes.
+        """
+        if self._tensor_list_dist is None and self.tensor_view_shapes:
+            self._tensor_list_dist = infer_list_distribution_from_nesting(
                 self.tensor_view_shapes)
-        return self._inferred_tensor_list_dist or ()
+        return self._tensor_list_dist or ()
+
+    @property
+    def output_dist(self):
+        """Output tensor distribution: projection of tensor_list_dist onto output_tensor_indexes.
+
+        Cached on first access. Returns () when no output tensors.
+        """
+        if self._output_dist is None:
+            dist = self.tensor_list_dist
+            if dist and self.output_tensor_indexes:
+                self._output_dist = tuple(dist[i] for i in self.output_tensor_indexes if i < len(dist))
+            else:
+                self._output_dist = ()
+        return self._output_dist
 
     # ========== Flat properties ==========
 
@@ -121,7 +144,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         # the nesting matches distribution exactly, but a tuple of strs like
         # ('float32', 'float32') is indistinguishable from a leaf — so we must
         # use _flatten_by_distribution to respect TensorList boundaries.
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist:
             self._flat_tensor_dtypes = self._flatten_by_distribution(
                 self.tensor_dtypes, dist)
@@ -137,7 +160,7 @@ class TensorApiTestcaseBase(TestcaseBase):
             return self.tensor_formats
         # Leaf values are str ('ND', 'NCHW').  Same rationale as
         # flat_tensor_dtypes — use _flatten_by_distribution.
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist:
             self._flat_tensor_formats = self._flatten_by_distribution(
                 self.tensor_formats, dist)
@@ -154,7 +177,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         # Leaf values are shape tuples (e.g. (2, 3)) — must use
         # _flatten_by_distribution to respect TensorList boundaries,
         # otherwise flatten_nested_sequence would split the shape tuple.
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist:
             self._flat_tensor_storage_shapes = self._flatten_by_distribution(
                 self.tensor_storage_shapes, dist)
@@ -170,7 +193,7 @@ class TensorApiTestcaseBase(TestcaseBase):
             return self.tensor_view_offsets
         # Leaf values are int (0, 1, …).  Same rationale as flat_tensor_dtypes
         # — use _flatten_by_distribution to respect TensorList boundaries.
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist:
             self._flat_tensor_view_offsets = self._flatten_by_distribution(
                 self.tensor_view_offsets, dist)
@@ -187,7 +210,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         # Leaf values are shape tuples (e.g. (1, 2, 3)) — must use
         # _flatten_by_distribution to respect TensorList boundaries,
         # otherwise flatten_nested_sequence would split the stride tuple.
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist:
             self._flat_tensor_view_strides = self._flatten_by_distribution(
                 self.tensor_view_strides, dist)
@@ -199,77 +222,49 @@ class TensorApiTestcaseBase(TestcaseBase):
     def flat_input_data_ranges(self):
         """Flat per-tensor ranges.
 
-        If ``_normalize_input_data_ranges`` has already been called (via
-        ``_normalize_compressed_fields``), the nested structure is guaranteed
-        and a simple ``_flatten_by_distribution`` suffices.  When that hasn't
-        happened yet we fall back to the same broadcast / pad logic that the
-        normalize step uses so that callers that bypass validation still work.
+        Assumes _normalize_compressed_fields has already expanded compressed
+        forms.  Simply flattens the normalized nested structure.
         """
         if self._flat_input_data_ranges is not None:
             return self._flat_input_data_ranges
         if not self.input_data_ranges:
             return self.input_data_ranges
-        flat_count = len(self.flat_tensor_view_shapes)
-        if flat_count == 0:
-            return self.input_data_ranges
-        # Already flat (no TensorList, or already one-to-one).
-        if len(self.input_data_ranges) == flat_count:
-            self._flat_input_data_ranges = self.input_data_ranges
+        dist = self.tensor_list_dist
+        if dist:
+            self._flat_input_data_ranges = self._flatten_by_distribution(
+                self.input_data_ranges, dist)
         else:
-            dist = self._get_tensor_list_distribution()
-            if dist and self._is_range_field_already_nested(self.input_data_ranges, dist):
-                # Normalized nested structure → simple flatten (fast path).
-                self._flat_input_data_ranges = self._flatten_by_distribution(
-                    self.input_data_ranges, dist)
-            elif dist:
-                # Compressed or partially-specified — normalize then flatten.
-                self._normalize_input_data_ranges(dist)
-                self._flat_input_data_ranges = self._flatten_by_distribution(
-                    self.input_data_ranges, dist)
-            else:
-                self._flat_input_data_ranges = self.input_data_ranges
+            self._flat_input_data_ranges = self.input_data_ranges
         return self._flat_input_data_ranges
 
     @property
     def flat_precision_tolerances(self):
-        """Flat per-output precision tolerances, expanded by distribution."""
+        """Flat per-output precision tolerances. Assumes normalize already done."""
         if self._flat_precision_tolerances is not None:
             return self._flat_precision_tolerances
         if not self.precision_tolerances:
             return self.precision_tolerances
-        flat_count = len(self.flat_tensor_view_shapes)
-        if flat_count == 0:
-            return self.precision_tolerances
-        if len(self.precision_tolerances) == flat_count:
-            self._flat_precision_tolerances = self.precision_tolerances
+        odist = self.output_dist
+        if odist:
+            self._flat_precision_tolerances = self._flatten_by_distribution(
+                self.precision_tolerances, odist)
         else:
-            dist = self._get_tensor_list_distribution()
-            if dist:
-                self._flat_precision_tolerances = self._flatten_by_distribution(
-                    self.precision_tolerances, dist)
-            else:
-                self._flat_precision_tolerances = self.precision_tolerances
+            self._flat_precision_tolerances = self.precision_tolerances
         return self._flat_precision_tolerances
 
     @property
     def flat_absolute_precision(self):
-        """Flat per-output absolute precision, or single float if not nested."""
+        """Flat per-output absolute precision. Assumes normalize already done."""
         if self._flat_absolute_precision is not None:
             return self._flat_absolute_precision
         if not isinstance(self.absolute_precision, tuple):
             return self.absolute_precision
-        flat_count = len(self.flat_tensor_view_shapes)
-        if flat_count == 0:
-            return self.absolute_precision
-        if len(self.absolute_precision) == flat_count:
-            self._flat_absolute_precision = self.absolute_precision
+        odist = self.output_dist
+        if odist:
+            self._flat_absolute_precision = self._flatten_by_distribution(
+                self.absolute_precision, odist)
         else:
-            dist = self._get_tensor_list_distribution()
-            if dist:
-                self._flat_absolute_precision = self._flatten_by_distribution(
-                    self.absolute_precision, dist)
-            else:
-                self._flat_absolute_precision = self.absolute_precision
+            self._flat_absolute_precision = self.absolute_precision
         return self._flat_absolute_precision
 
     # ========== Per-flat-index accessors ==========
@@ -330,7 +325,7 @@ class TensorApiTestcaseBase(TestcaseBase):
     def pure_output_indexes(self):
         if self._pure_output_indexes is not None:
             return self._pure_output_indexes
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         flat_output = set()
         for idx in (self.output_tensor_indexes or ()):
             flat_idx = sum(max(d, 1) for d in dist[:idx])
@@ -344,146 +339,16 @@ class TensorApiTestcaseBase(TestcaseBase):
     def _normalize_compressed_fields(self):
         if not self.is_valid or not self.tensor_view_shapes:
             return
-        dist = self._get_tensor_list_distribution()
+        dist = self.tensor_list_dist
         if dist:
-            for field_name in self._normalized_tensor_fields:
-                self._normalize_field_by_dist(field_name, dist)
-            self._normalize_input_data_ranges(dist)
-
-    def _normalize_field_by_dist(self, field_name, dist):
-        field = getattr(self, field_name)
-        if not field:
-            return
-        if self._is_field_already_nested(field, dist):
-            return
-        flat_count = sum(max(d, 1) for d in dist)
-        if len(field) == flat_count:
-            flat = field
-        elif len(field) == 1:
-            val = field[0]
-            if isinstance(val, (tuple, list)) and len(val) == 1:
-                val = val[0]
-            flat = (val,) * flat_count
-        elif len(field) <= len(dist):
-            # Fewer values than params — broadcast the last value to fill.
-            padded = field + (field[-1],) * (len(dist) - len(field))
-            flat = self._flatten_by_distribution(padded, dist)
-        else:
-            flat = self._flatten_by_distribution(field, dist)
-        result = []
-        idx = 0
-        for d in dist:
-            if d > 0:
-                result.append(tuple(flat[idx:idx + d]))
-                idx += d
-            else:
-                result.append(flat[idx])
-                idx += 1
-        setattr(self, field_name, tuple(result))
-        cache_attr = f'_flat_{field_name}'
-        if hasattr(self, cache_attr):
-            setattr(self, cache_attr, None)
-
-    @staticmethod
-    def _is_field_already_nested(field, dist):
-        if len(field) != len(dist):
-            return False
-        for val, num in zip(field, dist):
-            if num > 0:
-                if not isinstance(val, (tuple, list)) or len(val) != num:
-                    return False
-        return True
-
-    @staticmethod
-    def _is_range_field_already_nested(field, dist):
-        """Like _is_field_already_nested but for range tuples.
-
-        A range expression like (None, 1.0) has scalar (non-tuple) elements,
-        while a range list like ((None, 1.0), (-1.0, 1.0)) has tuple elements.
-        Only the latter counts as "already nested" for range fields.
-        """
-        if len(field) != len(dist):
-            return False
-        for val, num in zip(field, dist):
-            if num > 0:
-                if not isinstance(val, (tuple, list)) or len(val) != num:
-                    return False
-                if num > 1 and val:
-                    first = val[0]
-                    if not isinstance(first, (tuple, list)):
-                        return False
-        return True
-
-    def _normalize_input_data_ranges(self, dist):
-        """Normalize input_data_ranges to a fully nested per-param structure.
-
-        After normalization, ``self.input_data_ranges`` has length ``len(dist)``
-        and every TensorList position (num > 0) holds a tuple of individual
-        range expressions whose count equals *num*.
-
-        Processing steps:
-          1. Per-param alignment  – match user-supplied ranges to params,
-             broadcasting or padding with ``(None, None)`` as needed.
-          2. TensorList expand    – for each param whose dist entry is > 0,
-             expand a single range or short list into *num* individual ranges,
-             padding with ``(None, None)`` when the user supplied fewer entries
-             than the TensorList expects.
-          3. Re-nest              – rebuild the per-param nested structure so
-             that downstream ``flat_input_data_ranges`` can simply flatten.
-        """
-        field = self.input_data_ranges
-        # Keep empty — downstream defaults every tensor to (None, None).
-        if not field:
-            return
-        # Already fully nested (len matches dist, TensorList entries have
-        # correct sub-counts) — nothing to do.
-        if self._is_range_field_already_nested(field, dist):
-            return
-
-        # ---------- Step 1: align to per-param ----------
-        # len(field) == 1: single range expression broadcast to all params.
-        # len(field) < len(dist): missing params padded with (None, None).
-        # len(field) >= len(dist): truncate to param count.
-        if len(field) == 1:
-            per_param = [field[0]] * len(dist)
-        elif len(field) < len(dist):
-            per_param = list(field) + [(None, None)] * (len(dist) - len(field))
-        else:
-            per_param = list(field[:len(dist)])
-
-        # ---------- Step 2: expand TensorList positions ----------
-        result = []
-        for i, num in enumerate(dist):
-            val = per_param[i]
-            if num == 0:
-                # Single-tensor param — use as-is.
-                result.append(val)
-                continue
-
-            # Distinguish "single range" from "list of ranges".
-            # A range expression is a tuple of scalars, e.g. (None, 1.0) or
-            # (0.0, 5.0, 2.0).  A "list of ranges" has tuple elements, e.g.
-            # ((0.0, 0.5), (0.5, 1.0)).
-            is_range_list = (isinstance(val, (tuple, list))
-                             and val
-                             and isinstance(val[0], (tuple, list)))
-
-            if not is_range_list:
-                # Single range (r) → broadcast to num copies.
-                result.append(tuple([val] * num))
-            elif len(val) == 1:
-                # (r,) → broadcast the sole element.
-                result.append(tuple([val[0]] * num))
-            elif len(val) >= num:
-                # Enough or extra — truncate.
-                result.append(tuple(val[:num]))
-            else:
-                # Not enough — pad remaining with (None, None).
-                result.append(tuple(val) + ((None, None),) * (num - len(val)))
-
-        # ---------- Step 3: write back ----------
-        self.input_data_ranges = tuple(result)
-        self._flat_input_data_ranges = None
+            for field_name in self._scalar_tensor_fields:
+                self._normalize_scalar_field_by_dist(field_name, dist)
+            for field_name in (*self._shape_tensor_fields, 'input_data_ranges'):
+                self._normalize_range_field_by_dist(field_name, dist)
+            odist = self.output_dist
+            if odist:
+                self._normalize_scalar_field_by_dist('absolute_precision', odist)
+                self._normalize_range_field_by_dist('precision_tolerances', odist)
 
     @staticmethod
     def _flatten_by_distribution(values, distribution):

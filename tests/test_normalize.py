@@ -1,6 +1,6 @@
 """
 Tests for normalize refactoring in testcase_op.py:
-- _normalize_field_by_dist (string/scalar fields)
+- _normalize_scalar_field_by_dist (string/scalar fields)
 - _normalize_shape_field_by_dist (shape fields)
 - _normalize_range_field_by_dist (range/pair fields)
 - Distribution computation (_compute_input/output_distribution)
@@ -123,7 +123,7 @@ class TestDistributionComputation:
 
 
 # =====================================================================
-# _normalize_field_by_dist — string/scalar fields
+# _normalize_scalar_field_by_dist — string/scalar fields
 # =====================================================================
 
 class TestNormalizeFieldByDist:
@@ -165,15 +165,14 @@ class TestNormalizeFieldByDist:
         _validate(case)
         assert case.input_dtypes == dtypes
 
-    def test_length_mismatch_noop(self):
-        """Field length matches flat_count but not dist — left flat."""
+    def test_length_mismatch_invalid(self):
+        """len(field) > len(dist) → invalid."""
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,)),
             input_dtypes=("float16", "float32", "int32"),
         )
         _validate(case)
-        # len=3, dist=(2,0), flat_count=3 → matches flat_count, re-nested
-        assert case.input_dtypes == (("float16", "float32"), "int32")
+        assert case.is_valid is False
 
     def test_empty_field_skip(self):
         """Empty field is skipped, no normalize applied."""
@@ -281,6 +280,15 @@ class TestNormalizeRangeField:
         case.precision_tolerances = None
         _validate(case)
         assert case.precision_tolerances is None
+
+    def test_bare_scalar_broadcast(self):
+        """1e-5 bare scalar → broadcast to all positions."""
+        case = _make_testcase(
+            output_shapes=(((8,), (8,)),),
+        )
+        case.absolute_precision = 1e-5
+        _validate(case)
+        assert case.absolute_precision == ((1e-5, 1e-5),)
 
 
 # =====================================================================
@@ -462,17 +470,15 @@ class TestNormalizeEdgeCases:
         assert case.input_dtypes == (("float16", "float16"), ("float16", "float16", "float16"))
         assert case.flat_input_dtypes == ("float16", "float16", "float16", "float16", "float16")
 
-    def test_short_field_padded(self):
-        """Fewer values than dist entries — padded with last value."""
+    def test_short_field_no_pad_invalid(self):
+        """input_dtypes has no pad value — fewer values than dist → invalid."""
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,), (9,)),
             input_dtypes=("float16", "float32"),
         )
         _validate(case)
-        # len=2, dist=(2,0,0), len(dist)=3. padded to 3: ("float16","float32","float32")
-        # then flatten_by_distribution → ("float16","float16","float32","float32")
-        # then re-nest → (("float16","float16"),"float32","float32")
-        assert case.input_dtypes == (("float16", "float16"), "float32", "float32")
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
 
     def test_precision_tolerances_flat_no_output_dist(self):
         """precision_tolerances with no output_distribution stays as-is."""
@@ -598,14 +604,15 @@ class TestNonTensorListMultiOutputCompressed:
         _validate(case)
         assert case.output_dtypes == ("int32",)
 
-    def test_per_param_compressed_3_outputs(self):
-        """2 dtypes for 3 outputs — padded with last value."""
+    def test_per_param_compressed_3_outputs_invalid(self):
+        """output_dtypes has no pad value — 2 dtypes for 3 outputs → invalid."""
         case = _make_testcase(
             output_shapes=((8,), (16,), (32,)),
             output_dtypes=("float16", "float32"),
         )
         _validate(case)
-        assert case.output_dtypes == ("float16", "float32", "float32")
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
 
     def test_input_dtype_broadcast_flat(self):
         """('float32',) with 3 flat inputs → 3-element tuple."""
@@ -622,39 +629,73 @@ class TestNonTensorListMultiOutputCompressed:
 # =====================================================================
 
 class TestIsFieldAlreadyNested:
-    """Tests for _is_field_already_nested — prevents double-normalization."""
+    """Tests for already-nested detection via _normalize_field_by_dist."""
+
+    def _assert_already_nested_scalar(self, field, dist):
+        """Verify scalar field is detected as already-nested (no modification)."""
+        case = TestcaseOp()
+        case.is_valid = True
+        case.input_dtypes = field
+        case._normalize_field_by_dist("input_dtypes", dist, TestcaseOp._is_scalar_group)
+        assert case.is_valid is True
+        assert case.input_dtypes == field
+
+    def _assert_not_already_nested_scalar(self, field, dist):
+        """Verify scalar field is NOT already-nested (gets normalized or rejected)."""
+        case = TestcaseOp()
+        case.is_valid = True
+        case.input_dtypes = field
+        case._normalize_field_by_dist("input_dtypes", dist, TestcaseOp._is_scalar_group)
+        assert case.input_dtypes != field or case.is_valid is False
+
+    def _assert_already_nested_range(self, field, dist):
+        """Verify range field is detected as already-nested (no modification)."""
+        case = TestcaseOp()
+        case.is_valid = True
+        case.input_data_ranges = field
+        case._normalize_field_by_dist("input_data_ranges", dist, TestcaseOp._is_range_group)
+        assert case.is_valid is True
+        assert case.input_data_ranges == field
+
+    def _assert_not_already_nested_range(self, field, dist):
+        """Verify range field is NOT already-nested (gets normalized or rejected)."""
+        case = TestcaseOp()
+        case.is_valid = True
+        case.input_data_ranges = field
+        case._normalize_field_by_dist("input_data_ranges", dist, TestcaseOp._is_range_group)
+        assert case.input_data_ranges != field or case.is_valid is False
 
     def test_fully_nested_matches_dist(self):
-        field = (("float16", "float16"), "float16")
-        dist = (2, 0)
-        assert TestcaseOp._is_field_already_nested(field, dist) is True
+        self._assert_already_nested_scalar(
+            (("float16", "float16"), "float16"), (2, 0))
 
     def test_compressed_not_nested(self):
-        field = ("float16",)
-        dist = (2, 0)
-        assert TestcaseOp._is_field_already_nested(field, dist) is False
+        self._assert_not_already_nested_scalar(("float16",), (2, 0))
 
     def test_len_mismatch(self):
-        field = ("float16", "float16")
-        dist = (3,)
-        assert TestcaseOp._is_field_already_nested(field, dist) is False
+        self._assert_not_already_nested_scalar(("float16", "float16"), (3,))
 
     def test_inner_len_mismatch(self):
         """Per-TensorList compressed: inner len != dist count → not already nested."""
-        field = (("float16",), "float16")
-        dist = (2, 0)
-        assert TestcaseOp._is_field_already_nested(field, dist) is False
+        self._assert_not_already_nested_scalar(
+            (("float16",), "float16"), (2, 0))
 
     def test_all_single_tensors(self):
         """Flat (no TensorList) — all-zero dist, matching length → already nested."""
-        field = ("float16", "float16")
-        dist = (0, 0)
-        assert TestcaseOp._is_field_already_nested(field, dist) is True
+        self._assert_already_nested_scalar(("float16", "float16"), (0, 0))
 
     def test_single_tensorlist(self):
-        field = (("a", "b", "c"),)
-        dist = (3,)
-        assert TestcaseOp._is_field_already_nested(field, dist) is True
+        self._assert_already_nested_scalar((("a", "b", "c"),), (3,))
+
+    def test_range_fully_nested(self):
+        """Range field already nested."""
+        self._assert_already_nested_range(
+            (((0.0, 1.0), (0.5, 1.0)), (0.0, 5.0)), (2, 0))
+
+    def test_range_non_group_tuple_not_nested(self):
+        """(0.0, 1.0) at dist=2 position is not a range group → not already nested."""
+        self._assert_not_already_nested_range(
+            ((0.0, 1.0), (0.0, 5.0)), (2, 0))
 
 
 # =====================================================================
@@ -818,7 +859,7 @@ class TestNormalizeManualBinaries:
 
     def test_none_unquoted_preserved(self):
         case = _make_testcase(input_shapes=((8,), None, (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = ('ax.csv', None, 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == ('ax.csv', None, 'az.csv')
@@ -832,21 +873,21 @@ class TestNormalizeManualBinaries:
 
     def test_nested_tuple_preserved(self):
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', 'ay.csv'), 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == (('ax.csv', 'ay.csv'), 'az.csv')
 
     def test_nested_with_none_quoted(self):
         case = _make_testcase(input_shapes=(((3, 4), None), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', 'None'), 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == (('ax.csv', None), 'az.csv')
 
     def test_nested_with_none_unquoted(self):
         case = _make_testcase(input_shapes=(((3, 4), None), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', None), 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == (('ax.csv', None), 'az.csv')
@@ -860,7 +901,7 @@ class TestNormalizeManualBinaries:
 
     def test_nested_list_converted_to_tuple(self):
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (['ax.csv', 'ay.csv'], 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == (('ax.csv', 'ay.csv'), 'az.csv')
@@ -878,7 +919,7 @@ class TestNormalizeManualBinaries:
 
     def test_mixed_nested_flat_rejected(self):
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = ('ax.csv', ('az.csv',))
         _validate(case)
         assert case.is_valid is False
@@ -894,7 +935,7 @@ class TestNormalizeManualBinaries:
 
     def test_flat_with_none_input_explicit_none_ok(self):
         case = _make_testcase(input_shapes=((8,), None, (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = ('ax.csv', None, 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == ('ax.csv', None, 'az.csv')
@@ -917,7 +958,7 @@ class TestNormalizeManualBinaries:
 
     def test_nested_group_count_exceeds_inputs_rejected(self):
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', 'ay.csv', 'extra.csv'), 'az.csv')
         _validate(case)
         assert case.is_valid is False
@@ -925,7 +966,7 @@ class TestNormalizeManualBinaries:
 
     def test_nested_with_optional_input_none_ok(self):
         case = _make_testcase(input_shapes=(((3, 4), None), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', None), 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == (('ax.csv', None), 'az.csv')
@@ -933,7 +974,7 @@ class TestNormalizeManualBinaries:
     def test_nested_missing_required_input_rejected(self):
         """TensorList group has 2 non-None inputs but only 1 file."""
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv',), 'az.csv')
         _validate(case)
         assert case.is_valid is False
@@ -944,7 +985,7 @@ class TestNormalizeManualBinaries:
     def test_flat_input_reshaped_to_nested(self):
         """Flat binaries for TensorList inputs → reshaped to match input_shapes."""
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = ('ax.csv', 'ay.csv', 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == (('ax.csv', 'ay.csv'), 'az.csv')
@@ -952,7 +993,7 @@ class TestNormalizeManualBinaries:
     def test_flat_with_none_padded_to_nested(self):
         """Flat binaries with None → reshaped and padded to match input_shapes."""
         case = _make_testcase(input_shapes=(((3, 4), None), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = ('ax.csv', None, 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == (('ax.csv', None), 'az.csv')
@@ -991,7 +1032,7 @@ class TestNormalizeManualBinaries:
     def test_tensor_list_group_none_mixed_nested(self):
         """TensorList with one None and one non-None input."""
         case = _make_testcase(input_shapes=(((3, 4), None), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', None), 'az.csv')
         _validate(case)
         assert case.manual_input_binaries == (('ax.csv', None), 'az.csv')
@@ -999,7 +1040,7 @@ class TestNormalizeManualBinaries:
     def test_flat_binaries_exceed_non_tensor_list_inputs_rejected(self):
         """3 flat binaries for 2 non-TensorList inputs (None, None not recognized as TensorList)."""
         case = _make_testcase(input_shapes=((None, None), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (None, None, 'az.csv')
         _validate(case)
         assert case.is_valid is False
@@ -1017,7 +1058,7 @@ class TestNormalizeManualBinaries:
 
     def test_nested_top_level_count_mismatch_rejected(self):
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', 'ay.csv'),)
         _validate(case)
         assert case.is_valid is False
@@ -1026,7 +1067,7 @@ class TestNormalizeManualBinaries:
     def test_nested_tensor_list_position_is_str_rejected(self):
         """Nested format but TensorList position is str instead of tuple."""
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = ('ax.csv', 'az.csv')
         _validate(case)
         assert case.is_valid is False
@@ -1035,7 +1076,7 @@ class TestNormalizeManualBinaries:
     def test_nested_non_tensor_list_position_is_tuple_rejected(self):
         """Non-TensorList position given as tuple."""
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', 'ay.csv'), ('az.csv',))
         _validate(case)
         assert case.is_valid is False
@@ -1051,7 +1092,7 @@ class TestNormalizeManualBinaries:
 
     def test_file_for_none_in_tensor_list_group_rejected(self):
         case = _make_testcase(input_shapes=(((3, 4), None), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', 'unexpected.csv'), 'az.csv')
         _validate(case)
         assert case.is_valid is False
@@ -1059,7 +1100,7 @@ class TestNormalizeManualBinaries:
 
     def test_missing_file_for_non_none_in_tensor_list_group_rejected(self):
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('ax.csv', None), 'az.csv')
         _validate(case)
         assert case.is_valid is False
@@ -1082,14 +1123,14 @@ class TestFlatManualInputBinaries:
 
     def test_nested_tensorlist(self):
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('a.csv', 'b.csv'), 'c.csv')
         _validate(case)
         assert case.flat_manual_input_binaries == ('a.csv', 'b.csv', 'c.csv')
 
     def test_nested_with_none(self):
         case = _make_testcase(input_shapes=(((3, 4), None), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = (('a.csv', None), 'c.csv')
         _validate(case)
         assert case.flat_manual_input_binaries == ('a.csv', None, 'c.csv')
@@ -1108,8 +1149,319 @@ class TestFlatManualInputBinaries:
     def test_flat_reshaped_to_nested_then_flat(self):
         """Flat binaries → reshape to nested → flat property returns flat."""
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=("float16", "float16", "float32"))
+                              input_dtypes=(("float16", "float16"), "float32"))
         case.manual_input_binaries = ('a.csv', 'b.csv', 'c.csv')
         _validate(case)
         assert case.manual_input_binaries == (('a.csv', 'b.csv'), 'c.csv')
         assert case.flat_manual_input_binaries == ('a.csv', 'b.csv', 'c.csv')
+
+
+# =====================================================================
+# Unified _normalize_field_by_dist — TDD tests
+# =====================================================================
+
+class TestIsScalarGroup:
+    """Tests for _is_scalar_group classmethod."""
+
+    def test_tuple_is_group(self):
+        assert TestcaseOp._is_scalar_group(('NCHW', 'NHWC')) is True
+
+    def test_list_is_group(self):
+        assert TestcaseOp._is_scalar_group(['NCHW', 'NHWC']) is True
+
+    def test_string_is_not_group(self):
+        assert TestcaseOp._is_scalar_group('NCHW') is False
+
+    def test_int_is_not_group(self):
+        assert TestcaseOp._is_scalar_group(42) is False
+
+    def test_float_is_not_group(self):
+        assert TestcaseOp._is_scalar_group(1e-5) is False
+
+    def test_empty_tuple_is_not_group(self):
+        assert TestcaseOp._is_scalar_group(()) is True
+
+
+class TestIsRangeGroup:
+    """Tests for _is_range_group classmethod."""
+
+    def test_range_list_is_group(self):
+        assert TestcaseOp._is_range_group(((0.0, 1.0), (0.5, 1.0))) is True
+
+    def test_single_range_is_not_group(self):
+        """A bare range (0.0, 1.0) is NOT a group — it's a single atomic value."""
+        assert TestcaseOp._is_range_group((0.0, 1.0)) is False
+
+    def test_string_tuple_is_not_group(self):
+        assert TestcaseOp._is_range_group(('NCHW', 'NHWC')) is False
+
+    def test_empty_tuple_is_not_group(self):
+        assert TestcaseOp._is_range_group(()) is False
+
+    def test_single_element_range_list(self):
+        """((0.0, 1.0),) is a 1-element range group."""
+        assert TestcaseOp._is_range_group(((0.0, 1.0),)) is True
+
+    def test_int_tuple_is_not_group(self):
+        """(1, 2) looks like a range but val[0]=1 is not tuple → not a group."""
+        assert TestcaseOp._is_range_group((1, 2)) is False
+
+
+class TestNormalizeFieldAlreadyNested:
+    """Already-nested detection via unified _normalize_field_by_dist."""
+
+    def test_scalar_fully_nested_skip(self):
+        """Already nested scalar field — no modification."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_dtypes=(("float16", "float32"), "int32"),
+        )
+        _validate(case)
+        assert case.input_dtypes == (("float16", "float32"), "int32")
+
+    def test_range_fully_nested_skip(self):
+        """Already nested range field — no modification."""
+        ranges = (((None, 1.0), (-1.0, 1.0)), (0.0, 5.0))
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_dtypes=(("float16", "float16"), "float16"),
+            input_data_ranges=ranges,
+        )
+        _validate(case)
+        assert case.input_data_ranges == ranges
+
+    def test_all_flat_dist_zero_already_nested(self):
+        """Flat (no TensorList) with matching length — already nested."""
+        case = _make_testcase(
+            input_shapes=((8,), (8,)),
+            input_dtypes=("float16", "float32"),
+        )
+        _validate(case)
+        assert case.input_dtypes == ("float16", "float32")
+
+
+class TestNormalizeFieldLenEqOne:
+    """len(field)==1 branch: unwrap, reject, broadcast."""
+
+    def test_scalar_compressed_broadcast(self):
+        """('float16',) broadcasts to match distribution."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_dtypes=("float16",),
+        )
+        _validate(case)
+        assert case.input_dtypes == (("float16", "float16"), "float16")
+
+    def test_scalar_single_element_group_unwrap(self):
+        """(('NCHW',),) → unwrap to 'NCHW' → broadcast."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_formats=(("ND",),),
+        )
+        _validate(case)
+        assert case.input_formats == (("ND", "ND"), "ND")
+
+    def test_scalar_multi_element_group_rejected(self):
+        """Bug fix: (('NCHW','NHWC'),) with dist=(2,0) → REJECT.
+
+        Old code would broadcast ('NCHW','NHWC') to position 1 (num=0),
+        producing a tuple where a single string is expected. Now correctly
+        rejected as CASE_FIELD_AMBIGUOUS.
+        """
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+        )
+        case.input_dtypes = (("float16", "float32"),)
+        # Directly call unified method
+        case._normalize_field_by_dist(
+            "input_dtypes", (2, 0), TestcaseOp._is_scalar_group)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+    def test_range_compressed_broadcast(self):
+        """Single range ((0,1),) broadcasts to all positions."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_data_ranges=((0, 1),),
+        )
+        _validate(case)
+        assert case.input_data_ranges == (((0, 1), (0, 1)), (0, 1))
+
+    def test_range_single_element_group_unwrap(self):
+        """(((0.0,1.0),),) → unwrap to (0.0,1.0) → broadcast."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+        )
+        case.input_data_ranges = (((0.0, 1.0),),)
+        # Directly call to test unwrap path
+        case._normalize_field_by_dist(
+            "input_data_ranges", (2, 0), TestcaseOp._is_range_group)
+        assert case.input_data_ranges == (((0.0, 1.0), (0.0, 1.0)), (0.0, 1.0))
+
+    def test_range_multi_element_group_rejected(self):
+        """(((0.0,1.0),(0.5,1.0)),) with dist=(2,0) → REJECT."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+        )
+        case.input_data_ranges = (((0.0, 1.0), (0.5, 1.0)),)
+        case._normalize_field_by_dist(
+            "input_data_ranges", (2, 0), TestcaseOp._is_range_group)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+
+class TestNormalizeFieldLenBetweenOneAndDist:
+    """1 < len(field) < len(dist): pad or reject."""
+
+    def test_scalar_short_field_no_pad_rejected(self):
+        """input_dtypes has no pad — fewer values than dist → invalid."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,), (9,)),
+            input_dtypes=("float16", "float32"),
+        )
+        _validate(case)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+    def test_range_short_field_with_pad(self):
+        """1 < len(field) < len(dist): pad missing positions with pad_value."""
+        case = _make_testcase(
+            output_shapes=(((8,), (8,)), (4,), (6,)),
+        )
+        case.precision_tolerances = ((0.001, 0.002), (0.003, 0.004))
+        # len(field)=2, len(dist)=3, pad with None
+        case._normalize_field_by_dist(
+            "precision_tolerances", (2, 0, 0), TestcaseOp._is_range_group,
+            pad_value=None)
+        assert case.precision_tolerances == (
+            ((0.001, 0.002), (0.001, 0.002)), (0.003, 0.004), None)
+
+
+class TestNormalizeFieldLenGtDist:
+    """len(field) > len(dist) → REJECT."""
+
+    def test_scalar_len_gt_dist(self):
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_dtypes=("float16", "float32", "int32"),
+        )
+        _validate(case)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+    def test_range_len_gt_dist(self):
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+        )
+        case.input_data_ranges = ((0, 1), (-1, 1), (0, 5))
+        case._normalize_field_by_dist(
+            "input_data_ranges", (2, 0), TestcaseOp._is_range_group)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+
+class TestNormalizeFieldPerPositionExpand:
+    """Per-position expansion after broadcast/pad."""
+
+    def test_scalar_group_matches_dist(self):
+        """Group at TensorList position with matching len → use as-is."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_dtypes=(("float16", "float32"), "int32"),
+        )
+        _validate(case)
+        # Already nested — per-position uses group directly
+        assert case.input_dtypes == (("float16", "float32"), "int32")
+
+    def test_scalar_group_single_broadcast(self):
+        """('float16',) at TensorList(2) → broadcast to ('float16','float16')."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_dtypes=(("float16",), "float32"),
+        )
+        _validate(case)
+        assert case.input_dtypes == (("float16", "float16"), "float32")
+
+    def test_scalar_bare_value_broadcast(self):
+        """'float16' at TensorList(2) → broadcast to ('float16','float16')."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_dtypes=("float16", "float32"),
+        )
+        _validate(case)
+        assert case.input_dtypes == (("float16", "float16"), "float32")
+
+    def test_range_group_matches_dist(self):
+        """Range group at TensorList position with matching len → use as-is."""
+        case = _make_testcase(
+            output_shapes=(((8,), (8,)),),
+            precision_tolerances=(((0.001, 0.002), (0.003, 0.004)),),
+        )
+        _validate(case)
+        assert case.precision_tolerances == (((0.001, 0.002), (0.003, 0.004)),)
+
+    def test_range_group_single_broadcast(self):
+        """((0.004,0.004),) at TensorList(2) → broadcast."""
+        case = _make_testcase(
+            output_shapes=(((8,), (8,)),),
+            precision_tolerances=(((0.004, 0.004),),),
+        )
+        _validate(case)
+        assert case.precision_tolerances == (((0.004, 0.004), (0.004, 0.004)),)
+
+    def test_range_group_mismatch_rejected(self):
+        """Range group with wrong len at TensorList position → REJECT."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+        )
+        case.input_data_ranges = (((0, 1), (0, 1), (0, 1)), (0, 5))
+        case._normalize_field_by_dist(
+            "input_data_ranges", (2, 0), TestcaseOp._is_range_group)
+        assert case.is_valid is False
+        assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
+
+
+class TestNormalizeFieldGuardChecks:
+    """Entry guard tests."""
+
+    def test_not_is_valid_returns_early(self):
+        """If is_valid is False, normalize does nothing."""
+        case = _make_testcase()
+        case.is_valid = False
+        case.input_dtypes = ("float16",)
+        original = case.input_dtypes
+        case._normalize_field_by_dist(
+            "input_dtypes", (2, 0), TestcaseOp._is_scalar_group)
+        # Should not modify — early return
+        assert case.input_dtypes == original
+
+    def test_empty_field_returns_early(self):
+        """Empty field → skip normalize."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+            input_formats=(),
+        )
+        _validate(case)
+        assert case.input_formats == ()
+
+    def test_none_field_returns_early(self):
+        """None field → skip normalize."""
+        case = _make_testcase()
+        case.precision_tolerances = None
+        _validate(case)
+        assert case.precision_tolerances is None
+
+
+class TestNormalizeFieldCallerPrewrap:
+    """Caller is responsible for wrapping bare scalar values."""
+
+    def test_scalar_bare_string_wrapped_by_caller(self):
+        """Bare 'ND' must be wrapped to ('ND',) by caller before calling."""
+        case = _make_testcase(
+            input_shapes=(((3, 4), (5, 4)), (8,)),
+        )
+        # Simulate caller wrapping
+        case.input_dtypes = ("float16",)
+        case._normalize_field_by_dist(
+            "input_dtypes", (2, 0), TestcaseOp._is_scalar_group)
+        assert case.input_dtypes == (("float16", "float16"), "float16")

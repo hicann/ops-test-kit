@@ -43,7 +43,7 @@ def generate_inputs(testcase, switches, backend, plan):
     )
     if input_func is not None:
         use_torch = testcase.is_torch_dtype_support()
-        dist = testcase._get_tensor_list_distribution()
+        dist = testcase.tensor_list_dist
         if use_torch:
             plugin_inputs = np_to_torch_inputs(testcase, raw_inputs)
         else:
@@ -76,7 +76,7 @@ def generate_inputs(testcase, switches, backend, plan):
         flat_tensors = np_to_torch_inputs(testcase, raw_inputs)
     else:
         flat_tensors = list(raw_inputs)
-    dist = testcase._get_tensor_list_distribution()
+    dist = testcase.tensor_list_dist
     if dist:
         testcase.tensors = apply_as_list(flat_tensors, dist)
     else:
@@ -143,7 +143,7 @@ def override_tensors_from_attributes(testcase, raw_inputs):
     info = testcase.get_api_info()
     if not info or not testcase.attributes:
         return
-    dist = testcase._get_tensor_list_distribution()
+    dist = testcase.tensor_list_dist
     if dist:
         nested_np = apply_as_list(raw_inputs, dist)
     else:
