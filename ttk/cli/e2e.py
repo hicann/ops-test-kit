@@ -17,8 +17,6 @@ def register_e2e_command(subparsers):
 def _add_e2e_args(parser):
     parser.add_argument("--backend",
                         help="Hardware backend: npu, gpu, cpu (auto-detect if not specified)")
-    parser.add_argument("--validate", dest="validate_only", action="store_true",
-                        help="Validate CSV cases only, skip device execution")
 
 
 def _handle_e2e(args):

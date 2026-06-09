@@ -76,7 +76,7 @@ python3 -m ttk list -i cases.csv --op add
 ## Timeout or OOM with large operators
 
 - `--proc-timeout=300` (per-case timeout)
-- `-l 10737418240` (10GB HBM limit)
+- `-l 10` (10GB HBM limit)
 - `--reserve-hbm=512` (reserve HBM)
 
 ## Reproduce test results

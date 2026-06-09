@@ -28,7 +28,7 @@ python3 -m ttk kernel --help         # Show help
 ```shell
 # Kernel
 python3 -m ttk kernel -i examples/case_store/kernel/mat_mul_v3.csv
-python3 -m ttk kernel -i examples/case_store/kernel/add.csv -d -s
+python3 -m ttk kernel -i examples/case_store/kernel/add.csv -d
 python3 -m ttk kernel -i examples/case_store/kernel/add.csv --co
 
 # ACLNN
@@ -65,7 +65,7 @@ python3 -m ttk list -i cases.csv --op add
 | `--process-count` | `--pc` | Processes per device | 1 |
 | `--platform` | `--plat` | SoC version | Auto-detect |
 | `--proc-timeout` | | Per-case timeout (seconds) | 0 (unlimited) |
-| `--limit` | `-l` | Per-process HBM memory cap (bytes) | None |
+| `--limit` | `-l` | Memory limit per case (GB); skip if input+output exceeds | 30 |
 
 # Precision Control
 
@@ -87,6 +87,7 @@ python3 -m ttk list -i cases.csv --op add
 | `--dump-on-fail` | Auto-dump all data on precision failure | `--dump-on-fail` |
 | `--single-log` | One log file per test case | `--single-log` |
 | `--plugin` | External plugin path | `--plugin /path/to/plugin.py` |
+| `--validate` | Validate CSV format only (skips compilation, input/golden generation, device execution) | `--validate` |
 
 # Output
 
@@ -100,22 +101,17 @@ python3 -m ttk list -i cases.csv --op add
 
 | Parameter | Short | Description | Default |
 |-----------|-------|-------------|---------|
-| `--dynamic` | `-d` | Dynamic compilation | **On** |
-| `--static` | `-s` | Static compilation | Off |
-| `--const` | `-c` | Const compilation | Off |
-| `--binary` | `-b` | Binary mode; `--binary=release` for released kernels | Off |
-| `--auto` | | Auto-select compile mode from op info | Off |
+| `--dynamic` | `-d` | Dynamic shape compilation; `-d false` to disable | **On** |
+| `--const` | `-c` | Static shape compilation | Off |
+| `--binary` | `-b` | Binary mode; `-b release` for released kernels | Off |
 | `--compile-only` | `--co` | Compile only, skip execution | Off |
-| `--no-prof` | | Disable profiling | On |
-| `--compile-opts` | | Compile options | None |
-| `--core-type` | `--ct` | Core type: `AiCore`/`VectorCore` | Auto |
-| `--impl-mode` | | Operator implementation mode | None |
+| `--no-prof` | | Skip device execution (dry-run: compilation, input/golden generation still run) | On |
+| `--compile-opts` | | Compile options (KEY=VALUE, can be specified multiple times) | None |
 | `--tiling-run` | `--tr` | Tiling run times | 3 |
-| `--cce` | | Compile CCE file | Off |
-| `--reuse-hbm` | | Reuse HBM across processes | Off |
+| `--reuse-hbm` | | Each case runs 3 times on NPU by default; reuse same HBM memory to enable L2 Cache | Off |
 | `--reserve-hbm` | | Reserve HBM (MB) | None |
-| `--clear-atomic` | | Clear atomic-write region before exec | Off |
-| `--clear-ub` / `--clear-l1` | | Clear UB / L1 before exec | Off |
+| `--clear-atomic` | | Force clear output and workspace before execution | Off |
+| `--clear-ub` / `--clear-l1` | | Fill UB / L1 with specified value before execution (default: 0) | Off |
 | `--simt-ub` / `--simt-stack-dcu` | | SIMT-mode UB / DCU stack size | None |
 | `--force-block-dim` | | Force `block_dim` value | None |
 
@@ -124,7 +120,6 @@ python3 -m ttk list -i cases.csv --op add
 | Parameter | Description | Options | Default |
 |-----------|-------------|---------|---------|
 | `--backend` | Hardware backend (NPU/GPU/CPU) | `npu`/`gpu`/`cpu` | Auto-detect |
-| `--validate` | Validate CSV cases only, skip device execution | On/Off | Off |
 
 > E2E mode runs through a unified Backend abstraction (`framework_api/backends/`); all three backends share the same case parsing and precision comparison pipeline. The CPU backend is commonly used as the Golden source.
 

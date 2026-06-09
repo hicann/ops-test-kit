@@ -144,6 +144,6 @@ python3 -m ttk e2e -i torch_add.csv --backend npu --seed 42
 # 输出结果
 python3 -m ttk e2e -i torch_add.csv --backend npu -o results.csv
 
-# 仅校验CSV用例格式（不下设备）
+# 仅校验CSV用例格式（不下设备，所有模式通用）
 python3 -m ttk e2e -i torch_add.csv --validate
 ```

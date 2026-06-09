@@ -1,9 +1,9 @@
-testcase_name,network_name,op_name,input_shapes,input_dtypes,input_formats,output_shapes,output_dtypes,output_formats,input_ori_shapes,input_ori_formats,output_ori_shapes,output_ori_formats,attributes,input_data_ranges,precision_tolerances,absolute_precision,output_inplace_indexes,output_shape_unknown_indexes,is_enabled,remark,soc_series,priority,dump_file_prefix,manual_input_binaries,manual_golden_binaries
-abs_sample_3,UNKNOWN,abs,"((22, 17),)","('int32',)","('ND',)","((22, 17),)","('int32',)","('ND',)","((22, 17),)","('ND',)","((22, 17),)","('ND',)",{},"((None, None),)","((0, 0),)",0.0,(),(),True,,,0,,(),()
-abs_sample_2,UNKNOWN,abs,"((18,),)","('float32',)","('ND',)","((18,),)","('float32',)","('ND',)","((18,),)","('ND',)","((18,),)","('ND',)",{},"((None, None),)","((0, 0),)",0.0,(),(),True,,,0,,(),()
-abs_sample_4,UNKNOWN,abs,"((35, 19),)","('int16',)","('ND',)","((35, 19),)","('int16',)","('ND',)","((35, 19),)","('ND',)","((35, 19),)","('ND',)",{},"((None, None),)","((0, 0),)",0.0,(),(),True,,,0,,(),()
-abs_sample_6,UNKNOWN,abs,"((17, 26, 41),)","('int8',)","('ND',)","((17, 26, 41),)","('int8',)","('ND',)","((17, 26, 41),)","('ND',)","((17, 26, 41),)","('ND',)",{},"((None, None),)","((0, 0),)",0.0,(),(),True,,,0,,(),()
-abs_sample_0,UNKNOWN,abs,"((30, 16, 8, 44),)","('int8',)","('ND',)","((30, 16, 8, 44),)","('int8',)","('ND',)","((30, 16, 8, 44),)","('ND',)","((30, 16, 8, 44),)","('ND',)",{},"((None, None),)","((0, 0),)",0.0,(),(),True,,,0,,(),()
-abs_sample_1,UNKNOWN,abs,"((20, 18, 29),)","('float16',)","('ND',)","((20, 18, 29),)","('float16',)","('ND',)","((20, 18, 29),)","('ND',)","((20, 18, 29),)","('ND',)",{},"((None, None),)","((0, 0),)",0.0,(),(),True,,,0,,(),()
-abs_sample_7,UNKNOWN,abs,"((17, 23),)","('int64',)","('ND',)","((17, 23),)","('int64',)","('ND',)","((17, 23),)","('ND',)","((17, 23),)","('ND',)",{},"((None, None),)","((0, 0),)",0.0,(),(),True,,,0,,(),()
-abs_sample_5,UNKNOWN,abs,"((16, 19, 24, 49, 9),)","('float16',)","('ND',)","((16, 19, 24, 49, 9),)","('float16',)","('ND',)","((16, 19, 24, 49, 9),)","('ND',)","((16, 19, 24, 49, 9),)","('ND',)",{},"((None, None),)","((0, 0),)",0.0,(),(),True,,,0,,(),()
+testcase_name,op_name,input_shapes,input_dtypes,input_formats,output_shapes,output_dtypes,output_formats,precision_tolerances,absolute_precision
+abs_sample_3,abs,"((22, 17),)","('int32',)","('ND',)","((22, 17),)","('int32',)","('ND',)","((0, 0),)",0
+abs_sample_2,abs,"((18,),)","('float32',)","('ND',)","((18,),)","('float32',)","('ND',)","((0, 0),)",0
+abs_sample_4,abs,"((35, 19),)","('int16',)","('ND',)","((35, 19),)","('int16',)","('ND',)","((0, 0),)",0
+abs_sample_6,abs,"((17, 26, 41),)","('int8',)","('ND',)","((17, 26, 41),)","('int8',)","('ND',)","((0, 0),)",0
+abs_sample_0,abs,"((30, 16, 8, 44),)","('int8',)","('ND',)","((30, 16, 8, 44),)","('int8',)","('ND',)","((0, 0),)",0
+abs_sample_1,abs,"((20, 18, 29),)","('float16',)","('ND',)","((20, 18, 29),)","('float16',)","('ND',)","((0, 0),)",0
+abs_sample_7,abs,"((17, 23),)","('int64',)","('ND',)","((17, 23),)","('int64',)","('ND',)","((0, 0),)",0
+abs_sample_5,abs,"((16, 19, 24, 49, 9),)","('float16',)","('ND',)","((16, 19, 24, 49, 9),)","('float16',)","('ND',)","((0, 0),)",0

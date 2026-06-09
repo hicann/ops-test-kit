@@ -282,10 +282,6 @@ class TestcaseOp(TestcaseBase):
         return False
 
     @property
-    def manual_dyn_build_config(self):
-        return {"save_temp_cce_file": True, "op_debug_config": "dump_cce"}
-
-    @property
     def const_input_indexes(self):
         """Nested indexes of const inputs, derived from op_info valueDepend."""
         from ..operator.op_info_keeper import OpInfoKeeper
@@ -1529,15 +1525,12 @@ class TestcaseOp(TestcaseBase):
             self.fail_reason = "STC_SHAPE_OUT_OF_BOUND"
 
     def _set_case_core_type(self):
-        if get_global_storage().core_type:
-            self.core_type = get_global_storage().core_type
+        from ..operator.op_info_keeper import OpInfoKeeper
+        op_info = OpInfoKeeper().info_of(self.op_name)
+        if op_info is None:
+            self.core_type = "AiCore"
         else:
-            from ..operator.op_info_keeper import OpInfoKeeper
-            op_info = OpInfoKeeper().info_of(self.op_name)
-            if op_info is None:
-                self.core_type = "AiCore"
-            else:
-                self.core_type = op_info["coreType.value"]
+            self.core_type = op_info["coreType.value"]
 
     def _auto_set_inplace_indexes(self):
         from ..operator.op_info_keeper import OpInfoKeeper

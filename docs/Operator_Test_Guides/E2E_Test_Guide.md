@@ -80,5 +80,5 @@ python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --backend npu
 python3 -m ttk e2e -i examples/case_store/e2e/torch_npu_conv2d.csv --backend npu
 python3 -m ttk e2e -i torch_add.csv --backend npu -t add_f32_01
 python3 -m ttk e2e -i torch_add.csv --backend npu --seed 42 -o results.csv
-python3 -m ttk e2e -i torch_add.csv --validate                   # CSV-only validation, no device run
+python3 -m ttk e2e -i torch_add.csv --validate                   # CSV-only validation (common to all modes)
 ```

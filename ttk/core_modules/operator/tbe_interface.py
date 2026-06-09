@@ -236,7 +236,7 @@ class Opc(metaclass=Singleton):
             setattr(self, f"_{k}_opc", v())
 
         try:
-            self.core_type = get_global_storage().core_type
+            self.core_type = None
         except BaseException as e:
             logging.critical(f"Opc init failed: {e}")
             raise e
@@ -255,7 +255,7 @@ class Opc(metaclass=Singleton):
 
     @core_type.setter
     def core_type(self, val: Optional[str]):
-        self._core_type = val or get_global_storage().core_type
+        self._core_type = val or "AiCore"
         self._core_type = self._core_type or "AiCore"
         dev_plat = get_global_storage().dev_plat
         logging.debug(f"Setting soc version to "

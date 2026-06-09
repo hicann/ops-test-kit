@@ -21,20 +21,16 @@ def _add_kernel_args(parser):
                         help="Enable const shape test; use -c=false to disable")
     parser.add_argument("-b", "--binary", nargs="?", const=True, default=None,
                         help="Enable binary test (only --binary=release supported)")
-    parser.add_argument("--cce", nargs="?", const=True, default=None,
-                        help="Compile CCE file, e.g. --cce or --cce=d,s")
     parser.add_argument("--co", "--compile-only", dest="compile_only", action="store_true",
                         help="Compile only, skip profiling")
     parser.add_argument("--no-prof", action="store_true", help="Disable profiling (same as --co)")
     parser.add_argument("--tr", "--tiling-run", dest="tiling_run", type=int, default=None,
                         help="Tiling function run times (default: 3)")
 
-    parser.add_argument("--compile-opts", dest="compile_opts",
-                        help="Kernel compile options, e.g. --compile-opts='-g,-O0,oom'")
-    parser.add_argument("--impl-mode", dest="impl_mode",
-                        help="Operator implement mode")
-    parser.add_argument("--ct", "--core-type", dest="core_type",
-                        help="Core type: VectorCore or AiCore")
+    parser.add_argument("--compile-opts", dest="compile_opts", action="append", metavar="KEY=VALUE",
+                        help="Compile option as key=value. Can be specified multiple times. "
+                             "e.g. --compile-opts op_debug_config=oom,dump_cce "
+                             "--compile-opts enable_deterministic_mode=1")
     parser.add_argument("--npu-timeout", dest="npu_timeout", type=int, default=0,
                         help="NPU execution timeout in ms (default: 0)")
     parser.add_argument("--reuse-hbm", dest="reuse_hbm", action="store_true",
@@ -42,11 +38,11 @@ def _add_kernel_args(parser):
     parser.add_argument("--reserve-hbm", dest="reserve_hbm", type=int, default=None,
                         help="Reserve N MB of HBM")
     parser.add_argument("--clear-atomic", dest="clear_atomic", nargs="?", const=True,
-                        help="Force clear atomic, e.g. --clear-atomic=d,s")
+                        help="Force clear output and workspace memory before execution")
     parser.add_argument("--clear-ub", dest="clear_ub", default=None,
-                        help="Clear UB to value, e.g. --clear-ub=0 or --clear-ub=1.0")
+                        help="Clear UB to specified value before execution (default: 0)")
     parser.add_argument("--clear-l1", dest="clear_l1", default=None,
-                        help="Clear L1 to value")
+                        help="Clear L1 to specified value before execution (default: 0)")
 
     parser.add_argument("--simt-ub", dest="simt_ub", default=None,
                         help="Force SIMT UB size in bytes")

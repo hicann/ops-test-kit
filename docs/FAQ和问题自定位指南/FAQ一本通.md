@@ -94,7 +94,7 @@ python3 -m ttk list -i cases.csv --op add
 ## 算子太大执行超时或超出内存
 
 - 设置单用例超时时间：`--proc-timeout=300`
-- 设置HBM内存限制：`-l 10737418240`（10GB）
+- 设置HBM内存限制：`-l 10`（10GB）
 - 预留HBM内存：`--reserve-hbm=512`
 
 ## 多卡并行时部分用例失败

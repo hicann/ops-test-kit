@@ -48,7 +48,7 @@ FORMAT_MODE_STATIC_ND_AGNOSTIC = "static_nd_agnostic"
 SUPPORT_SIMPLIFIEDKEY_ID_SET = (0, 1, 2)
 
 
-def binary_kernel_match(interface: OperatorInterface, testcase: TestcaseOp):
+def binary_kernel_match(interface: OperatorInterface, testcase: TestcaseOp, compile_options: dict = None):
     op_name = testcase.op_name  # snake_name
     op_type = OpInfoKeeper().op_type_of(op_name)  # CamelName
     if not op_type:
@@ -56,13 +56,13 @@ def binary_kernel_match(interface: OperatorInterface, testcase: TestcaseOp):
 
     matched_bin_info = None
     if support_simplified_key_mode(op_type, testcase):
-        simplified_key = generate_simplified_key(interface, testcase)
+        simplified_key = generate_simplified_key(interface, testcase, compile_options)
         matched_bin_info = kernel_match_by_simplified_key(simplified_key, op_name)
     if not matched_bin_info:
         bin_cfg: dict = OpInfoKeeper().binary_static_key_config_of(op_name)
         if not bin_cfg:
             return None
-        stc_generalize_info, dynamic_generalize_info = generalize_op(interface, testcase)
+        stc_generalize_info, dynamic_generalize_info = generalize_op(interface, testcase, compile_options)
         optional_input_indices = get_optional_input_indices(op_name)
         matched_bin_info = kernel_match_by_static_key(testcase, bin_cfg, stc_generalize_info,
                                                       dynamic_generalize_info, optional_input_indices)
@@ -206,7 +206,7 @@ def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: Test
     return ",".join(generalized_attr)
 
 
-def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp):
+def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, compile_options: dict = None):
     # GenerateSimpleKeyStr
     def _construct_dtype_format(xput_tensor: Union[List[dict], dict],
                                 _dtype_mode, _format_mode, explain: list):
@@ -220,7 +220,7 @@ def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp):
 
     # simplifiedKey: op_type/deterministic,impl_mode/required input dtype,format/output dtype,format
     op_type = OpInfoKeeper().op_type_of(testcase.op_name)
-    deterministic = 1 if testcase.manual_dyn_build_config.get("enable_deterministic_mode", False) else 0
+    deterministic = 1 if (compile_options or {}).get("enable_deterministic_mode", "0") == "1" else 0
     impl_mode_str = testcase.attributes.get("impl_mode", "")
     impl_mode = get_impl_mode_int(impl_mode_str)
 
@@ -260,13 +260,13 @@ def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp):
             xput_key.append(_construct_dtype_format(case_xputs[str_xpt][idx],
                                                     dtype_mode, format_mode,
                                                     xput_key_exp))
-            if xpt_x.get("paramType") == "dynamic" and simplified_key_mode == 1 and dynamic_param_mode == "unfolded":
+            if xpt_x.get("paramType") == "dynamic" and simplified_key_mode == 1 and dynamic_param_mode != "folded_with_desc":
                 xput_key_exp[-1] += ",tensor_list_count"
                 xput_key[-1] += f",{len(case_xputs[str_xpt][idx])}"
     if simplified_key_mode == 1:
         attr_key = generalize_attr_for_simple_mode(interface, testcase, op_info)
         if attr_key is not None:
-            xput_key_exp[-1] += ",tensor_list_count"
+            xput_key_exp.append("attributes")
             xput_key.append(attr_key)
     simplified_key += f"{'/'.join(xput_key)}"
     key_explain += f"{'/'.join(xput_key_exp)}"
@@ -284,7 +284,7 @@ def kernel_match_by_simplified_key(simplified_key: str, op_name: str):
     return matched_bin
 
 
-def generalize_op(interface: OperatorInterface, testcase: TestcaseOp):
+def generalize_op(interface: OperatorInterface, testcase: TestcaseOp, compile_options: dict = None):
     # GeneralizeOps
     dyn_inputs, dyn_outputs = gather_dynamic_tensors(interface, testcase)
     op_info = OpInfoKeeper().info_of(testcase.op_name)
@@ -293,7 +293,8 @@ def generalize_op(interface: OperatorInterface, testcase: TestcaseOp):
     op_func = interface.get_dyn_operator(testcase)
     dyn_func_params = interface.get_op_func_parameter_dict(op_func, testcase.op_name)
     static_json, dynamic_json = generalize_with_default_rule(testcase, op_info, dyn_func_params,
-                                                             dyn_inputs, dyn_outputs)
+                                                             dyn_inputs, dyn_outputs,
+                                                             compile_options=compile_options)
 
     generalize_func = get_generalize_func_registered(interface, testcase)
     if generalize_func:
@@ -333,7 +334,8 @@ def get_generalize_func_registered(interface: OperatorInterface,
 
 def generalize_with_default_rule(testcase: TestcaseOp, op_info: dict,
                                  dyn_func_params: Mapping[str, inspect.Parameter],
-                                 dyn_inputs: Tuple[dict], dyn_outputs: Tuple[dict]):
+                                 dyn_inputs: Tuple[dict], dyn_outputs: Tuple[dict],
+                                 compile_options: dict = None):
     op_pattern = op_info.get("op.pattern", None)
     support_dynamic_rank = str(op_info.get("dynamicRankSupport.flag", False) or False)
     if support_dynamic_rank.lower() != 'true':
@@ -357,9 +359,9 @@ def generalize_with_default_rule(testcase: TestcaseOp, op_info: dict,
         static_json.update({"attrs": static_attr_json})
     if dynamic_attr_json:
         dynamic_json.update({"attrs": dynamic_attr_json})
-    if "enable_deterministic_mode" in testcase.manual_dyn_build_config:
-        dynamic_json.update({"deterministic":
-                             str(testcase.manual_dyn_build_config["enable_deterministic_mode"]).lower()})
+    deterministic_opt = (compile_options or {}).get("enable_deterministic_mode")
+    if deterministic_opt:
+        dynamic_json.update({"deterministic": deterministic_opt.lower()})
     logging.debug(f"Static json: {static_json}")
     logging.debug(f"Dynamic json: {dynamic_json}")
     return static_json, dynamic_json

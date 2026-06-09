@@ -79,6 +79,8 @@ def args_to_switches(args):
         sw.dev_plat = args.platform
     if hasattr(args, 'proc_timeout') and args.proc_timeout:
         sw.proc_timeout = args.proc_timeout
+    if hasattr(args, 'validate_only') and args.validate_only:
+        sw.validate_only = True
     if hasattr(args, 'warmup') and not args.warmup:
         sw.warmup = False
     if hasattr(args, 'run') and args.run is not None:
@@ -111,20 +113,15 @@ def apply_kernel_args(sw, args):
             sw.bin_switches.enabled = val
     if hasattr(args, 'compile_only') and args.compile_only:
         sw.compile_only = True
+    # --compile-opts key=value (append, direct passthrough)
     if hasattr(args, 'compile_opts') and args.compile_opts:
-        EQAUL_OPTS = {'-G': 'ccec_g', '-O0': 'ccec_O0'}
-        opts = list(set(args.compile_opts.split(',')))
-        for k, v in EQAUL_OPTS.items():
-            if k in opts:
-                opts[opts.index(k)] = v
-            if k.lower() in opts:
-                opts[opts.index(k.lower())] = v
-        opts.extend(list(sw.kernel_compile_options))
-        sw.kernel_compile_options = tuple(set(opts))
+        for pair in args.compile_opts:
+            if '=' not in pair:
+                raise ValueError(f"--compile-opts requires KEY=VALUE format, got: {pair}")
+            key, value = pair.split('=', 1)
+            sw.compile_options[key] = value
     if hasattr(args, 'impl_mode') and args.impl_mode:
         sw.op_impl_mode = args.impl_mode
-    if hasattr(args, 'core_type') and args.core_type:
-        sw.core_type = args.core_type
     if hasattr(args, 'limit') and args.limit is not None:
         sw.DAVINCI_HBM_SIZE_LIMIT = args.limit
     if hasattr(args, 'reuse_hbm') and args.reuse_hbm:
@@ -172,8 +169,6 @@ def apply_aclnn_args(sw, args):
 def apply_e2e_args(sw, args):
     if hasattr(args, 'backend') and args.backend:
         sw.backend_name = args.backend.lower()
-    if hasattr(args, 'validate_only') and args.validate_only:
-        sw.validate_only = True
 
 
 def run_with_switches(sw):

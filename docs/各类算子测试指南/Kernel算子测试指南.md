@@ -57,8 +57,8 @@ matmul_512_1_1792__1792_256,llama3_70b_train,mat_mul_v3,"((512, 1792), (1792, 25
 # 基本执行（默认动态编译）
 python3 -m ttk kernel -i add.csv
 
-# 动态+静态编译
-python3 -m ttk kernel -i add.csv -d -s
+# 动态 shape 编译（默认）
+python3 -m ttk kernel -i add.csv -d
 
 # 指定设备
 python3 -m ttk kernel -i add.csv --dev 0
@@ -79,23 +79,22 @@ Kernel模式的完整执行流程如下：
 
 | 参数 | 编译模式 | 说明 |
 |------|---------|------|
-| `-d`（默认） | 动态编译 | 用动态shape编译，经tiling得到实际shape后执行 |
-| `-s` | 静态编译 | 用固定shape编译后直接执行 |
-| `-c` | 常量编译 | 将指定输入作为常量编译 |
-| `-b` | 二进制模式 | 使用预编译的发布内核 |
+| `-d`（默认） | 动态 shape 编译 | 用动态shape编译，经tiling得到实际shape后执行 |
+| `-c` | 静态 shape 编译 | 用固定shape编译后直接执行 |
+| `-b release` | 二进制模式 | 使用预编译的发布内核 |
 
 ```shell
-# 动态编译（默认）
+# 动态 shape 编译（默认）
 python3 -m ttk kernel -i add.csv -d
 
-# 静态编译
-python3 -m ttk kernel -i add.csv -s
+# 关闭动态 shape 编译
+python3 -m ttk kernel -i add.csv -d false
 
-# 动态+静态同时编译
-python3 -m ttk kernel -i add.csv -d -s
+# 静态 shape 编译
+python3 -m ttk kernel -i add.csv -c
 
-# 二进制模式
-python3 -m ttk kernel -i add.csv -b
+# 二进制模式（使用发布内核）
+python3 -m ttk kernel -i add.csv -b release
 ```
 
 ## 仅编译

@@ -915,21 +915,62 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 inplace_indices.append(idx)
         self.output_inplace_indexes = tuple(inplace_indices)
 
+    # Backward/Grad API 中排除的输入参数名（以 Out/Output 结尾但实际是输入）
+    _BACKWARD_OUTPUT_EXCLUDE = frozenset({
+        'gradOutput', 'gradOut', 'grad_output',
+        'attentionOut', 'dOut',
+    })
+
+    def _auto_fill_output_tensor_indexes(self):
+        """Auto-fill output_tensor_indexes from tensor param naming conventions.
+
+        Rules (in priority order):
+          b. *Ref suffix → inplace output
+          c. *Out / *Output / "output" → output candidate
+             Backward/Grad API exclusions:
+               - names in _BACKWARD_OUTPUT_EXCLUDE → skip
+               - "output" that is NOT the last tensor → skip
+          f. No candidates found → fallback to (-1,) (last tensor)
+        """
+        if not self.is_valid or self.output_tensor_indexes:
+            return
+
+        op_api_info: OpApiInfo = OpApiInfoKeeper().info_of(self.api_name)
+        is_backward = 'Backward' in self.api_name or 'Grad' in self.api_name
+        tensor_names = op_api_info.tensors
+        output_indices = []
+
+        for idx, name in enumerate(tensor_names):
+            if name.endswith('Ref'):
+                output_indices.append(idx)
+                continue
+            is_output_name = (
+                name == 'output'
+                or name.endswith(('Out', 'OutOptional', 'Output', 'OutputOptional'))
+            )
+            if not is_output_name:
+                continue
+            if is_backward:
+                if name in self._BACKWARD_OUTPUT_EXCLUDE:
+                    continue
+                if name == 'output' and idx != len(tensor_names) - 1:
+                    continue
+            output_indices.append(idx)
+
+        if not output_indices:
+            output_indices = [-1]
+
+        self.output_tensor_indexes = tuple(output_indices)
+
     def _check_output_configuration(self):
         """
-        1. if output_tensor_indexes is not set,
-           configure it as (-1,) if not inplace input tensor,
-           otherwise tuple of indexes of inplace input tensor.
-        2. output_inplace_indexes should be included in output_indexes
+        1. if output_tensor_indexes is not set, auto-fill from naming conventions.
+        2. correct negative indexes, validate range.
+        3. output_inplace_indexes should be included in output_indexes
         """
         if not self.is_valid:
             return
-        op_api_info: OpApiInfo = OpApiInfoKeeper().info_of(self.api_name)
-        ref_indexes = tuple([idx for idx, n in enumerate(op_api_info.tensors)
-                             if n.endswith('Ref')])
-        if not self.output_tensor_indexes:
-            # try to fill it automatically...
-            self.output_tensor_indexes = ref_indexes or (-1,)
+        self._auto_fill_output_tensor_indexes()
         # correct negative indexes to positive ones
         self.output_tensor_indexes = tuple([idx + len(self.tensor_view_shapes) if idx < 0
                                             else idx for idx in self.output_tensor_indexes])

@@ -74,7 +74,7 @@ def dynamic_compilation(testcase: TestcaseOp, mode_name: str = "Dyn"):
             get_process_context().notify_status(f"On{mode_name}Compilation")
             if switch.realtime == OPTestSwitch.REUSE_BINARY_RELEASE_KERNEL:
                 try:
-                    matched_bin_json = binary_kernel_match(interface, testcase)
+                    matched_bin_json = binary_kernel_match(interface, testcase, get_global_storage().compile_options)
                     if matched_bin_json:
                         parse_matched_bin_info(interface, testcase, matched_bin_json, result)
                     else:

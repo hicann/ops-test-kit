@@ -264,8 +264,7 @@ class OperatorInterface(metaclass=Singleton):
                     self.set_dynamic_compile_context(cxt, testcase, operator_func, kernel_name, dyn_params)
                     compile_time = self._compile_op(mode, testcase.op_name,
                                                     operator_func, op_func_parameters,
-                                                    tensor_list_list, op_kwargs,
-                                                    build_cfg=testcase.manual_dyn_build_config)
+                                                    tensor_list_list, op_kwargs)
                     compile_info = self._opc.get_compile_info()
                     tiling_op_type = self._opc.get_tiling_op_type()
                     logging.debug("Received op_type from operator context: %s" % tiling_op_type)
@@ -293,7 +292,7 @@ class OperatorInterface(metaclass=Singleton):
                                                                    final_outputs,
                                                                    attrs)))
         tiling_time = []
-        build_cfg = testcase.manual_dyn_build_config or {}
+        build_cfg = self._build_compile_cfg()
         adapter_before_tiling(testcase, compile_result, final_inputs, final_outputs)
         with self._opc.build_config(**build_cfg):
             for i in range(get_global_storage().tiling_run_time):
@@ -334,20 +333,20 @@ class OperatorInterface(metaclass=Singleton):
             op_info.precision_mode = attrs["impl_mode"]
         return op_info
 
+    @staticmethod
+    def _build_compile_cfg():
+        return dict(get_global_storage().compile_options)
+
     def _compile_op(self, mode: str, op_name: str,
                     op_func: Union[Callable, str], op_func_parameters: tuple,
-                    tensor_list: list, op_kwargs: dict,
-                    build_cfg: dict = None) -> float:
+                    tensor_list: list, op_kwargs: dict) -> float:
         op_impl_type = "dynamic"
         try:
             logging.debug("Calling %s operator: %s(%s, %s)" % (op_impl_type, op_name,
                                                                str(tensor_list)[1:-1], str(op_kwargs)[1:-1]))
             before_compile = time.time()
             if isinstance(op_func, Callable):
-                build_cfg = {} if not build_cfg else build_cfg
-                opts = [x.strip() for x in build_cfg.get("op_debug_config", "").split(',')]
-                opts.extend(get_global_storage().kernel_compile_options)
-                build_cfg.update({"op_debug_config": ",".join(set(opts))})
+                build_cfg = self._build_compile_cfg()
                 with self._opc.build_config(**build_cfg):
                     op_func(*copy.deepcopy(tensor_list), **copy.deepcopy(op_kwargs))
             else:

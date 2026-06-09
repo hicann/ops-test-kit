@@ -40,6 +40,8 @@ def add_common_args(parser):
     parser.add_argument("--print", dest="summary_print", default=True,
                         type=lambda x: x.lower() != "false",
                         help="Print summary info periodically (default: true)")
+    parser.add_argument("--validate", dest="validate_only", action="store_true",
+                        help="Validate CSV cases only, skip device execution")
     parser.add_argument("--proc-no-reuse", dest="proc_no_reuse", action="store_true",
                         help="Create new process for each case")
     parser.add_argument("--no-memory-check", dest="no_memory_check", action="store_true",

@@ -1553,13 +1553,13 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
                     'Dtype': [('int', 0)],
                     'torch.dtype': [('int', 0)],
                     'bool': [('str', 'mean')],
-    'torch.Tensor': 'Tensor',
-    'torch.BoolTensor': 'Tensor',
-    'torch.IntTensor': 'Tensor',
-    'torch.LongTensor': 'Tensor',
-    'torch.FloatTensor': 'Tensor',
-    'torch.DoubleTensor': 'Tensor',
-}
+                    'torch.Tensor': 'Tensor',
+                    'torch.BoolTensor': 'Tensor',
+                    'torch.IntTensor': 'Tensor',
+                    'torch.LongTensor': 'Tensor',
+                    'torch.FloatTensor': 'Tensor',
+                    'torch.DoubleTensor': 'Tensor',
+                }
                 fixed = False
                 for alt_type, alt_val in _ALT_PROBES.get(p.type, []):
                     try:
@@ -2188,16 +2188,20 @@ def get_api_params(api_name: str) -> Optional[APIParamInfo]:
         return _MANUAL_OVERRIDES[api_name]
     result = extract_api_params(api_name)
     if result is not None and _is_tensor_method(api_name):
-        self_param = ParamInfo(name='self', type='Tensor')
-        if result.overloads:
-            for ov in result.overloads:
-                ov.params.insert(0, self_param)
-                ov.layout = OverloadTensorLayout.build(ov.params, ov.return_count)
-            best = max(result.overloads,
-                       key=lambda oi: sum(1 for p in oi.params if p.is_optional))
-            result.params = best.params
-        else:
-            result.params.insert(0, self_param)
+        # Functional alias params already include the self-equivalent tensor
+        # (e.g. 'input' from torch.nn.functional.relu_), so skip insertion.
+        is_alias = 'alias(' in (result.source or '')
+        if not is_alias:
+            self_param = ParamInfo(name='self', type='Tensor')
+            if result.overloads:
+                for ov in result.overloads:
+                    ov.params.insert(0, self_param)
+                    ov.layout = OverloadTensorLayout.build(ov.params, ov.return_count)
+                best = max(result.overloads,
+                           key=lambda oi: sum(1 for p in oi.params if p.is_optional))
+                result.params = best.params
+            else:
+                result.params.insert(0, self_param)
     if result is not None:
         result._resolve_api_flags()
     return result

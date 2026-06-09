@@ -108,7 +108,6 @@ class SWITCHES:
         "single_testcase_log_mode",
         "dev_plat",
         "short_soc_version",
-        "core_type",
         "custom_columns",
         "print_help",
         "process_per_device",
@@ -152,7 +151,7 @@ class SWITCHES:
         "reuse_hbm",
         "reserve_hbm",
         "priorities",
-        "kernel_compile_options",
+        "compile_options",
         "plugin_path",
         "test_mode",
         "backend_name",
@@ -171,7 +170,6 @@ class SWITCHES:
         self.single_testcase_log_mode = False
         self.dev_plat: str = "AUTO"
         self.short_soc_version: Optional[str] = None  # None in GPU mode
-        self.core_type = None
         self.custom_columns = None
         self.print_help: bool = False
         self.process_per_device = None
@@ -218,7 +216,7 @@ class SWITCHES:
         self.reuse_hbm: bool = False
         self.reserve_hbm: int = 0
         self.priorities: Optional[tuple] = None
-        self.kernel_compile_options: tuple = ()
+        self.compile_options: dict = {}
         self.plugin_path: Optional[Tuple[pathlib.Path]] = None
         self.test_mode: str = "op"
         self.backend_name: Optional[str] = None
@@ -268,7 +266,7 @@ class SWITCHES:
             self._compile_only = False
 
     def oom_enabled(self) -> bool:
-        return 'oom' in self.kernel_compile_options
+        return 'oom' in self.compile_options.get('op_debug_config', '')
 
 
 class OPTestSwitch:

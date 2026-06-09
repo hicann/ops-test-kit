@@ -1,0 +1,134 @@
+---
+name: ttk-how-diagnose
+description: 诊断 TTK 测试失败。只要用户提到测试跑不过、结果不对、精度差、编译挂了、执行超时、OOM、需要 dump 数据或排障，就必须使用此 skill。即使用户只是说"精度差一点"、"编译报错怎么解决"、"跑不过了"等口语化表述，也应触发。
+---
+
+# 诊断 TTK 测试失败
+
+## Step 1: 环境检查
+
+```shell
+python3 -m ttk -v        # 版本号
+python3 -m ttk info       # 设备信息（NPU卡数、CANN版本）
+```
+
+如果环境变量缺失，先 source：
+
+```shell
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+```
+
+常见缺失报错：`ImportError: libhccl.so`、`AttributeError: 'NoneType' object has no attribute 'acl_init'`
+
+## Step 2: 错误分类
+
+| 类别 | 关键词 | 诊断方向 |
+|------|--------|---------|
+| **环境** | `not found`、`ImportError`、`ASCEND_HOME_PATH` | Step 1 环境检查 |
+| **CSV 解析** | `parse`、`field`、`dtype`、`shape` | CSV 格式与字段 |
+| **编译** | `compile`、`tiling`、`build`、`op not found` | 算子名/属性/shape |
+| **执行** | `timeout`、`OOM`、`HBM`、`runtime` | 内存/超时参数 |
+| **精度** | `precision`、`cosine`、`close`、`compare` | Step 4 精度调试 |
+| **插件** | `plugin`、`register`、`golden` | 注册名/插件路径 |
+
+## Step 3: 锁定单个用例调试
+
+多用例并行运行时日志互相覆盖，用 `-t` 锁定单个失败用例可以隔离输出。`--single-log` 为每个用例生成独立日志文件，`--dump-on-fail` 在精度失败时自动保存输入/输出/Golden 数据。
+
+```shell
+# 单用例 + 独立日志 + 失败时dump
+python3 -m ttk kernel -i cases.csv -t case_name --single-log --dump-on-fail
+
+# 指定 dump 内容和格式
+python3 -m ttk kernel -i cases.csv -t case_name --dump in,out,golden --dump-format npy
+```
+
+### 按类别的诊断命令
+
+**环境问题**：
+
+```shell
+python3 -m ttk info                                    # 设备状态
+python3 -m ttk kernel -i examples/case_store/kernel/add.csv  # 内置示例验证
+```
+
+**执行超时/OOM**：
+
+```shell
+python3 -m ttk kernel -i cases.csv --proc-timeout=300  # 加大超时
+python3 -m ttk kernel -i cases.csv -l 10              # 跳过输入输出超过 10GB 的用例
+python3 -m ttk kernel -i cases.csv --reserve-hbm=512   # 预留 HBM 512MB
+```
+
+**多卡问题**：
+
+```shell
+python3 -m ttk info                        # 检查设备
+python3 -m ttk kernel -i cases.csv --device-blacklist=2,3  # 排除设备
+python3 -m ttk kernel -i cases.csv --pc=1  # 减少进程数
+```
+
+**可复现性**：
+
+```shell
+python3 -m ttk kernel -i cases.csv --seed 42  # 固定种子
+```
+
+**插件不生效**：
+
+1. 确认 `--plugin my_plugin.py` 参数已传入
+2. 确认 `__golden__` 字典中的 key 与 CSV 的 `op_name` 或 `api_name` 一致
+3. 检查插件文件语法错误
+
+## Step 4: 精度调试流程
+
+### 4.1 选择比对方法
+
+| 场景 | 方法 | 参数 |
+|------|------|------|
+| 浮点常规 | 数值近似 | `--compare close`（默认） |
+| 大规模向量整体趋势 | 余弦相似度 | `--compare cosine` |
+| 整型/精确结果 | 二进制精确 | `--compare binary` |
+| float8 类型 | 重量化 | `--compare requant`（自动） |
+
+### 4.2 Dump 数据分析
+
+```shell
+# 失败时自动 dump
+python3 -m ttk kernel -i cases.csv -t case_name --dump-on-fail
+
+# 指定 dump 内容
+python3 -m ttk kernel -i cases.csv -t case_name --dump in,out,golden --dump-format npy
+```
+
+### 4.3 调整容差
+
+在 CSV 中调整精度容差：
+
+```csv
+precision_tolerances,"((0.001, 0.001),)"
+absolute_precision,1e-8
+```
+
+### 4.4 常见精度原因
+
+| 现象 | 可能原因 | 修复 |
+|------|---------|------|
+| 全部 NaN | 输入数据范围不当 | 调整 `input_data_ranges` |
+| 大误差集中在某区域 | 溢出/下溢 | 缩小输入范围 |
+| 余弦相似度高但 close 失败 | 个别极值偏差 | 放大 `absolute_precision` |
+| 二进制比对失败但数值接近 | 浮点精度差异 | 用 `--compare close` + 合理容差 |
+
+## 常见错误模式速查
+
+详细错误模式和修复见 `references/`：
+- 错误模式表：`references/error-patterns.md`
+- 精度调试详解：`references/precision-debug.md`
+
+完整文档：`docs/FAQ和问题自定位指南/FAQ一本通.md`（路径相对于 ops-test-kit 仓库根目录）
+
+## 相关 Skill
+
+- CSV 格式有误？→ `ttk-how-write-case`
+- 重新跑测试？→ `ttk-how-run-test`
+- Golden 不对需要自定义？→ `ttk-how-write-plugin`

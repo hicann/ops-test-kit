@@ -10,8 +10,13 @@ Tests for ttk.core_modules.testcase_manager.testcase_aclnn: nested tensor struct
 flat properties, compression, and parameter validation.
 """
 
+from collections import OrderedDict
+
 import pytest
+from unittest.mock import patch, MagicMock
+
 from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+from ttk.core_modules.aclnn.op_api_info_keeper import OpApiInfo
 from ttk.utilities.container_utils import flatten_nested_sequence
 
 
@@ -1146,3 +1151,186 @@ class TestNormalizeRangeFieldMixedTensorList:
         assert dist == (0,)
         case._normalize_range_field_by_dist("input_data_ranges", dist)
         assert case.input_data_ranges == ((0.0, 1.0),)
+
+
+# ========== Tests for _auto_fill_output_tensor_indexes ==========
+
+def _make_op_api_info(tensor_names, tensor_types=None):
+    """Helper to create a mock OpApiInfo with given tensor param names."""
+    if tensor_types is None:
+        tensor_types = ["aclTensor*"] * len(tensor_names)
+    params = OrderedDict()
+    for name, typ in zip(tensor_names, tensor_types):
+        params[name] = {"type": typ}
+    info = OpApiInfo(params=params)
+    return info
+
+
+class TestAutoFillOutputTensorIndexes:
+    """Tests for _auto_fill_output_tensor_indexes naming-convention-based detection."""
+
+    def _make_case(self, api_name="aclnnDummy", tensor_names=None,
+                   tensor_types=None, tensor_view_shapes=None):
+        """Create a TestcaseAclnn with mocked OpApiInfoKeeper.info_of."""
+        if tensor_names is None:
+            tensor_names = ["self", "other", "out"]
+        if tensor_view_shapes is None:
+            tensor_view_shapes = tuple((2, 3) for _ in tensor_names)
+        info = _make_op_api_info(tensor_names, tensor_types)
+        case = TestcaseAclnn()
+        case.api_name = api_name
+        case.is_valid = True
+        case.fail_reason = None
+        case.tensor_view_shapes = tensor_view_shapes
+        case.tensor_dtypes = tuple("float32" for _ in tensor_names)
+        case.attributes = {}
+        case.output_tensor_indexes = ()
+        case.output_inplace_indexes = ()
+        # Patch at module level where _auto_fill_output_tensor_indexes calls it
+        self._patcher = patch(
+            "ttk.core_modules.testcase_manager.testcase_aclnn.OpApiInfoKeeper")
+        MockCls = self._patcher.start()
+        MockCls.return_value.info_of.return_value = info
+        return case
+
+    def teardown_method(self):
+        if hasattr(self, '_patcher'):
+            self._patcher.stop()
+
+    # --- Basic output detection by *Out suffix ---
+
+    def test_out_suffix_detected(self):
+        case = self._make_case(tensor_names=["self", "other", "yOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (2,)
+
+    def test_output_suffix_detected(self):
+        case = self._make_case(tensor_names=["input", "gradOutput"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (1,)
+
+    def test_output_literal_detected(self):
+        case = self._make_case(tensor_names=["self", "other", "output"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (2,)
+
+    def test_out_optional_detected(self):
+        case = self._make_case(tensor_names=["input", "meanOutOptional", "rstdOutOptional"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (1, 2)
+
+    def test_output_optional_detected(self):
+        case = self._make_case(tensor_names=["input", "activationFeatureOutputOptional"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (1,)
+
+    # --- Ref suffix (inplace) ---
+
+    def test_ref_suffix_detected(self):
+        case = self._make_case(tensor_names=["selfRef", "other"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (0,)
+
+    def test_mixed_ref_and_out(self):
+        case = self._make_case(tensor_names=["selfRef", "other", "yOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (0, 2)
+
+    # --- Fallback to last tensor ---
+
+    def test_fallback_no_matching_names(self):
+        case = self._make_case(tensor_names=["self", "weight", "bias"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (-1,)
+
+    # --- Already set by user ---
+
+    def test_user_set_not_overridden(self):
+        case = self._make_case(tensor_names=["self", "other", "yOut"])
+        case.output_tensor_indexes = (0,)
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (0,)
+
+    # --- Not valid ---
+
+    def test_invalid_skipped(self):
+        case = self._make_case(tensor_names=["self", "out"])
+        case.is_valid = False
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == ()
+
+    # --- Backward/Grad exclusions ---
+
+    def test_backward_excludes_grad_output(self):
+        case = self._make_case(
+            api_name="aclnnSoftmaxBackward",
+            tensor_names=["gradOutput", "output", "yOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (2,)
+
+    def test_backward_excludes_grad_out(self):
+        case = self._make_case(
+            api_name="aclnnLayerNormBackward",
+            tensor_names=["input", "gradOut", "gradInputOut", "gradWeightOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (2, 3)
+
+    def test_backward_excludes_grad_output_underscore(self):
+        """grad_output doesn't match *Out/*Output suffix, excluded by name."""
+        case = self._make_case(
+            api_name="aclnnModulateBackward",
+            tensor_names=["grad_output", "yOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (1,)
+
+    def test_backward_excludes_attention_out(self):
+        case = self._make_case(
+            api_name="aclnnNsaSelectedAttentionGrad",
+            tensor_names=["query", "attentionOut", "dqOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (2,)
+
+    def test_backward_excludes_d_out(self):
+        case = self._make_case(
+            api_name="aclnnSparseFlashAttentionGrad",
+            tensor_names=["query", "dOut", "dqOut", "dkOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (2, 3)
+
+    def test_backward_output_not_last_excluded(self):
+        case = self._make_case(
+            api_name="aclnnLogSoftmaxBackward",
+            tensor_names=["gradOutput", "output", "yOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (2,)
+
+    def test_backward_output_as_last_included(self):
+        case = self._make_case(
+            api_name="aclnnAvgPool3dBackward",
+            tensor_names=["gradOutput", "self", "output"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (2,)
+
+    def test_grad_api_detected(self):
+        case = self._make_case(
+            api_name="aclnnFlashAttentionScoreGrad",
+            tensor_names=["query", "dkOut", "dvOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (1, 2)
+
+    # --- Non-backward: no exclusions ---
+
+    def test_non_backward_out_fallback(self):
+        """'out' not matched by *Out/*Output, falls back to last tensor."""
+        case = self._make_case(
+            api_name="aclnnAdd",
+            tensor_names=["self", "other", "out"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (-1,)
+
+    def test_non_backward_all_out(self):
+        case = self._make_case(
+            api_name="aclnnAminmax",
+            tensor_names=["self", "minOut", "maxOut"])
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (1, 2)

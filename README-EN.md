@@ -11,6 +11,18 @@ TTK (ops Test Tool Kit) is a full-pipeline, automated, batch operator testing fr
 
 [中文文档](./README.md)
 
+## Architecture & Test Coverage
+
+```
+┌──────────────────────────────────────────────────┐
+│  Framework   ✅ Torch · TensorFlow · ...          │  ← E2E (end-to-end, full pipeline)
+├──────────────────────────────────────────────────┤
+│  Engine      GE · ✅ ACLNN                        │  ← ACLNN (engine API, compile+execute)
+├──────────────────────────────────────────────────┤
+│  Operator    ✅ AiCore · AiCpu                     │  ← Kernel (operator core, compile+execute)
+└──────────────────────────────────────────────────┘
+```
+
 ## Basic Usage Guide
 
 - [Test Case Generation (CSV Format)](/docs/Test_Case_Generation.md)
@@ -94,6 +106,55 @@ ops-test-kit/
 ├── docs/                  # Documentation
 └── scripts/               # Build/dev helper scripts
 ```
+
+## AI Assistance (Agent Skills)
+
+TTK ships with Agent Skills that provide automatic TTK usage guidance for CLI-based AI coding assistants (Claude Code, OpenCode, etc.).
+
+### Option 1: Launch Agent in the ops-test-kit Directory
+
+Skills are stored in `.claude/skills/` and auto-loaded by agents that support this directory structure:
+
+```shell
+cd ops-test-kit
+claude   # or opencode, or other CLI agents
+```
+
+### Option 2: Use from Another Project
+
+If you've already started an agent in your operator repo or another directory, simply tell it to read the TTK entry file:
+
+```
+Read {path-to-ops-test-kit}/AGENTS.md for TTK test framework usage guide
+```
+
+The agent will read the skill index in AGENTS.md and load the corresponding SKILL.md and reference files on demand.
+
+> **Note**: `python3 -m ttk` commands must be run from the ops-test-kit directory.
+
+### Option 3 (Fallback)
+
+If the above options don't work, add the following to your project's `CLAUDE.md` so the agent is aware of TTK Skills in every session:
+
+```markdown
+## TTK Operator Test Framework
+
+TTK (ops-test-kit) is an Ascend NPU single-operator test framework supporting Kernel/ACLNN/E2E test modes.
+- Entry file: {path-to-ops-test-kit}/AGENTS.md
+- Skills directory: {path-to-ops-test-kit}/.claude/skills/
+- Running ttk commands requires cd to the ops-test-kit directory
+```
+
+> **Note**: `python3 -m ttk` commands must be run from the ops-test-kit directory.
+
+**Built-in Skills**:
+
+| Skill | Purpose |
+|-------|---------|
+| ttk-how-run-test | Build run commands, check devices, parameter reference |
+| ttk-how-write-case | Write CSV test cases for Kernel/ACLNN/E2E modes |
+| ttk-how-diagnose | Diagnose test failures, precision issues, compilation errors |
+| ttk-how-write-plugin | Write custom Golden/Input plugins |
 
 ## Related Information
 

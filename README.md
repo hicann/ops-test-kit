@@ -11,6 +11,18 @@ TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库
 
 [English Documentation](./README-EN.md)
 
+## 🏗️ 架构层级与测试覆盖
+
+```
+┌──────────────────────────────────────────────────┐
+│  应用框架层  ✅ Torch · TensorFlow · ...          │  ← E2E（端到端，覆盖全链路）
+├──────────────────────────────────────────────────┤
+│  引擎层     GE · ✅ ACLNN                        │  ← ACLNN（引擎 API，覆盖编译+执行）
+├──────────────────────────────────────────────────┤
+│  算子层     ✅ AiCore · AiCpu                     │  ← Kernel（算子内核，覆盖编译+执行）
+└──────────────────────────────────────────────────┘
+```
+
 ## 🧰 基本使用指南
 
 - [用例生成（CSV用例编写）](/docs/用例生成.md)
@@ -94,6 +106,53 @@ ops-test-kit/
 ├── docs/                  # 文档源文件
 └── scripts/               # 构建/开发辅助脚本
 ```
+
+## 🤖 AI 辅助（Agent Skills）
+
+TTK 配备了 Agent Skills，为 CLI 类 AI 编程助手（Claude Code、OpenCode 等）提供 TTK 使用指导。Skills 位于 `.claude/skills/` 目录下。
+
+### 方式一：在 ops-test-kit 目录下启动 Agent
+
+Agent 自动加载 `.claude/skills/` 下的 Skills：
+
+```shell
+cd ops-test-kit
+claude   # 或 opencode 等其他 CLI Agent
+```
+
+### 方式二：从其他项目中使用
+
+如果你已在算子仓库等其他目录下启动了 Agent，直接告诉它读取 TTK 的入口文件即可：
+
+```
+读取 {ops-test-kit 路径}/AGENTS.md 获取 TTK 测试框架使用指南
+```
+
+Agent 会读取 AGENTS.md 中的技能索引，按需加载对应的 SKILL.md 和 reference 文件。
+
+> **注意**：执行 `python3 -m ttk` 命令需要在 ops-test-kit 目录下运行。
+
+### 方式三（托底）
+
+如果前两种方式不适用，在项目的 `CLAUDE.md` 中添加以下内容，让 Agent 在每次会话中都能感知 TTK Skills：
+
+```markdown
+## TTK 算子测试框架
+
+TTK（ops-test-kit）是昇腾 NPU 单算子测试框架，支持 Kernel/ACLNN/E2E 三种测试模式。
+- 入口文件：{ops-test-kit 路径}/AGENTS.md
+- Skills 目录：{ops-test-kit 路径}/.claude/skills/
+- 执行 ttk 命令时需要 cd 到 ops-test-kit 目录
+```
+
+**内置技能**：
+
+| 技能 | 用途 |
+|------|------|
+| ttk-how-run-test | 构造运行命令、查看设备、参数说明 |
+| ttk-how-write-case | 编写 Kernel/ACLNN/E2E 模式的 CSV 用例 |
+| ttk-how-diagnose | 诊断测试失败、精度问题、编译错误 |
+| ttk-how-write-plugin | 编写自定义 Golden/Input 插件 |
 
 ## 💬相关信息
 

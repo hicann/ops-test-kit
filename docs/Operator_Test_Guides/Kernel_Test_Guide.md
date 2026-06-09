@@ -39,7 +39,7 @@ More examples in `examples/case_store/kernel/`.
 
 ```shell
 python3 -m ttk kernel -i add.csv
-python3 -m ttk kernel -i add.csv -d -s
+python3 -m ttk kernel -i add.csv -d
 python3 -m ttk kernel -i add.csv --dev 0
 python3 -m ttk kernel -i add.csv -o results.csv
 ```
@@ -54,10 +54,9 @@ Read CSV -> Compile kernel (dynamic/static/const/binary) -> Generate inputs -> E
 
 | Flag | Mode | Description |
 |------|------|-------------|
-| `-d` (default) | Dynamic | Compile with dynamic shapes, run tiling, then execute |
-| `-s` | Static | Compile with fixed shapes |
-| `-c` | Const | Treat specified inputs as compile-time constants |
-| `-b` | Binary | Use pre-compiled release kernels |
+| `-d` (default) | Dynamic shape | Compile with dynamic shapes, run tiling, then execute |
+| `-c` | Static shape | Compile with fixed shapes |
+| `-b release` | Binary | Use pre-compiled release kernels |
 
 ```shell
 python3 -m ttk kernel -i add.csv --co          # Compile only
