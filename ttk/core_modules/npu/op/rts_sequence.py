@@ -468,6 +468,7 @@ class OnlineRtsProfiling:
     def _process_msprof_cycles(self):
         KERNEL_TYPE = ("AI_CORE", "AIV_SQE", "AI_VECTOR_CORE",
                        "MIX_AIC", "MIX_AIV",
+                       "KERNEL_MIX_AIC", "KERNEL_MIX_AIV",
                        "KERNEL_AIVEC", "KERNEL_AICORE")
         total_cycle = "UNKNOWN"
         prof_result_path = pathlib.Path(self._prof_result_path)
