@@ -17,6 +17,7 @@ from typing import Optional, Callable, Set, Tuple, Dict
 
 from .custom_plugin_manager import CustomPluginManager
 from .builtin_plugin_loader import BuiltinPluginLoader
+from .spec_loader import load_spec_function
 
 _func_cache: Dict[Tuple[str, str, str, Optional[str]], Tuple[Optional[Callable], Optional[str]]] = {}
 
@@ -27,43 +28,49 @@ def get_plugin_function(operator_name: str,
                      plugin_path: Optional[str] = None) -> Tuple[Optional[Callable], Optional[str]]:
     """
     Get plugin function by priority
-    
+
     Priority:
-        1. Custom plugin
-        2. Builtin plugin
-    
+        1. TestSpec (TestSpecManager)
+        2. Custom plugin
+        3. Builtin plugin
+
     Args:
         operator_name: Operator name
         plugin_type: "golden" or "input"
         level_type: "kernel" or "aclnn"
         plugin_path: Custom plugin path
-        
+
     Returns:
         (func, source) tuple, or (None, None) if not found
         func: Callable object
-        source: "builtin" or "custom"
+        source: "spec", "custom" or "builtin"
     """
-    cache_key = (operator_name, plugin_type, level_type)
+    cache_key = (operator_name, plugin_type, level_type, str(plugin_path) if plugin_path else None)
     if cache_key in _func_cache:
         return _func_cache[cache_key]
-    
+
     func = None
     source = None
-    
-    if plugin_path:
+
+    # 1. TestSpec（最高优先级）
+    func, source = load_spec_function(operator_name, plugin_type, plugin_path)
+
+    # 2. Custom plugin
+    if func is None and plugin_path:
         custom_manager = CustomPluginManager(plugin_path)
         custom_func = custom_manager.load_if_available(operator_name, plugin_type, level_type)
         if custom_func:
             func = custom_func
             source = "custom"
-    
-    if not func:
+
+    # 3. Builtin plugin
+    if func is None:
         builtin_loader = BuiltinPluginLoader()
         builtin_func = builtin_loader.load_if_available(operator_name, plugin_type, level_type)
         if builtin_func:
             func = builtin_func
             source = "builtin"
-    
+
     _func_cache[cache_key] = (func, source)
     return (func, source)
 

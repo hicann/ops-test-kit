@@ -141,6 +141,44 @@ def test_invalid_golden_type():
         print(f"✓ Correctly raised KeyError: {e}")
 
 
+def test_spec_priority_over_custom():
+    """测试优先级：spec > custom > builtin"""
+    print("\n=== Test priority: spec > custom > builtin ===")
+
+    examples_path = str(Path(__file__).resolve().parent.parent / "ttk" / "test_spec" / "examples")
+
+    func, source = get_plugin_function("add", "golden", "kernel", examples_path)
+    assert func is not None, "应找到 add 的 spec golden"
+    assert source == "spec", f"期望 source='spec'，实际 source='{source}'"
+    print(f"✓ add: 从 {source} 加载（spec 优先）")
+
+
+def test_spec_input():
+    """测试 spec customize_inputs 通过 plugin_type='input'"""
+    print("\n=== Test spec customize_inputs ===")
+
+    examples_path = str(Path(__file__).resolve().parent.parent / "ttk" / "test_spec" / "examples")
+
+    func, source = get_plugin_function("histogram_input", "input", "kernel", examples_path)
+    assert func is not None, "应找到 histogram_input 的 spec customize_inputs"
+    assert source == "spec", f"期望 source='spec'，实际 source='{source}'"
+    print(f"✓ histogram_input: customize_inputs 从 {source} 加载")
+
+
+def test_spec_fallback_to_builtin():
+    """测试无 spec 时回退到 builtin"""
+    print("\n=== Test spec fallback to builtin ===")
+
+    examples_path = str(Path(__file__).resolve().parent.parent / "ttk" / "test_spec" / "examples")
+
+    func, source = get_plugin_function("relu", "golden", "kernel", examples_path)
+    if func is not None:
+        assert source != "spec", "relu 不应匹配 spec"
+        print(f"✓ relu: 回退到 {source}")
+    else:
+        print(f"✓ relu: 无 spec 也无 builtin — 返回 None")
+
+
 if __name__ == "__main__":
     test_builtin_golden_functions()
     test_builtin_aclnn_functions()

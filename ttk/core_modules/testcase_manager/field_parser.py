@@ -118,7 +118,7 @@ def _shapelike(value: str,
         # sub_value is single value, convert to tuple and return
         if positive_only and not (all((i > 0 for i in parsed if i is not None)) or
                                   (any([i == 0 for i in parsed]) if allow_empty_tensor else False)):
-            logging.warning("shapelike value should not have %s dim %s" %
+            raise ValueError("shapelike value should not have %s dim %s" %
                             ("non-positive" if not allow_empty_tensor else "negative", value))
         return parsed,
     for sub_value in parsed:
@@ -129,7 +129,7 @@ def _shapelike(value: str,
                 raise ValueError("shapelike value should not have invalid dim %s" % value)
             if positive_only and not (all((i > 0 for i in sub_value)) or
                                       (any([i == 0 for i in sub_value]) if allow_empty_tensor else False)):
-                logging.warning("shapelike value should not have %s dim %s" %
+                raise ValueError("shapelike value should not have %s dim %s" %
                                 ("non-positive" if not allow_empty_tensor else "negative", value))
         elif isinstance(sub_value, type(None)):
             pass
@@ -219,7 +219,7 @@ def shapelike_stc_nested(value: str):
 
     if all(isinstance(e, int) for e in parsed):
         if not all(d >= 0 for d in parsed):
-            logging.warning("shapelike value should not have negative dim %s" % str(parsed))
+            raise ValueError("shapelike value should not have negative dim %s" % str(parsed))
         return (parsed,)
 
     result = []
@@ -238,7 +238,7 @@ def shapelike_stc_nested(value: str):
                         if not is_shape(sub, (int,)):
                             raise TypeError("%s is not a valid shape in %s" % (str(sub), value))
                         if not all(d >= 0 for d in sub):
-                            logging.warning("shapelike value should not have negative dim %s" % str(sub))
+                            raise ValueError("shapelike value should not have negative dim %s" % str(sub))
                         sub_shapes.append(tuple(sub))
                     else:
                         raise TypeError("%s is not a valid shape in %s" % (str(sub), value))
@@ -247,7 +247,7 @@ def shapelike_stc_nested(value: str):
                 if not is_shape(element, (int,)):
                     raise TypeError("%s is not a valid shape in %s" % (str(element), value))
                 if not all(d >= 0 for d in element):
-                    logging.warning("shapelike value should not have negative dim %s" % str(element))
+                    raise ValueError("shapelike value should not have negative dim %s" % str(element))
                 result.append(tuple(element))
         else:
             raise TypeError("%s of %s is not a valid shapelike value" % (str(element), value))
