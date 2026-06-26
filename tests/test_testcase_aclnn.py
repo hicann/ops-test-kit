@@ -1334,3 +1334,21 @@ class TestAutoFillOutputTensorIndexes:
             tensor_names=["self", "minOut", "maxOut"])
         case._auto_fill_output_tensor_indexes()
         assert case.output_tensor_indexes == (1, 2)
+
+    # --- None (nullptr) tensor handling ---
+
+    def test_none_out_optional_in_output_indexes(self):
+        case = self._make_case(
+            tensor_names=["input", "resultOut", "reserveOutOptional"],
+            tensor_view_shapes=((3, 4), (3, 4), None))
+        case._auto_fill_output_tensor_indexes()
+        assert case.output_tensor_indexes == (1, 2)
+
+    # --- None (nullptr) inplace handling ---
+
+    def test_none_ref_skipped_in_inplace(self):
+        case = self._make_case(
+            tensor_names=["varRef", "mRef", "maxGradNormOptionalRef", "grad"],
+            tensor_view_shapes=((512,), (512,), None, (512,)))
+        case._auto_fill_output_inplace_indices()
+        assert case.output_inplace_indexes == (0, 1)

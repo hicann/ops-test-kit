@@ -910,8 +910,8 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             is_nested = isinstance(element, (tuple, list)) and len(element) > 0 and isinstance(element[0], (tuple, list))
             if param_name in ref_lst:
                 if element is None:
-                    raise RuntimeError(f"Parameter [{param_name}] is INPLACE type."
-                                       f" But got `None` (consider as invalid).")
+                    logging.info(f"Inplace parameter [{param_name}] is None (nullptr), skipping.")
+                    continue
                 inplace_indices.append(idx)
         self.output_inplace_indexes = tuple(inplace_indices)
 
