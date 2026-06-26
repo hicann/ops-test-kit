@@ -77,7 +77,7 @@ class TestSpecLoaderDiscovery:
 
 class TestManagerLoadAndInspect:
     def setup_method(self):
-        self.mgr = TestSpecManager(search_paths=[EXAMPLES_DIR])
+        self.mgr = TestSpecManager(search_paths=(EXAMPLES_DIR,))
 
     def test_load_add(self):
         cls = self.mgr.load("add")
@@ -115,25 +115,43 @@ class TestManagerLoadAndInspect:
 
 class TestManagerValidation:
     def setup_method(self):
-        self.mgr = TestSpecManager(search_paths=[EXAMPLES_DIR])
+        self.mgr = TestSpecManager(search_paths=(EXAMPLES_DIR,))
 
-    def test_validate_valid_spec(self):
+    def test_validate_valid_spec_no_raise(self):
+        """Valid spec — validate() does not raise."""
         cls = self.mgr.load("add")
         assert cls is not None
-        warnings = self.mgr.validate(cls)
-        # AddTestSpec is valid — should produce no warnings
-        assert warnings == []
+        self.mgr.validate(cls)  # no exception
 
-    def test_validate_returns_list(self):
-        cls = self.mgr.load("add")
-        assert cls is not None
-        result = self.mgr.validate(cls)
-        assert isinstance(result, list)
+    def test_validate_invalid_raises(self):
+        """Invalid spec (golden wrong type) — validate() raises InvalidSpecError."""
+        from ttk.test_spec import InvalidSpecError
+
+        class BadSpec:
+            golden = 123  # int, not str/type/callable
+
+        with pytest.raises(InvalidSpecError):
+            self.mgr.validate(BadSpec)
+
+    def test_load_invalid_raises_on_first_use(self):
+        """First load of an invalid spec triggers validate → raises (fail-fast)."""
+        import tempfile
+        from pathlib import Path
+        from ttk.test_spec import InvalidSpecError
+
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "bad.py").write_text(
+                'class BadSpec:\n    golden = 123\n'
+                '__spec__ = {"bad_op": BadSpec}\n'
+            )
+            mgr = TestSpecManager((d,))
+            with pytest.raises(InvalidSpecError):
+                mgr.load("bad_op")
 
 
 class TestManagerListVendors:
     def setup_method(self):
-        self.mgr = TestSpecManager(search_paths=[EXAMPLES_DIR])
+        self.mgr = TestSpecManager(search_paths=(EXAMPLES_DIR,))
 
     def test_list_vendors_dict(self):
         """03_third_party.py has SoftmaxMultiVendorSpec with dict third_party."""
@@ -191,3 +209,93 @@ class TestExampleDiscoverability:
         """05_advanced.py should be loadable."""
         cls = self.loader.load("softmax_advanced")
         assert cls is not None, "05_advanced.py spec not discovered"
+
+
+class TestValidateClassExclusion:
+    """callable 属性里,golden/third_party 接受 class,其余只 function。"""
+
+    def setup_method(self):
+        self.mgr = TestSpecManager(search_paths=(EXAMPLES_DIR,))
+
+    def test_golden_accepts_class(self):
+        """golden 文档有 class 形式 → validate 通过。"""
+        class GoldenImpl:
+            def __call__(self, x, **kwargs):
+                return [x]
+        class S:
+            golden = GoldenImpl
+        self.mgr.validate(S)  # 不抛
+
+    def test_third_party_accepts_class(self):
+        class TpImpl:
+            def __call__(self, x, **kwargs):
+                return [x]
+        class S:
+            third_party = TpImpl
+        self.mgr.validate(S)  # 不抛
+
+    def test_customize_inputs_rejects_class(self):
+        from ttk.test_spec import InvalidSpecError
+        class InputImpl:
+            def __call__(self, x, **kwargs):
+                return [x]
+        class S:
+            customize_inputs = InputImpl
+        with pytest.raises(InvalidSpecError):
+            self.mgr.validate(S)
+
+    def test_compare_rejects_class(self):
+        from ttk.test_spec import InvalidSpecError
+        class CompareImpl:
+            def __call__(self, *outputs, **kwargs):
+                return {"pass": True, "metrics": []}
+        class S:
+            compare = CompareImpl
+        with pytest.raises(InvalidSpecError):
+            self.mgr.validate(S)
+
+    def test_pre_compare_rejects_class(self):
+        from ttk.test_spec import InvalidSpecError
+        class PreImpl:
+            def __call__(self, *outputs, **kwargs):
+                return list(outputs)
+        class S:
+            pre_compare = PreImpl
+        with pytest.raises(InvalidSpecError):
+            self.mgr.validate(S)
+
+    def test_describe_rejects_class(self):
+        from ttk.test_spec import InvalidSpecError
+        class DescImpl:
+            def __call__(self, params):
+                return {}
+        class S:
+            describe = DescImpl
+        with pytest.raises(InvalidSpecError):
+            self.mgr.validate(S)
+
+
+class TestValidateTorchGraph:
+    """torch_graph 必须是 torch.nn.Module 子类。"""
+
+    def setup_method(self):
+        self.mgr = TestSpecManager(search_paths=(EXAMPLES_DIR,))
+
+    def test_accepts_nn_module_subclass(self):
+        import torch.nn as nn
+        class GraphMod(nn.Module):
+            def forward(self, x):
+                return x
+        class S:
+            torch_graph = GraphMod
+        self.mgr.validate(S)  # 不抛
+
+    def test_rejects_non_nn_module_class(self):
+        from ttk.test_spec import InvalidSpecError
+        class NotModule:  # 普通类,非 nn.Module(MRO 不含)
+            def forward(self, x):
+                return x
+        class S:
+            torch_graph = NotModule
+        with pytest.raises(InvalidSpecError):
+            self.mgr.validate(S)

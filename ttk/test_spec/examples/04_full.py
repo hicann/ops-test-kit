@@ -48,13 +48,17 @@ class LayerNormFullSpec:
 
     # -- compare — custom comparison (optional, default cosine_similarity) --
     def compare(*outputs, **kwargs):
-        """Custom comparison: returns {pass, metrics}"""
+        """Custom comparison: returns dict (single output) or list[dict] (multi output).
+        Each dict: pass(bool, required), precision(str|float, required),
+        error_info(str, optional), metrics(dict, optional), diff_indices(list, optional).
+        float precision is percentage (99.98, not 0.9998)."""
         npu_out, golden_out = outputs[0], outputs[1]
         cos_sim = numpy.dot(npu_out.flatten(), golden_out.flatten()) / (
             numpy.linalg.norm(npu_out.flatten()) * numpy.linalg.norm(golden_out.flatten()))
         return {
             "pass": cos_sim > kwargs.get("threshold", 0.99),
-            "metrics": [{"name": "cosine_similarity", "value": cos_sim}],
+            "precision": cos_sim * 100,
+            "metrics": {"cosine_similarity": cos_sim},
         }
 
 

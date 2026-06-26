@@ -30,7 +30,7 @@ TestSpec — 统一的算子测试规范
 完整约定见 README.md 和 op_assets_desc.md。
 """
 
-__all__ = ["TestSpecManager", "SpecNotFoundError", "InvalidSpecWarning"]
+__all__ = ["TestSpecManager", "SpecNotFoundError", "InvalidSpecError", "get_spec_attr"]
 
 
 class SpecNotFoundError(Exception):
@@ -38,8 +38,8 @@ class SpecNotFoundError(Exception):
     pass
 
 
-class InvalidSpecWarning(UserWarning):
-    """属性类型不符合约定，仅 warn，不阻断"""
+class InvalidSpecError(Exception):
+    """属性类型不符合约定，validate 失败时抛出（fail-fast）"""
     pass
 
 
@@ -48,4 +48,7 @@ def __getattr__(name):
     if name == "TestSpecManager":
         from .manager import TestSpecManager
         return TestSpecManager
+    if name == "get_spec_attr":
+        from .manager import get_spec_attr
+        return get_spec_attr
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

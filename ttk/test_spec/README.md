@@ -22,11 +22,11 @@ class AbsTestSpec:
 |------|------|---------|
 | `golden` | CPU 真值 | `str` / 函数 / 类 |
 | `third_party` | 三方标杆 | `str` / `dict` / 类 |
-| `compare` | 自定义比对 | `dict` / 函数 |
+| `compare` | 自定义比对 | 函数 |
 | `pre_compare` | 比对前处理 | 函数 |
 | `customize_inputs` | 自定义输入 | 函数 |
 | `tolerance` | 精度标准 | `dict(dtype→{standard, ...})` |
-| `torch_graph` | Graph 模式 | 类（仅 torch.API） |
+| `torch_graph` | Graph 模式 | `torch.nn.Module` 子类（仅 torch.API） |
 
 所有属性可选。`golden` 三种形式：
 
@@ -65,7 +65,7 @@ __spec__ = {"abs": AbsTestSpec}
 ```python
 from ttk.test_spec import TestSpecManager
 
-mgr = TestSpecManager(search_paths=["path/to/specs"])
+mgr = TestSpecManager(search_paths=("path/to/specs",))
 cls = mgr.load("softmax_v2")
 
 if cls and mgr.has(cls, "golden"):
@@ -74,7 +74,7 @@ if cls and mgr.has(cls, "golden"):
 if cls and mgr.has(cls, "third_party"):
     tp = mgr.get(cls, "third_party")
 
-warnings = mgr.validate(cls)  # 类型检查，warn 不阻断
+mgr.validate(cls)  # 类型检查，不合规抛 InvalidSpecError（fail-fast）
 ```
 
 ## 更多示例

@@ -20,11 +20,12 @@ import os
 import numpy as np
 from contextlib import nullcontext
 
-from ttk.utilities.container_utils import get_global_storage, apply_as_list
+from ttk.utilities.container_utils import get_global_storage, apply_as_list, deep_flatten
 from ttk.core_modules.tbe_multiprocessing import get_process_context, DeviceLock
 from ttk.core_modules.comparison.comparison import compare
 from ttk.core_modules.tbe_logging import default_logging_config
 from ttk.utilities import get, dump_to_file, waiting_for_memory
+from ttk.test_spec import get_spec_attr
 
 from .backends import get_backend
 from .execution import call_api
@@ -382,15 +383,115 @@ def _generate_golden_data(testcase, raw_inputs, switches, backend):
     return golden_nps
 
 
+def _apply_pre_compare(testcase, result_nps, golden_nps, switches):
+    """加载并调用 pre_compare, 变换 result_nps 和 golden_nps。
+    无 spec / golden 无效时什么都不做。异常向上抛。"""
+    func = get_spec_attr(testcase.api_name, "pre_compare", switches.plugin_path)
+    if func is None:
+        return
+
+    # result_nps / golden_nps 无效(哨兵场景: SUPPRESSED / UNSUPPORTED / GOLDEN_FAILURE)→ 跳过
+    if not result_nps or not golden_nps or any(isinstance(g, str) for g in golden_nps):
+        return
+
+    # flat → nested(业务视角)
+    output_dist = getattr(testcase, "output_dist", None)
+    if output_dist:
+        nested_result = apply_as_list(result_nps, output_dist)
+        nested_golden = apply_as_list(golden_nps, output_dist)
+    else:
+        nested_result = list(result_nps)
+        nested_golden = list(golden_nps)
+
+    ret = func(*nested_result, *nested_golden)
+
+    if ret is None:
+        return  # in-place 模式: 用户用 [:] 修改数组值, 已反映到原 flat list
+
+    # 有返回值模式: unfold 回 flat
+    n = len(nested_result)
+    if not isinstance(ret, (list, tuple)) or len(ret) != n + len(nested_golden):
+        raise ValueError(
+            f"[{testcase.testcase_name}] pre_compare returned len="
+            f"{len(ret) if hasattr(ret, '__len__') else '?'}, "
+            f"expected {n + len(nested_golden)} (npu={n} + golden={len(nested_golden)})")
+
+    flat_result = deep_flatten(ret[:n])
+    flat_golden = deep_flatten(ret[n:])
+    if len(flat_result) != len(result_nps) or len(flat_golden) != len(golden_nps):
+        raise ValueError(
+            f"[{testcase.testcase_name}] pre_compare unfolded len mismatch: "
+            f"npu={len(flat_result)}/{len(result_nps)}, "
+            f"golden={len(flat_golden)}/{len(golden_nps)} (check tensor-list nesting)")
+    for i in range(len(flat_result)):
+        result_nps[i] = flat_result[i]
+    for i in range(len(flat_golden)):
+        golden_nps[i] = flat_golden[i]
+
+
+def _try_custom_compare(testcase, result_nps, golden_nps, switches):
+    """尝试定制 compare。返回 (precision_str, log_str, is_pass) 或 None。"""
+    func = get_spec_attr(testcase.api_name, "compare", switches.plugin_path)
+    if func is None:
+        return None
+
+    # result_nps / golden_nps 无效 → 走内置
+    if not result_nps or not golden_nps or any(isinstance(g, str) for g in golden_nps):
+        return None
+
+    # fold(与 pre_compare 一致)
+    output_dist = getattr(testcase, "output_dist", None)
+    if output_dist:
+        nested_result = apply_as_list(result_nps, output_dist)
+        nested_golden = apply_as_list(golden_nps, output_dist)
+    else:
+        nested_result = list(result_nps)
+        nested_golden = list(golden_nps)
+
+    ret = func(*nested_result, *nested_golden)
+
+    # 适配 dict → (precision_str, log_str, is_pass)
+    if isinstance(ret, dict):
+        ret = [ret]
+
+    if not isinstance(ret, (list, tuple)):
+        raise ValueError(f"[{testcase.testcase_name}] compare must return dict or list[dict]")
+
+    if not ret:
+        raise ValueError(f"[{testcase.testcase_name}] compare returned empty list")
+
+    if any(isinstance(item, (list, tuple)) for item in ret):
+        dicts = deep_flatten(ret)
+    else:
+        dicts = list(ret)
+
+    precisions, passes, logs = [], [], ""
+    for i, d in enumerate(dicts):
+        if not isinstance(d, dict) or "pass" not in d or "precision" not in d:
+            raise ValueError(
+                f"[{testcase.testcase_name}] compare output[{i}] missing 'pass' or 'precision'")
+        p = d["precision"]
+        precisions.append(f"{p}%" if isinstance(p, (int, float)) else str(p))
+        passes.append(bool(d["pass"]))
+        if d.get("error_info"):
+            logs += f"Output {i}: {d['error_info']}\n"
+
+    return ",".join(precisions), logs, all(passes)
+
+
 def _evaluate_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct):
     """Compare results against golden, set return_struct. Returns True if pass."""
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in result_nps)
     tol_options = _build_tol_options(testcase)
     try:
-        precision_str, log_str, is_pass = compare(
-            result_nps, golden_nps, output_dtypes,
-            methods=switches.compare_method, options=tol_options
-        )
+        custom_result = _try_custom_compare(testcase, result_nps, golden_nps, switches)
+        if custom_result is not None:
+            precision_str, log_str, is_pass = custom_result
+        else:
+            precision_str, log_str, is_pass = compare(
+                result_nps, golden_nps, output_dtypes,
+                methods=switches.compare_method, options=tol_options
+            )
     except Exception:
         logging.exception(f"[{testcase.testcase_name}] Comparison failure")
         return_struct.precision = "COMPARE_FAILURE"
@@ -457,6 +558,8 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
     _dump_outputs(testcase, result_nps, switches)
 
     golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend)
+
+    _apply_pre_compare(testcase, result_nps, golden_nps, switches)
 
     process_ctx.notify_status("OnComparison")
     _evaluate_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct)

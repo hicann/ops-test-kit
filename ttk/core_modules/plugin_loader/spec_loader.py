@@ -58,9 +58,9 @@ def _get_or_create_manager(plugin_path):
         return None
 
     if isinstance(plugin_path, (list, tuple)):
-        paths = [str(p) for p in plugin_path]
+        paths = tuple(plugin_path)
     else:
-        paths = [str(plugin_path)]
+        paths = (plugin_path,)
 
     if paths == _spec_search_paths and _spec_manager is not None:
         return _spec_manager
