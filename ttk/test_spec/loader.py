@@ -3,7 +3,7 @@ import importlib
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 
 
 def _snake_to_pascal(name: str) -> str:
@@ -23,11 +23,11 @@ class SpecLoader:
     Multiple search paths: first match wins (same as sys.path)
     """
 
-    def __init__(self, search_paths: list[str]):
+    def __init__(self, search_paths: List[str]):
         self._search_paths = [Path(p).resolve() for p in search_paths]
-        self._cache: dict[str, Optional[type]] = {}
-        self._file_cache: dict[Path, Optional[dict]] = {}  # __spec__ content cache
-        self._loaded_modules: dict[str, object] = {}  # track modules for cleanup
+        self._cache: Dict[str, Optional[type]] = {}
+        self._file_cache: Dict[Path, Optional[dict]] = {}  # __spec__ content cache
+        self._loaded_modules: Dict[str, object] = {}  # track modules for cleanup
 
     def load(self, op_name: str) -> Optional[type]:
         """Load spec class. Returns class or None."""
@@ -48,19 +48,27 @@ class SpecLoader:
         return None
 
     def _iter_py_files(self):
-        """Iterate all .py files in search path order (exclude _-prefixed hidden files)"""
+        """Iterate all .py files in search path order (exclude _-prefixed hidden files).
+
+        Each search path can be a directory (rglob *.py) or a single .py file
+        (loaded directly, _-prefix filter not applied since user chose it explicitly).
+        """
         seen = set()
         for search_path in self._search_paths:
-            if not search_path.is_dir():
-                continue
-            for py_file in search_path.rglob("*.py"):
-                name = py_file.name
-                if name.startswith("_") and name != "__init__.py":
-                    continue
-                resolved = py_file.resolve()
+            if search_path.is_file():
+                resolved = search_path.resolve()
                 if resolved not in seen:
                     seen.add(resolved)
                     yield resolved
+            elif search_path.is_dir():
+                for py_file in search_path.rglob("*.py"):
+                    name = py_file.name
+                    if name.startswith("_") and name != "__init__.py":
+                        continue
+                    resolved = py_file.resolve()
+                    if resolved not in seen:
+                        seen.add(resolved)
+                        yield resolved
 
     def _try_find_in_file(self, py_file: Path, op_name: str) -> Optional[type]:
         """Try to find spec class in a single .py file"""

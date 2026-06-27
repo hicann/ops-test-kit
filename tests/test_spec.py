@@ -175,6 +175,74 @@ class TestManagerListVendors:
 # ---------------------------------------------------------------------------
 
 
+class TestSingleFilePluginPath:
+    """Regression test: --plugin-path pointing to a specific .py file (not a dir)
+    must be loaded. Previously _iter_py_files skipped non-dir paths entirely."""
+
+    def test_load_spec_from_single_file(self):
+        """SpecLoader should load a spec when given a .py file path directly."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            spec_file = Path(d) / "my_op.py"
+            spec_file.write_text(
+                'import numpy\n'
+                'class MyOpTestSpec:\n'
+                '    def golden(x, **kwargs):\n'
+                '        return [numpy.abs(x)]\n'
+                '__spec__ = {"my_op": MyOpTestSpec}\n'
+            )
+            loader = SpecLoader([str(spec_file)])
+            cls = loader.load("my_op")
+            assert cls is not None, "spec not found when --plugin-path is a .py file"
+            assert cls.__name__ == "MyOpTestSpec"
+
+    def test_load_spec_from_single_file_naming_convention(self):
+        """Naming convention (class name derived from op name) also works for single file."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            spec_file = Path(d) / "relu.py"
+            spec_file.write_text(
+                'import numpy\n'
+                'class ReluTestSpec:\n'
+                '    def golden(x, **kwargs):\n'
+                '        return [numpy.maximum(x, 0)]\n'
+            )
+            loader = SpecLoader([str(spec_file)])
+            cls = loader.load("relu")
+            assert cls is not None
+            assert cls.__name__ == "ReluTestSpec"
+
+    def test_single_file_and_dir_mixed(self):
+        """A mix of file path and dir path should both be searched."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            d_path = Path(d)
+            (d_path / "dir_spec.py").write_text(
+                'import numpy\n'
+                'class DirOpTestSpec:\n'
+                '    def golden(x, **kwargs):\n'
+                '        return [x]\n'
+                '__spec__ = {"dir_op": DirOpTestSpec}\n'
+            )
+            file_spec = d_path / "file_spec.py"
+            file_spec.write_text(
+                'import numpy\n'
+                'class FileOpTestSpec:\n'
+                '    def golden(x, **kwargs):\n'
+                '        return [x]\n'
+                '__spec__ = {"file_op": FileOpTestSpec}\n'
+            )
+            loader = SpecLoader([str(d_path), str(file_spec)])
+            assert loader.load("dir_op") is not None
+            assert loader.load("file_op") is not None
+
+
 class TestExampleDiscoverability:
     """All example files should be discoverable by the loader.
 

@@ -1,5 +1,5 @@
 # ttk/test_spec/manager.py
-from typing import Any, Optional
+from typing import Any, Optional, List, Set
 
 from ..utilities import Singleton
 from .loader import SpecLoader
@@ -18,7 +18,7 @@ class TestSpecManager(metaclass=Singleton):
 
     def __init__(self, search_paths):
         self._loader = SpecLoader(search_paths)
-        self._validated: set[int] = set()  # spec classes already validated (by id)
+        self._validated: Set[int] = set()  # spec classes already validated (by id)
 
     # -- Loading --
 
@@ -47,7 +47,7 @@ class TestSpecManager(metaclass=Singleton):
 
     # -- Convenience --
 
-    def list_vendors(self, cls: type) -> list[str]:
+    def list_vendors(self, cls: type) -> List[str]:
         """List vendor keys in third_party dict.
 
         Returns:

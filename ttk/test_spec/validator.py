@@ -1,9 +1,11 @@
 # ttk/test_spec/validator.py
 
+from typing import Dict
+
 from . import InvalidSpecError
 
 # Valid types for each attribute: tuple of types
-_CHECK_RULES: dict[str, tuple] = {
+_CHECK_RULES: Dict[str, tuple] = {
     "golden": (str, type),
     "third_party": (str, dict, type),
     "compare": (),
