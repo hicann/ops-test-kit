@@ -167,8 +167,20 @@ def apply_aclnn_args(sw, args):
 
 
 def apply_e2e_args(sw, args):
+    if hasattr(args, 'dynamic') and args.dynamic is not None:
+        val = args.dynamic
+        if isinstance(val, str):
+            val = val.lower() not in ('false', '0', 'no', 'off')
+        sw.dyn_switches.enabled = val
+    if hasattr(args, 'const') and args.const is not None:
+        val = args.const
+        if isinstance(val, str):
+            val = val.lower() not in ('false', '0', 'no', 'off')
+        sw.cst_switches.enabled = val
     if hasattr(args, 'backend') and args.backend:
         sw.backend_name = args.backend.lower()
+    if hasattr(args, 'fullgraph'):
+        sw.fullgraph = args.fullgraph
 
 
 def run_with_switches(sw):

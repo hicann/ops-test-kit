@@ -155,6 +155,7 @@ class SWITCHES:
         "plugin_path",
         "test_mode",
         "backend_name",
+        "fullgraph",
         "validate_only",
         # private properties
         "_run_time",
@@ -220,6 +221,7 @@ class SWITCHES:
         self.plugin_path: Optional[Tuple[pathlib.Path]] = None
         self.test_mode: str = "op"
         self.backend_name: Optional[str] = None
+        self.fullgraph: int = 0
         self.validate_only: bool = False
         # private properties below
         self._run_time: Optional[int] = None

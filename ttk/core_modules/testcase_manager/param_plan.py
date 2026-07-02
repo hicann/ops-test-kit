@@ -20,6 +20,7 @@ Usage:
     args, kwargs, extra = plan.build_args(nested_tensors)
 """
 import ast
+import logging
 import re
 
 from ttk.utilities.dtypes import str_to_torch_dtype
@@ -124,12 +125,15 @@ def match_overload(api_name, input_tensor_count, attributes=None, tensor_distrib
         has_var = any(getattr(p, 'is_var_positional', False) for p in input_tensors)
         required = sum(1 for p in input_tensors
                        if not p.is_optional and not getattr(p, 'is_var_positional', False))
+        scalar_cover = sum(1 for p in input_tensors
+                          if p.name in attrs and p.name != 'self')
+        effective_count = input_tensor_count + scalar_cover
         if has_var:
-            if input_tensor_count < required:
+            if effective_count < required:
                 continue
         else:
             total = len(input_tensors)
-            if input_tensor_count < required or input_tensor_count > total:
+            if effective_count < required or effective_count > total:
                 continue
 
         if tensor_distribution is not None:
@@ -376,6 +380,15 @@ class ParamPlan:
                 if getattr(param, 'is_var_positional', False):
                     args.extend(tensor_queue)
                     tensor_queue.clear()
+                elif param.name in attrs and param.name != 'self' and not tensor_queue:
+                    raw = attrs[param.name]
+                    try:
+                        args.append(coerce_value(raw, param.type))
+                    except (ValueError, TypeError):
+                        logging.warning(
+                            f"{self.api_name}: scalar fallback for param '{param.name}' "
+                            f"(declared type={param.type}, value={raw!r})")
+                        args.append(coerce_value(raw, 'Number'))
                 elif tensor_queue:
                     val = tensor_queue.pop(0)
                     if param.is_tensor and isinstance(val, list) and len(val) == 1:

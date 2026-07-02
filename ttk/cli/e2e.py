@@ -17,10 +17,17 @@ def register_e2e_command(subparsers):
 def _add_e2e_args(parser):
     parser.add_argument("--backend",
                         help="Hardware backend: npu, gpu, cpu (auto-detect if not specified)")
+    parser.add_argument("-d", "--dynamic", nargs="?", const=True, default=None,
+                        help="Enable dynamic shape graph test (default: disabled); use -d=false to disable")
+    parser.add_argument("-c", "--const", nargs="?", const=True, default=None,
+                        help="Enable static shape graph test (default: disabled); use -c=false to disable")
+    parser.add_argument("--fullgraph", dest="fullgraph", default=0, type=int,
+                        help="Capture full graph in torch.compile (0=off, 1=on; default: 0)")
 
 
 def _handle_e2e(args):
     sw = args_to_switches(args)
     sw.test_mode = "framework-api"
+    sw.dyn_switches.enabled = False
     apply_e2e_args(sw, args)
     run_with_switches(sw)

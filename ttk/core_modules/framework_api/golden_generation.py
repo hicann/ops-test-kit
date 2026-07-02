@@ -167,7 +167,7 @@ def _to_numpy_result(result):
 
 def _exec_and_convert(api_name, args, kwargs, overload_index=0):
     """Execute API and convert result to list of numpy arrays."""
-    from .execution import call_api
+    from .eager_execution import call_api
     resolved, is_tensor_method = resolve_api(api_name)
     if is_tensor_method:
         if args[0] is None:

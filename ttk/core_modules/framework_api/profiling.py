@@ -28,33 +28,16 @@ from ttk.utilities import get, dump_to_file, waiting_for_memory
 from ttk.test_spec import get_spec_attr
 
 from .backends import get_backend
-from .execution import call_api
+from .eager_execution import call_api
 from .api_resolver import resolve_api
 from .golden_generation import generate_golden
+from .graph_execution import _execute_graph
 from .input_generation import generate_inputs
 from .profiler import get_profiler
+from .profiling_utils import apply_format_cast, prepare_device_args, result_to_numpy
 from .result import FrameworkApiReturnStructure
 
 WARMUP_COUNT = 5
-REPEAT_COUNT = 10
-
-
-def apply_format_cast(tensors, formats):
-    """Apply NPU format cast to tensors that require non-default formats."""
-    from ttk.utilities import FORMAT_DICT, PRIVATE_FORMATS
-
-    if not formats or all(f not in PRIVATE_FORMATS for f in formats):
-        return tensors
-
-    import torch_npu
-
-    result = []
-    for tensor, fmt in zip(tensors, formats):
-        if fmt and fmt in PRIVATE_FORMATS:
-            tensor = torch_npu.npu_format_cast(tensor, FORMAT_DICT[fmt])
-        result.append(tensor)
-    return result
-
 
 def _print_get_shape(arr):
     return arr.shape if hasattr(arr, 'shape') else arr
@@ -101,56 +84,96 @@ def _profiling_end_print(testcase, return_struct, golden_nps=None, switches=None
     golden_nps = golden_nps or []
     separator_len = 103
     separator = "-" * separator_len
-    
-    kernel_table = ""
-    if return_struct.kernel_details:
-        try:
-            kernels = json.loads(return_struct.kernel_details)
-            if kernels:
-                avg_width = 15
-                max_width = 14
-                min_width = 14
-                
-                max_name_len = max(len(k.get("name", "")) for k in kernels)
-                max_calls = max(k.get("calls", 0) for k in kernels)
-                calls_str_len = len(str(max_calls))
-                calls_width = max(calls_str_len + 2, 10)
-                calls_header = "# of Calls"
-                
-                total_fixed_width = avg_width + max_width + min_width + calls_width
-                name_width = min(max_name_len + 2, separator_len - total_fixed_width)
-                
-                kernel_table = f"\n{separator}\n"
-                kernel_table += f"{'Name':<{name_width}}{'avg':<{avg_width}}{'max':<{max_width}}{'min':<{min_width}}{calls_header}\n"
-                kernel_table += f"{separator}\n"
-                for k in kernels:
-                    name = k.get("name", "")
-                    if len(name) > name_width:
-                        name = name[:name_width-2] + ".."
-                    avg = f"{k.get('avg', 0):.3f}"
-                    max_val = f"{k.get('max', 0):.3f}"
-                    min_val = f"{k.get('min', 0):.3f}"
-                    calls = k.get("calls", 0)
-                    kernel_table += f"{name:<{name_width}}{avg:<{avg_width}}{max_val:<{max_width}}{min_val:<{min_width}}{calls}\n"
-                kernel_table += f"{separator}\n"
-        except (json.JSONDecodeError, TypeError):
-            kernel_table = f"\nKernel Details: {return_struct.kernel_details}\n"
-
-    perf_hash = "#" * 42
-    perf_line = f" {perf_hash} Result Summary  {perf_hash} "
     end_hash = "#" * separator_len
 
-    logging.info(
-        f"{kernel_table}"
-        f"\n{perf_line}\n"
-        f"STATUS: {return_struct.precision_status} \n"
-        f"DEVICE: {return_struct.device_perf_us} us\n"
-        f"CPU: {return_struct.cpu_perf_us} us\n"
-        f"GOLD: {return_struct.precision}\n"
-        f"Golden Shapes: {tuple(_print_get_shape(g) if isinstance(g, np.ndarray) else g for g in golden_nps)}\n"
-        f"Golden Dtypes: {tuple(str(_print_get_dtype(g)) if isinstance(g, np.ndarray) else g for g in golden_nps)}\n"
-        f"{end_hash}"
-    )
+    def _format_kernel_table(kernels_json, label=""):
+        try:
+            kernels = json.loads(kernels_json)
+            if not kernels:
+                return ""
+            avg_width = 15
+            max_width = 14
+            min_width = 14
+            max_name_len = max(len(k.get("name", "")) for k in kernels)
+            max_calls = max(k.get("calls", 0) for k in kernels)
+            calls_str_len = len(str(max_calls))
+            calls_width = max(calls_str_len + 2, 10)
+            calls_header = "# of Calls"
+            total_fixed_width = avg_width + max_width + min_width + calls_width
+            name_width = min(max_name_len + 2, separator_len - total_fixed_width)
+            header = f"{label} Kernels" if label else ""
+            table = f"\n{header}\n{separator}\n" if header else f"\n{separator}\n"
+            table += f"{'Name':<{name_width}}{'avg':<{avg_width}}{'max':<{max_width}}{'min':<{min_width}}{calls_header}\n"
+            table += f"{separator}\n"
+            for k in kernels:
+                name = k.get("name", "")
+                if len(name) > name_width:
+                    name = name[:name_width-2] + ".."
+                avg = f"{k.get('avg', 0):.3f}"
+                max_val = f"{k.get('max', 0):.3f}"
+                min_val = f"{k.get('min', 0):.3f}"
+                calls = k.get("calls", 0)
+                table += f"{name:<{name_width}}{avg:<{avg_width}}{max_val:<{max_width}}{min_val:<{min_width}}{calls}\n"
+            table += f"{separator}\n"
+            return table
+        except (json.JSONDecodeError, TypeError):
+            return f"\n{label} Kernel Details: {kernels_json}\n"
+
+    kernel_table = ""
+    if return_struct.eager_kernel_details:
+        kernel_table += _format_kernel_table(return_struct.eager_kernel_details, "Eager")
+    if return_struct.graph_cst_kernel_details:
+        kernel_table += _format_kernel_table(return_struct.graph_cst_kernel_details, "Graph Cst")
+    if return_struct.graph_dyn_kernel_details:
+        kernel_table += _format_kernel_table(return_struct.graph_dyn_kernel_details, "Graph Dyn")
+
+    lines = []
+    has_eager = return_struct.eager_precision is not None
+    has_graph = return_struct.graph_cst_precision is not None or return_struct.graph_dyn_precision is not None
+
+    if has_eager:
+        lines.append(f"EAGER:       {return_struct.eager_precision}")
+        lines.append(f"  DEVICE: {return_struct.eager_device_perf_us} us")
+        lines.append(f"  CPU:    {return_struct.eager_cpu_perf_us} us")
+    if return_struct.graph_cst_precision is not None:
+        lines.append(f"GRAPH CST:   {return_struct.graph_cst_precision}")
+        if return_struct.graph_cst_device_perf_us is not None:
+            lines.append(f"  DEVICE: {return_struct.graph_cst_device_perf_us} us")
+            lines.append(f"  CPU:    {return_struct.graph_cst_cpu_perf_us} us")
+    if return_struct.graph_dyn_precision is not None:
+        lines.append(f"GRAPH DYN:   {return_struct.graph_dyn_precision}")
+        if return_struct.graph_dyn_device_perf_us is not None:
+            lines.append(f"  DEVICE: {return_struct.graph_dyn_device_perf_us} us")
+            lines.append(f"  CPU:    {return_struct.graph_dyn_cpu_perf_us} us")
+
+    if not lines and return_struct.precision_status is None:
+        return
+
+    lines.append(f"STATUS: {return_struct.precision_status}")
+
+    if has_eager and not has_graph:
+        title = "Eager Result Summary"
+    elif has_graph and not has_eager:
+        title = "Graph Result Summary"
+    else:
+        title = "Result Summary"
+
+    left_pad = (separator_len - len(title) - 4) // 2
+    right_pad = separator_len - len(title) - 4 - left_pad
+    perf_line = f" {'#' * left_pad} {title}  {'#' * right_pad} "
+
+    golden_shapes = tuple(_print_get_shape(g) if isinstance(g, np.ndarray) else g for g in golden_nps)
+    golden_dtypes = tuple(str(_print_get_dtype(g)) if isinstance(g, np.ndarray) else g for g in golden_nps)
+
+    msg_parts = []
+    if kernel_table:
+        msg_parts.append(kernel_table)
+    msg_parts.append(f"\n{perf_line}")
+    msg_parts.append("\n".join(lines))
+    msg_parts.append(f"Golden Shapes: {golden_shapes}")
+    msg_parts.append(f"Golden Dtypes: {golden_dtypes}")
+    msg_parts.append(end_hash)
+    logging.info("\n".join(msg_parts))
 
 
 def profile_process(testcase, device_grant_events, device_granted_indices, dev_id):
@@ -177,7 +200,7 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
     return_struct = FrameworkApiReturnStructure()
 
     if not testcase.is_valid:
-        return_struct.precision = testcase.fail_reason
+        return_struct.eager_precision = testcase.fail_reason
         return_struct.precision_status = "FAIL"
         _profiling_end_print(testcase, return_struct)
         return return_struct
@@ -271,48 +294,13 @@ def _dump_on_fail(testcase, raw_inputs, result_nps, golden_nps, switches):
             _dump_data(golden, f"{testcase.testcase_name}_golden_{idx}", switches)
 
 
-def _result_to_numpy(result, backend, copy=False):
-    """Convert API result to numpy array.
-
-    Handles: Tensor, tuple/list of results, and scalar returns (bool/int/float/dtype).
-    Scalar results are wrapped in a 0-d numpy array.
-    Returns list of numpy arrays or None.
-    """
-    import torch
-    if result is None:
-        return None
-    if isinstance(result, (tuple, list)):
-        nps = []
-        for r in result:
-            if r is None:
-                nps.append(None)
-            elif isinstance(r, torch.Tensor):
-                arr = backend.to_numpy(r)
-                nps.append(arr.copy() if copy else arr)
-            else:
-                nps.append(np.array(r))
-        return nps
-    if isinstance(result, torch.Tensor):
-        arr = backend.to_numpy(result)
-        return [arr.copy() if copy else arr]
-    return [np.array(result)]
-
-
-def _execute_on_device(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
-    """Build device tensors, run API with profiling, return (result_nps, perf) or raises."""
+def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
+    """Build device tensors, run API in eager mode with profiling, return (result_nps, perf) or raises."""
     process_ctx = get_process_context()
 
-    dev_tensors = [backend.to_device(x, dev_id) if x is not None else None for x in raw_inputs]
-    if testcase.tensor_formats and backend.device_name() == "npu":
-        dev_tensors = apply_format_cast(dev_tensors, testcase.flat_tensor_formats)
-    dist = testcase.tensor_list_dist
-    if dist:
-        nested_tensors = apply_as_list(dev_tensors, dist)
-    else:
-        nested_tensors = dev_tensors
-    args, kwargs, _ = plan.build_args(nested_tensors)
+    args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
-    run_count = switches.run_time if switches.run_time and switches.run_time > 0 else REPEAT_COUNT
+    run_count = switches.run_time
     profiler = get_profiler(testcase.api_name, backend)
 
     if is_inplace:
@@ -326,7 +314,7 @@ def _execute_on_device(testcase, backend, dev_id, switches, plan, resolved, is_t
         else:
             result = call_api(testcase.api_name, plan.overload_index, resolved, args, kwargs)
         backend.synchronize(dev_id)
-        result_nps = _result_to_numpy(result, backend, copy=True)
+        result_nps = result_to_numpy(result, backend, copy=True)
         if inplace_backup is not None:
             args[0][:] = inplace_backup
     else:
@@ -352,14 +340,10 @@ def _execute_on_device(testcase, backend, dev_id, switches, plan, resolved, is_t
 
     perf = profiler.result(backend, run_count)
 
-    if is_inplace and inplace_backup is not None:
-        args[0][:] = inplace_backup
-        del inplace_backup
-
     if not is_inplace:
-        result_nps = _result_to_numpy(result, backend)
+        result_nps = result_to_numpy(result, backend)
 
-    del dev_tensors, nested_tensors
+    del args, kwargs
     return result_nps, perf
 
 
@@ -479,8 +463,8 @@ def _try_custom_compare(testcase, result_nps, golden_nps, switches):
     return ",".join(precisions), logs, all(passes)
 
 
-def _evaluate_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct):
-    """Compare results against golden, set return_struct. Returns True if pass."""
+def _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct):
+    """Compare eager mode results against golden, set return_struct. Returns True if pass."""
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in result_nps)
     tol_options = _build_tol_options(testcase)
     try:
@@ -493,20 +477,57 @@ def _evaluate_precision(testcase, raw_inputs, result_nps, golden_nps, switches, 
                 methods=switches.compare_method, options=tol_options
             )
     except Exception:
-        logging.exception(f"[{testcase.testcase_name}] Comparison failure")
-        return_struct.precision = "COMPARE_FAILURE"
+        logging.exception(f"[{testcase.testcase_name}] Eager comparison failure")
+        return_struct.eager_precision = "COMPARE_FAILURE"
         return_struct.precision_status = "FAIL"
         return False
 
     if log_str:
-        logging.debugc(f"\nComparing {testcase.testcase_name} with golden\n{log_str}")
+        logging.debugc(f"\nComparing eager with golden\n{log_str}")
 
     precision_status = "PASS" if is_pass else "FAIL"
     if not is_pass and switches.dump_config.dump_on_fail:
         _dump_on_fail(testcase, raw_inputs, result_nps, golden_nps, switches)
     return_struct.construct(precision_str, precision_status, perf)
-    _profiling_end_print(testcase, return_struct, golden_nps, switches)
     return True
+
+
+def _evaluate_graph_precision(testcase, raw_inputs, graph_nps, golden_nps, switches, return_struct, mode, perf=None):
+    """Compare graph mode results against golden.
+
+    Args:
+        mode: "static" or "dynamic"
+        perf: ProfileResult from graph execution (may be None)
+    """
+    if not graph_nps:
+        return_struct.construct("GRAPH_EXEC_FAILURE", "FAIL", None, mode=mode)
+        return
+
+    _apply_pre_compare(testcase, graph_nps, golden_nps, switches)
+
+    output_dtypes = tuple(str(g.dtype) if g is not None else None for g in graph_nps)
+    tol_options = _build_tol_options(testcase)
+    try:
+        custom_result = _try_custom_compare(testcase, graph_nps, golden_nps, switches)
+        if custom_result is not None:
+            precision_str, log_str, is_pass = custom_result
+        else:
+            precision_str, log_str, is_pass = compare(
+                graph_nps, golden_nps, output_dtypes,
+                methods=switches.compare_method, options=tol_options
+            )
+    except Exception:
+        logging.exception(f"Graph {mode} comparison failure")
+        precision_str = "COMPARE_FAILURE"
+        is_pass = False
+
+    if log_str:
+        logging.debugc(f"\nComparing graph {mode} with golden\n{log_str}")
+
+    status = "PASS" if is_pass else "FAIL"
+    if not is_pass and switches.dump_config.dump_on_fail:
+        _dump_on_fail(testcase, raw_inputs, graph_nps, golden_nps, switches)
+    return_struct.construct(precision_str, status, perf, mode=mode)
 
 
 def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
@@ -536,33 +557,65 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
     process_ctx.notify_status("OnDumpInput")
     _dump_inputs(testcase, raw_inputs, switches)
 
+    graph_enabled = switches.cst_switches.enabled or switches.dyn_switches.enabled
+
     process_ctx.notify_status("OnAcquireLock")
     use_device = backend.use_device()
+    result_nps = None
+    perf = None
+    graph_cst_nps = None
+    graph_dyn_nps = None
+    graph_cst_perf = None
+    graph_dyn_perf = None
     with DeviceLock(process_ctx, dev_id, use_device=use_device,
                     grant_event=device_grant_events.get(dev_id),
                     granted_idx=device_granted_indices.get(dev_id)):
         process_ctx.notify_status("OnProfilingPrint")
         _profiling_print(testcase, backend, dev_id, switches)
-        process_ctx.notify_status("OnProfiling")
-        result_nps, perf = _execute_on_device(
+
+        process_ctx.notify_status("OnEagerProfiling")
+        result_nps, perf = _execute_eager(
             testcase, backend, dev_id, switches, plan,
             resolved, is_tensor_method, is_inplace, raw_inputs)
+        if graph_enabled:
+            if switches.cst_switches.enabled:
+                process_ctx.notify_status("OnGraphCst")
+                graph_cst_nps, graph_cst_perf = _execute_graph(
+                    testcase, backend, dev_id, switches, plan,
+                    resolved, is_tensor_method, is_inplace, raw_inputs, dynamic=False)
+            if switches.dyn_switches.enabled:
+                process_ctx.notify_status("OnGraphDyn")
+                graph_dyn_nps, graph_dyn_perf = _execute_graph(
+                    testcase, backend, dev_id, switches, plan,
+                    resolved, is_tensor_method, is_inplace, raw_inputs, dynamic=True)
     gc.collect()
-
-    if result_nps is None:
-        return_struct.precision = "NO_OUTPUT"
-        return_struct.precision_status = "FAIL"
-        return
-
-    process_ctx.notify_status("OnDumpOutput")
-    _dump_outputs(testcase, result_nps, switches)
 
     golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend)
 
-    _apply_pre_compare(testcase, result_nps, golden_nps, switches)
+    if result_nps is None:
+        return_struct.eager_precision = "NO_OUTPUT"
+        return_struct.precision_status = "FAIL"
+        if not graph_enabled:
+            return
+    else:
+        process_ctx.notify_status("OnDumpOutput")
+        _dump_outputs(testcase, result_nps, switches)
 
-    process_ctx.notify_status("OnComparison")
-    _evaluate_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct)
+        _apply_pre_compare(testcase, result_nps, golden_nps, switches)
+        process_ctx.notify_status("OnEagerComparison")
+        _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct)
 
+    if graph_enabled:
+        process_ctx.notify_status("OnGraphComparison")
+        if switches.cst_switches.enabled and graph_cst_nps:
+            _dump_outputs(testcase, graph_cst_nps, switches)
+        if switches.dyn_switches.enabled and graph_dyn_nps:
+            _dump_outputs(testcase, graph_dyn_nps, switches)
+        if switches.cst_switches.enabled:
+            _evaluate_graph_precision(testcase, raw_inputs, graph_cst_nps, golden_nps, switches, return_struct, "static", graph_cst_perf)
+        if switches.dyn_switches.enabled:
+            _evaluate_graph_precision(testcase, raw_inputs, graph_dyn_nps, golden_nps, switches, return_struct, "dynamic", graph_dyn_perf)
+
+    _profiling_end_print(testcase, return_struct, golden_nps, switches)
     del raw_inputs
 

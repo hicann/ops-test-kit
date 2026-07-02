@@ -20,21 +20,41 @@ class FrameworkApiReturnStructure:
     """Return structure from profile_process, written to result CSV."""
 
     __slots__ = (
-        "precision",
         "precision_status",
-        "device_perf_us",
-        "cpu_perf_us",
-        "kernel_count",
-        "kernel_details",
+        "eager_precision",
+        "eager_device_perf_us",
+        "eager_cpu_perf_us",
+        "eager_kernel_count",
+        "eager_kernel_details",
+        "graph_cst_precision",
+        "graph_cst_device_perf_us",
+        "graph_cst_cpu_perf_us",
+        "graph_cst_kernel_count",
+        "graph_cst_kernel_details",
+        "graph_dyn_precision",
+        "graph_dyn_device_perf_us",
+        "graph_dyn_cpu_perf_us",
+        "graph_dyn_kernel_count",
+        "graph_dyn_kernel_details",
     )
 
     def __init__(self):
-        self.precision = None
         self.precision_status = None
-        self.device_perf_us = None
-        self.cpu_perf_us = None
-        self.kernel_count = None
-        self.kernel_details = None
+        self.eager_precision = None
+        self.eager_device_perf_us = None
+        self.eager_cpu_perf_us = None
+        self.eager_kernel_count = None
+        self.eager_kernel_details = None
+        self.graph_cst_precision = None
+        self.graph_cst_device_perf_us = None
+        self.graph_cst_cpu_perf_us = None
+        self.graph_cst_kernel_count = None
+        self.graph_cst_kernel_details = None
+        self.graph_dyn_precision = None
+        self.graph_dyn_device_perf_us = None
+        self.graph_dyn_cpu_perf_us = None
+        self.graph_dyn_kernel_count = None
+        self.graph_dyn_kernel_details = None
 
     @staticmethod
     def get_titles():
@@ -43,31 +63,40 @@ class FrameworkApiReturnStructure:
     def pick_data(self, titles):
         return tuple(getattr(self, t, None) for t in titles)
 
-    def construct(self, precision_str, precision_passed, profile_result):
+    _MODE_PREFIX = {"static": "cst", "dynamic": "dyn"}
+
+    def construct(self, precision_str, precision_passed, profile_result, mode=None):
         """
         Build from comparison and profiling results.
 
         Args:
             precision_str: precision value string from comparison
             precision_passed: "PASS" or "FAIL"
-            profile_result: ProfileResult from profiler
+            profile_result: ProfileResult from profiler (may be None)
+            mode: None for eager, "static" or "dynamic" for graph
         """
-        self.precision = precision_str
-        self.precision_status = precision_passed
+        if mode is None:
+            prefix = "eager_"
+        else:
+            prefix = f"graph_{self._MODE_PREFIX[mode]}_"
+
+        setattr(self, f"{prefix}precision", precision_str)
+        if precision_passed == "FAIL" or self.precision_status is None:
+            self.precision_status = precision_passed
 
         if profile_result:
             if profile_result.elapsed_us > 0:
-                self.device_perf_us = f"{profile_result.elapsed_us:.3f}"
+                setattr(self, f"{prefix}device_perf_us", f"{profile_result.elapsed_us:.3f}")
             else:
-                self.device_perf_us = "----"
+                setattr(self, f"{prefix}device_perf_us", "----")
             if profile_result.kernel_details:
                 kd = profile_result.kernel_details
-                self.cpu_perf_us = f"{kd.total_cpu_us:.3f}"
-                self.kernel_count = str(len(kd.kernels))
-                self.kernel_details = json.dumps(
+                setattr(self, f"{prefix}cpu_perf_us", f"{kd.total_cpu_us:.3f}")
+                setattr(self, f"{prefix}kernel_count", str(len(kd.kernels)))
+                setattr(self, f"{prefix}kernel_details", json.dumps(
                     [{"name": k.name, "avg": round(k.avg_us, 3),
                       "max": round(k.max_us, 3), "min": round(k.min_us, 3),
                       "calls": k.calls}
-                     for k in kd.kernels],
+                      for k in kd.kernels],
                     ensure_ascii=False
-                )
+                ))

@@ -443,6 +443,20 @@ class TestcaseE2e(TensorApiTestcaseBase):
                 has_none.append(False)
         return nested_flags, has_none
 
+    def _count_scalar_attrs_for_tensor_params(self, info):
+        """Count tensor-like params satisfied by scalar values in attributes."""
+        if not self.attributes:
+            return 0
+        attr_keys = set(self.attributes.keys())
+        count = 0
+        for ov in info.overloads:
+            ov_count = 0
+            for p in ov.layout.input_params:
+                if p.name in attr_keys and p.name != 'self':
+                    ov_count += 1
+            count = max(count, ov_count)
+        return count
+
     def _check_overload_match(self, info):
         """Fail if input tensors don't match any overload in count/type/nesting."""
         out_indices = set(self.output_tensor_indexes or ())
@@ -459,10 +473,19 @@ class TestcaseE2e(TensorApiTestcaseBase):
             self._check_required_attrs(info, oidx)
             return
 
+        scalar_attr_count = self._count_scalar_attrs_for_tensor_params(info)
+        if scalar_attr_count > 0:
+            effective_count = input_count + scalar_attr_count
+            matched, _, oidx = info.match_overload(effective_count, None, None)
+            if matched:
+                self._check_required_attrs(info, oidx)
+                return
+
         required_min = min(
             sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like and pp.name != 'out']
                 if not p.is_optional)
             for ov in info.overloads)
+        required_min -= scalar_attr_count
         count_matched = info.match_overload(input_count, None, None)
         if count_matched[0]:
             self.is_valid = False
