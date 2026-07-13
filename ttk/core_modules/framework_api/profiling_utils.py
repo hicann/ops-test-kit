@@ -81,7 +81,7 @@ def prepare_device_args(testcase, backend, dev_id, plan, raw_inputs):
     from ttk.utilities.container_utils import apply_as_list
     
     dev_tensors = [backend.to_device(x, dev_id) if x is not None else None for x in raw_inputs]
-    if testcase.tensor_formats and backend.device_name() == "npu":
+    if testcase.tensor_formats and backend.is_npu():
         dev_tensors = apply_format_cast(dev_tensors, testcase.flat_tensor_formats)
     dist = testcase.tensor_list_dist
     if dist:

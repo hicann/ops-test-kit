@@ -2,17 +2,19 @@
 
 ## 专属选项
 
-| 参数 | 说明 | 可选值 | 默认 |
-|------|------|--------|------|
-| `--backend` | 硬件后端 | `npu`/`gpu`/`cpu` | 自动检测（NPU > GPU > CPU） |
+| 参数 | 说明 | 默认 |
+|------|------|------|
+| `--cpu` | 强制 CPU 执行（跳过 NPU 自动探测） | 关闭 |
+| `--fullgraph` | Graph 模式（torch.compile）；0=禁用，1=启用 | 0 |
+| `-d`/`--dynamic` | 动态图 | 自动 |
+| `-c`/`--const` | 静态图 | 自动 |
 
 ## 后端依赖
 
 | 后端 | 依赖 |
 |------|------|
-| NPU | `torch` + `torch_npu` |
-| GPU | `torch`（CUDA） |
-| CPU | `torch` |
+| NPU | `torch` + `torch_npu`（默认自动探测） |
+| CPU | `torch`（`--cpu` 强制） |
 
 ## 执行流程
 

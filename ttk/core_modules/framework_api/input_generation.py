@@ -38,7 +38,7 @@ def generate_inputs(testcase, switches, backend, plan):
     override_tensors_from_attributes(testcase, raw_inputs)
 
     plugin_path = switches.plugin_path
-    input_func, _ = get_plugin_function(
+    input_func = get_plugin_function(
         testcase.api_name, "input", "e2e", plugin_path
     )
     if input_func is not None:
@@ -54,7 +54,7 @@ def generate_inputs(testcase, switches, backend, plan):
             nested_for_plugin = plugin_inputs
         args, kwargs, extra_attrs = plan.build_args(nested_for_plugin)
         extra = {
-            'backend': backend.device_name(),
+            'backend': backend.alias(),
             'tensor_formats': testcase.tensor_formats,
             'tensor_dtypes': testcase.tensor_dtypes,
             'use_torch': use_torch,

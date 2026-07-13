@@ -106,10 +106,12 @@ python3 -m ttk kernel -i cases.csv -t add_01 --single-log --dump full
 
 | Scenario | Method | Flag |
 |----------|--------|------|
-| General float | Numeric approximation | `--compare close` (default) |
+| General float (default) | Statistical relative error (community standard) | `--compare stat_rel_err` (default) |
+| Pointwise isclose | Numeric approximation | `--compare close` |
 | Large vector trends | Cosine similarity | `--compare cosine` |
 | Integer / exact match | Binary exact | `--compare binary` |
 | float8 types | Requantization | `--compare requant` (auto) |
+| 3rd-party cross-check | Three-party cross-check | `--compare cross_check` (needs `third_party`) |
 
 ## Adjust tolerance in CSV
 
@@ -123,7 +125,7 @@ absolute_precision,1e-8
 ## Custom golden not taking effect
 
 1. Verify `--plugin` path is correct
-2. Check `@register_golden(["op_name"])` matches CSV `op_name`
+2. Check the TestSpec class name / `__spec__` registry key matches CSV `op_name` (class name = `PascalCase+TestSpec`, e.g. `AbsTestSpec`)
 3. Check plugin file for syntax errors
 
 ## Duplicate operator name registration

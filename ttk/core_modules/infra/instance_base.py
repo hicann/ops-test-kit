@@ -75,6 +75,7 @@ class InstanceBase(metaclass=ABCMeta):
         if self.switches.random_seed:
             numpy.random.seed(self.switches.random_seed)
         self._commit_id: Optional[str] = None
+        self.heartbeat_manager = None  # HeartbeatManager or None
 
     @abstractmethod
     def env_prepare(self):
@@ -110,6 +111,7 @@ class InstanceBase(metaclass=ABCMeta):
             raise RuntimeError(f"Device count is invalid: {self.switches.device_count}")
         logging.info(f"Device Count: {self.switches.device_count}")
         self._parse_testcases()
+        self._start_heartbeat_process()  # after validate_only early-return, before setup_profile_object
         self.setup_profile_object()
         self.profile_object.setup()
         self._open_result_file()
@@ -117,6 +119,7 @@ class InstanceBase(metaclass=ABCMeta):
         self._prepare_tasks()
         # loop and push processes
         while True:
+            self._supervise_heartbeat()  # respawn HB if it died; None-safe + throttled ~1s
             self._update_processes()
             self._handle_completed_process()
             self._push_task_to_process()
@@ -125,6 +128,7 @@ class InstanceBase(metaclass=ABCMeta):
             if self.total_case_count == self.completed_case_count:
                 logging.info(f"ttk Profiling complete")
                 break
+            time.sleep(0.01)  # pacing before next iteration; avoids busy-spin 100% CPU on one core. Placed after the break-check so we don't sleep on the exiting iteration.
         # close all processes
         self.close_subprocesses()
         # clean up
@@ -155,7 +159,70 @@ class InstanceBase(metaclass=ABCMeta):
             while not pg.is_ready():
                 pg.update()
 
+    def _start_heartbeat_process(self) -> None:
+        """Spawn heartbeat subprocess if remote execution is configured.
+
+        Called from profile() before setup_profile_object. Heartbeat starts
+        sending GET /v1/heartbeat (merged health+detect+register) to all
+        configured endpoints; writes health state to TTK_XPU_HEALTH_PATH.
+        """
+        try:
+            from ttk.remote import is_remote_configured, get_tenant_id
+            from ttk.remote.config import get_remote_config
+            from ttk.remote.heartbeat import heartbeat_loop
+            from ttk.remote.heartbeat_manager import HeartbeatManager
+        except ImportError:
+            return  # ttk.remote not available
+
+        if not is_remote_configured():
+            return
+
+        config = get_remote_config()
+        if not config or not config.endpoints:
+            return
+
+        # Shared TLS module (same source as dispatcher): tls_from_config does the
+        # cert/key pair check (raises on mismatch, fail-loud); returns {} when no
+        # TLS configured — build_tls_connection treats {} as plain HTTP.
+        # NB: tls_from_config call is OUTSIDE the ImportError try/except above so a
+        # cert/key mismatch raises as a loud startup failure (not swallowed).
+        from ttk.remote.tls import tls_from_config
+        tls = tls_from_config(config)
+        self.heartbeat_manager = HeartbeatManager(
+            heartbeat_target=heartbeat_loop,
+            root_path=self.switches.root_path,
+            tenant_id=get_tenant_id(),
+            endpoints=config.endpoints,
+            tls=tls,
+        )
+        self.heartbeat_manager.start()
+
+    def _stop_heartbeat_process(self) -> None:
+        """Terminate heartbeat subprocess and cleanup state.
+
+        Called from close_subprocesses(). The subprocess sends DELETE to all
+        endpoints before exiting, cleaning up tenant state on the server.
+        """
+        if self.heartbeat_manager is not None:
+            self.heartbeat_manager.stop()
+            self.heartbeat_manager = None
+
+    def _supervise_heartbeat(self) -> None:
+        """Respawn HB if it died. None-safe + throttled (~1s, not every 10ms loop tick).
+
+        Called at the top of the profile() main loop before _update_processes.
+        heartbeat_manager is None when remote execution is off — guarded.
+        """
+        if self.heartbeat_manager is None:
+            return
+        now = time.time()
+        if now - getattr(self, "_last_supervise_ts", 0.0) < 1.0:
+            return
+        self._last_supervise_ts = now
+        self.heartbeat_manager.supervise()
+
     def close_subprocesses(self):
+        self._stop_heartbeat_process()
         for pg in self.process_groups.values():
             pg.close_all()
 
@@ -218,7 +285,7 @@ class InstanceBase(metaclass=ABCMeta):
             self.result_csv_file.close()
 
     def _prepare_device_locks(self):
-        # TODO: davinci-id not start from 0 to max-count in docker.
+        # TODO: device-id not start from 0 to max-count in docker.
         # Prepare device locks
         self.device_locks = self._initialize_device_lock()
         for dev_id, dev_lock in enumerate(self.device_locks):

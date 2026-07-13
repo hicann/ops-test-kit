@@ -56,15 +56,18 @@ class ApiProfilingResult:
 
 class ApiComparisonResult:
     __slots__ = ("precision",
-                 "passed")
+                 "passed",
+                 "metrics")
 
     def __init__(self, default_value):
         self.precision = default_value
         self.passed = default_value
+        self.metrics = {}
 
-    def set(self, a, b):
+    def set(self, a, b, metrics=None):
         self.precision = a
         self.passed = b
+        self.metrics = metrics or {}
         return self
 
     def get(self) -> tuple:
@@ -79,6 +82,7 @@ class ApiProfilingReturnStructure:
     __slots__ = (
                  "precision",
                  "precision_status",
+                 "precision_metrics",
                  "soc"
                  )
 
@@ -86,6 +90,7 @@ class ApiProfilingReturnStructure:
         self.precision = default_value
         # Precision
         self.precision_status = default_value
+        self.precision_metrics = default_value
         # Special
         self.soc = get_global_storage().dev_plat
 
@@ -96,6 +101,7 @@ class ApiProfilingReturnStructure:
         # Check prof_results and construct one if necessary
         self.precision = compare_result.precision
         self.precision_status = compare_result.passed
+        self.precision_metrics = compare_result.metrics or {}
 
     @staticmethod
     def get_titles() -> tuple:

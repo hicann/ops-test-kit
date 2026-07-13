@@ -126,8 +126,6 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         # torch.Tensor or sequence of torch.Tensor with strides & offsets.
         "tensors",
         "scalars",
-        "flatten_tensors",
-        "flatten_scalars",
         # list of torch.Tensor with strides & offset or numpy.ndarray (consider as view shape)
         "golden_tensors",
         # private
@@ -199,9 +197,6 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         # End of testcase valid configurations
         self.tensors = None
         self.scalars = None
-        # flatten tensors and scalars
-        self.flatten_tensors = None
-        self.flatten_scalars = None
         self.golden_tensors = None
         # Test Runtime Attributes
         # private parameters

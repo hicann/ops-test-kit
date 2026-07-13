@@ -18,7 +18,7 @@ from typing import Tuple, Union
 # Third-party Packages
 from .profiling_structure import ComparisonResult
 from ...comparison import compare
-from ....utilities import resolve_custom_numpy_dtypes, get, get_global_storage, unpack_4bits
+from ....utilities import resolve_custom_numpy_dtypes, get, unpack_4bits
 
 
 def comparing(dyn_kernel_name: str, cst_kernel_name: str, bin_kernel_name: str,
@@ -26,41 +26,37 @@ def comparing(dyn_kernel_name: str, cst_kernel_name: str, bin_kernel_name: str,
               cst_outputs: Tuple[Union[str, numpy.ndarray]],
               bin_outputs: Tuple[Union[str, numpy.ndarray]],
               goldens: Tuple[Union[str, numpy.ndarray]],
-              percentage_thresholds: Tuple[Tuple[float, float]],
               output_dtypes: tuple,
-              absolute_precision=1e-8) -> ComparisonResult:
-    output_dtypes = tuple(output_dtype for output_dtype in output_dtypes if output_dtype is not None)
+              *, standards, third_parties=None) -> ComparisonResult:
+    # outputs may hold sentinels (DYN_OFF/None) of different length than dtypes;
+    # __outputs_to_numpy_arrays + compare() skip sentinels — no length assert.
     __outputs_to_numpy_arrays(dyn_outputs, output_dtypes)
     __outputs_to_numpy_arrays(cst_outputs, output_dtypes)
     __outputs_to_numpy_arrays(bin_outputs, output_dtypes)
-    if percentage_thresholds is None:
-        rtol, ptol = None, None
-    else:
-        rtol = [get(x, 0) for x in percentage_thresholds]
-        ptol = [get(x, 1) for x in percentage_thresholds]
-    tol_options = {'rtol': rtol, 'ptol': ptol, 'atol': absolute_precision}
-    method = get_global_storage().compare_method
     try:
         logging_data = "\n"
-        # DYN
-        logging_data += "Comparing %s with numpy\n" % dyn_kernel_name
-        dyn_precision, _logging_data, d_passed = compare(dyn_outputs, goldens, output_dtypes, method, tol_options)
+        _std_tokens = sorted({str(s.token) for s in standards}) if standards else []
+        _std = ",".join(_std_tokens) if _std_tokens else "unknown"
+        logging_data += "Comparing %s with %s\n" % (dyn_kernel_name, _std)
+        dyn_precision, _logging_data, d_passed, dyn_m = compare(
+            dyn_outputs, goldens, output_dtypes, standards=standards, third_parties=third_parties)
         logging_data += _logging_data
-        # CST
-        logging_data += "Comparing %s with numpy\n" % cst_kernel_name
-        cst_precision, _logging_data, c_passed = compare(cst_outputs, goldens, output_dtypes, method, tol_options)
+        logging_data += "Comparing %s with %s\n" % (cst_kernel_name, _std)
+        cst_precision, _logging_data, c_passed, cst_m = compare(
+            cst_outputs, goldens, output_dtypes, standards=standards, third_parties=third_parties)
         logging_data += _logging_data
-        # BIN
-        logging_data += "Comparing %s with numpy\n" % bin_kernel_name
-        bin_precision, _logging_data, b_passed = compare(bin_outputs, goldens, output_dtypes, method, tol_options)
+        logging_data += "Comparing %s with %s\n" % (bin_kernel_name, _std)
+        bin_precision, _logging_data, b_passed, bin_m = compare(
+            bin_outputs, goldens, output_dtypes, standards=standards, third_parties=third_parties)
         logging_data += _logging_data
         logging.debugc(logging_data)
 
         passed = "PASS" if all([d_passed, c_passed, b_passed]) else "FAIL"
+        metrics = {"dyn": dyn_m, "cst": cst_m, "bin": bin_m}
     except:
         logging.exception("Comparison failed")
         return ComparisonResult("COMPARE_FAILURE")
-    return ComparisonResult(None).set(dyn_precision, cst_precision, bin_precision, passed)
+    return ComparisonResult(None).set(dyn_precision, cst_precision, bin_precision, passed, metrics)
 
 
 def __outputs_to_numpy_arrays(outputs, output_dtypes):

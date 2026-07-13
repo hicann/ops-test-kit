@@ -6,7 +6,7 @@ from ttk.cli.bridge import args_to_switches, apply_e2e_args, run_with_switches
 def register_e2e_command(subparsers):
     parser = subparsers.add_parser(
         "e2e",
-        help="Framework API mode: torch_npu/tf end-to-end test"
+        help="Framework API mode: torch_npu end-to-end test"
     )
     add_common_args(parser)
     add_device_args(parser)
@@ -15,8 +15,8 @@ def register_e2e_command(subparsers):
 
 
 def _add_e2e_args(parser):
-    parser.add_argument("--backend",
-                        help="Hardware backend: npu, gpu, cpu (auto-detect if not specified)")
+    parser.add_argument("--cpu", action="store_true", default=False,
+                        help="Force CPU backend")
     parser.add_argument("-d", "--dynamic", nargs="?", const=True, default=None,
                         help="Enable dynamic shape graph test (default: disabled); use -d=false to disable")
     parser.add_argument("-c", "--const", nargs="?", const=True, default=None,

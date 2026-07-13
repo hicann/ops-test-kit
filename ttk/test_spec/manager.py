@@ -93,3 +93,19 @@ def get_spec_attr(op_name: str, attr: str, plugin_path) -> Any:
     if cls is None or not mgr.has(cls, attr):
         return None
     return mgr.get(cls, attr)
+
+
+def get_spec_class_meta(op_name: str, plugin_path):
+    """返回 spec 类元数据（供 XPU/远端 sync+实例化）。无 spec 或无 plugin_path → None。
+
+    Returns:
+        {"spec_file": <abs .py path or None>, "class_name": <cls.__name__>} or None
+    """
+    if not plugin_path:
+        return None
+    paths = tuple(plugin_path) if isinstance(plugin_path, (list, tuple)) else (plugin_path,)
+    cls = TestSpecManager(search_paths=paths).load(op_name)
+    if cls is None:
+        return None
+    return {"spec_file": getattr(cls, "__ttk_spec_file__", None),
+            "class_name": cls.__name__}

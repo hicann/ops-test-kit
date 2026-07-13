@@ -4,6 +4,8 @@
 
 ---
 
+> Hardware vendor names appearing in this document are for illustration only; TTK is configuration-driven and supports any hardware accelerator that conforms to the interface.
+
 # Environment Setup
 
 - Python 3.8+, PyTorch 2.0+
@@ -13,7 +15,7 @@
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 pip install -r requirements.txt
 pip install ".[e2e-npu]"
-pip install ".[e2e-gpu]"
+pip install ".[e2e-xpu]"
 ```
 
 # Write Test Cases
@@ -49,22 +51,21 @@ npu_conv2d_f16,torch_npu.npu_conv2d,"((1,3,224,224),(64,3,7,7),(64,))","('float1
 
 # Backends
 
-E2E mode is driven by a unified Backend abstraction (`ttk.core_modules.framework_api.backends`). The three backends share the same case parsing, input generation, and precision-comparison pipeline. The CPU backend is commonly used as the Golden source.
+E2E mode is driven by a unified Backend abstraction (`ttk.core_modules.framework_api.backends`). All backends share the same case parsing, input generation, and precision-comparison pipeline. The CPU backend is commonly used as the Golden source. The backend is auto-selected per the configured hardware segment (`yaml` `frameworks.torch.<seg>`); `--cpu` forces the CPU backend.
 
-| Backend | Flag | Dependencies |
-|---------|------|-------------|
-| NPU | `--backend npu` | torch + torch_npu |
-| GPU | `--backend gpu` | torch (CUDA) |
-| CPU | `--backend cpu` | torch |
-
-If `--backend` is omitted, TTK auto-detects in priority NPU > GPU > CPU.
+| Backend | Dependencies |
+|---------|-------------|
+| NPU | torch + torch_npu |
+| MLU | torch (MLU) |
+| CPU | torch |
 
 # Precision Testing
 
 ```shell
-python3 -m ttk e2e -i torch_add.csv --backend npu
-python3 -m ttk e2e -i torch_add.csv --backend gpu
-python3 -m ttk e2e -i torch_add.csv --backend cpu
+# auto-selects available backend per configured hardware segment
+python3 -m ttk e2e -i torch_add.csv
+# force CPU backend
+python3 -m ttk e2e -i torch_add.csv --cpu
 ```
 
 ## Execution Flow
@@ -76,9 +77,10 @@ Read CSV -> Generate input tensors -> Call API on test backend -> Call golden AP
 # Common Examples
 
 ```shell
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --backend npu
-python3 -m ttk e2e -i examples/case_store/e2e/torch_npu_conv2d.csv --backend npu
-python3 -m ttk e2e -i torch_add.csv --backend npu -t add_f32_01
-python3 -m ttk e2e -i torch_add.csv --backend npu --seed 42 -o results.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_npu_conv2d.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --cpu
+python3 -m ttk e2e -i torch_add.csv -t add_f32_01
+python3 -m ttk e2e -i torch_add.csv --seed 42 -o results.csv
 python3 -m ttk e2e -i torch_add.csv --validate                   # CSV-only validation (common to all modes)
 ```

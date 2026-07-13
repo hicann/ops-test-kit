@@ -2,11 +2,13 @@
 
 TTK (ops Test Tool Kit) is a full-pipeline, automated, batch operator testing framework provided by the [CANN](https://hiascend.com/software/cann) operator library. It helps developers quickly perform batch operator functional verification, performance evaluation, and Golden value comparison, improving operator development quality and efficiency.
 
+> Hardware vendor names appearing in this document are for illustration only; TTK is configuration-driven and supports any hardware accelerator that conforms to the interface.
+
 * **Rich operator test types**: Supports Kernel (AscendC), ACLNN (aclnn\* C API), and E2E (PyTorch/torch\_npu framework API) testing
-* **Multiple hardware backends**: E2E mode runs through a unified Backend abstraction supporting NPU, GPU, and CPU as device under test or reference
+* **Multiple hardware backends**: E2E mode runs through a unified Backend abstraction supporting NPU, MLU, CPU, etc. as device under test or reference (available backend auto-selected per configured hardware segment)
 * **Batch CSV-driven**: Define test cases via CSV files and run them in batch with a single command
 * **Multi-card parallel execution**: Supports multi-NPU parallel testing for improved efficiency
-* **Multiple precision comparison methods**: Supports numeric approximation, cosine similarity, binary exact, and requantization comparison
+* **Multiple precision comparison methods**: Supports statistical relative error, numeric approximation, cosine similarity, binary exact, requantization, and three-party cross-check
 * **Extensible plugin system**: Custom Golden / input generation functions, with separate registries for Kernel and ACLNN/E2E modes
 
 [中文文档](./README.md)
@@ -72,8 +74,9 @@ python3 -m ttk kernel -i examples/case_store/kernel/add.csv
 # ACLNN mode
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
 
-# E2E mode (NPU/GPU/CPU; backend auto-detected if --backend omitted)
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --backend npu
+# E2E mode (auto-selects available backend per configured hardware segment; --cpu forces cpu)
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --cpu
 
 # Show device info
 python3 -m ttk info

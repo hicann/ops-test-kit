@@ -16,21 +16,24 @@ TestSpec — 统一的算子测试规范
 
         # tolerance — 精度标准（可选；abs 精确运算，二进制一致）
         tolerance = {
-            "float32": {"standard": "BinaryCompareStandard"},
+            "float32": {"standard": "binary_equal"},
         }
 
         # compare / pre_compare / customize_inputs 未定义 → 框架用默认
 
-    __spec__ = {"abs": AbsTestSpec}  # 优先注册；可选，命名约定兜底
+    # __spec__ dict 注册（可选，命名约定兜底）；值为类名字符串（非类对象）——
+    # loader AST 扫描不 exec、spec 隔离 + 惰性 load；可写文件顶部
+    __spec__ = {"abs": "AbsTestSpec"}
 
 类名约定（__spec__ 不存在时回退）：
     op_name: softmax_v2  →  SoftmaxV2TestSpec
     op_name: abs         →  AbsTestSpec
 
-完整约定见 README.md 和 op_assets_desc.md。
+发现机制：loader 首次 load 时 AST 静态建索引（扫描不 exec），惰性 load 仅 exec
+命中的那一个文件；__spec__ 因 AST 扫描而可写文件顶部。完整约定见 README.md。
 """
 
-__all__ = ["TestSpecManager", "SpecNotFoundError", "InvalidSpecError", "get_spec_attr"]
+__all__ = ["SpecNotFoundError", "InvalidSpecError", "validate", "get_spec_attr", "get_spec_class_meta"]
 
 
 class SpecNotFoundError(Exception):
@@ -45,10 +48,13 @@ class InvalidSpecError(Exception):
 
 # 延迟 import，避免循环依赖
 def __getattr__(name):
-    if name == "TestSpecManager":
-        from .manager import TestSpecManager
-        return TestSpecManager
     if name == "get_spec_attr":
         from .manager import get_spec_attr
         return get_spec_attr
+    if name == "get_spec_class_meta":
+        from .manager import get_spec_class_meta
+        return get_spec_class_meta
+    if name == "validate":
+        from .validator import validate
+        return validate
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

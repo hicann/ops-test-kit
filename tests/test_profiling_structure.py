@@ -52,7 +52,11 @@ class TestComparisonResult:
         cr = ComparisonResult("X")
         values = cr.get()
         assert len(values) == len(ComparisonResult.__slots__)
-        assert all(v == "X" for v in values)
+        for name, v in zip(ComparisonResult.__slots__, values):
+            if name == "metrics":
+                assert v == {}                  # metrics 默认 {}（dict），非 default_value
+            else:
+                assert v == "X"
 
 
 class TestRTSProfilingResult:

@@ -117,7 +117,7 @@ class OpProfileObject(ProfileObject):
 
     def _launch_knowledge_server(self, mp_context: BaseContext):
         logging.info("Launching knowledge base Server process")
-        self.kb = SimpleCommandProcess(mp_context, name="KnowledgeBaseServer")
+        self.kb = SimpleCommandProcess(mp_context, name="KBS")
         self.kb.data["switch"] = True
         self.kb.send_action(knowledge_base_sequence, (), {})
         while not self.kb.status == self.kb.status.RUNNING:

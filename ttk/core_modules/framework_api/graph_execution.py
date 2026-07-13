@@ -103,7 +103,7 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     Returns:
         (list of numpy arrays, ProfileResult) on success, or (None, None) on failure
     """
-    if backend.device_name() != "npu":
+    if not backend.is_npu():
         logging.warning("Graph mode only supports NPU backend, skipping")
         return [], None
 

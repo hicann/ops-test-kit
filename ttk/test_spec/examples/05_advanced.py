@@ -28,8 +28,8 @@ class SoftmaxAdvancedSpec:
     }
 
     tolerance = {
-        "float32": {"standard": "IsClose", "rtol": 1e-4, "atol": 1e-4},
-        "float16": {"standard": "IsClose", "rtol": 1e-3, "atol": 1e-3},
+        "float32": {"standard": "stat_rel_err"},
+        "float16": {"standard": "stat_rel_err"},
     }
 
 
@@ -175,9 +175,9 @@ class UniqueSpec:
 # Explicit registration: class names use *Spec suffix (not *TestSpec),
 # so __spec__ dict is needed for discovery.
 __spec__ = {
-    "softmax_advanced": SoftmaxAdvancedSpec,
-    "histogram_input": HistogramInputSpec,
-    "topk": TopKSpec,
-    "topk_return": TopKReturnSpec,
-    "unique": UniqueSpec,
+    "softmax_advanced": "SoftmaxAdvancedSpec",
+    "histogram_input": "HistogramInputSpec",
+    "topk": "TopKSpec",
+    "topk_return": "TopKReturnSpec",
+    "unique": "UniqueSpec",
 }

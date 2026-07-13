@@ -23,6 +23,7 @@ from contextlib import nullcontext
 from ttk.utilities.container_utils import get_global_storage, apply_as_list, deep_flatten
 from ttk.core_modules.tbe_multiprocessing import get_process_context, DeviceLock
 from ttk.core_modules.comparison.comparison import compare
+from ttk.core_modules.comparison.resolve import resolve_tolerance
 from ttk.core_modules.tbe_logging import default_logging_config
 from ttk.utilities import get, dump_to_file, waiting_for_memory
 from ttk.test_spec import get_spec_attr
@@ -57,7 +58,7 @@ def _profiling_print(testcase, backend, dev_id, switches):
         f"\n{separator}\n"
         f"API Name: {testcase.api_name}\n"
         f"Golden API: {testcase.golden_api}\n"
-        f"Backend: {backend.device_name()}\n"
+        f"Backend: {backend.alias()}\n"
         f"////////////// Tensors //////////////\n"
         f"Input View Shapes: {testcase.tensor_view_shapes}\n"
         f"Input Dtypes: {testcase.tensor_dtypes}\n"
@@ -216,7 +217,7 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
                     dev_id, switches, return_struct)
     except Exception as e:
         logging.error(f"[{testcase.testcase_name}] Error: {e}", exc_info=True)
-        return_struct.precision = str(e)
+        return_struct.eager_precision = str(e)
         return_struct.precision_status = "FAIL"
 
     return return_struct
@@ -228,20 +229,9 @@ def _get_or_create_backend(switches):
     cached = process_ctx.storage.get("framework_api_backend")
     if cached is not None:
         return cached
-    backend = get_backend(switches.backend_name)
+    backend = get_backend(switches.force_cpu)
     process_ctx.storage["framework_api_backend"] = backend
     return backend
-
-
-def _build_tol_options(testcase):
-    """Build tolerance options dict from testcase, same pattern as OpApi Comparator."""
-    if testcase.precision_tolerances is None:
-        rtol, ptol = None, None
-    else:
-        ptols = testcase.flat_precision_tolerances
-        rtol = [get(x, 0) for x in ptols]
-        ptol = [get(x, 1) for x in ptols]
-    return {'rtol': rtol, 'ptol': ptol, 'atol': testcase.flat_absolute_precision}
 
 
 def _dump_data(data, file_name, switches):
@@ -358,7 +348,7 @@ def _generate_golden_data(testcase, raw_inputs, switches, backend):
         try:
             golden_nps = generate_golden(
                 testcase, raw_inputs, switches.plugin_path, switches,
-                backend.device_name())
+                backend.alias())
         except Exception:
             logging.exception(f"[{testcase.testcase_name}] Golden generation failure")
             golden_nps = ["GOLDEN_FAILURE"]
@@ -466,20 +456,23 @@ def _try_custom_compare(testcase, result_nps, golden_nps, switches):
 def _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct):
     """Compare eager mode results against golden, set return_struct. Returns True if pass."""
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in result_nps)
-    tol_options = _build_tol_options(testcase)
+    tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
+    standards = resolve_tolerance(tolerance, testcase.flat_precision_tolerances,
+                                  testcase.flat_absolute_precision, output_dtypes,
+                                  switches.compare_method)
     try:
         custom_result = _try_custom_compare(testcase, result_nps, golden_nps, switches)
         if custom_result is not None:
             precision_str, log_str, is_pass = custom_result
+            metrics = {}
         else:
-            precision_str, log_str, is_pass = compare(
+            precision_str, log_str, is_pass, metrics = compare(
                 result_nps, golden_nps, output_dtypes,
-                methods=switches.compare_method, options=tol_options
+                standards=standards, third_parties=None
             )
     except Exception:
         logging.exception(f"[{testcase.testcase_name}] Eager comparison failure")
-        return_struct.eager_precision = "COMPARE_FAILURE"
-        return_struct.precision_status = "FAIL"
+        return_struct.construct("COMPARE_FAILURE", "FAIL", None, metrics={})
         return False
 
     if log_str:
@@ -488,7 +481,7 @@ def _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, swit
     precision_status = "PASS" if is_pass else "FAIL"
     if not is_pass and switches.dump_config.dump_on_fail:
         _dump_on_fail(testcase, raw_inputs, result_nps, golden_nps, switches)
-    return_struct.construct(precision_str, precision_status, perf)
+    return_struct.construct(precision_str, precision_status, perf, metrics=metrics)
     return True
 
 
@@ -506,20 +499,22 @@ def _evaluate_graph_precision(testcase, raw_inputs, graph_nps, golden_nps, switc
     _apply_pre_compare(testcase, graph_nps, golden_nps, switches)
 
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in graph_nps)
-    tol_options = _build_tol_options(testcase)
+    tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
+    standards = resolve_tolerance(tolerance, testcase.flat_precision_tolerances,
+                                  testcase.flat_absolute_precision, output_dtypes,
+                                  switches.compare_method)
+    log_str, metrics = "", {}                  # try 前初始化（防 except 路径 NameError）
     try:
         custom_result = _try_custom_compare(testcase, graph_nps, golden_nps, switches)
         if custom_result is not None:
-            precision_str, log_str, is_pass = custom_result
+            precision_str, log_str, is_pass = custom_result   # metrics 保持 {}
         else:
-            precision_str, log_str, is_pass = compare(
+            precision_str, log_str, is_pass, metrics = compare(
                 graph_nps, golden_nps, output_dtypes,
-                methods=switches.compare_method, options=tol_options
-            )
+                standards=standards, third_parties=None)
     except Exception:
         logging.exception(f"Graph {mode} comparison failure")
-        precision_str = "COMPARE_FAILURE"
-        is_pass = False
+        precision_str, log_str, is_pass = "COMPARE_FAILURE", "", False
 
     if log_str:
         logging.debugc(f"\nComparing graph {mode} with golden\n{log_str}")
@@ -527,7 +522,7 @@ def _evaluate_graph_precision(testcase, raw_inputs, graph_nps, golden_nps, switc
     status = "PASS" if is_pass else "FAIL"
     if not is_pass and switches.dump_config.dump_on_fail:
         _dump_on_fail(testcase, raw_inputs, graph_nps, golden_nps, switches)
-    return_struct.construct(precision_str, status, perf, mode=mode)
+    return_struct.construct(precision_str, status, perf, mode=mode, metrics=metrics)
 
 
 def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
@@ -537,7 +532,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
 
     plan = testcase.get_param_plan()
     if plan is None:
-        return_struct.precision = "PARAM_PLAN_FAILURE"
+        return_struct.eager_precision = "PARAM_PLAN_FAILURE"
         return_struct.precision_status = "FAIL"
         logging.error(f"[{testcase.testcase_name}] Cannot resolve param plan for {testcase.api_name}")
         return
@@ -550,7 +545,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
         raw_inputs = generate_inputs(testcase, switches, backend, plan)
     except Exception:
         logging.exception(f"[{testcase.testcase_name}] Input generation failure")
-        return_struct.precision = "INPUT_GEN_FAILURE"
+        return_struct.eager_precision = "INPUT_GEN_FAILURE"
         return_struct.precision_status = "FAIL"
         return
 

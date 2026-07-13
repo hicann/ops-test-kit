@@ -55,20 +55,10 @@ class InputGenerator:
                 self._package_scalars_numpy()
 
             # Check special input operators
-            input_func, src = get_plugin_function(self._ctx.api_name,
+            input_func = get_plugin_function(self._ctx.api_name,
                 "input", "aclnn", self._switch.plugin_path)
             if input_func:
-                if src == 'builtin':
-                    self._call_builtin_input(input_func)
-                else:
-                    self._call_custom_input(input_func)
-
-    def _call_builtin_input(self, input_func):
-        disable_builtin = int(os.getenv("TTK_DISABLE_BUILTIN", "0"))
-        if disable_builtin:
-            raise RuntimeError('Special input function is not moved out.')
-        else:
-            input_func(self._ctx)
+                self._call_custom_input(input_func)
 
     def _call_custom_input(self, input_func):
         plan = self._ctx.get_param_plan()
@@ -159,7 +149,6 @@ class InputGenerator:
                                   f"view_shape={v_shape}, view_stride={v_shape}, view_offset={v_offset}")
                     raise
                 torch_tensors.append(t_view)
-        self._ctx.flatten_tensors = torch_tensors
         self._ctx.tensors = apply_as_list(torch_tensors,
                                           self._ctx.tensor_list_dist)
 
@@ -190,7 +179,6 @@ class InputGenerator:
                         scalars[idx][j] = torch.tensor(val[j], dtype=scalars[idx][j].dtype)
                 else:
                     scalars[idx] = torch.tensor(val, dtype=scalars[idx].dtype)
-        self._ctx.flatten_scalars = tuple_flatten(scalars)
         self._ctx.scalars = tuple(scalars)
 
     def _convert_np_to_numpy_view(self):
@@ -222,7 +210,6 @@ class InputGenerator:
                     logging.error(f"numpy.as_strided failed. storage_shape={np_arr.shape} "
                                   f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}")
                     raise
-        self._ctx.flatten_tensors = np_views
         self._ctx.tensors = apply_as_list(np_views,
                                           self._ctx.tensor_list_dist)
 
@@ -248,7 +235,6 @@ class InputGenerator:
                         scalars[idx][j] = numpy.array(val[j], dtype=scalars[idx][j].dtype)
                 else:
                     scalars[idx] = numpy.array(val, dtype=scalars[idx].dtype)
-        self._ctx.flatten_scalars = tuple_flatten(scalars)
         self._ctx.scalars = tuple(scalars)
 
     @staticmethod

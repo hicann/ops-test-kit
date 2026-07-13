@@ -26,24 +26,12 @@ class LayerNormFullSpec:
 
     third_party = {"torch": ThirdPartyImpl, "tf": "tf.raw_ops.LayerNorm"}
 
-    # -- tolerance — per-dtype precision standard --
+    # -- tolerance — per-dtype 精度标准（2.1 规范名）--
+    # stat_rel_err 用 dtype 表内置阈值（float32=2^-13 等）；
+    # cross_check（2.1 商用标准）validator 接受但 P2 才实现。
     tolerance = {
-        "float32": {
-            "standard": "BenchmarkCompareStandard",
-            "avg_re_rtol": 2.0,
-            "max_re_rtol": 5.0,
-            "rmse_rtol": 2.0,
-            "small_value": 1e-6,
-            "small_value_atol": 1e-9,
-        },
-        "float16": {
-            "standard": "BenchmarkCompareStandard",
-            "avg_re_rtol": 2.0,
-            "max_re_rtol": 10.0,
-            "rmse_rtol": 2.0,
-            "small_value": 0.001,
-            "small_value_atol": 1e-5,
-        },
+        "float32": {"standard": "stat_rel_err"},
+        "float16": {"standard": "stat_rel_err"},
     }
 
     # -- compare — custom comparison (optional, default cosine_similarity) --
@@ -65,5 +53,5 @@ class LayerNormFullSpec:
 # Explicit registration: class name uses *Spec suffix (not *TestSpec),
 # so __spec__ dict is needed for discovery.
 __spec__ = {
-    "layer_norm_full": LayerNormFullSpec,
+    "layer_norm_full": "LayerNormFullSpec",
 }

@@ -208,16 +208,63 @@ class NpuProfiler(FrameworkProfiler):
 
 
 class TorchProfiler(FrameworkProfiler):
-    """Profiler for torch using torch.profiler. Works on both GPU and CPU."""
+    """Profiler for torch using torch.profiler. Works on both CPU and accelerators.
+
+    Hardware-neutral: activities come from
+    ``backend.profile["profiler"]["activities"]`` (a list of ProfilerActivity
+    attribute names like "CPU"/"CUDA"/"MLU"/"MUSA") rather than a string compare
+    on torch_lib. ``_device_acts`` is the non-CPU subset; ``result`` reports
+    device kernels via ``_device_time`` (multi-candidate fallback across torch
+    versions / device bindings).
+    """
 
     def __init__(self, backend):
         from torch.profiler import profile, ProfilerActivity
 
-        activities = [ProfilerActivity.CPU]
-        if backend.device_name() == "gpu":
-            activities.append(ProfilerActivity.CUDA)
+        cfg = backend.profile["profiler"]
+        activities = []
+        for a in cfg["activities"]:
+            try:
+                activities.append(getattr(ProfilerActivity, a))
+            except AttributeError:
+                valid = [n for n in dir(ProfilerActivity) if not n.startswith("_")]
+                raise ValueError(
+                    f"unknown ProfilerActivity '{a}'; valid: {valid}"
+                ) from None
         self._prof = profile(activities=activities, record_shapes=True)
-        self._has_cuda = backend.device_name() == "gpu"
+        # Non-CPU activity names (e.g. ["MLU"]); empty for CPU-only profiles.
+        self._device_acts = [a for a in cfg["activities"] if a != "CPU"]
+        self._device_time_attr = cfg.get("device_time_attr")
+        # device key for _device_time legacy fallback (self_{device}_time_total).
+        # device = profile["torch_lib"] (mlu/musa/...), NOT the activity name
+        # (activity name is a ProfilerActivity enum; torch_lib is the torch module attr).
+        self._device = backend.profile["torch_lib"]
+
+    def _device_time(self, evt, device=None):
+        """3-candidate device-time extraction for one event (pure self_).
+
+        Order: explicit device_time_attr (if configured) → self_device_time_total
+        (torch 2.7+ cuda/musa unified) → self_{device}_time_total (legacy,
+        e.g. self_cuda_time_total / self_mlu_time_total).
+
+        Uses ``is not None`` (not truthiness) so a legitimate v=0.0 idle kernel
+        is not mis-treated as missing and falls through to a wrong fallback.
+        ``device`` defaults to self._device (profile["torch_lib"]).
+
+        Only ``self_*`` fields are used (self time, excluding nested child ops);
+        ``device_time_total`` (total time, includes nested) was dropped to avoid
+        mixing self_/total semantics — it would inflate the sum when nested ops
+        double-count, and it was redundant (self_device_time_total already
+        covers the musa scenario it was meant for).
+        """
+        if device is None:
+            device = self._device
+        if self._device_time_attr is not None:
+            return getattr(evt, self._device_time_attr, 0.0)
+        v = getattr(evt, "self_device_time_total", None)
+        if v is not None:
+            return v
+        return getattr(evt, f"self_{device}_time_total", 0.0)
 
     def __enter__(self):
         self._prof.__enter__()
@@ -229,13 +276,15 @@ class TorchProfiler(FrameworkProfiler):
     def result(self, backend, repeat_count) -> ProfileResult:
         events = self._prof.key_averages()
 
-        total_cpu_us = sum(getattr(e, 'cpu_time_total', 0.0) for e in events)
+        total_cpu_us = sum(getattr(e, "cpu_time_total", 0.0) for e in events)
 
-        if self._has_cuda:
+        if self._device_acts:
+            # Device kernels via _device_time fallback (covers mlu/musa/...).
+            # device key comes from self._device (profile["torch_lib"]).
             device_kernels = []
             total_device_us = 0.0
             for evt in events:
-                device_us = getattr(evt, 'cuda_time_total', 0.0)
+                device_us = self._device_time(evt)
                 if device_us > 0:
                     device_kernels.append(KernelInfo(
                         name=evt.key,
@@ -264,114 +313,6 @@ class TorchProfiler(FrameworkProfiler):
         )
 
 
-class TfProfiler(FrameworkProfiler):
-    """Profiler for tf.* using tf.profiler.experimental + wall-clock fallback."""
-
-    def __init__(self, backend):
-        self._tmpdir = tempfile.mkdtemp(prefix="ttk_tf_prof_")
-        self._start = None
-        self._elapsed = None
-        self._profiler_ok = False
-
-    def __enter__(self):
-        try:
-            import tensorflow as tf
-            tf.profiler.experimental.start(self._tmpdir)
-            self._profiler_ok = True
-        except Exception as e:
-            logging.warning(f"tf.profiler start failed, falling back to wall-clock: {e}")
-            self._profiler_ok = False
-        self._start = time.perf_counter()
-        return self
-
-    def __exit__(self, *exc):
-        if self._profiler_ok:
-            try:
-                import tensorflow as tf
-                tf.profiler.experimental.stop()
-            except Exception:
-                pass
-        self._elapsed = time.perf_counter() - self._start
-        self._cleanup_tmpdir()
-
-    def _cleanup_tmpdir(self):
-        if self._tmpdir and os.path.isdir(self._tmpdir):
-            shutil.rmtree(self._tmpdir, ignore_errors=True)
-            self._tmpdir = None
-
-    def result(self, backend, repeat_count) -> ProfileResult:
-        total_wall_us = (self._elapsed or 0.0) * 1e6
-        kernels = []
-        total_device_us = 0.0
-
-        if self._profiler_ok:
-            kernels, total_device_us = self._parse_trace()
-
-        if not kernels:
-            return ProfileResult(
-                elapsed_us=total_wall_us / max(repeat_count, 1),
-                kernel_details=None,
-            )
-
-        return ProfileResult(
-            elapsed_us=total_device_us / max(repeat_count, 1),
-            kernel_details=KernelDetails(
-                kernels=kernels,
-                total_device_us=total_device_us,
-                total_cpu_us=total_wall_us,
-            ),
-        )
-
-    def _parse_trace(self):
-        """Parse tf profiler trace JSON for per-op device timing."""
-        import json
-
-        kernels_map = {}
-        total_device_us = 0.0
-
-        trace_files = []
-        if self._tmpdir:
-            for root, _, files in os.walk(self._tmpdir):
-                for f in files:
-                    if f.endswith(".json"):
-                        trace_files.append(os.path.join(root, f))
-
-        for trace_file in trace_files:
-            try:
-                with open(trace_file, "r") as f:
-                    data = json.load(f)
-            except Exception:
-                continue
-
-            events = data if isinstance(data, list) else data.get("traceEvents", [])
-            for evt in events:
-                if evt.get("ph") != "X":
-                    continue
-                cat = evt.get("cat", "")
-                if "op" not in cat.lower() and "kernel" not in cat.lower():
-                    continue
-                name = evt.get("name", "")
-                dur_us = evt.get("dur", 0) / 1000.0
-                if name and dur_us > 0:
-                    total_device_us += dur_us
-                    if name in kernels_map:
-                        kernels_map[name]["total_us"] += dur_us
-                        kernels_map[name]["calls"] += 1
-                    else:
-                        kernels_map[name] = {"total_us": dur_us, "calls": 1}
-
-        kernels = [
-            KernelInfo(
-                name=name,
-                device_us=info["total_us"],
-                calls=info["calls"],
-                avg_us=info["total_us"] / info["calls"],
-            )
-            for name, info in kernels_map.items()
-        ]
-        return kernels, total_device_us
-
-
 class WallClockProfiler(FrameworkProfiler):
     """Fallback wall-clock profiler for unknown frameworks."""
 
@@ -394,20 +335,21 @@ class WallClockProfiler(FrameworkProfiler):
 
 
 def get_profiler(api_name: str, backend) -> FrameworkProfiler:
-    """Select profiler based on api_name prefix and backend."""
-    device = backend.device_name()
+    """Select profiler based on api_name prefix and backend.
+
+    Hardware-neutral: routes on is_npu() + profile['profiler'] rather
+    than device_name() string compares.
+    """
     if api_name.startswith("torch_npu."):
-        if device != "npu":
+        if not backend.is_npu():
             raise RuntimeError(
-                f"API '{api_name}' requires NPU backend but current backend is '{device}'"
+                f"API '{api_name}' requires NPU backend, "
+                f"but current is '{backend.alias()}'"
             )
         return NpuProfiler(backend)
     if api_name.startswith("torch."):
-        if device == "npu":
+        # NPU with builtin profiler -> NpuProfiler; otherwise TorchProfiler.
+        if backend.is_npu() and backend.profile.get("profiler") == "builtin":
             return NpuProfiler(backend)
         return TorchProfiler(backend)
-    elif api_name.startswith("tf."):
-        if device == "gpu":
-            return TfProfiler(backend)
-        return WallClockProfiler(backend)
     return WallClockProfiler(backend)

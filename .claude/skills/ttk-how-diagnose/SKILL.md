@@ -1,6 +1,6 @@
 ---
 name: ttk-how-diagnose
-description: 诊断 TTK 测试失败。只要用户提到测试跑不过、结果不对、精度差、编译挂了、执行超时、OOM、需要 dump 数据或排障，就必须使用此 skill。即使用户只是说"精度差一点"、"编译报错怎么解决"、"跑不过了"等口语化表述，也应触发。
+description: 诊断 TTK 测试失败（跑完后结果不对/报错/超时排障）。只要用户提到测试跑不过、结果不对、精度差、编译挂了、执行超时、OOM、需要 dump 数据或排障，就必须使用此 skill。即使用户只是说"精度差一点"、"编译报错怎么解决"、"跑不过了"、"挂了/被杀了"，也应触发。首次正常运行用 ttk-how-run-test；定义/编写 golden 等资产用 ttk-how-write-plugin。
 ---
 
 # 诊断 TTK 测试失败
@@ -12,13 +12,7 @@ python3 -m ttk -v        # 版本号
 python3 -m ttk info       # 设备信息（NPU卡数、CANN版本）
 ```
 
-如果环境变量缺失，先 source：
-
-```shell
-source /usr/local/Ascend/ascend-toolkit/set_env.sh
-```
-
-常见缺失报错：`ImportError: libhccl.so`、`AttributeError: 'NoneType' object has no attribute 'acl_init'`
+TTK 启动时自动检测并 source CANN 环境（`setenv.bash`），通常无需手动设置。仅当 CANN 装在非标路径时设置 `ASCEND_CUSTOM_PATH`（详见 `ttk-how-run-test` Step 1）。若自动 source 失败，常见报错：`ImportError: libhccl.so`、`AttributeError: 'NoneType' object has no attribute 'acl_init'`。
 
 ## Step 2: 错误分类
 
@@ -74,11 +68,7 @@ python3 -m ttk kernel -i cases.csv --pc=1  # 减少进程数
 python3 -m ttk kernel -i cases.csv --seed 42  # 固定种子
 ```
 
-**插件不生效**：
-
-1. 确认 `--plugin my_plugin.py` 参数已传入
-2. 确认 `__golden__` 字典中的 key 与 CSV 的 `op_name` 或 `api_name` 一致
-3. 检查插件文件语法错误
+**插件不生效**：确认 `--plugin` 已传、类名/`__spec__` 注册名与 CSV 一致、插件无语法错。详见 `references/error-patterns.md` 插件错误表。
 
 ## Step 4: 精度调试流程
 
@@ -86,10 +76,14 @@ python3 -m ttk kernel -i cases.csv --seed 42  # 固定种子
 
 | 场景 | 方法 | 参数 |
 |------|------|------|
-| 浮点常规 | 数值近似 | `--compare close`（默认） |
+| 浮点常规（默认） | 统计相对误差（社区标准） | `--compare stat_rel_err`（默认） |
+| 逐点 isclose | 数值近似 | `--compare close` |
 | 大规模向量整体趋势 | 余弦相似度 | `--compare cosine` |
 | 整型/精确结果 | 二进制精确 | `--compare binary` |
 | float8 类型 | 重量化 | `--compare requant`（自动） |
+| 三方交叉校验 | 三方交叉校验 | `--compare cross_check`（需 `third_party`） |
+
+> 默认未设 `--compare` 时，按 `Spec.tolerance` 逐输出路由（需 `--plugin`），否则 `stat_rel_err`。
 
 ### 4.2 Dump 数据分析
 
@@ -103,21 +97,23 @@ python3 -m ttk kernel -i cases.csv -t case_name --dump in,out,golden --dump-form
 
 ### 4.3 调整容差
 
-在 CSV 中调整精度容差：
+容差首选 `Spec.tolerance`（TestSpec 中按 dtype 声明，详见 `ttk-how-write-plugin`）；无 plugin 时用 CSV 字段兜底：
 
 ```csv
 precision_tolerances,"((0.001, 0.001),)"
 absolute_precision,1e-8
 ```
 
+> 完整优先级：`--compare`（CLI）> `Spec.tolerance`（TestSpec）> CSV 字段 > 方法默认（见 `references/precision-debug.md`）。
+
 ### 4.4 常见精度原因
 
-| 现象 | 可能原因 | 修复 |
-|------|---------|------|
-| 全部 NaN | 输入数据范围不当 | 调整 `input_data_ranges` |
-| 大误差集中在某区域 | 溢出/下溢 | 缩小输入范围 |
-| 余弦相似度高但 close 失败 | 个别极值偏差 | 放大 `absolute_precision` |
-| 二进制比对失败但数值接近 | 浮点精度差异 | 用 `--compare close` + 合理容差 |
+| 现象 | 修复 |
+|------|------|
+| 全部 NaN / 大误差集中 | 调整 `input_data_ranges`、缩小输入范围（防溢出/下溢） |
+| 数值接近但比对失败 | 浮点精度差异，放大容差或换 `--compare` |
+
+> 完整现象-原因-修复表见 `references/precision-debug.md`。
 
 ## 常见错误模式速查
 

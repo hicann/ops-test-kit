@@ -164,7 +164,7 @@ def __transform_to_original_format(context: TestcaseOp):
     if switches.golden_mode == "Disable" or context.manual_golden_binaries:
         return
 
-    from ...utilities.container_utils import shape_like_flatten
+    from ....utilities.container_utils import shape_like_flatten
 
     flat_shapes = eliminate_scalar_shapes(context.flat_input_shapes)
     flat_ori_shapes = eliminate_scalar_shapes(context.flat_input_ori_shapes)
@@ -257,24 +257,11 @@ def __gen_input(context: TestcaseOp):
         __realtime_random_input(context)
         __override_inputs_from_attributes(context)
 
-        input_func, src = get_plugin_function(context.op_name, "input", "kernel", switches.plugin_path)
+        input_func = get_plugin_function(context.op_name, "input", "kernel", switches.plugin_path)
         if input_func:
-            if src == 'builtin':  # disabled for decouple.
-                disable_builtin = int(os.getenv("TTK_DISABLE_BUILTIN", "1"))
-                if disable_builtin:
-                    raise RuntimeError('Special input function is not moved out.')
-                else:
-                    # Check special input operators
-                    special_return = input_func(context)
-                    if len(special_return) == 2:
-                        input_arrays, _ = special_return
-                    else:
-                        raise RuntimeError("Special input function of operator %s returns invalid number of input %d"
-                                        % (context.op_name, len(special_return)))
-            else:
-                input_arrays = list(context.input_arrays)
-                kwargs = __collect_dynamic_kwargs(context)
-                input_arrays = input_func(*input_arrays, **kwargs)
+            input_arrays = list(context.input_arrays)
+            kwargs = __collect_dynamic_kwargs(context)
+            input_arrays = input_func(*input_arrays, **kwargs)
             # flatten (flat or nested) → validate → nest
             flat = deep_flatten(input_arrays)
             if len(flat) != len(context.flat_input_shapes):

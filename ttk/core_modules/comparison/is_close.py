@@ -12,23 +12,24 @@ is_close comparison
 """
 # Standard Packages
 import numpy as np
-from typing import Sequence
 
 # Third-party Packages
 from ...utilities import get
-from .registry import ComparisonBase, EachCompareResult, register_comparison
+from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
 
 
-@register_comparison('close')
+@register_comparison(['close', 'isclose'])
 class CloseComparison(ComparisonBase):
+    STANDARD_NAME = "isclose"
     def __post_init__(self):
-        self.rtol = self.tol_options.get('rtol', None)
+        legacy = self.tol_options.get("legacy", {})
+        self.rtol = legacy.get("rtol", None)
         if not isinstance(self.rtol, (tuple, list)):
             self.rtol = [self.rtol]
-        self.ptol = self.tol_options.get('ptol', None)
+        self.ptol = legacy.get("ptol", None)
         if not isinstance(self.ptol, (tuple, list)):
             self.ptol = [self.ptol]
-        self.atol = self.tol_options.get('atol', None)
+        self.atol = legacy.get("atol", None)
         if not isinstance(self.atol, (tuple, list)):
             self.atol = [self.atol]
 
@@ -57,61 +58,40 @@ class CloseComparison(ComparisonBase):
     def compare_impl(self) -> EachCompareResult:
         ptol = self._get_ptol(self.output.dtype)
         compare_result = self._isclose()
-        if isinstance(compare_result.precision, Sequence):  # str
+        if isinstance(compare_result.precision, str):
             compare_result.is_pass = False
         else:
             if (1 - compare_result.precision) > ptol:
                 compare_result.is_pass = False
             else:
                 compare_result.is_pass = True
+        compare_result.standard = "isclose"
+        metrics = {
+            "standard": "isclose",
+            "precision": (f"{compare_result.precision * 100}%"
+                          if not isinstance(compare_result.precision, str)
+                          else compare_result.precision),
+            "pass": bool(compare_result.is_pass),
+        }
+        if not compare_result.is_pass:
+            metrics["reason"] = FAIL_REASONS["tolerance_exceeded"]
+        compare_result.metrics = metrics
         return compare_result
 
     def _isclose(self) -> EachCompareResult:
+        # 空数组已在 base compare() 的 _check_empty 统一短路，这里只处理非空
         rtol = self._get_rtol(self.output.dtype)
         atol = self._get_atol(self.output.dtype)
         diff_indices, log = None, ""
-        output_size = self.output.numel() if self.is_torch_output else self.output.size
-        golden_size = self.golden.numel() if self.is_torch_golden else self.golden.size
-        if golden_size <= 0:
-            if not self.output.any():
-                precision = 1
-                log += f"Output {self.output_idx} is full of zero while it has a zero golden.\n"
-            else:
-                precision = 0
-                diff_indices = [idx for idx in range(output_size)]
-                if self.is_torch_output:
-                    import torch
-                    diff_indices = torch.tensor(diff_indices)
-                log += f"Output {self.output_idx} is not full of zero while it has a zero golden.\n"
-        elif output_size != golden_size:
+        output_size = self.output.size
+        golden_size = self.golden.size
+        if output_size != golden_size:
             precision = f"{output_size} vs {golden_size}"
             log += f"Output {self.output_idx} size is different with golden size: {precision}\n"
         else:
             output = self._normalize_dtype(self.output)
             golden = self._normalize_dtype(self.golden)
-            if not self.is_torch_output and not self.is_torch_golden:
-                precision, diff_indices = self._numpy_isclose(output, golden, rtol, atol, golden_size)
-            else:
-                import torch
-                if self.is_torch_output and self.is_torch_golden:
-                    try:
-                        promote_dtype = torch.promote_types(output.dtype, golden.dtype)
-                        diff_results = torch.isclose(output.to(dtype=promote_dtype).view([-1]),
-                                                     golden.to(dtype=promote_dtype).view([-1]),
-                                                     rtol=rtol, atol=atol, equal_nan=True)
-                        diff_indices = torch.where(diff_results != True)[0]
-                        del diff_results
-                        precision = (golden_size - diff_indices.numel()) / golden_size
-                    except (TypeError, RuntimeError):
-                        output = output.detach().cpu().numpy()
-                        golden = golden.detach().cpu().numpy()
-                        precision, diff_indices = self._numpy_isclose(output, golden, rtol, atol, golden_size)
-                else:
-                    if self.is_torch_output:
-                        output = output.detach().cpu().numpy()
-                    if self.is_torch_golden:
-                        golden = golden.detach().cpu().numpy()
-                    precision, diff_indices = self._numpy_isclose(output, golden, rtol, atol, golden_size)
+            precision, diff_indices = self._numpy_isclose(output, golden, rtol, atol, golden_size)
         return EachCompareResult(precision, diff_indices, False, log)
 
     def _get_rtol(self, dtype):

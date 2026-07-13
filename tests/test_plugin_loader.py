@@ -16,51 +16,17 @@ import tempfile
 import shutil
 from pathlib import Path
 
-from ttk.core_modules.plugin_loader import get_plugin_function, get_available_operators
-
-
-def test_builtin_golden_functions():
-    """Test builtin golden functions"""
-    print("=== Test builtin golden functions ===")
-    
-    available = get_available_operators("golden", "kernel")
-    print(f"Available builtin golden operators: {sorted(available)}")
-    
-    test_operators = ["add", "relu", "gelu"]
-    
-    for op_name in test_operators:
-        func, source = get_plugin_function(op_name, "golden", "kernel")
-        if func:
-            print(f"✓ {op_name}: loaded successfully from {source}")
-        else:
-            print(f"✗ {op_name}: not found")
-
-
-def test_builtin_aclnn_functions():
-    """Test builtin aclnn functions"""
-    print("\n=== Test builtin aclnn functions ===")
-    
-    available = get_available_operators("golden", "aclnn")
-    print(f"Available builtin aclnn operators: {sorted(available)}")
-    
-    test_operators = ["aclnnAdds", "aclnnMuls"]
-    
-    for op_name in test_operators:
-        func, source = get_plugin_function(op_name, "golden", "aclnn")
-        if func:
-            print(f"✓ {op_name}: loaded successfully from {source}")
-        else:
-            print(f"✗ {op_name}: not found")
+from ttk.core_modules.plugin_loader import get_plugin_function
 
 
 def test_custom_golden_functions():
     """Test custom golden functions"""
     print("\n=== Test custom golden functions ===")
-    
+
     with tempfile.TemporaryDirectory() as tmpdir:
         plugin_path = Path(tmpdir) / "custom_plugins"
         plugin_path.mkdir()
-        
+
         test_file = plugin_path / "test_custom.py"
         test_file.write_text("""#!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
@@ -75,28 +41,20 @@ __golden__ = {
     }
 }
 """)
-        
-        available = get_available_operators("golden", "kernel", str(plugin_path))
-        print(f"Available custom golden operators: {sorted(available)}")
-        
-        if "test_custom" in available:
-            func, source = get_plugin_function("test_custom", "golden", "kernel", str(plugin_path))
-            if func:
-                print(f"✓ test_custom: loaded successfully from {source}")
-            else:
-                print(f"✗ test_custom: not found")
-        else:
-            print(f"✗ test_custom: not in available list")
+
+        func = get_plugin_function("test_custom", "golden", "kernel", str(plugin_path))
+        assert func is not None, "test_custom 应加载成功"
+        print("✓ test_custom: loaded successfully")
 
 
 def test_priority():
-    """Test priority: custom > builtin"""
-    print("\n=== Test priority: custom > builtin ===")
-    
+    """Test priority: custom plugin loads when provided"""
+    print("\n=== Test priority: custom plugin ===")
+
     with tempfile.TemporaryDirectory() as tmpdir:
         plugin_path = Path(tmpdir) / "custom_plugins"
         plugin_path.mkdir()
-        
+
         override_file = plugin_path / "override_relu.py"
         override_file.write_text("""#!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
@@ -112,45 +70,21 @@ __golden__ = {
 }
 """)
 
-        func, source = get_plugin_function("relu", "golden", "kernel", str(plugin_path))
-        if func:
-            print(f"✓ Custom relu loaded (overrides builtin) from {source}")
-        else:
-            print(f"✗ Failed to load custom relu")
-
-
-def test_invalid_plugin_type():
-    """Test invalid plugin type"""
-    print("\n=== Test invalid plugin type ===")
-    
-    try:
-        get_available_operators("invalid_type", "kernel")
-        print("✗ Should have raised KeyError")
-    except KeyError as e:
-        print(f"✓ Correctly raised KeyError: {e}")
-
-
-def test_invalid_golden_type():
-    """Test invalid golden type"""
-    print("\n=== Test invalid golden type ===")
-    
-    try:
-        get_available_operators("golden", "invalid_type")
-        print("✗ Should have raised KeyError")
-    except KeyError as e:
-        print(f"✓ Correctly raised KeyError: {e}")
+        func = get_plugin_function("relu", "golden", "kernel", str(plugin_path))
+        assert func is not None, "custom plugin 未加载"
+        assert callable(func)
+        assert func.__name__ == "custom_relu_golden"
 
 
 def test_spec_priority_over_custom():
-    """测试优先级：spec > custom > builtin"""
-    print("\n=== Test priority: spec > custom > builtin ===")
+    """测试优先级：spec > custom"""
+    print("\n=== Test priority: spec > custom ===")
 
     examples_path = str(Path(__file__).resolve().parent.parent / "ttk" / "test_spec" / "examples")
 
-    func, source = get_plugin_function("add", "golden", "kernel", examples_path)
+    func = get_plugin_function("add", "golden", "kernel", examples_path)
     assert func is not None, "应找到 add 的 spec golden"
-    assert source == "spec", f"期望 source='spec'，实际 source='{source}'"
-    print(f"✓ add: 从 {source} 加载（spec 优先）")
+    print("✓ add: spec golden 加载成功（spec 优先）")
 
 
 def test_spec_input():
@@ -159,32 +93,26 @@ def test_spec_input():
 
     examples_path = str(Path(__file__).resolve().parent.parent / "ttk" / "test_spec" / "examples")
 
-    func, source = get_plugin_function("histogram_input", "input", "kernel", examples_path)
+    func = get_plugin_function("histogram_input", "input", "kernel", examples_path)
     assert func is not None, "应找到 histogram_input 的 spec customize_inputs"
-    assert source == "spec", f"期望 source='spec'，实际 source='{source}'"
-    print(f"✓ histogram_input: customize_inputs 从 {source} 加载")
+    print("✓ histogram_input: customize_inputs 加载成功")
 
 
 def test_spec_fallback_to_builtin():
-    """测试无 spec 时回退到 builtin"""
-    print("\n=== Test spec fallback to builtin ===")
+    """测试无 spec 时 plugin_loader 不再 builtin 兜底,返回 None"""
+    print("\n=== Test spec fallback (no builtin in plugin_loader) ===")
 
     examples_path = str(Path(__file__).resolve().parent.parent / "ttk" / "test_spec" / "examples")
 
-    func, source = get_plugin_function("relu", "golden", "kernel", examples_path)
-    if func is not None:
-        assert source != "spec", "relu 不应匹配 spec"
-        print(f"✓ relu: 回退到 {source}")
-    else:
-        print(f"✓ relu: 无 spec 也无 builtin — 返回 None")
+    func = get_plugin_function("relu", "golden", "kernel", examples_path)
+    assert func is None, "relu 无 spec 时 plugin_loader 应返回 None(builtin 兜底已移到流程层)"
 
 
 if __name__ == "__main__":
-    test_builtin_golden_functions()
-    test_builtin_aclnn_functions()
     test_custom_golden_functions()
     test_priority()
-    test_invalid_plugin_type()
-    test_invalid_golden_type()
-    
+    test_spec_priority_over_custom()
+    test_spec_input()
+    test_spec_fallback_to_builtin()
+
     print("\n=== All tests completed ===")

@@ -3,6 +3,8 @@ import argparse
 
 def add_common_args(parser):
     parser.add_argument("-i", "--input", required=True, help="CSV test case file")
+    parser.add_argument("--config", default=None,
+                        help="Path to ttk config YAML (overrides ~/.config/ttk/ and ./ttk.conf.yaml)")
     parser.add_argument("-o", "--output", help="Output CSV file")
     parser.add_argument("-t", "--testcase", help="Specify testcase name(s), comma-separated")
     parser.add_argument("--ti", "--testcase-index", dest="testcase_index",
@@ -16,9 +18,10 @@ def add_common_args(parser):
     parser.add_argument("--seed", "--random-seed", type=int, dest="random_seed", help="Random seed")
     parser.add_argument("--input-dist", dest="input_dist", choices=["uniform", "normal"],
                         default="uniform", help="Input data distribution (default: uniform)")
-    parser.add_argument("--compare", default="close",
-                        choices=["close", "cosine", "binary", "requant"],
-                        help="Comparison method (default: close)")
+    parser.add_argument("--compare", default=None,
+                        choices=["close", "stat_rel_err", "cosine", "binary", "requant", "cross_check"],
+                        help="Comparison method. Default: per-output routing via Spec.tolerance "
+                             "(requires --plugin), else stat_rel_err.")
     parser.add_argument("--golden-mode", dest="golden_mode", default="Enable",
                         choices=["Enable", "Disable", "Promote"],
                         help="Golden generation mode (default: Enable)")
@@ -51,3 +54,7 @@ def add_common_args(parser):
                         help="Profile E2E duration (default: true)")
     parser.add_argument("--po", "--progress-output", dest="progress_output",
                         help="Progress output file")
+    parser.add_argument("--provider", default=None,
+                        help="Which providers to TEST (e.g. torch,tf). "
+                             "Test filter — narrows dispatch, does NOT override remote config. "
+                             "If not set, uses the first available key from spec's third_party.")

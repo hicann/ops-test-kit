@@ -34,6 +34,7 @@ def _make(api_name="torch.dummy", **kwargs):
 
 @pytest.fixture
 def make_testcase():
+    """Local override: TestcaseE2e (overrides conftest's TestcaseAclnn)."""
     return _make
 
 

@@ -15,32 +15,41 @@ import numpy as np
 from typing import List, Tuple, Union
 
 # Third-party Packages
-from .registry import ComparisonRegister
+from .registry import ComparisonRegister, FAIL_REASONS
 from ...utilities import get
 
 
 __all__ = ["compare"]
 
+_P2_TOKENS = {"quant"}
+
 
 def compare(outputs: Union[Tuple[np.ndarray], List[np.ndarray]],
             goldens: Union[Tuple[np.ndarray], List[np.ndarray]],
             output_dtypes: tuple,
-            methods: Union[str, list, tuple] = 'close',
-            options: dict = None) -> (str, str, bool):
-    from .binary_equal import BinaryComparison
-    from .cosine_similarity import CosineSimilarityComparison
-    from .is_close import CloseComparison
-    from .re_quantize import ReQuantizeComparison
-
+            *,
+            standards,
+            third_parties=None) -> (str, str, bool, dict):
+    """逐输出比对。standards: resolve_tolerance 产出（与 outputs 同长）。
+    返回 (precision_str, log, is_pass, metrics_dict)。"""
+    # 触发 @register_comparison 装饰器（注册到 ComparisonRegister.registry）
+    from .binary_equal import BinaryComparison  # noqa: F401
+    from .cosine_similarity import CosineSimilarityComparison  # noqa: F401
+    from .is_close import CloseComparison  # noqa: F401
+    from .re_quantize import ReQuantizeComparison  # noqa: F401
+    from .stat_rel_err import StatRelErrComparison  # noqa: F401
+    from .cross_check import CrossCheckComparison  # noqa: F401
     if not outputs:
         return ("UNKNOWN",
                 "Output or Golden data is empty, compare result UNKNOWN\n",
-                False)
+                False, {})
 
-    if not isinstance(methods, (list, tuple)):
-        methods = (methods,)
+    if third_parties and not isinstance(outputs[0], str) and len(third_parties) < len(outputs):
+        return ("COMPARE_FAILURE",
+                f"third_parties({len(third_parties)}) < outputs({len(outputs)})",
+                False, {"reason": FAIL_REASONS["third_party_count_mismatch"]})
 
-    total_precision, total_pass, total_log = [], [], ""
+    total_precision, total_pass, total_log, total_metrics = [], [], "", {}
     for idx, data_pair in enumerate(zip(outputs, goldens)):
         output, golden = data_pair
         if isinstance(output, str):
@@ -55,27 +64,30 @@ def compare(outputs: Union[Tuple[np.ndarray], List[np.ndarray]],
             total_precision.append("SUPPRESSED")
             total_pass.append(True)
             continue
+        if output is None:
+            total_precision.append("NO_OUTPUT")
+            total_pass.append(False)
+            continue
 
-        method = get(methods, idx)
-        dtype_str = str(output.dtype).split('.')[-1]
-        if (dtype_str in ('float8_e5m2', 'float8_e4m3fn', 'hifloat8') and
-                method not in ('bin', 'binary', 'requant')):
-            method = 'requant'
-        elif dtype_str in ('float4_e2m1', 'float4_e1m2', 'float8_e8m0'):
-            method = 'bin'
-        comparison = ComparisonRegister.registry.get(method.lower())
+        token = standards[idx].token
+        comparison = ComparisonRegister.registry.get(token.lower())
         if comparison is None:
-            raise ValueError(f"Comparison method [{method}] is not recognized.")
-        c = comparison(output, golden, idx,
-                       get(output_dtypes, idx), options)
+            if token in _P2_TOKENS:
+                raise NotImplementedError(f"Comparison standard [{token}] is accepted in Spec.tolerance "
+                                          f"but not yet implemented.")
+            raise ValueError(f"Comparison standard [{token}] is not recognized.")
+        c = comparison(output, golden, idx, get(output_dtypes, idx),
+                       standards[idx].params,
+                       third_party=get(third_parties, idx) if third_parties else None)
 
-        precision, log, is_pass = c.compare()
+        precision, log, is_pass, metrics = c.compare()
         total_precision.append(precision)
         total_pass.append(is_pass)
         total_log += log
+        total_metrics[idx] = metrics
         gc.collect()
 
-    return ','.join(total_precision), total_log, all(total_pass)
+    return ','.join(total_precision), total_log, all(total_pass), total_metrics
 
 
 def _filter_fake_fail(output: str):

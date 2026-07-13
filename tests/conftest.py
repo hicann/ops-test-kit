@@ -1,18 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: UTF-8 -*-
-# Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Agreement Version 2.0 (the "License").
-# See LICENSE in the root of the software repository for the full text of the License.
-
-"""
-Pytest configuration and shared fixtures for ttk tests.
-
-Provides:
-  - Device-free test isolation (autouse)
-  - Shared helpers for constructing mock testcase structures
-"""
-
 import pytest
 
 
@@ -27,16 +12,8 @@ def isolate_ttk_environment(monkeypatch):
 
 @pytest.fixture
 def make_testcase():
-    """Factory fixture to create TestcaseAclnn instances for testing.
-
-    Usage:
-        case = make_testcase(
-            api_name="aclnnDummy",
-            tensor_view_shapes=(((3,3),(3,2)), (3,5)),
-            tensor_dtypes=("float32",),
-        )
-    """
-
+    """Factory: TestcaseAclnn instances (shared global; test_testcase_e2e.py
+    overrides locally with TestcaseE2e)."""
     def _make(api_name="aclnnDummy", **kwargs):
         from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
         case = TestcaseAclnn()
@@ -47,5 +24,18 @@ def make_testcase():
         for k, v in kwargs.items():
             setattr(case, k, v)
         return case
-
     return _make
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _load_default_config():
+    """所有测试前加载默认 config 一次（替代被删的 get_config lazy fallback）。
+
+    删 lazy fallback 后 get_config() 不再自动加载；这个 session fixture 保证
+    _config 已加载默认配置链（default.yaml + ~/.config/ttk + ./ttk.conf.yaml），
+    测试可直接 get_config()。需要自定义 config 的测试在测试体内显式
+    load_config(yaml)，测完 load_config() 恢复默认。
+    """
+    from ttk.config.loader import load_config
+    load_config()
+    yield

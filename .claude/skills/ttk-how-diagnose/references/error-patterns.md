@@ -52,6 +52,7 @@ source $ASCEND_CUSTOM_PATH/bin/setenv.bash
 | 报错信息 | 原因 | 修复 |
 |---------|------|------|
 | Golden 函数不生效 | 未传 `--plugin` 参数 | 命令行加 `--plugin my_plugin.py` |
-| 注册名未匹配 | `__golden__` 字典中的 key 与 CSV 不一致 | 确保 `__golden__` 中的 key 与 CSV 的 `op_name` 或 `api_name` 完全一致 |
+| Spec 未匹配 | TestSpec 类名/`__spec__` 注册名与 CSV 不一致 | 确保类名遵循 `PascalCase+TestSpec`（如 `AbsTestSpec`）或 `__spec__` dict 的 key 与 CSV `op_name`/`api_name` 一致 |
 | 插件加载报错 | 语法或运行时错误 | 用 `python3 -c "import ast; ast.parse(open('my_plugin.py').read())"` 检查语法 |
 | 同名注册覆盖 | 多个插件注册相同算子名 | 确保注册名称唯一，后加载会覆盖并打印警告 |
+| TestSpec 加载失败 | `__spec__` 文件语法错或 Spec 类定义有误 | 检查 `__spec__` 标记与 Spec 类；语法错会记 error 日志（仅 `__spec__` 文件） |

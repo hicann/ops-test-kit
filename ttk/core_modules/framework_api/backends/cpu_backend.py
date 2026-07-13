@@ -5,26 +5,41 @@
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+from __future__ import annotations
 
+"""CPU backend (for golden baseline or no-device testing).
 
-import torch
+Renamed from CpuBackend. CPU has no ``torch.cpu.get_device_name`` (torch exposes
+no ``torch.cpu`` module), so device_name is permanently overridden to alias()
+('cpu') — this is the contract, not a placeholder. CPU backends never go
+through the profiler ``_build`` path (which would inject torch_lib/profile), so
+both are provided as class attributes here for state self-consistency.
+"""
 
-from .base import Backend
+from .torch_backend import TorchBackend
 from ....utilities import numpy_to_torch_tensor, torch_to_numpy_tensor
 
 
-class CpuBackend(Backend):
+class CpuTorchBackend(TorchBackend):
     """CPU backend (for golden baseline or no-device testing)."""
 
-    def device_name(self):
-        return "cpu"
+    torch_lib = "cpu"
+    # torch_lib key mirrors what _build injects for config-driven backends, so
+    # TorchProfiler.__init__ reading profile["torch_lib"] works uniformly.
+    profile = {"torch_lib": "cpu", "profiler": {"activities": ["CPU"]}}
+    # alias = segment name. CPU never goes through _build, so set the class
+    # attribute directly (mirrors the torch_lib/profile class-attr pattern).
+    _segment_name = "cpu"
 
-    def is_available(self):
+    def device_name(self, dev_id: int = 0) -> str:
+        return self.alias()  # CPU has no torch.cpu.get_device_name
+
+    def is_available(self) -> bool:
         return True
 
-    def device_count(self):
+    def device_count(self) -> int:
         return 1
 
     def to_device(self, tensor, dev_id=0):
@@ -38,6 +53,6 @@ class CpuBackend(Backend):
 
     def to_numpy(self, tensor):
         return torch_to_numpy_tensor(tensor.detach().contiguous())
-    
-    def use_device(self):
+
+    def use_device(self) -> bool:
         return False

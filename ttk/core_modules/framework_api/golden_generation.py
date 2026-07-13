@@ -25,7 +25,7 @@ from ttk.core_modules.plugin_loader import get_plugin_function
 from ttk.utilities.container_utils import apply_as_list, flatten_nested_sequence
 
 from .api_resolver import resolve_api
-from .backends.cpu_backend import CpuBackend
+from .backends.cpu_backend import CpuTorchBackend as CpuBackend
 from .framework_api_info_keeper import FrameworkApiInfoKeeper
 
 _cpu_backend = CpuBackend()
@@ -67,7 +67,7 @@ def generate_golden(testcase, raw_inputs, plugin_path=None, switches=None, backe
                                api_info=golden_api_info)
 
     # --- Priority 2: Custom plugin via plugin_loader ---
-    func, _ = get_plugin_function(api_name, "golden", "e2e", plugin_path)
+    func = get_plugin_function(api_name, "golden", "e2e", plugin_path)
     if func is not None:
         return _call_plugin_with_plan(testcase, func, switches, backend)
 

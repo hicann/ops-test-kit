@@ -34,6 +34,8 @@ class SoftmaxComposeSpec:
         return [exp_x / numpy.sum(exp_x, axis=axis, keepdims=True)]
 
     class NpuDecomposeImpl:
+        # 参数绑定契约见 README「类形式参数绑定」: input/attr 喂给声明它的方法
+        # (axis 属性→__init__, x 输入→__call__); 同名参数两边都喂; 有默认值可省略。
         def __init__(self, *, axis=-1, **kwargs):
             self.axis = axis
 
@@ -52,7 +54,7 @@ class SoftmaxComposeSpec:
 # Explicit registration: class names use *Spec suffix (not *TestSpec),
 # so __spec__ dict is needed for discovery.
 __spec__ = {
-    "softmax_simple": SoftmaxSimpleSpec,
-    "softmax_multi_vendor": SoftmaxMultiVendorSpec,
-    "softmax_compose": SoftmaxComposeSpec,
+    "softmax_simple": "SoftmaxSimpleSpec",
+    "softmax_multi_vendor": "SoftmaxMultiVendorSpec",
+    "softmax_compose": "SoftmaxComposeSpec",
 }

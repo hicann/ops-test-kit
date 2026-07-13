@@ -142,10 +142,12 @@ python3 -m ttk kernel -i cases.csv --dump in,golden --dump-format npy
 
 | 场景 | 推荐方法 | 参数 |
 |------|---------|------|
-| 浮点运算常规测试 | 数值近似 | `--compare close`（默认） |
+| 浮点运算常规测试（默认） | 统计相对误差（社区标准） | `--compare stat_rel_err`（默认） |
+| 逐点 isclose | 数值近似 | `--compare close` |
 | 大规模向量整体趋势 | 余弦相似度 | `--compare cosine` |
 | 整型运算/需要精确结果 | 二进制精确 | `--compare binary` |
 | float8类型 | 重量化 | `--compare requant`（自动） |
+| 三方交叉校验 | 三方交叉校验 | `--compare cross_check`（需 `third_party`） |
 
 ## 如何调整精度容差？
 
@@ -164,7 +166,7 @@ absolute_precision,1e-8
 ## 自定义Golden函数不生效
 
 1. 确认已通过 `--plugin` 参数传入插件文件路径
-2. 确认 `@register_golden(["op_name"])` 中的算子名与CSV中的 `op_name` 一致
+2. 确认 TestSpec 类名/`__spec__` 注册名与CSV中的 `op_name` 一致（类名遵循 `PascalCase+TestSpec`，如 `AbsTestSpec`）
 3. 检查插件文件是否有语法错误
 
 ## 多个插件有同名算子注册

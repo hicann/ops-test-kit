@@ -98,6 +98,9 @@ class TestcaseOp(TestcaseBase):
                  "tf_func",
                  "kb_pid",
                  "core_type",
+                 # XPU third-party
+                 "xpu_results",
+                 "golden_mode_override",
                  # private
                  "_computed_list_distribution",
                  "_input_distribution",
@@ -127,6 +130,7 @@ class TestcaseOp(TestcaseBase):
                  "_bin_tensor_dict",
                  "_dyn_input_ranges_cache",
                  "_dyn_output_ranges_cache",
+                 "xpu_results",
                  )
     identity_headers: Dict[str, tuple] = {
         **TestcaseBase.identity_headers,
@@ -247,6 +251,7 @@ class TestcaseOp(TestcaseBase):
         self._bin_tensor_dict: Optional[Tuple[Tuple[dict], Tuple[dict]]] = None
         self._dyn_input_ranges_cache: Optional[tuple] = None
         self._dyn_output_ranges_cache: Optional[tuple] = None
+        self.xpu_results: dict = {}
 
     @property
     def cst_clear_atomic(self):

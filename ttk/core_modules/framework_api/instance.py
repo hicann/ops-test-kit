@@ -27,10 +27,10 @@ class FrameworkApiInstance(InstanceBase):
     def __init__(self):
         super().__init__()
         switches = get_global_storage()
-        self.backend = get_backend(switches.backend_name)
-        if self.backend.device_name() == 'cpu':
+        self.backend = get_backend(switches.force_cpu)
+        if not self.backend.use_device():
             switches.proc_no_reuse = True
-        logging.info(f"Framework API mode: backend={self.backend.device_name()}")
+        logging.info(f"Framework API mode: backend={self.backend.alias()}")
 
     def env_prepare(self):
         pass
@@ -44,7 +44,7 @@ class FrameworkApiInstance(InstanceBase):
     def get_device_platform(self):
         switches = get_global_storage()
         if switches.dev_plat == "AUTO":
-            switches.dev_plat = self.backend.soc_version()
+            switches.dev_plat = self.backend.device_name()
         switches.short_soc_version = self.backend.soc_series()
         logging.info(f"Device platform: {switches.dev_plat}")
 
@@ -54,4 +54,4 @@ class FrameworkApiInstance(InstanceBase):
         )
 
     def device_info(self, dev_id: int) -> str:
-        return f"{self.backend.device_name()}:{dev_id}"
+        return f"{self.backend.alias()}:{dev_id}"

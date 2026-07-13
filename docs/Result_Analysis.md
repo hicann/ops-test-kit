@@ -33,10 +33,14 @@ Use `--compare` to select the comparison method:
 
 | Method | Value | Description | Default Tolerance |
 |--------|-------|-------------|-------------------|
-| Numeric approximation | `close` (default) | Uses `np.isclose()`/`torch.isclose()` | fp16/bf16: rtol=0.001; fp32: rtol=0.0001; atol=1e-8 |
+| Statistical relative error (community standard) | `stat_rel_err` (default) | Per-dtype statistical relative error with community thresholds | Per-dtype threshold table |
+| Numeric approximation | `close` | Uses `np.isclose()`/`torch.isclose()` | fp16/bf16: rtol=0.001; fp32: rtol=0.0001; atol=1e-8 |
 | Cosine similarity | `cosine` | Vector cosine similarity | rtol=0.01 |
 | Binary exact | `binary` | Bit-exact comparison | No tolerance |
 | Requantization | `requant` | For float8 types (e5m2/e4m3fn/hifloat8) | Auto-adapted |
+| Three-party cross-check | `cross_check` | output/golden/third_party ratio; needs `third_party` (fp16/bf16/fp32) | mare/mere/rmse ratio + level presets |
+
+> Default: `--compare` unset → per-output routing via `Spec.tolerance` (needs `--plugin`), else `stat_rel_err`.
 
 ## Auto-Switch Rules
 

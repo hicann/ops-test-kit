@@ -20,6 +20,25 @@ import copy
 BFP16_NEEDS_FP32_FOR_NPY: Optional[bool] = None
 
 
+# Shared dtype promotion map for golden "Promote" mode.
+#
+# Used by BOTH flows:
+#   - KERNEL (output_generation.__promote_dtype) — numpy arrays
+#   - ACLNN   (golden_generation._promote_dtype)  — torch tensors
+#
+# Promoting to a wider dtype yields the "true value" of the op computed at
+# higher precision, against which the low-precision NPU output is compared.
+# Kept here (not in either flow module) to avoid a cross-flow import dependency
+# and duplication.
+DTYPE_PROMOTE_MAP: dict = {
+    "float16": "float32",
+    "bfloat16": "float32",
+    "float32": "float64",
+    "complex32": "complex64",
+    "complex64": "complex128",
+}
+
+
 dtype_width_map = {
     "complex32": 4,
     "complex64": 8,

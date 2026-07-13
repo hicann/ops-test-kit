@@ -4,6 +4,8 @@
 
 ---
 
+> 文档中出现的硬件厂商名仅作示例，TTK 通过配置驱动支持任意符合接口的硬件加速器。
+
 # 环境准备
 
 1、基本环境配置
@@ -26,8 +28,8 @@ pip install -r requirements.txt
 # NPU后端
 pip install ".[e2e-npu]"
 
-# GPU后端
-pip install ".[e2e-gpu]"
+# MLU后端
+pip install ".[e2e-xpu]"
 ```
 
 # 测试用例编写
@@ -80,27 +82,22 @@ npu_conv2d_f16,torch_npu.npu_conv2d,"((1,3,224,224),(64,3,7,7),(64,))","('float1
 
 ## 后端选择
 
-E2E 模式由统一的 Backend 抽象层（`ttk.core_modules.framework_api.backends`）驱动 NPU/GPU/CPU 三种后端，三者共享同一套用例解析、输入生成与精度比对逻辑。CPU 后端通常用作 Golden 计算源。
+E2E 模式由统一的 Backend 抽象层（`ttk.core_modules.framework_api.backends`）驱动 NPU/MLU/CPU 等后端，各后端共享同一套用例解析、输入生成与精度比对逻辑。CPU 后端通常用作 Golden 计算源。后端按配置 hardware segment（`yaml` 的 `frameworks.torch.<seg>`）自动选择可用后端，`--cpu` 强制 CPU 后端。
 
-| 后端 | 参数值 | 依赖 |
-|------|--------|------|
-| NPU | `npu` | torch + torch_npu |
-| GPU | `gpu` | torch (CUDA) |
-| CPU | `cpu` | torch |
-
-未传 `--backend` 时按 NPU > GPU > CPU 优先级自动检测可用后端。
+| 后端 | 依赖 |
+|------|------|
+| NPU | torch + torch_npu |
+| MLU | torch (MLU) |
+| CPU | torch |
 
 ## 执行命令
 
 ```shell
-# NPU后端
-python3 -m ttk e2e -i torch_add.csv --backend npu
+# 自动按配置 hardware segment 选择可用后端
+python3 -m ttk e2e -i torch_add.csv
 
-# GPU后端
-python3 -m ttk e2e -i torch_add.csv --backend gpu
-
-# CPU后端（常用于Golden生成）
-python3 -m ttk e2e -i torch_add.csv --backend cpu
+# 强制 CPU 后端（常用于Golden生成）
+python3 -m ttk e2e -i torch_add.csv --cpu
 ```
 
 ## 执行流程
@@ -115,13 +112,13 @@ E2E模式的执行流程如下：
 
 ```shell
 # 使用余弦相似度比对
-python3 -m ttk e2e -i torch_add.csv --backend npu --compare cosine
+python3 -m ttk e2e -i torch_add.csv --compare cosine
 
 # 失败时自动Dump数据
-python3 -m ttk e2e -i torch_add.csv --backend npu --dump-on-fail
+python3 -m ttk e2e -i torch_add.csv --dump-on-fail
 
 # Dump数据为npy格式
-python3 -m ttk e2e -i torch_add.csv --backend npu --dump full --dump-format npy
+python3 -m ttk e2e -i torch_add.csv --dump full --dump-format npy
 ```
 
 精度对比方法的详细说明请参考：[结果分析](../结果分析.md)
@@ -129,20 +126,23 @@ python3 -m ttk e2e -i torch_add.csv --backend npu --dump full --dump-format npy
 # 常用场景示例
 
 ```shell
-# torch.add 基础测试
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --backend npu
+# torch.add 基础测试（自动选择可用后端）
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
 
 # torch_npu.npu_conv2d（使用golden_api）
-python3 -m ttk e2e -i examples/case_store/e2e/torch_npu_conv2d.csv --backend npu
+python3 -m ttk e2e -i examples/case_store/e2e/torch_npu_conv2d.csv
+
+# 强制 CPU 后端
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --cpu
 
 # 指定用例运行
-python3 -m ttk e2e -i torch_add.csv --backend npu -t add_f32_01
+python3 -m ttk e2e -i torch_add.csv -t add_f32_01
 
 # 固定随机种子
-python3 -m ttk e2e -i torch_add.csv --backend npu --seed 42
+python3 -m ttk e2e -i torch_add.csv --seed 42
 
 # 输出结果
-python3 -m ttk e2e -i torch_add.csv --backend npu -o results.csv
+python3 -m ttk e2e -i torch_add.csv -o results.csv
 
 # 仅校验CSV用例格式（不下设备，所有模式通用）
 python3 -m ttk e2e -i torch_add.csv --validate

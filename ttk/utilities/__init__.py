@@ -24,5 +24,6 @@ from .plugin import CommonPlugin
 from .data import RandomData
 from .plog_utils import extract_plog_errors
 from .proc import *
+from .func_dispatch import framework_of, bind_by_name, resolve_callable_str, UnknownParamError
 VERSION = "3.0.0"
 FAQ = ""

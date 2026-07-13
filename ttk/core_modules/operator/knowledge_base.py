@@ -16,6 +16,7 @@ import os
 import time
 from contextlib import contextmanager
 # Third-party Packages
+from ...utilities import set_thread_name
 from ...utilities.platform import get_npu_hw_info
 from ..tbe_multiprocessing import get_process_context
 
@@ -56,6 +57,7 @@ class KnowledgeBaseInterface:
 
 
 def knowledge_base_sequence():
+    set_thread_name("MT")
     interface = KnowledgeBaseInterface()
     with interface.knowledge_base():
         while get_process_context().get_data("switch"):

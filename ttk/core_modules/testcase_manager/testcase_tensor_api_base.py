@@ -15,7 +15,7 @@ __all__ = ["TensorApiTestcaseBase"]
 from .testcase_base import TestcaseBase
 from ...utilities import get, shape_stride
 from ...utilities.container_utils import (
-    infer_list_distribution_from_nesting, flatten_nested_sequence
+    infer_list_distribution_from_nesting, flatten_nested_sequence, deep_flatten
 )
 
 
@@ -46,6 +46,8 @@ class TensorApiTestcaseBase(TestcaseBase):
         "_output_dist",
         "_param_plan_cache",
         "_flat_tensor_view_shapes",
+        "_flat_tensors",
+        "_flat_scalars",
         "_flat_tensor_dtypes",
         "_flat_tensor_formats",
         "_flat_tensor_storage_shapes",
@@ -81,6 +83,8 @@ class TensorApiTestcaseBase(TestcaseBase):
         self._output_dist = None
         self._param_plan_cache = None
         self._flat_tensor_view_shapes = None
+        self._flat_tensors = None
+        self._flat_scalars = None
         self._flat_tensor_dtypes = None
         self._flat_tensor_formats = None
         self._flat_tensor_storage_shapes = None
@@ -151,6 +155,20 @@ class TensorApiTestcaseBase(TestcaseBase):
         else:
             self._flat_tensor_dtypes = self.tensor_dtypes
         return self._flat_tensor_dtypes
+
+    @property
+    def flatten_tensors(self):
+        if self._flat_tensors is not None:
+            return self._flat_tensors
+        self._flat_tensors = deep_flatten(self.tensors) if self.tensors is not None else None
+        return self._flat_tensors
+
+    @property
+    def flatten_scalars(self):
+        if self._flat_scalars is not None:
+            return self._flat_scalars
+        self._flat_scalars = deep_flatten(self.scalars) if self.scalars is not None else None
+        return self._flat_scalars
 
     @property
     def flat_tensor_formats(self):
@@ -266,6 +284,17 @@ class TensorApiTestcaseBase(TestcaseBase):
         else:
             self._flat_absolute_precision = self.absolute_precision
         return self._flat_absolute_precision
+
+    def invalidate_flat_cache(self, *fields):
+        """Invalidate flat cache(s) by field name.
+
+        Example: invalidate_flat_cache("tensor_dtypes") sets self._flat_tensor_dtypes = None.
+        Uses hasattr guard: nonexistent _flat_{field} is safely skipped.
+        """
+        for field in fields:
+            attr = f"_flat_{field}"
+            if hasattr(self, attr):
+                setattr(self, attr, None)
 
     # ========== Per-flat-index accessors ==========
 

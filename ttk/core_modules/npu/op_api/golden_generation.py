@@ -35,6 +35,28 @@ from ...testcase_manager import TestcaseAclnn
 from ...aclnn import OpApiInfoKeeper, OpApiInfo
 from ....utilities import get_global_storage
 from ....utilities import camel_to_snake, acl_to_torch_dtype
+from ....utilities import framework_of, bind_by_name, resolve_callable_str
+from ....utilities import DTYPE_PROMOTE_MAP, str_to_torch_dtype, is_torch_native_dtype
+from ....utilities.container_utils import deep_flatten, apply_as_list
+
+
+ACLNN_GOLDEN: dict = {
+    "aclnnInplaceOne": "torch.ops.aten.ones_like",
+    "aclnnInplaceZero": "torch.ops.aten.zeros_like",
+    "aclnnMaxDim": "torch.ops.aten.max",
+    "aclnnMax": "torch.ops.aten.amax",
+    "aclnnVarCorrection": "torch.ops.aten.var",
+    "aclnnStdMeanCorrection": "torch.ops.aten.std_mean",
+    "aclnnIsFinite": "torch.ops.aten.isfinite",
+    "aclnnIsInf": "torch.ops.aten.isinf",
+    "aclnnIsClose": "torch.ops.aten.isclose",
+    "aclnnMatmul": "torch.mm",
+    "aclnnBatchMatMul": "torch.bmm",
+    "aclnnArgMax": "torch.argmax",
+    "aclnnAminmaxAll": "torch.aminmax",
+    "aclnnAminmaxDim": "torch.aminmax",
+    "aclnnLogSumExp": "torch.logsumexp",
+}
 
 
 class GoldenGenerator:
@@ -59,25 +81,11 @@ class GoldenGenerator:
         logging.warning("Using manually configured golden data")
         return None
 
-    def _call_builtin_golden(self, gf):
-        # NOTE: DO NOT COMMENT this below.
-        import torch
-        if isinstance(gf, str):
-            gf = eval(gf)
-        # noinspection PyBroadException
-        try:
-            golden_parameters = inspect.signature(gf).parameters
-        except:
-            golden_parameters = []
-        with self._golden_mode():
-            if "context" in golden_parameters:
-                results = gf(self._ctx)
-            else:
-                # construct golden params without outputs.
-                tensors = self._package_golden_tensors()
-                kwargs = self._package_golden_torch_kwargs()
-                results = gf(*tensors, **kwargs)
-        return results
+    def _call_torch_api(self, gf):
+        """ACLNN torch API golden:packaged tensors + torch-convention kwargs → gf(*tensors, **kwargs)。"""
+        tensors = self._package_golden_tensors()
+        kwargs = self._package_golden_torch_kwargs()
+        return gf(*tensors, **kwargs)
 
     def _call_custom_golden(self, gf):
         plan = self._ctx.get_param_plan()
@@ -94,23 +102,59 @@ class GoldenGenerator:
         results = gf(*args, **kwargs)
         return results
 
+    def _named_values(self):
+        """Build a name→value pool (input tensors + scalars + attrs) for class-form bind_by_name."""
+        pool = {}
+        op_api_info = OpApiInfoKeeper().info_of(self._ctx.api_name)
+        tensors = self._package_golden_tensors()       # input tensors only (pure outputs skipped)
+        if op_api_info is not None:
+            # op_api_info.tensors includes input+output names; skip pure_output_indexes to align with tensors.
+            # NOTE: TensorList (one param → multiple flat tensors) may break this 1:1 alignment.
+            names = [n for i, n in enumerate(op_api_info.tensors)
+                     if i not in self._ctx.pure_output_indexes]
+            assert len(names) == len(tensors), \
+                f"_named_values alignment mismatch: {len(names)} names vs {len(tensors)} tensors " \
+                f"(possible TensorList nesting — name count != flat tensor count)"
+            for name, t in zip(names, tensors):
+                pool[name] = t
+            for idx, s in enumerate(self._ctx.flatten_scalars or ()):
+                if idx < len(op_api_info.scalars):
+                    pool[op_api_info.scalars[idx]] = s
+        pool.update(self._ctx.attributes or {})
+        return pool
+
+    def _invoke_class(self, cls):
+        pool = self._named_values()
+        if cls.__init__ is object.__init__:
+            inst = cls()
+        else:
+            ia, ik = bind_by_name(cls.__init__, pool)
+            inst = cls(*ia, **ik)
+        ca, ck = bind_by_name(inst.__call__, pool)
+        # Promote-context wrap is now applied at the outer _invoke_golden dispatch.
+        return inst(*ca, **ck)
+
+    def _invoke_golden(self, golden_func):
+        if isinstance(golden_func, str):
+            golden_func = resolve_callable_str(golden_func)
+        # Promote-context wrap around the ENTIRE dispatch (class / torch / custom)
+        # — custom goldens also need promoted bfloat16/float16 inputs.
+        with self._golden_mode():
+            if isinstance(golden_func, type):
+                return self._invoke_class(golden_func)
+            if framework_of(golden_func) == "torch":
+                return self._call_torch_api(golden_func)
+            return self._call_custom_golden(golden_func)
+
     def _generate_golden(self):
-        golden_func, src = self._import_golden_funcs()
-        disable_builtin = int(os.getenv("TTK_DISABLE_BUILTIN", "0"))
+        golden_func = self._import_golden_funcs()
         if golden_func is None:
-            logging.warning(f"Golden data generation method for [{self._ctx.api_name}] "
-                            f"is not registered!")
+            logging.warning(f"Golden data generation method for [{self._ctx.api_name}] is not registered!")
             golden_arrays = ["UNSUPPORTED"]
-        elif src == 'builtin' and disable_builtin:
-            logging.warning(f"builtin golden for [{self._ctx.api_name}] is disabled!")
-            golden_arrays = ["SUPPRESSED"]
         else:
             # noinspection PyBroadException
             try:
-                if src == 'builtin':
-                    golden_results = self._call_builtin_golden(golden_func)
-                else:
-                    golden_results = self._call_custom_golden(golden_func)
+                golden_results = self._invoke_golden(golden_func)
             except TimeoutError:
                 logging.exception("Golden generation timeout")
                 golden_results = ["GOLDEN_TIMEOUT"]
@@ -123,15 +167,18 @@ class GoldenGenerator:
         return golden_arrays
 
     def _import_golden_funcs(self):
-        golden_func, src = get_plugin_function(
+        golden_func = get_plugin_function(
             self._ctx.api_name, 'golden', 'aclnn', self._switch.plugin_path)
         if golden_func:
-            return golden_func, src
+            return golden_func
+        golden_func = ACLNN_GOLDEN.get(self._ctx.api_name, None)
+        if golden_func:
+            return golden_func
         else:
             snake_api_name = camel_to_snake(self._ctx.api_name[5:])
             func = self._auto_import_from_torch(snake_api_name)
             # TD: skip searching next time. optimize later.
-            return func, 'builtin'
+            return func
 
     def _find_torch_api(self, torch_module, snake_name: str):
         # find torch.snake_name
@@ -180,8 +227,60 @@ class GoldenGenerator:
             yield from self._promote_dtype()
 
     def _promote_dtype(self):
-        # TODO
-        yield
+        """Promote low-precision input tensors+scalars to higher precision for golden (true value), restore after.
+
+        ctx.tensors may be numpy or torch (decided by input_generation) — promoted in-place
+        via .to() (torch) or .astype() (numpy), type preserved.
+        If source dtype is non-torch-native but target is (cross-boundary), raises
+        NotImplementedError (numpy<->torch conversion not yet implemented).
+        Bare generator (no @contextlib.contextmanager) — _golden_mode uses yield from."""
+        import torch
+        ctx = self._ctx
+        t_dtypes = list(ctx.flat_tensor_dtypes)
+        s_dtypes = list(ctx.flat_scalar_dtypes or ())
+        t_need = [d in DTYPE_PROMOTE_MAP for d in t_dtypes]
+        s_need = [d in DTYPE_PROMOTE_MAP for d in s_dtypes]
+        if not (any(t_need) or any(s_need)):
+            yield
+            return
+        # scenario-2 guard
+        for d in t_dtypes + s_dtypes:
+            if d in DTYPE_PROMOTE_MAP:
+                tgt = DTYPE_PROMOTE_MAP[d]
+                if not is_torch_native_dtype(d) and is_torch_native_dtype(tgt):
+                    raise NotImplementedError(
+                        f"ACLNN promote crosses torch native boundary {d}->{tgt}: "
+                        f"numpy<->torch conversion not implemented")
+        # backup nested attrs (flat caches go through invalidate, not backup)
+        bak = (ctx.tensors, ctx.tensor_dtypes, ctx.scalars, ctx.scalar_dtypes)
+        try:
+            # promote tensors: flat → .to/.astype → re-nest
+            flat_t = list(deep_flatten(ctx.tensors))
+            new_t_dtypes = list(t_dtypes)
+            for i, t in enumerate(flat_t):
+                if t_need[i] and t is not None:
+                    tgt = DTYPE_PROMOTE_MAP[t_dtypes[i]]
+                    flat_t[i] = t.to(str_to_torch_dtype(tgt)) if isinstance(t, torch.Tensor) else t.astype(tgt)
+                    new_t_dtypes[i] = tgt
+            dist = ctx.tensor_list_dist
+            ctx.tensors = tuple(apply_as_list(flat_t, dist))
+            ctx.tensor_dtypes = tuple(apply_as_list(new_t_dtypes, dist))
+            # promote scalars
+            flat_s = list(deep_flatten(ctx.scalars)) if ctx.scalars else []
+            new_s_dtypes = list(s_dtypes)
+            for i, s in enumerate(flat_s):
+                if i < len(s_need) and s_need[i] and s is not None:
+                    tgt = DTYPE_PROMOTE_MAP[s_dtypes[i]]
+                    flat_s[i] = s.to(str_to_torch_dtype(tgt)) if isinstance(s, torch.Tensor) else s.astype(tgt)
+                    new_s_dtypes[i] = tgt
+            sdist = ctx.scalar_list_dist
+            ctx.scalars = tuple(apply_as_list(flat_s, sdist))
+            ctx.scalar_dtypes = tuple(apply_as_list(new_s_dtypes, sdist))
+            ctx.invalidate_flat_cache("tensors", "tensor_dtypes", "scalars", "scalar_dtypes")
+            yield
+        finally:
+            ctx.tensors, ctx.tensor_dtypes, ctx.scalars, ctx.scalar_dtypes = bak
+            ctx.invalidate_flat_cache("tensors", "tensor_dtypes", "scalars", "scalar_dtypes")
 
     def _package_golden_torch_kwargs(self):
         DEL_KWARG = ('impl_mode', 'cube_math_type')

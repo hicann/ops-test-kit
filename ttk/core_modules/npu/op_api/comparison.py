@@ -23,6 +23,8 @@ import numpy
 from .profiling_structure import ApiComparisonResult
 from ...testcase_manager import TestcaseAclnn
 from ...comparison import compare
+from ...comparison.resolve import resolve_tolerance
+from ....test_spec import get_spec_attr
 from ....utilities import get, get_global_storage
 from ....utilities import numpy_to_torch_tensor, resolve_custom_numpy_dtypes
 
@@ -30,33 +32,32 @@ from ....utilities import numpy_to_torch_tensor, resolve_custom_numpy_dtypes
 class Comparator:
     def __init__(self, context: TestcaseAclnn):
         self._ctx = context
-        if self._ctx.precision_tolerances is None:
-            rtol, ptol = None, None
-        else:
-            ptols = self._ctx.flat_precision_tolerances
-            rtol = [get(x, 0) for x in ptols]
-            ptol = [get(x, 1) for x in ptols]
-        self._tol_options = {'rtol': rtol, 'ptol': ptol,
-                             'atol': self._ctx.flat_absolute_precision}
+        self._tolerance = get_spec_attr(
+            context.api_name, "tolerance",
+            getattr(get_global_storage(), "plugin_path", None))
 
     def compare(self):
-        method = get_global_storage().compare_method
+        compare_method = get_global_storage().compare_method
+        output_dtypes = resolve_custom_numpy_dtypes(self._ctx.flat_output_dtypes)
+        standards = resolve_tolerance(self._tolerance, self._ctx.flat_precision_tolerances,
+                                      self._ctx.flat_absolute_precision, output_dtypes, compare_method)
         self._output_bytes_to_tensors()
         try:
             logging_data = "\n"
             logging_data += "Comparing %s with golden\n" % self._ctx.testcase_name
-            precision, _logging_data, passed = compare(self._ctx.prof_result.output_bytes,
-                                                       self._ctx.golden_tensors,
-                                                       resolve_custom_numpy_dtypes(self._ctx.flat_output_dtypes),
-                                                       method,
-                                                       self._tol_options)
+            precision, _logging_data, passed, metrics = compare(
+                self._ctx.prof_result.output_bytes,
+                self._ctx.golden_tensors,
+                output_dtypes,
+                standards=standards,
+                third_parties=None)
             logging_data += _logging_data
             logging.debugc(logging_data)
             passed = "PASS" if passed else "FAIL"
         except:
             logging.exception("Comparison failed")
             return ApiComparisonResult("COMPARE_FAILURE")
-        return ApiComparisonResult(None).set(precision, passed)
+        return ApiComparisonResult(None).set(precision, passed, metrics)
 
     def _output_bytes_to_tensors(self):
         outputs = self._ctx.prof_result.output_bytes

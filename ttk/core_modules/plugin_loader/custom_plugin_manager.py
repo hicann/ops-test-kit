@@ -35,18 +35,10 @@ class CustomPluginManager(metaclass=Singleton):
         PLUGIN_TYPE_GOLDEN: {
             "golden_types": [LEVEL_KERNEL, LEVEL_ACLNN, LEVEL_E2E],
             "field_name": FIELD_GOLDEN,
-            "builtin_registries": {
-                LEVEL_KERNEL: ("ttk.user_defined_modules.op.golden_funcs.registry", "golden_funcs"),
-                LEVEL_ACLNN: ("ttk.user_defined_modules.op_api.golden_funcs.registry", "golden_registry")
-            }
         },
         PLUGIN_TYPE_INPUTS: {
             "golden_types": [LEVEL_KERNEL, LEVEL_ACLNN, LEVEL_E2E],
             "field_name": FIELD_INPUTS,
-            "builtin_registries": {
-                LEVEL_KERNEL: ("ttk.user_defined_modules.op.input_funcs.registry", "input_funcs"),
-                LEVEL_ACLNN: ("ttk.user_defined_modules.op_api.input_funcs.registry", "input_registry")
-            }
         }
     }
 
@@ -122,12 +114,7 @@ class CustomPluginManager(metaclass=Singleton):
         
         logging.info(f"Scanned {len(self._scan_cache[plugin_type][level_type])} custom {plugin_type}.{level_type} functions")
         
-    def get_available_operators(self, plugin_type: str, level_type: str) -> Set[str]:
-        """Get available operators"""
-        self._ensure_scanned(plugin_type, level_type)
-        return set(self._scan_cache[plugin_type][level_type].keys())
-        
-    def load_if_available(self, operator_name: str, 
+    def load_if_available(self, operator_name: str,
                        plugin_type: str, level_type: str) -> Optional[callable]:
         """Load if available"""
         if not self._is_valid_golden_type(plugin_type, level_type):

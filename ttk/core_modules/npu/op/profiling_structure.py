@@ -312,6 +312,23 @@ class RTSProfilingResult:
         return "FAIL" if "FAIL" in oob_lst else "PASS"
 
 
+def _format_xpu_metrics(xpu_results):
+    """Format xpu_results dict into xpu_metrics dict for CSV output."""
+    if not xpu_results:
+        return {}
+    metrics = {}
+    for provider, entry in xpu_results.items():
+        m = {"status": entry.get("status", "FAIL"),
+             "api": entry.get("api", "")}
+        if entry.get("perf"):
+            m["device_us"] = entry["perf"].get("device_us", "NA")
+            m["peak_memory_mb"] = entry["perf"].get("peak_memory_mb", "NA")
+        if entry.get("error"):
+            m["error"] = entry["error"]
+        metrics[provider] = m
+    return metrics
+
+
 class ProfilingReturnStructure:
     """
     Structure for Return
@@ -349,7 +366,9 @@ class ProfilingReturnStructure:
                  "bin_workspaces",
                  "data_input_size_b",
                  "data_output_size_b",
-                 "soc")
+                 "soc",
+                 "xpu_metrics",
+                 "precision_metrics")
 
     def __init__(self, default_value=None):
         self.dyn_tiling_time_us = default_value
@@ -393,6 +412,8 @@ class ProfilingReturnStructure:
         self.cst_workspaces = default_value
         self.bin_workspaces = default_value
         self.soc = get_global_storage().dev_plat
+        self.xpu_metrics = default_value
+        self.precision_metrics = default_value
 
     # noinspection DuplicatedCode
     def construct(self, context: TestcaseOp,
@@ -449,6 +470,11 @@ class ProfilingReturnStructure:
         self.cst_workspaces = context.cst_compile_result.workspaces
         self.bin_workspaces = context.bin_compile_result.workspaces
 
+        self.xpu_metrics = _format_xpu_metrics(
+            getattr(context, "xpu_results", None))
+
+        self.precision_metrics = compare_result.metrics or {}
+
     @staticmethod
     def get_titles(custom: bool = False) -> Tuple[str]:
         if get_global_storage().custom_columns and custom:
@@ -492,19 +518,22 @@ class ComparisonResult:
     __slots__ = ("dyn_precision",
                  "cst_precision",
                  "bin_precision",
-                 "passed")
+                 "passed",
+                 "metrics")
 
     def __init__(self, default_value):
         self.dyn_precision = default_value
         self.cst_precision = default_value
         self.bin_precision = default_value
         self.passed = default_value
+        self.metrics = {}
 
-    def set(self, a, b, c, d):
+    def set(self, a, b, c, d, metrics=None):
         self.dyn_precision = a
         self.cst_precision = b
         self.bin_precision = c
         self.passed = d
+        self.metrics = metrics or {}
         return self
 
     def get(self) -> tuple:

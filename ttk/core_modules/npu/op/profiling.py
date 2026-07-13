@@ -11,10 +11,17 @@
 Profiling method for Universal testcases
 """
 # Standard Packages
-import os
 import logging
+import os
 import shutil
 from typing import NoReturn, Optional, Tuple, Union
+
+from ttk.remote import DATA, get_tenant_id
+from ttk.core_modules.operator import OpInfoKeeper
+
+# third_party key aliases — mirrors server executor.py:_TP_ALIASES; keep in sync.
+# Applied in _extract_spec_providers (resolve_providers) and _build_spec (tp -> server).
+_TP_ALIASES = {"tensorflow": "tf", "np": "numpy"}
 
 try:
     from contextlib import nullcontext
@@ -44,6 +51,7 @@ from ...tbe_logging import default_logging_config
 from ...tbe_multiprocessing import get_process_context, DeviceLock
 from ...testcase_manager import TestcaseOp
 from ...operator import OpInfoKeeper
+from ....test_spec import get_spec_attr
 from ....utilities import resolve_custom_numpy_dtypes, get, get_global_storage, get_str_tiling_data
 from ....utilities import parse_tiling_data, table_print, deep_flatten
 from ....utilities import dump_to_file, waiting_for_memory
@@ -109,6 +117,129 @@ def prof_compile_only_end(context: TestcaseOp):
     return return_structure
 
 
+def _extract_spec_providers(tp):
+    """Spec-layer provider keys (priority order = insertion order).
+
+    dict -> keys; str -> single provider derived from API prefix; None/empty -> [].
+    (Empty -> caller lets EndpointView.resolve_providers use detect∩yaml∩alive.)
+    """
+    if isinstance(tp, dict):
+        return [_TP_ALIASES.get(k, k) for k in tp.keys()]
+    if isinstance(tp, str):
+        from ttk.remote import _derive_provider_from_api
+        return [_derive_provider_from_api(tp, "torch")]
+    return []
+
+
+def _build_spec(provider, tp, spec_file, spec_class, op_name, op_type):
+    """Build one ExecutionSpec. api source: third_party dict | str | None.
+
+    - dict[str, str]      -> type='api', api=value
+    - dict[str, type]     -> type='spec' (impl class; server resolves
+                             cls.third_party[provider]); spec_file/class
+                             carried so the server can sync the module
+    - str                 -> type='api', api=tp
+    - None / no spec      -> type='api', api=None (server _resolve_3party_api
+                             derives api from op_name + op_type)
+    """
+    from pathlib import Path
+    from ttk.remote import ExecutionSpec
+    if isinstance(tp, dict) and provider in tp:
+        v = tp[provider]
+        if isinstance(v, str):
+            return ExecutionSpec(provider=provider, type="api", api=v)
+        # impl class -> spec mode (server resolves cls.third_party[provider])
+        return ExecutionSpec(provider=provider, type="spec",
+                             spec_file=spec_file,
+                             spec_module=Path(spec_file).stem if spec_file else None,
+                             spec_class=spec_class)
+    if isinstance(tp, str):
+        return ExecutionSpec(provider=provider, type="api", api=tp)
+    # no spec / no third_party -> api=None, server _resolve_3party_api(op_name, op_type)
+    return ExecutionSpec(provider=provider, type="api", api=None)
+
+
+def _xpu_inputs(context):
+    """XPU (torch/tf) needs the logical ori-shape arrays; NPU run-format
+    (input_arrays, e.g. NC1HWC0) is unusable on non-NPU accelerators. Fallback if unset."""
+    return context.original_input_arrays or context.input_arrays
+
+
+def _xpu_mode(switches, need_data):
+    """按位或：xpu_perf→PERF，need_data→DATA。返回 0/PERF/DATA/DATA|PERF。"""
+    from ttk.remote import DATA, PERF
+    mode = 0
+    if switches.xpu_perf:
+        mode |= PERF
+    if need_data:
+        mode |= DATA
+    return mode
+
+
+def _extract_third_party(xpu_results, priority):
+    """从 priority provider 取 outputs（纯函数，直接索引，不靠 dict 序）。
+    fail-closed：无 results / 无 priority / 非 PASS / 无 outputs → None（cross_check → GOLDEN_FAILURE）。"""
+    if not xpu_results or priority is None:
+        return None
+    entry = xpu_results.get(priority, {})
+    if entry.get("status") != "PASS" or "outputs" not in entry:
+        return None
+    return entry["outputs"]
+
+
+def _do_xpu_profiling(context, xpu_mode):
+    """Run XPU dispatch，return priority provider name（specs[0].provider）。
+    resolve_providers 失败 → xpu_results={} + return None（→ _extract_third_party None → GOLDEN_FAILURE）。"""
+    try:
+        op_info = OpInfoKeeper().info_of(context.op_name)
+        input_names = [ipt["name"] for ipt in op_info["inputs"]] if op_info else []
+    except Exception:
+        input_names = []
+
+    from ttk.test_spec import get_spec_attr, get_spec_class_meta
+    from ttk.remote.endpoint_view import EndpointView, _parse_provider_filter
+
+    op_type = OpInfoKeeper().op_type_of(context.op_name)
+    paths = get_global_storage().plugin_path or ()
+    tp = get_spec_attr(context.op_name, "third_party", paths)
+    if isinstance(tp, dict):
+        tp = {_TP_ALIASES.get(k, k): v for k, v in tp.items()}
+    meta = get_spec_class_meta(context.op_name, paths)
+    spec_file = meta["spec_file"] if meta else None
+    spec_class = meta["class_name"] if meta else None
+
+    ev = EndpointView()
+    spec_providers = _extract_spec_providers(tp)
+    sw = get_global_storage()
+    cli_providers = _parse_provider_filter(sw.provider_filter if sw else None)
+
+    try:
+        providers = ev.resolve_providers(spec_providers, cli_providers)
+    except RuntimeError as e:
+        context.xpu_results = {}
+        logging.error("[%s] XPU resolve failed: %s",
+                      getattr(context, "testcase_name", context.op_name), e)
+        return None
+
+    specs = [_build_spec(p, tp, spec_file, spec_class, context.op_name, op_type) for p in providers]
+
+    from ttk.remote.xpu_collector import collect_xpu_results
+    _tmp_root = os.path.join(get_global_storage().root_path, ".ttk", "xpu_tmp")
+    context.xpu_results = collect_xpu_results(
+        specs,
+        inputs=_xpu_inputs(context),
+        input_names=input_names,
+        mode=xpu_mode,
+        tenant_id=get_tenant_id(),
+        op_name=context.op_name,
+        op_type=op_type,
+        attrs=context.attributes if hasattr(context, 'attributes') else {},
+        tmp_root=_tmp_root,
+        runtime=get_global_storage().run_time,
+    )
+    return specs[0].provider if specs else None
+
+
 def profile_process(context: TestcaseOp,
                     device_grant_events: dict,
                     device_granted_indices: dict,
@@ -150,12 +281,42 @@ def profile_process(context: TestcaseOp,
         logging.exception("Input data generation failure:")
         return prof_end(context, "INPUT_GEN_FAILURE")
     process_ctx.notify_status("OnGenGolden")
-    # noinspection PyBroadException
+    # resolve 提前到 __gen_output 之前（唯一目的：设 golden_mode_override 让 golden 走 Promote）
+    # 3 点相对 import：profiling.py 在 npu/op/，core_modules/comparison 在上 2 级（同 npu/op/comparison.py:20）
+    from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
+    try:
+        tolerance = get_spec_attr(context.op_name, "tolerance",
+                                  getattr(get_global_storage(), "plugin_path", None))
+        standards = _resolve_tolerance(tolerance,
+                                       context.flat_precision_tolerances,
+                                       context.flat_absolute_precision,
+                                       context.flat_output_dtypes,
+                                       get_global_storage().compare_method)
+        need_3party_outputs = any(s.token == "cross_check" for s in standards)
+        if need_3party_outputs:
+            context.golden_mode_override = "Promote"
+    except ValueError as e:
+        logging.error("[%s] tolerance invalid: %s", context.op_name, e)
+        return prof_end(context, "TOLERANCE_INVALID")
+
+    # golden gen with override cleanup
     try:
         __gen_output(context)
     except:
         logging.exception("Output buffer initialization data or golden data generation failure:")
         return prof_end(context, "OUTPUT_GEN_FAILURE")
+    finally:
+        if hasattr(context, "golden_mode_override"):
+            del context.golden_mode_override
+
+    process_ctx.notify_status("OnXpuProfiling")
+    xpu_mode = _xpu_mode(get_global_storage(), need_3party_outputs)
+    xpu_priority = _do_xpu_profiling(context, xpu_mode) if xpu_mode else None
+    third_parties_nested = _extract_third_party(getattr(context, "xpu_results", None), xpu_priority)
+    if need_3party_outputs and third_parties_nested is None:
+        logging.warning("[%s] cross_check configured but no third_party output (no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE", context.op_name)
+    third_parties = list(deep_flatten(third_parties_nested)) if third_parties_nested is not None else None
+
     process_ctx.notify_status("OnGenWorkspace")
     context.dyn_workspace_arrays = __gen_workspaces(context.dyn_compile_result.workspaces,
                                                     context.dyn_compile_result.debug_buf_size)
@@ -196,9 +357,8 @@ def profile_process(context: TestcaseOp,
                                context.cst_prof_result.output_bytes,
                                context.bin_prof_result.output_bytes,
                                context.golden_arrays,
-                               context.flat_precision_tolerances,
                                context.flat_output_dtypes,
-                               context.flat_absolute_precision)
+                               standards=standards, third_parties=third_parties)
     if compare_result.passed != "PASS" and switches.dump_config.dump_on_fail:
         __dump_on_fail(context)
     process_ctx.notify_status("OnReturning")

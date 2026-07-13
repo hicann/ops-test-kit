@@ -7,6 +7,13 @@ def args_to_switches(args):
 
     sw = SWITCHES()
     sw.logging_to_file = True
+    sw.config_path = getattr(args, 'config', None)        # NEW: 经 SWITCHES pickle 传 worker
+    sw.provider_filter = getattr(args, 'provider', None)  # NEW: --provider CLI 过滤器
+
+    # 无条件加载配置（config_path=None 时走标准路径：default.yaml + ~/.config/ttk + ./ttk.conf.yaml）。
+    # 删 get_config lazy fallback 后，这是 parent 侧唯一的 load 入口。
+    from ttk.config.loader import load_config
+    load_config(sw.config_path)
 
     sw.input_files = [args.input]
     sw.output_file_name = args.output
@@ -40,6 +47,8 @@ def args_to_switches(args):
         sw.dump_config.file_format = args.dump_format
     if hasattr(args, 'dump_on_fail') and args.dump_on_fail:
         sw.dump_config.dump_on_fail = True
+    if hasattr(args, 'xpu_perf') and args.xpu_perf:
+        sw.xpu_perf = True
 
     if hasattr(args, 'plugin') and args.plugin:
         sw.plugin_path = tuple(
@@ -177,8 +186,8 @@ def apply_e2e_args(sw, args):
         if isinstance(val, str):
             val = val.lower() not in ('false', '0', 'no', 'off')
         sw.cst_switches.enabled = val
-    if hasattr(args, 'backend') and args.backend:
-        sw.backend_name = args.backend.lower()
+    if getattr(args, "cpu", False):
+        sw.force_cpu = True
     if hasattr(args, 'fullgraph'):
         sw.fullgraph = args.fullgraph
 

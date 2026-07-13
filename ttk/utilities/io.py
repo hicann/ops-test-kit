@@ -271,20 +271,17 @@ def __golden_mode(switches: SWITCHES, secondary_param: str):
         raise RuntimeError("Invalid Precision Test Mode: %s" % secondary_param)
 
 
-@register_param(["--compare"], "Method to compare npu output with golden. Options:\n"
-                               "close: use numpy.isclose method to evaluate. (default)\n"
-                               "cosine: use cosine similarity to evaluate, usually for quantize operators.\n"
-                               "binary: compare npu output to golden in binary mode.\n"
-                               "requant: used for re-quantize operators.")
+@register_param(["--compare"], "Method to compare npu output with golden (legacy path; live CLI uses cli/common.py).\n"
+                               "Options: close, stat_rel_err, cosine, binary, requant.\n"
+                               "Default: None -> per-output routing via Spec.tolerance, else stat_rel_err.")
 def __compare_method(switches: SWITCHES, secondary_param: str):
     if not secondary_param:
-        switches.compare_method = "close"
+        switches.compare_method = None
     else:
         s = secondary_param.lower()
-        if s not in ("close", "cosine", "bin", "binary", "requant"):
+        if s not in ("close", "stat_rel_err", "cosine", "binary", "requant"):
             raise RuntimeError("Invalid secondary parameter for option --compare.")
-        else:
-            switches.compare_method = s
+        switches.compare_method = s
 
 
 @register_param(["--pr", "--precision-report"], "Output precision detail report. Eg: --pd or --pd=precision_report.\n"
@@ -311,16 +308,6 @@ def __test_mode(switches: SWITCHES, secondary_param: str):
         switches.test_mode = secondary_param.lower()
     else:
         logging.error(f"Invalid --mode value: {secondary_param}. Must be one of {valid_modes}")
-        sys.exit(1)
-
-
-@register_param(["--backend"], "Hardware backend for framework-api mode: npu, gpu, cpu. Auto-detect if not specified.")
-def __backend(switches: SWITCHES, secondary_param: str):
-    valid_backends = ("npu", "gpu", "cpu")
-    if secondary_param and secondary_param.lower() in valid_backends:
-        switches.backend_name = secondary_param.lower()
-    else:
-        logging.error(f"Invalid --backend value: {secondary_param}. Must be one of {valid_backends}")
         sys.exit(1)
 
 

@@ -36,6 +36,7 @@ class FrameworkApiReturnStructure:
         "graph_dyn_cpu_perf_us",
         "graph_dyn_kernel_count",
         "graph_dyn_kernel_details",
+        "precision_metrics",
     )
 
     def __init__(self):
@@ -55,6 +56,7 @@ class FrameworkApiReturnStructure:
         self.graph_dyn_cpu_perf_us = None
         self.graph_dyn_kernel_count = None
         self.graph_dyn_kernel_details = None
+        self.precision_metrics = {}
 
     @staticmethod
     def get_titles():
@@ -65,7 +67,7 @@ class FrameworkApiReturnStructure:
 
     _MODE_PREFIX = {"static": "cst", "dynamic": "dyn"}
 
-    def construct(self, precision_str, precision_passed, profile_result, mode=None):
+    def construct(self, precision_str, precision_passed, profile_result, mode=None, metrics=None):
         """
         Build from comparison and profiling results.
 
@@ -74,6 +76,7 @@ class FrameworkApiReturnStructure:
             precision_passed: "PASS" or "FAIL"
             profile_result: ProfileResult from profiler (may be None)
             mode: None for eager, "static" or "dynamic" for graph
+            metrics: per-mode precision metrics dict (accumulated by mode key)
         """
         if mode is None:
             prefix = "eager_"
@@ -100,3 +103,7 @@ class FrameworkApiReturnStructure:
                       for k in kd.kernels],
                     ensure_ascii=False
                 ))
+
+        if metrics:
+            mode_key = "eager" if mode is None else f"graph_{self._MODE_PREFIX[mode]}"
+            self.precision_metrics[mode_key] = metrics

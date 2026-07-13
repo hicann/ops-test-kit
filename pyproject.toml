@@ -35,10 +35,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gpu-tf = ["tensorflow>=2.12"]
-gpu-torch = ["torch>=2.0"]
+tf = ["tensorflow>=2.12"]
+torch = ["torch>=2.0"]
 e2e-npu = ["torch>=2.0", "torch_npu>=2.1"]
-e2e-gpu = ["torch>=2.0"]
+e2e-xpu = ["torch>=2.0"]
 dev = [
     "pytest>=7",
     "pytest-cov",
@@ -46,8 +46,8 @@ dev = [
     "ruff",
 ]
 all = [
-    "ttk[gpu-tf]",
-    "ttk[gpu-torch]",
+    "ttk[tf]",
+    "ttk[torch]",
     "ttk[e2e-npu]",
 ]
 
@@ -100,4 +100,5 @@ xfail_strict = true
 markers = [
     "slow: mark test as slow (deselect with '-m \"not slow\"')",
     "device: test requires NPU device attached",
+    "e2e: end-to-end test (kernel compile + XPU dispatch, needs NPU)",
 ]

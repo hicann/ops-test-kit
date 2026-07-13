@@ -14,7 +14,7 @@ Resolve api_name string to callable object.
 Handles both module functions (torch.add) and Tensor methods (torch.Tensor.relu_).
 """
 
-_MODULE_ALIAS = {"tf": "tensorflow"}
+_MODULE_ALIAS = {}
 
 
 def resolve_api(api_name: str):
@@ -25,7 +25,6 @@ def resolve_api(api_name: str):
         'torch.add'                 -> (torch.add, False)
         'torch.nn.functional.relu'  -> (torch.nn.functional.relu, False)
         'torch_npu.npu_conv2d'      -> (torch_npu.npu_conv2d, False)
-        'tf.math.add'               -> (tf.math.add, False)
         'torch.Tensor.relu_'        -> ('relu_', True)
         'torch.Tensor.npu_scatter_' -> ('npu_scatter_', True)
     """

@@ -1,0 +1,84 @@
+# xpu-server 配置（与 TTK 客户端 config 分离）
+# 优先级: 命令行参数 > YAML > 内置默认
+
+# --- 服务监听 ---
+server:
+  bind: "127.0.0.1"               # 默认只本机（不暴露网络）
+  port: 9090                      # 与客户端默认呼应
+  max_concurrent: 16              # 并发上限（BoundedSemaphore）
+  run_deadline_s: 300             # 单请求超时秒数，与客户端 timeout 呼应
+
+# --- 执行后端（sandbox 决定算子在哪跑；hardware/docker 与之关联）---
+execution:
+  sandbox: none                   # none（mp.Process）| docker（容器隔离）
+  gate_wait_s: 1.0                # data_gate 等待超时（背压 503）
+
+# hardware — 每硬件一个 profile 段（段名=角色）
+# 段顺序 = 探测顺序（/dev 按段顺序首个命中）。
+# 段名 = 角色 = tf device_type.lower()（load 时校验全小写+必填 fail-fast）。
+# 每段强制 torch profile（tf-only 不支持）。
+hardware:
+  gpu:
+    dev_prefix: nvidia
+    torch_lib: cuda               # getattr(torch, cuda) + 推导 CUDA_VISIBLE_DEVICES（sandbox=none）
+    tf_device_type: GPU
+    docker_args: ["--gpus", "device={device_id}"]   # sandbox=docker 时透传模板（render 后 ["--gpus","device=0"]）
+    torch_profiler:
+      module: torch.profiler      # 仅文档性质（inline 硬编码 import，不消费此键）
+      activities: [CPU, CUDA]
+  mlu:
+    dev_prefix: cambricon
+    torch_lib: mlu                # 推导 MLU_VISIBLE_DEVICES
+    tf_device_type: MLU
+    docker_args: ["--device", "/dev/cambricon{device_id}"]
+    torch_profiler:
+      module: torch.profiler
+      activities: [CPU, MLU]
+  # 自定义/特例（不符合 {torch_lib.upper()}_VISIBLE_DEVICES 推导，如 npu ASCEND_RT / rocm ROCR）：
+  # custom:
+  #   dev_prefix: myhw
+  #   torch_lib: xpu
+  #   visible_env: ASCEND_RT_VISIBLE_DEVICES   # 可选，覆盖推导（sandbox=none）
+  #   torch_profiler:
+  #     module: torch.profiler
+  #     activities: [CPU, XPU]
+
+# --- Docker 容器隔离（仅在 execution.sandbox=docker 时生效；hardware.<seg>.docker_args 透传设备）---
+docker:
+  images:                         # 配几个 = 支持几个 provider
+    torch: "xpu-executor-torch:latest"
+    tf: "xpu-executor-tf:latest"
+  memory: "8g"                    # 每容器内存限制
+  network: "none"                 # 用户代码网络隔离
+
+# --- provider 暴露与归一化 ---
+providers:                        # 可选，限制暴露的 provider。不配则全部暴露
+  - torch
+  # - tf                          # 注释掉 = 不暴露（即使框架已安装）
+  # - flash_attn                  # 基于 torch，只暴露 flash_attn，不暴露 raw torch
+
+# provider → framework 映射（默认 framework = provider，只配例外）
+provider_framework:
+  # torch: torch                 # 不用配
+  # tf: tf                       # 不用配
+  # flash_attn: torch            # 未来：flash_attn 的 H2D 走 torch 路径
+
+# --- 存储 ---
+storage:
+  # sync_dir: ""                  # 可选，不配则默认 server 同级目录 ttk_xpu_sync/
+  # tmp_dir: ""                   # 可选，不配则默认 server 同级目录 ttk_tmp_dir/
+
+# --- mTLS（跨机加密传输。仅在 tls.enabled=true 时生效）---
+# 证书由 CA 持有者在 CA 机器上分三步签发（CA 一次；server 每 XPU 一次；client 每租户按需）：
+#   ./scripts/gen_tls_certs.sh init-ca /opt/ttk-certs                       # 一次：建 CA
+#   ./scripts/gen_tls_certs.sh server /opt/ttk-certs IP:<host> [DNS:...]    # 一次/XPU：server 证书（SAN 必填 = client 连接的 host；不再硬编码 127.0.0.1）
+#   ./scripts/gen_tls_certs.sh client /opt/ttk-certs <tenant>               # 每租户：client 证书
+# XPU server 需要: ca.crt + server.crt + server.key
+# 每个租户(TTK worker)需要: ca.crt + <tenant>.client.crt + <tenant>.client.key
+#   新租户：再跑一次 client 子命令签新证书发给租户；server 信 CA，无需该 client 证书、无需重启。
+#   ca.key（CA 私钥）只留 CA 机器、绝不发往任何 client/server；发给各角色的只有 ca.crt + 各自证书/私钥。
+tls:
+  enabled: false                  # true → 启用 mTLS
+  ca_cert: ""                     # CA 证书路径
+  server_cert: ""                 # 服务端证书路径
+  server_key: ""                  # 服务端私钥路径

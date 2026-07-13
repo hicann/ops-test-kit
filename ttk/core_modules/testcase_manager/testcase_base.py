@@ -82,6 +82,7 @@ class TestcaseBase(metaclass=ABCMeta):
                  "fail_reason",
                  # private
                  "_actual_input_data_ranges",
+                 "xpu_results",
                  )
 
     identity_headers: Dict[str, tuple] = {
@@ -125,6 +126,7 @@ class TestcaseBase(metaclass=ABCMeta):
         self.fail_reason: Optional[str] = None
         # private
         self._actual_input_data_ranges = None
+        self.xpu_results = {}
 
     def __hash__(self):
         return hash(self.testcase_name)

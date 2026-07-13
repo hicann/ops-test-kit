@@ -21,3 +21,9 @@ settings.local.json
 ttk/_build_hash.py
 csrc/build/
 csrc/*/build/
+msprof/
+
+# xpu_server runtime: default sync/tmp dirs (created next to the server package)
+ttk/remote/server/ttk_xpu_sync/
+ttk/remote/server/ttk_tmp_dir/
+

@@ -13,31 +13,53 @@ binary comparison
 
 # Standard Packages
 import hashlib
-import math
 
 import numpy as np
 
 # Third-party Packages
-from .registry import ComparisonBase, EachCompareResult, register_comparison
+from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
 
 
-@register_comparison(['bin', 'binary'])
+@register_comparison(['bin', 'binary', 'binary_equal'])
 class BinaryComparison(ComparisonBase):
-    def compare_impl(self) -> EachCompareResult:
-        if str(self.output.dtype) != str(self.golden.dtype):
-            return EachCompareResult(0, is_pass=False,
-                                     log=f"Dtype for output & golden is different: "
-                                         f"{self.output.dtype} vs {self.golden.dtype}")
-        if self.is_torch:
-            diff_idx, golden_size, diff_idx_size = self._torch_binary_compare(self.output, self.golden)
-        else:
-            diff_idx, golden_size, diff_idx_size = self._numpy_binary_compare(self.output, self.golden)
+    STANDARD_NAME = "binary_equal"
 
+    def compare_impl(self) -> EachCompareResult:
+        # 空数组已在 compare() 入口 _check_empty 统一短路，这里只处理非空
+        if str(self.output.dtype) != str(self.golden.dtype):
+            return self._cross_dtype_compare()
+        diff_idx, golden_size, diff_idx_size = self._numpy_binary_compare(self.output, self.golden)
+        return self._result(diff_idx, golden_size, diff_idx_size)
+
+    def _result(self, diff_idx, golden_size, diff_idx_size):
         if diff_idx_size == 0:
-            return EachCompareResult(1, is_pass=True)
-        else:
-            precision = (golden_size - diff_idx_size) / golden_size
-            return EachCompareResult(precision, diff_idx, is_pass=False)
+            return EachCompareResult(1, is_pass=True, standard="binary_equal",
+                                     metrics={"standard": "binary_equal", "pass": True})
+        precision = (golden_size - diff_idx_size) / golden_size
+        return EachCompareResult(precision, diff_idx, is_pass=False, standard="binary_equal",
+                                 metrics={"standard": "binary_equal", "pass": False,
+                                          "reason": FAIL_REASONS["bitwise_mismatch"]})
+
+    def _cross_dtype_compare(self) -> EachCompareResult:
+        od, gd = self.output.dtype, self.golden.dtype
+        # int4/float4 自定义 dtype 会让 np.issubdtype/promote_types 崩，短路拒
+        if any(x in str(d) for d in (od, gd) for x in ("int4", "float4")):
+            return self._reject(od, gd)
+        out_int = np.issubdtype(od, np.integer) or od.kind == "b"
+        gold_int = np.issubdtype(gd, np.integer) or gd.kind == "b"
+        if out_int and gold_int:
+            promoted = np.promote_types(od, gd)
+            if np.issubdtype(promoted, np.integer):
+                diff_idx, golden_size, diff_idx_size = self._numpy_binary_compare(
+                    self.output.astype(promoted), self.golden.astype(promoted))
+                return self._result(diff_idx, golden_size, diff_idx_size)
+        return self._reject(od, gd)
+
+    def _reject(self, od, gd) -> EachCompareResult:
+        return EachCompareResult(0, is_pass=False, standard="binary_equal",
+                                 log=f"Dtype not bitwise-comparable: {od} vs {gd}",
+                                 metrics={"standard": "binary_equal", "pass": False,
+                                          "reason": FAIL_REASONS["cross_dtype_uncomparable"]})
 
     @staticmethod
     def _numpy_binary_compare(output: np.ndarray, golden: np.ndarray):
@@ -72,25 +94,4 @@ class BinaryComparison(ComparisonBase):
         del same, npu_nan, golden_nan, diff_nan
 
         golden_size, diff_idx_size = golden.size, diff_idx.size
-        return diff_idx, golden_size, diff_idx_size
-
-    @staticmethod
-    def _torch_binary_compare(output: "torch.Tensor", golden: "torch.Tensor"):
-        import torch
-        dtypes = tuple([torch.int8, torch.int16, torch.int32, torch.int64])
-        normalized_dtype = dtypes[int(math.log2(output.element_size()))]
-        output_int = output.view([-1]).view(dtype=normalized_dtype)
-        golden_int = golden.view([-1]).view(dtype=normalized_dtype)
-        same = output_int == golden_int
-        diff_idx = torch.floor_divide(torch.where(~same)[0], output.element_size())
-        diff_idx = torch.unique(diff_idx)
-
-        npu_nan, golden_nan = torch.isnan(output.view([-1])), torch.isnan(golden.view([-1]))
-        diff_nan = torch.logical_and(npu_nan, golden_nan)
-        both_nan_idx = torch.where(diff_nan)
-
-        diff_idx = torch.where(torch.logical_not(torch.isin(diff_idx, both_nan_idx[0])))[0]
-        del same, npu_nan, golden_nan, diff_nan
-
-        golden_size, diff_idx_size = golden.numel(), diff_idx.numel()
         return diff_idx, golden_size, diff_idx_size

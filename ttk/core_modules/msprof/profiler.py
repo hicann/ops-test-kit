@@ -75,6 +75,8 @@ class MsProfiler:
     def report_op_dfx(self, op_dfx: MsProfOpDfx):
         if self._is_model:
             return
+        if self._msprof_dll is None:
+            return
         if self._prof_api_dll is None:
             self._prof_api_dll = ctypes.CDLL(f"libprofapi.so")
         api = getattr(self._prof_api_dll, "MsprofReportCompactInfo")

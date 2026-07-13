@@ -104,18 +104,6 @@ class TestCextLoaderBuildCext(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     @patch("subprocess.check_call")
-    def test_fast_path_skips_build(self, mock_check_call):
-        os.makedirs(self.build_dir, exist_ok=True)
-        with open(self.so_path, "w") as f:
-            f.write("fake")
-        with open(self.marker_path, "w") as f:
-            f.write("1")
-
-        loader = _import_cext_loader()
-        loader._build_cext(self.src_dir, self.so_name)
-        mock_check_call.assert_not_called()
-
-    @patch("subprocess.check_call")
     def test_build_creates_marker(self, mock_check_call):
         def fake_build(*args, **kwargs):
             os.makedirs(self.build_dir, exist_ok=True)

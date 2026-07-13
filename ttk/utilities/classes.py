@@ -147,6 +147,7 @@ class SWITCHES:
         "input_distribution",
         "golden_mode",
         "compare_method",
+        "xpu_perf",
         "precision_report",
         "reuse_hbm",
         "reserve_hbm",
@@ -154,12 +155,14 @@ class SWITCHES:
         "compile_options",
         "plugin_path",
         "test_mode",
-        "backend_name",
+        "force_cpu",
         "fullgraph",
         "validate_only",
         # private properties
         "_run_time",
-        "_compile_only"
+        "_compile_only",
+        "config_path",        # NEW: --config CLI 值（yaml 路径），经 SWITCHES pickle 传 worker
+        "provider_filter"     # NEW: --provider CLI 值（provider 过滤器），经 SWITCHES pickle 传 worker
     ]
 
     def __init__(self):
@@ -170,7 +173,7 @@ class SWITCHES:
         self.logging_to_file: bool = False
         self.single_testcase_log_mode = False
         self.dev_plat: str = "AUTO"
-        self.short_soc_version: Optional[str] = None  # None in GPU mode
+        self.short_soc_version: Optional[str] = None  # None in non-NPU mode
         self.custom_columns = None
         self.print_help: bool = False
         self.process_per_device = None
@@ -212,7 +215,8 @@ class SWITCHES:
         self.simt_cfg: SoCSimtCfg = SoCSimtCfg()
         self.input_distribution: str = "uniform"
         self.golden_mode: str = "Enable"
-        self.compare_method: str = "close"
+        self.compare_method = None
+        self.xpu_perf: bool = False
         self.precision_report: Optional[str] = None
         self.reuse_hbm: bool = False
         self.reserve_hbm: int = 0
@@ -220,12 +224,14 @@ class SWITCHES:
         self.compile_options: dict = {}
         self.plugin_path: Optional[Tuple[pathlib.Path]] = None
         self.test_mode: str = "op"
-        self.backend_name: Optional[str] = None
+        self.force_cpu: bool = False
         self.fullgraph: int = 0
         self.validate_only: bool = False
         # private properties below
         self._run_time: Optional[int] = None
         self._compile_only: bool = False
+        self.config_path: Optional[str] = None
+        self.provider_filter: Optional[str] = None
 
     @property
     def overflow_mode(self) -> int:

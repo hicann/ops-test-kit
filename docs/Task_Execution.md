@@ -14,7 +14,7 @@ python3 -m ttk {kernel,aclnn,e2e,info,list} [options]
 |-----------|---------|
 | `kernel` | AscendC kernel compile + NPU execute + precision compare |
 | `aclnn` | aclnn\* C API call + precision compare |
-| `e2e` | PyTorch framework API end-to-end test (NPU/GPU/CPU) |
+| `e2e` | PyTorch framework API end-to-end test (NPU/MLU/CPU) |
 | `info` | Query local Ascend NPU device info |
 | `list` | Preview test case names from CSV |
 
@@ -34,9 +34,9 @@ python3 -m ttk kernel -i examples/case_store/kernel/add.csv --co
 # ACLNN
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
 
-# E2E
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --backend npu
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --backend cpu
+# E2E (auto-selects available backend per configured hardware segment)
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --cpu
 
 # Device info & case preview
 python3 -m ttk info
@@ -71,7 +71,7 @@ python3 -m ttk list -i cases.csv --op add
 
 | Parameter | Description | Options | Default |
 |-----------|-------------|---------|---------|
-| `--compare` | Comparison method | `close`/`cosine`/`binary`/`requant` | `close` |
+| `--compare` | Comparison method | `close`/`stat_rel_err`/`cosine`/`binary`/`requant`/`cross_check` | Spec.tolerance routing (needs `--plugin`), else `stat_rel_err` |
 | `--input-dist` | Input distribution | `uniform`/`normal` | `uniform` |
 | `--seed` | Random seed (reproducible) | Integer | Random |
 | `--golden-mode` | Golden generation mode | `Enable`/`Disable`/`Promote` | `Enable` |
@@ -105,7 +105,7 @@ python3 -m ttk list -i cases.csv --op add
 | `--const` | `-c` | Static shape compilation | Off |
 | `--binary` | `-b` | Binary mode; `-b release` for released kernels | Off |
 | `--compile-only` | `--co` | Compile only, skip execution | Off |
-| `--no-prof` | | Skip device execution (dry-run: compilation, input/golden generation still run) | On |
+| `--no-prof` | | Skip device execution (dry-run: compilation, input/golden generation still run) | Off |
 | `--compile-opts` | | Compile options (KEY=VALUE, can be specified multiple times) | None |
 | `--tiling-run` | `--tr` | Tiling run times | 3 |
 | `--reuse-hbm` | | Each case runs 3 times on NPU by default; reuse same HBM memory to enable L2 Cache | Off |
@@ -117,11 +117,7 @@ python3 -m ttk list -i cases.csv --op add
 
 # E2E-Specific Parameters
 
-| Parameter | Description | Options | Default |
-|-----------|-------------|---------|---------|
-| `--backend` | Hardware backend (NPU/GPU/CPU) | `npu`/`gpu`/`cpu` | Auto-detect |
-
-> E2E mode runs through a unified Backend abstraction (`framework_api/backends/`); all three backends share the same case parsing and precision comparison pipeline. The CPU backend is commonly used as the Golden source.
+> E2E mode runs through a unified Backend abstraction (`framework_api/backends/`); all backends share the same case parsing and precision comparison pipeline. The CPU backend is commonly used as the Golden source. The backend is auto-selected per the configured hardware segment (`yaml` `frameworks.torch.<seg>`); `--cpu` forces the CPU backend.
 
 # ACLNN-Specific Parameters
 

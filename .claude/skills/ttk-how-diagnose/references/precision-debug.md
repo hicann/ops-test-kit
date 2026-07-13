@@ -4,12 +4,27 @@
 
 | 方法 | 参数 | 原理 | 适用场景 |
 |------|------|------|---------|
-| 数值近似 | `--compare close` | `np.allclose(a, b, rtol, atol)` | 浮点运算常规测试（默认） |
+| 统计相对误差（社区标准） | `--compare stat_rel_err` | 按 dtype 统计相对误差，社区标准阈值 | 浮点运算常规测试（默认） |
+| 数值近似 | `--compare close` | `np.allclose(a, b, rtol, atol)` | 逐点 isclose 比对 |
 | 余弦相似度 | `--compare cosine` | 向量余弦距离 | 大规模向量整体趋势验证 |
 | 二进制精确 | `--compare binary` | 逐字节比对 | 整型运算、需要完全一致的结果 |
 | 重量化 | `--compare requant` | 重量化后比对 | 量化数据类型（fp8/fp4/int4 等，自动启用） |
+| 三方交叉校验 | `--compare cross_check` | output/golden/third_party 误差比值 | 有 third_party 参考实现时（fp16/bf16/fp32） |
+
+> 默认未设 `--compare` 时，按 `Spec.tolerance` 逐输出路由（需 `--plugin`），否则 `stat_rel_err`。
 
 ## 容差参数
+
+容差来源优先级：`--compare`（CLI）> `Spec.tolerance`（TestSpec，需 `--plugin`）> CSV `precision_tolerances`/`absolute_precision` > 方法默认阈值。
+
+### Spec.tolerance（首选）
+
+在 TestSpec 中按 dtype 声明精度标准（含 `standard` token + 阈值），逐输出路由：
+
+```python
+# TestSpec：float32 走 stat_rel_err，阈值 0.001
+tolerance = {"float32": {"standard": "stat_rel_err", "threshold": 0.001}}
+```
 
 ### CSV 字段
 

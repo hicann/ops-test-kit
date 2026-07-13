@@ -9,30 +9,130 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 
+import importlib
+import logging
 from typing import Optional
 
+import torch
+
 from .base import Backend
-from .npu_backend import NpuBackend
-from .gpu_backend import GpuBackend
-from .cpu_backend import CpuBackend
+from .npu_backend import NpuTorchBackend
+from .xpu_backend import XpuTorchBackend
+from .cpu_backend import CpuTorchBackend
+from ....config.loader import get_hardware_config
 
-_BACKEND_MAP = {
-    "npu": NpuBackend,
-    "gpu": GpuBackend,
-    "cpu": CpuBackend,
-}
+_log = logging.getLogger(__name__)
+
+# Module-level cache of the frameworks config segment (lazy-loaded once).
+_HW_PROFILES_CACHE: Optional[dict] = None
 
 
-def get_backend(backend_name: Optional[str] = None) -> Backend:
-    """Get backend by name or auto-detect (npu > gpu > cpu)."""
-    if backend_name:
-        cls = _BACKEND_MAP.get(backend_name)
-        if cls is None:
-            raise ValueError(f"Unknown backend: {backend_name}. Must be one of {list(_BACKEND_MAP.keys())}")
-        return cls()
+def _hw_profiles(framework: str) -> dict:
+    """Return the hardware-profile dict for a framework (cached).
 
-    for cls in (NpuBackend, GpuBackend, CpuBackend):
-        b = cls()
-        if b.is_available():
-            return b
-    return CpuBackend()
+    Lazily loads the ``frameworks`` config segment on first call and caches it
+    module-level. Returns the per-framework sub-dict (role -> profile); empty
+    dict when the framework is absent.
+    """
+    global _HW_PROFILES_CACHE
+    if _HW_PROFILES_CACHE is None:
+        _HW_PROFILES_CACHE = get_hardware_config()
+    return _HW_PROFILES_CACHE.get(framework, {})
+
+
+def _validate_profile(name: str, profile: dict) -> None:
+    """Fail-fast validation of a hardware profile dict.
+
+    - torch_lib must be present (torch module attribute name).
+    - profiler must be the literal 'builtin' or a dict carrying 'activities'.
+    """
+    if "torch_lib" not in profile:
+        raise ValueError(f"profile '{name}' missing torch_lib")
+    prof = profile.get("profiler")
+    if prof != "builtin" and not (isinstance(prof, dict) and "activities" in prof):
+        raise ValueError(
+            f"profile '{name}' profiler must be 'builtin' or dict with activities"
+        )
+
+
+def _build(framework: str, name: str, profile: dict) -> Backend:
+    """Validate the profile then instantiate and inject torch_lib/profile/segment.
+
+    The backend class is derived from ``torch_lib`` (the torch module attribute
+    name), NOT from the segment name: ``npu`` -> NpuTorchBackend, ``cpu`` ->
+    CpuTorchBackend, anything else (mlu/musa/...) -> XpuTorchBackend. The
+    segment name (the yaml key, e.g. 'mlu'/'musa') is injected as
+    ``_segment_name`` so alias() returns whatever the deployer named the segment.
+
+    Fail-fast: invalid profiles raise before any backend is created.
+    """
+    _validate_profile(name, profile)
+    torch_lib = profile["torch_lib"]
+    if torch_lib == "npu":
+        cls = NpuTorchBackend
+    elif torch_lib == "cpu":
+        cls = CpuTorchBackend
+    else:  # mlu / musa / other -> generic accelerator
+        cls = XpuTorchBackend
+    b = cls()
+    b.torch_lib = torch_lib
+    b.profile = profile
+    b._segment_name = name  # alias = segment name (arbitrary)
+    return b
+
+
+def _probe(profile: dict) -> bool:
+    """Probe whether a hardware profile's torch_lib is usable.
+
+    cuda is native to torch (no ``torch_cuda`` module to import); other libs
+    (npu/xpu/mlu/...) require importing ``torch_<lib>`` first. The whole body
+    is wrapped so ImportError (lib not installed), AttributeError/None (torch
+    attr missing), and RuntimeError (e.g. PrivateUse1 single-slot already
+    renamed) all degrade to a logged warning + False.
+
+    A missing/empty ``torch_lib`` is checked up front (distinct warning) so a
+    malformed config is not silently swallowed as "CPU fallback".
+    """
+    lib = profile.get("torch_lib")
+    if not lib:
+        _log.warning("hardware probe skipped: profile missing torch_lib (%s)", profile)
+        return False
+    try:
+        if lib != "cuda":
+            importlib.import_module(f"torch_{lib}")
+        mod = getattr(torch, lib, None)
+        return bool(mod and mod.is_available())
+    except Exception as e:
+        _log.warning(
+            "hardware probe failed for torch_lib=%s: %s",
+            lib, e,
+        )
+        return False
+
+
+def get_backend(force_cpu: bool = False) -> Backend:
+    """Resolve a hardware Backend.
+
+    Resolution order (first match wins):
+
+    - ``force_cpu`` -> CpuTorchBackend.
+    - else auto-detect: iterate ``_hw_profiles("torch")`` in declared order,
+      skip profiles whose ``torch_lib`` is 'cpu' (CPU is the fallback below),
+      ``_probe`` each; first hit is ``_build``.
+    - nothing detected -> CpuTorchBackend fallback.
+
+    Instances are not cached: each call builds fresh.
+    """
+    if force_cpu:
+        return CpuTorchBackend()
+
+    for name, profile in _hw_profiles("torch").items():
+        # Skip CPU profiles during auto-detect (CPU is the fallback below).
+        if profile.get("torch_lib") == "cpu":
+            continue
+        if _probe(profile):
+            _log.info(
+                "Active hardware: %s (torch_lib=%s)", name, profile["torch_lib"]
+            )
+            return _build("torch", name, profile)
+    return CpuTorchBackend()

@@ -19,14 +19,6 @@ from ttk.core_modules.npu.op.comparison import comparing
 
 
 @pytest.fixture(autouse=True)
-def _mock_global_storage():
-    mock_gs = MagicMock()
-    mock_gs.compare_method = "close"
-    with patch('ttk.core_modules.npu.op.comparison.get_global_storage', return_value=mock_gs):
-        yield mock_gs
-
-
-@pytest.fixture(autouse=True)
 def _mock_outputs_to_numpy():
     with patch('ttk.core_modules.npu.op.comparison.__outputs_to_numpy_arrays',
                lambda outputs, dtypes: None):
@@ -42,8 +34,8 @@ def _call_comparing(mock_compare_side_effect):
             (np.array([1.0]),),
             (np.array([1.0]),),
             (np.array([1.0]),),
-            ((1e-3, 1e-3),),
             ("float32",),
+            standards=[MagicMock()],
         )
         return result, mock_compare
 
@@ -52,10 +44,9 @@ class TestComparingPass:
 
     def test_all_pass(self):
         result, _ = _call_comparing([
-            ("1.0", "", True),
-            ("1.0", "", True),
-            ("1.0", "", True),
-            ("1.0", "", True),
+            ("1.0", "", True, {}),
+            ("1.0", "", True, {}),
+            ("1.0", "", True, {}),
         ])
         assert result.passed == "PASS"
         assert result.dyn_precision == "1.0"
@@ -64,35 +55,33 @@ class TestComparingPass:
 
     def test_dyn_fail_means_overall_fail(self):
         result, _ = _call_comparing([
-            ("0.5", "", False),
-            ("1.0", "", True),
-            ("1.0", "", True),
-            ("1.0", "", True),
+            ("0.5", "", False, {}),
+            ("1.0", "", True, {}),
+            ("1.0", "", True, {}),
         ])
         assert result.passed == "FAIL"
         assert result.dyn_precision == "0.5"
 
     def test_bin_fail_means_overall_fail(self):
         result, _ = _call_comparing([
-            ("1.0", "", True),
-            ("1.0", "", True),
-            ("0.3", "", False),
-            ("1.0", "", True),
+            ("1.0", "", True, {}),
+            ("1.0", "", True, {}),
+            ("0.3", "", False, {}),
         ])
         assert result.passed == "FAIL"
         assert result.bin_precision == "0.3"
 
     def test_3_comparisons_made(self):
         result, mock_compare = _call_comparing([
-            ("1.0", "", True),
-            ("1.0", "", True),
-            ("1.0", "", True),
+            ("1.0", "", True, {}),
+            ("1.0", "", True, {}),
+            ("1.0", "", True, {}),
         ])
         assert mock_compare.call_count == 3
 
     def test_comparison_order(self):
         call_log = []
-        def track_compare(outputs, goldens, output_dtypes, method, options):
+        def track_compare(outputs, goldens, output_dtypes, *, standards, third_parties=None):
             first = outputs[0]
             label = "dyn" if first is dyn_out else "cst" if first is cst_out else "bin"
             if goldens[0] is golden:
@@ -100,7 +89,7 @@ class TestComparingPass:
             elif goldens[0] is dyn_out:
                 label += "_vs_dyn"
             call_log.append(label)
-            return ("1.0", "", True)
+            return ("1.0", "", True, {})
 
         dyn_out = np.array([1.0])
         cst_out = np.array([1.0])
@@ -110,7 +99,7 @@ class TestComparingPass:
         with patch('ttk.core_modules.npu.op.comparison.compare', side_effect=track_compare):
             comparing("dyn_k", "cst_k", "bin_k",
                       (dyn_out,), (cst_out,), (bin_out,), (golden,),
-                      ((1e-3, 1e-3),), ("float32",))
+                      ("float32",), standards=[MagicMock()])
 
         assert call_log == [
             "dyn_vs_golden",
@@ -126,11 +115,11 @@ class TestComparingPass:
                 (np.array([1.0]),),
                 (np.array([1.0]),),
                 (np.array([1.0]),),
-                ((1e-3, 1e-3),),
                 ("float32",),
+                standards=[MagicMock()],
             )
         assert result.passed == "COMPARE_FAILURE"
 
     def test_none_thresholds(self):
-        result, _ = _call_comparing([("1.0", "", True)] * 4)
+        result, _ = _call_comparing([("1.0", "", True, {})] * 3)
         assert result.passed == "PASS"

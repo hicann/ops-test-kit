@@ -171,14 +171,26 @@ def on_exit():
         atexit._run_exitfuncs()
 
 
+def worker_bootstrap(global_storage):
+    """Worker 进程初始化：设全局存储 + 加载配置 + 日志 + 随机种子。
+
+    从 intermediate_func 的 prologue 提取，可独立单测（intermediate_func 是
+    while True RPC 循环，无法直接测）。load_config 让 forkserver worker
+    拿到 --config 的配置（含 TLS）——本 spec 的核心修复。
+    """
+    set_global_storage(global_storage)
+    from ttk.config.loader import load_config  # lazy import（函数体内，避循环依赖）
+    load_config(global_storage.config_path)
+    default_logging_config(file_handler=global_storage.logging_to_file)
+    if global_storage.random_seed:
+        numpy.random.seed(global_storage.random_seed)
+
+
 def intermediate_func(pipe: "mp.connection.Connection", global_storage) -> NoReturn:
     global process_context
     process_context = ProcessContext(pipe)
     process_context.report_status(PROCESS_STATUS_CODE.LAUNCHED)  # 0x0114 -> Launched
-    set_global_storage(global_storage)
-    default_logging_config(file_handler=get_global_storage().logging_to_file)
-    if global_storage.random_seed:
-        numpy.random.seed(global_storage.random_seed)
+    worker_bootstrap(global_storage)
     while True:
         process_context.report_status(PROCESS_STATUS_CODE.IDLE)  # 0x1919 -> Ready for Command
         # noinspection PyBroadException

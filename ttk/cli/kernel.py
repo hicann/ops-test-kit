@@ -1,6 +1,7 @@
 from ttk.cli.common import add_common_args
 from ttk.cli.device import add_device_args
 from ttk.cli.bridge import args_to_switches, apply_kernel_args, run_with_switches
+from ttk.remote import is_remote_configured
 
 
 def register_kernel_command(subparsers):
@@ -52,10 +53,27 @@ def _add_kernel_args(parser):
                         help="SIMT DVG stack size in bytes")
     parser.add_argument("--force-block-dim", dest="force_block_dim", default=None,
                         help="Force block dim, e.g. --force-block-dim=2")
+    parser.add_argument("--xpu-perf", dest="xpu_perf", action="store_true",
+                        help="Collect 3rd-party (XPU) performance per case. "
+                             "Requires remote XPU config (ttk.conf.yaml or --config). PERF-only.")
+
+
+def _validate_xpu_perf_precondition(sw):
+    """前置校验：xpu_perf 触发了，remote 必须已配，否则 fail-fast。
+
+    is_remote_configured() 在这是"前置校验"（remote 在不在），不是触发器；
+    触发器是 xpu_perf。查 yaml config 来源。
+    """
+    if sw.xpu_perf and not is_remote_configured():
+        raise RuntimeError(
+            "--xpu-perf requires remote XPU config (ttk.conf.yaml or --config), "
+            "but none is configured.")
 
 
 def _handle_kernel(args):
     sw = args_to_switches(args)
     sw.test_mode = "op"
     apply_kernel_args(sw, args)
+
+    _validate_xpu_perf_precondition(sw)
     run_with_switches(sw)

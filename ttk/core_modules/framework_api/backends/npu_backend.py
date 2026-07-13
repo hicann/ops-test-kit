@@ -5,37 +5,37 @@
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-
+from __future__ import annotations
 
 import numpy as np
-import torch
 
-from .base import Backend
+from .torch_backend import TorchBackend
 from ....utilities import (
-    numpy_to_torch_tensor, torch_to_numpy_tensor, is_torch_native_dtype,
-    get_npu_available_device_ids,
-    get_ascend_full_soc_version,
-    get_npu_hw_info
+    is_torch_native_dtype, get_npu_hw_info,
 )
 
 
-class NpuBackend(Backend):
-    """NPU backend"""
+class NpuTorchBackend(TorchBackend):
+    """NPU backend.
 
-    def device_name(self):
-        return "npu"
+    Inherits the torch-generic device API (is_available/device_count) from
+    TorchBackend — those go through ``torch.npu.*``.
 
-    def is_available(self):
-        return self.device_count() > 0
+    device_name is inherited from Backend (``torch.npu.get_device_name``
+    returns the SoC model, e.g. 'Ascend910B3'). soc_series derives the short
+    series from that model via get_npu_hw_info (no more asys dependency).
 
-    def device_count(self):
-        ids = get_npu_available_device_ids()
-        return len(ids)
+    alias() is inherited from Backend (config-driven _segment_name, injected by
+    _build = the yaml segment key).
+    """
+
+    def is_npu(self) -> bool:
+        return True
 
     def to_device(self, tensor, dev_id=0):
-        import torch_npu
+        import torch_npu  # NPU-only: keep import in method body (lazy)
         str_dtype = tensor.dtype.name
         if is_torch_native_dtype(tensor.dtype.name):
             torch_tensor = self.from_numpy(tensor)
@@ -51,21 +51,12 @@ class NpuBackend(Backend):
                 )
                 return npu_torch_tensor
 
-    def synchronize(self, dev_id=0):
-        torch.npu.synchronize(dev_id)
-
-    def from_numpy(self, arr):
-        return numpy_to_torch_tensor(arr)
-
-    def to_numpy(self, tensor):
-        return torch_to_numpy_tensor(tensor.detach().cpu())
-
-    def soc_version(self):
-        return get_ascend_full_soc_version()
+    # to_numpy/from_numpy inherited from TorchBackend (was a dead byte-identical
+    # override that also dropped the .contiguous() guard the parent applies).
 
     def soc_series(self):
-        hw_info = get_npu_hw_info(self.soc_version())
-        return hw_info['short_soc_version']
-
-    def use_device(self):
-        return True
+        try:
+            hw_info = get_npu_hw_info(self.device_name())
+            return hw_info['short_soc_version']
+        except (FileNotFoundError, RuntimeError, KeyError):
+            return self.device_name()

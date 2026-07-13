@@ -1,6 +1,6 @@
 ---
 name: ttk-how-run-test
-description: 运行 TTK 测试。只要用户提到运行测试、跑算子、执行 kernel/aclnn/e2e 测试，或需要构造 ttk 命令、查看设备、ttk info、ttk list，就必须使用此 skill。即使用户只是说"帮我跑一下 add"、"怎么运行算子"、"加个编译选项"、"用 2 卡跑"、"编译选项怎么加"等口语化表述，也应触发。
+description: 运行 TTK 测试（首次/正常发起一次执行）。只要用户提到运行测试、跑算子、执行 kernel/aclnn/e2e 测试，或需要构造 ttk 命令、查看设备、ttk info、ttk list，就必须使用此 skill。即使用户只是说"帮我跑一下 add"、"怎么运行算子"、"加个编译选项"、"用 2 卡跑"等口语化表述，也应触发。跑完后失败/结果不对要排障用 ttk-how-diagnose。
 ---
 
 # 运行 TTK 测试
@@ -57,10 +57,10 @@ ACLNN 子命令复用全部通用参数，无模式专属选项，详见 `refere
 ### E2E 模式
 
 ```shell
-python3 -m ttk e2e -i cases.csv --backend npu
+python3 -m ttk e2e -i cases.csv
 ```
 
-E2E 支持 `--backend`（npu/gpu/cpu），详见 `references/e2e-params.md`。
+E2E 默认自动探测 NPU；`--cpu` 强制 CPU 执行。详见 `references/e2e-params.md`。
 
 ## 通用选项速查
 
@@ -90,10 +90,12 @@ E2E 支持 `--backend`（npu/gpu/cpu），详见 `references/e2e-params.md`。
 
 | 参数 | 说明 | 默认 |
 |------|------|------|
-| `--compare` | `close`/`cosine`/`binary`/`requant` | `close` |
+| `--compare` | `close`/`stat_rel_err`/`cosine`/`binary`/`requant`/`cross_check` | Spec.tolerance 路由（需 `--plugin`），否则 `stat_rel_err` |
 | `--seed` | 随机种子。取相同值时，同一个用例每次执行生成的输入数据完全一致 | 随机 |
 | `--golden-mode` | `Enable`/`Disable`/`Promote` | `Enable` |
 | `--input-dist` | `uniform`/`normal` | `uniform` |
+
+> 完整容差优先级（`--compare` > `Spec.tolerance` > CSV > 默认）见 `ttk-how-diagnose/references/precision-debug.md`。
 
 ### 调试
 
@@ -118,7 +120,7 @@ E2E 支持 `--backend`（npu/gpu/cpu），详见 `references/e2e-params.md`。
 # 运行自带示例
 python3 -m ttk kernel -i examples/case_store/kernel/add.csv
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --backend npu
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
 
 # 调试单个失败用例
 python3 -m ttk kernel -i cases.csv -t case_name --dump-on-fail --single-log

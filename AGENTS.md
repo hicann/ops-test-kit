@@ -25,7 +25,7 @@ TTK 的三种测试模式对应昇腾技术栈的不同层级，越往上覆盖�
 执行 TTK 命令需要在本仓库（ops-test-kit）目录下运行：
 - Kernel 模式：`python3 -m ttk kernel -i cases.csv`
 - ACLNN 模式：`python3 -m ttk aclnn -i cases.csv`
-- E2E 模式：`python3 -m ttk e2e -i cases.csv --backend npu`
+- E2E 模式：`python3 -m ttk e2e -i cases.csv`（默认自动探测 NPU；`--cpu` 强制 CPU）
 
 验证 NPU 环境：`python3 -m ttk info`
 
@@ -36,7 +36,7 @@ TTK 的三种测试模式对应昇腾技术栈的不同层级，越往上覆盖�
 | 运行测试 | ttk-how-run-test | 运行ttk、执行测试、查看设备、ttk info/list |
 | 编写用例 | ttk-how-write-case | 写用例、生成CSV、CSV字段、TensorList、动态shape |
 | 诊断失败 | ttk-how-diagnose | 测试失败、精度不通过、编译报错、执行超时、排障 |
-| 编写插件 | ttk-how-write-plugin | 自定义golden、__golden__、插件开发 |
+| 编写插件 | ttk-how-write-plugin | TestSpec、__spec__、算子测试规范编写 |
 
 > 读取 `.claude/skills/{技能名}/SKILL.md` 获取详细工作流程。
 

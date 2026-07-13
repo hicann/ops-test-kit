@@ -35,7 +35,7 @@ python3 -m ttk kernel -i cases.csv --co
 | `--const` | `-c` | 静态 shape 编译 | 关闭 |
 | `--binary` | `-b` | 二进制编译；`-b release` 使用发布内核 | 关闭 |
 | `--compile-only` | `--co` | 仅编译不执行 | 关闭 |
-| `--no-prof` | | 不下设备执行（类似 dry-run，编译、输入生成、Golden生成等流程正常执行） | 开启 |
+| `--no-prof` | | 不下设备执行（类似 dry-run，编译、输入生成、Golden生成等流程正常执行） | 关闭 |
 | `--compile-opts` | | 编译选项（KEY=VALUE 格式，可多次指定） | 无 |
 | `--tiling-run` | `--tr` | Tiling 运行次数 | 3 |
 
@@ -59,4 +59,6 @@ python3 -m ttk kernel -i cases.csv --co
 | `--clear-l1` | 执行前将 L1 填充为指定值（默认清零） | 关闭 |
 | `--simt-ub` | SIMT 模式 UB 大小 | 无 |
 | `--simt-stack-dcu` | SIMT 模式 DCU 栈大小 | 无 |
+| `--simt-stack-dvg` | SIMT 模式 DVG 栈大小 | 无 |
 | `--force-block-dim` | 强制指定 block_dim | 无 |
+| `--xpu-perf` | 采集 XPU 远程性能（device_ms） | 关闭 |

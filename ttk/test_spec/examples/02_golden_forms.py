@@ -34,7 +34,7 @@ class AbsClassSpec:
 # Explicit registration: class names use *Spec suffix (not *TestSpec),
 # so __spec__ dict is needed for discovery.
 __spec__ = {
-    "abs_str": AbsStrSpec,
-    "abs_func": AbsFuncSpec,
-    "abs_class": AbsClassSpec,
+    "abs_str": "AbsStrSpec",
+    "abs_func": "AbsFuncSpec",
+    "abs_class": "AbsClassSpec",
 }

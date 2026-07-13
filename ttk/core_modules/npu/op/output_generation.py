@@ -16,7 +16,6 @@ import gc
 import inspect
 import logging
 import numpy
-import os
 from typing import Sequence, Tuple, Union, List, Optional
 try:
     from collections.abc import Callable
@@ -28,15 +27,29 @@ from ...plugin_loader import get_plugin_function
 from ...operator.op_info_keeper import OpInfoKeeper
 from ...testcase_manager import TestcaseOp
 from ....utilities import resolve_custom_numpy_dtypes, get, get_global_storage, get_dtype_range, numpy_bfloat16
-from ....utilities import load_numpy_data, shape_product, ceil_div, input_apply_as_list
+from ....utilities import load_numpy_data, shape_product, ceil_div, input_apply_as_list, DTYPE_PROMOTE_MAP
+from ....utilities import framework_of, bind_by_name, resolve_callable_str
 
 
-DTYPE_PROMOTE_MAP: dict = {
-    "float16": "float32",
-    "bfloat16": "float32",
-    "float32": "float64",
-    "complex32": "complex64",
-    "complex64": "complex128",
+KERNEL_GOLDEN: dict = {
+    "floor_div": numpy.floor_divide,
+    "neg": numpy.negative,
+    "acos": numpy.arccos,
+    "acosh": numpy.arccosh,
+    "asin": numpy.arcsin,
+    "asinh": numpy.arcsinh,
+    "atan": numpy.arctan,
+    "atan2": numpy.arctan2,
+    "atanh": numpy.arctanh,
+    "assign_sub": numpy.subtract,
+    "assign_add": numpy.add,
+    "mod": numpy.fmod,
+    "is_finite": numpy.isfinite,
+    "is_nan": numpy.isnan,
+    "is_inf": numpy.isinf,
+    "is_pos_inf": numpy.isposinf,
+    "is_neg_inf": numpy.isneginf,
+    "is_close": numpy.isclose,
 }
 
 
@@ -110,32 +123,28 @@ def __golden_mode(mode: str, context: TestcaseOp):
         yield from __promote_dtype(context)
 
 
-def __call_builtin_golden_func(context: TestcaseOp, golden_func, golden_parameters,
-                               output_dtypes: list):
-    switches = get_global_storage()
-
-    with __golden_mode(switches.golden_mode, context):
-        if "context" in golden_parameters:
-            results = golden_func(context)
-        else:
-            kwargs = __correct_kwargs_for_golden(context, golden_parameters)
-            # auto convert to fp32 and invoke numpy function for bfp16
-            # otherwise numpy function will consider data as fp16 to compute which is wrong.
-            if ((isinstance(golden_func, numpy.ufunc)
-                    or inspect.getmodule(golden_func) == numpy
-                    or "numpy" in str(type(golden_func)))
-                and any("bfloat16" in str(arr.dtype) for arr in context.flat_input_arrays)):
-                input_arrays = [arr if "bfloat16" not in str(arr.dtype) else arr.astype("float32")
-                                for arr in context.flat_input_arrays]
-                input_arrays = input_apply_as_list(input_arrays, context.input_distribution)
-                results = golden_func(*input_arrays, **kwargs)
-                results = __golden_flatten(results)
-                results = [arr.astype(get(output_dtypes, i), copy=False)
-                            if (isinstance(arr, numpy.ndarray) and "bfloat16" in str(get(output_dtypes, i)))
-                            else arr for i, arr in enumerate(results)]
-                del input_arrays
-            else:
-                results = golden_func(*context.input_arrays, **kwargs)
+def __call_numpy_api(context: TestcaseOp, golden_func, golden_parameters,
+                     output_dtypes: list):
+    """KERNEL numpy API golden computation."""
+    kwargs = __correct_kwargs_for_golden(context, golden_parameters)
+    # auto convert to fp32 and invoke numpy function for bfloat16.
+    # otherwise numpy function will consider data as float16 to compute which is wrong.
+    # NOTE: this bf16→fp32 branch is ORTHOGONAL to __golden_mode/Promote — numpy
+    # cannot compute bfloat16 natively, so we lift to fp32 even when golden_mode
+    # != Promote. The Promote-context wrap is applied once at the outer
+    # __invoke_golden dispatch (covers custom/class/torch/tf too).
+    if any("bfloat16" in str(arr.dtype) for arr in context.flat_input_arrays):
+        input_arrays = [arr if "bfloat16" not in str(arr.dtype) else arr.astype("float32")
+                        for arr in context.flat_input_arrays]
+        input_arrays = input_apply_as_list(input_arrays, context.input_distribution)
+        results = golden_func(*input_arrays, **kwargs)
+        results = __golden_flatten(results)
+        results = [arr.astype(get(output_dtypes, i), copy=False)
+                    if (isinstance(arr, numpy.ndarray) and "bfloat16" in str(get(output_dtypes, i)))
+                    else arr for i, arr in enumerate(results)]
+        del input_arrays
+    else:
+        results = golden_func(*context.input_arrays, **kwargs)
     return results
 
 
@@ -146,32 +155,110 @@ def __call_custom_golden_func(context: TestcaseOp, golden_func, golden_parameter
         return output0, output1
     '''
     kwargs = __collect_dynamic_golden_kwargs(context)
+    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in golden_parameters.values())
+    if golden_parameters and not has_var_kw:
+        kwargs = {k: v for k, v in kwargs.items() if k in golden_parameters}
     results = golden_func(*context.input_arrays, **kwargs)
     return results
 
 
+def _torch_attrs_by_schema(func, attrs: dict) -> dict:
+    """从 torch.ops.aten.* 的 OpOverload schema 取 attr 名过滤 attrs。
+    schema 在 OpOverload(.default)上,不在 packet 上;非 aten/无 schema → {}。"""
+    ovl = getattr(func, "default", func)
+    sch = getattr(ovl, "_schema", None)
+    if sch is None:
+        return {}
+    out = {}
+    for a in sch.arguments:
+        if str(a.type) == "Tensor":      # 输入(已 positional 喂),跳过
+            continue
+        if a.name in attrs:
+            out[a.name] = attrs[a.name]
+    return out
+
+
+def __call_torch_api(context: TestcaseOp, func):
+    from ....utilities import numpy_to_torch_tensor, torch_to_numpy_tensor
+    t = [numpy_to_torch_tensor(a) if a is not None else None
+         for a in context.flat_input_arrays]
+    t = input_apply_as_list(t, context.input_distribution)
+    kwargs = _torch_attrs_by_schema(func, context.attributes)
+    results = __golden_flatten(func(*t, **kwargs))
+    return [torch_to_numpy_tensor(r) if hasattr(r, "numpy") else r for r in results]
+
+
+def __call_tf_api(context: TestcaseOp, func):
+    from ....utilities import normalize_to_tf_dtype, tf_dtype_revert
+    tf_in = [normalize_to_tf_dtype(a) if a is not None else None
+             for a in context.flat_input_arrays]
+    tf_in = input_apply_as_list(tf_in, context.input_distribution)
+    results = __golden_flatten(func(*tf_in))   # tf 无 schema 等价,attrs 暂不传
+    out = []
+    for r in results:
+        n = r.numpy() if hasattr(r, "numpy") else r
+        out.append(tf_dtype_revert(n))
+    return out
+
+
+def __invoke_class(context: TestcaseOp, cls, output_dtypes):
+    op_info = OpInfoKeeper().info_of(context.op_name)
+    inputs_named = {}
+    if op_info:
+        for inp, arr in zip(op_info["inputs"], context.flat_input_arrays):
+            inputs_named[inp["name"]] = arr
+    pool = {**inputs_named, **(context.attributes or {})}   # attributes 正常为 dict,or {} 防 None
+    if cls.__init__ is object.__init__:
+        inst = cls()
+    else:
+        ia, ik = bind_by_name(cls.__init__, pool)
+        inst = cls(*ia, **ik)
+    ca, ck = bind_by_name(inst.__call__, pool)
+    results = inst(*ca, **ck)
+    return results
+
+
+def __invoke_golden(context: TestcaseOp, golden_func, output_dtypes):
+    if isinstance(golden_func, str):
+        golden_func = resolve_callable_str(golden_func)
+    # Single Promote-context wrap around the ENTIRE dispatch (class / numpy /
+    # torch / tf / custom) — previously only the numpy builtin + class paths
+    # were guarded, so under golden_mode=Promote the custom / torch / tf goldens
+    # ran on un-promoted bfloat16/float16 inputs (inaccurate "true value").
+    mode = getattr(context, "golden_mode_override", None) or get_global_storage().golden_mode
+    with __golden_mode(mode, context):
+        if isinstance(golden_func, type):
+            return __invoke_class(context, golden_func, output_dtypes)
+        fw = framework_of(golden_func)
+        if fw == "numpy":
+            params = __sig_params(golden_func)
+            return __call_numpy_api(context, golden_func, params, output_dtypes)
+        if fw == "torch":
+            return __call_torch_api(context, golden_func)
+        if fw == "tf":
+            return __call_tf_api(context, golden_func)
+        return __call_custom_golden_func(context, golden_func, __sig_params(golden_func))
+
+
+def __sig_params(func):
+    try:
+        return inspect.signature(func).parameters
+    except Exception:
+        return {}   # 与正常值(mappingproxy,dict-like)同类型:异常返回 {} 非 [],in/.values()/.items() 统一可用
+
+
 def __generate_golden(context: TestcaseOp, output_dtypes: list) -> list:
     switches = get_global_storage()
-
-    golden_func, src = get_plugin_function(context.op_name, "golden", "kernel", switches.plugin_path)
+    golden_func = get_plugin_function(context.op_name, "golden", "kernel", switches.plugin_path)
+    if golden_func is None:
+        golden_func = KERNEL_GOLDEN.get(context.op_name)
     if golden_func is None:
         if context.op_name in numpy.__dir__() and isinstance(getattr(numpy, context.op_name), Callable):
-            golden_func, src = getattr(numpy, context.op_name), 'builtin'
-    disable_builtin = int(os.getenv("TTK_DISABLE_BUILTIN", "1"))
-    if golden_func and (src != 'builtin' or not disable_builtin):
+            golden_func = getattr(numpy, context.op_name)
+    if golden_func:
         # noinspection PyBroadException
         try:
-            golden_parameters = inspect.signature(golden_func).parameters
-        except:
-            golden_parameters = []
-        # Call golden function
-        # noinspection PyBroadException
-        try:
-            if src == 'builtin':
-                golden_results = __call_builtin_golden_func(context, golden_func, golden_parameters,
-                                                            output_dtypes)
-            else:  # customized & decoupled
-                golden_results = __call_custom_golden_func(context, golden_func, golden_parameters)
+            golden_results = __invoke_golden(context, golden_func, output_dtypes)
         except TimeoutError:
             logging.exception("Golden generation timeout")
             golden_results = ["GOLDEN_TIMEOUT"]
@@ -277,7 +364,6 @@ def __normalize_goldens(golden_arrays: List[Union[str, numpy.ndarray]], output_d
 
 
 def __nan_to_num(golden_array: numpy.ndarray, op: str, npu_dtype):
-    from ....user_defined_modules.op.golden_funcs.registry import user_specified_dma_copy_ops
     DMA_COPY_OPS = ("as_strided", "batch_to_space", "batch_to_space_nd", "broadcast_to",
                     "concat", "depth_to_space", "diag_v2",
                     "diag_flat", "flatten",
@@ -294,9 +380,7 @@ def __nan_to_num(golden_array: numpy.ndarray, op: str, npu_dtype):
     if "float" not in str(npu_dtype):
         return golden_array
     if (op in DMA_COPY_OPS or
-            (op.endswith("_d") and op[:-2] in DMA_COPY_OPS) or
-        op in user_specified_dma_copy_ops or
-            (op.endswith("_d") and op[:-2] in user_specified_dma_copy_ops)):
+            (op.endswith("_d") and op[:-2] in DMA_COPY_OPS)):
         return golden_array
     if get_global_storage().short_soc_version in ("Ascend310P",):  # result of this soc acts like INF/NAN mode.
         return golden_array

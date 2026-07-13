@@ -12,23 +12,25 @@ cosine similarity comparison
 """
 
 # Standard Packages
-from typing import Union
 import numpy as np
 
 # Third-party Packages
 from ...utilities import get
-from .registry import ComparisonBase, EachCompareResult, register_comparison
+from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
 
 
 @register_comparison("cosine")
 class CosineSimilarityComparison(ComparisonBase):
+    STANDARD_NAME = "cosine"
+
     def __post_init__(self):
-        self.rtol = self.tol_options.get('rtol', None)
+        legacy = self.tol_options.get("legacy", {})
+        self.rtol = legacy.get("rtol", None)
         if not isinstance(self.rtol, (tuple, list)):
             self.rtol = [self.rtol]
 
     @staticmethod
-    def _normalize_dtype(arr: Union[np.ndarray, "torch.Tensor"]) -> np.ndarray:
+    def _normalize_dtype(arr: np.ndarray) -> np.ndarray:
         # convert int4 -> int8, bcz np.dot will be wrong with int4
         if hasattr(arr, "dtype") and hasattr(arr.dtype, "name"):
             if arr.dtype.name == 'int4':
@@ -39,17 +41,19 @@ class CosineSimilarityComparison(ComparisonBase):
         rtol = self._get_rtol(self.output.dtype)
         output = self._normalize_dtype(self.output)
         golden = self._normalize_dtype(self.golden)
-        if self.is_torch:
-            from torch import cosine_similarity
-            precision = cosine_similarity(output.view([-1]), golden.view([-1]), dim=0)
-        else:
-            common_dtype = np.promote_types(output.dtype, golden.dtype)
-            _output = output if common_dtype == output.dtype else output.astype(common_dtype)
-            _golden = golden if common_dtype == golden.dtype else golden.astype(common_dtype)
-            output_norm = np.linalg.norm(_output)
-            golden_norm = np.linalg.norm(_golden)
-            precision = np.dot(_output, _golden.T) / (output_norm * golden_norm)
-        return EachCompareResult(precision, is_pass=False if (1 - precision) > rtol else True)
+        common_dtype = np.promote_types(output.dtype, golden.dtype)
+        _output = output if common_dtype == output.dtype else output.astype(common_dtype)
+        _golden = golden if common_dtype == golden.dtype else golden.astype(common_dtype)
+        output_norm = np.linalg.norm(_output)
+        golden_norm = np.linalg.norm(_golden)
+        precision = np.dot(_output, _golden.T) / (output_norm * golden_norm)
+        is_pass = (1 - precision) <= rtol
+        metrics = {"standard": "cosine", "precision": float(precision),
+                   "pass": bool(is_pass)}
+        if not is_pass:
+            metrics["reason"] = FAIL_REASONS["similarity_below_threshold"]
+        return EachCompareResult(precision, is_pass=is_pass, standard="cosine",
+                                 metrics=metrics)
 
     def _get_rtol(self, dtype):
         rtol = get(self.rtol, self.output_idx)

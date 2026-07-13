@@ -187,14 +187,12 @@ class TestCompileFailed:
             setattr(case, f"{mode}_compile_result", self._make_result("SUCC"))
         assert not case.compile_failed()
 
-    def test_dyn_fail_means_failed(self):
+    def test_all_fail_means_failed(self):
+        # compile_failed() = 所有编译结果非 SUCC（全失败）; 任一 SUCC 即不算失败（有可用编译）
         case = _make_testcase()
-        case.dyn_compile_result = self._make_result("FAIL")
-        case.cst_compile_result = self._make_result("SUCC")
-        case.bin_compile_result = self._make_result("SUCC")
-        results = [getattr(getattr(case, f"{t}_compile_result"), "compile_result")
-                   for t in ("dyn", "cst", "bin")]
-        assert "SUCC" not in results or "FAIL" in results
+        for mode in ("dyn", "cst", "bin"):
+            setattr(case, f"{mode}_compile_result", self._make_result("FAIL"))
+        assert case.compile_failed() is True
 
     def test_compile_dynamic_op_success_with_cst(self):
         case = _make_testcase()
@@ -431,14 +429,14 @@ class TestConstInputIndexes:
 class TestInputBytes:
 
     def test_input_bytes_calculation(self):
-        case = _make_testcase()
+        case = _make_testcase()  # 默认 2× float16 (8,) = 2*(8*2) = 32 bytes
         _validate(case)
-        assert case.input_bytes > 0
+        assert case.input_bytes == 32
 
     def test_output_bytes_calculation(self):
-        case = _make_testcase()
+        case = _make_testcase()  # 默认 1× float16 (8,) = 8*2 = 16 bytes
         _validate(case)
-        assert case.output_bytes > 0
+        assert case.output_bytes == 16
 
 
 class TestGetCompilationHash:

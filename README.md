@@ -2,11 +2,13 @@
 
 TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库提供的全链路、自动化、批量化算子测试框架，帮助开发者快速完成算子批量功能验证、性能评估以及Golden值比对，提升算子开发质量和效率。
 
+> 文档中出现的硬件厂商名仅作示例，TTK 通过配置驱动支持任意符合接口的硬件加速器。
+
 * **支持丰富的算子测试类型**：支持Kernel（AscendC）、ACLNN（aclnn* C API）、E2E（PyTorch/torch_npu框架API）等算子测试
-* **支持多种硬件类型**：E2E 模式经统一 Backend 抽象层支持 NPU、GPU、CPU 作为待测或标杆设备
+* **支持多种硬件类型**：E2E 模式经统一 Backend 抽象层支持 NPU、MLU、CPU 等作为待测或标杆设备（按配置 hardware segment 自动选择可用后端）
 * **批量CSV用例驱动**：通过CSV文件定义测试用例，一条命令批量运行
 * **多卡并行执行**：支持多NPU设备并行测试，提升测试效率
-* **多种精度对比方法**：支持数值近似、余弦相似度、二进制精确、重量化等对比方法
+* **多种精度对比方法**：支持统计相对误差（社区标准）、数值近似、余弦相似度、二进制精确、重量化、三方交叉校验等对比方法
 * **可扩展插件系统**：支持自定义Golden生成函数、输入数据生成函数（Kernel 与 ACLNN/E2E 各自命名空间）
 
 [English Documentation](./README-EN.md)
@@ -72,8 +74,9 @@ python3 -m ttk kernel -i examples/case_store/kernel/add.csv
 # ACLNN模式
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
 
-# E2E模式（NPU/GPU/CPU 任一后端，省略 --backend 时自动检测）
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --backend npu
+# E2E模式（按配置 hardware segment 自动选择可用后端；--cpu 强制 cpu）
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --cpu
 
 # 查看设备信息
 python3 -m ttk info

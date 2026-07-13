@@ -212,7 +212,7 @@ class TestGenerateGolden:
 
         fake_func = MagicMock(return_value=np.array([4.0, 5.0, 6.0]))
         with patch('ttk.core_modules.framework_api.golden_generation.get_plugin_function') as mock_get:
-            mock_get.return_value = (fake_func, "e2e")
+            mock_get.return_value = fake_func
             result = generate_golden(case, raw)
             assert len(result) == 1
             np.testing.assert_array_equal(result[0], [4.0, 5.0, 6.0])
@@ -225,7 +225,7 @@ class TestGenerateGolden:
         raw = [np.array([-1.0, 0.0, 1.0, 2.0], dtype=np.float32)]
 
         with patch('ttk.core_modules.framework_api.golden_generation.get_plugin_function') as mock_get:
-            mock_get.return_value = (None, None)
+            mock_get.return_value = None
             result = generate_golden(case, raw)
             assert len(result) == 1
             np.testing.assert_array_almost_equal(
@@ -240,7 +240,7 @@ class TestGenerateGolden:
 
         with patch('ttk.core_modules.framework_api.golden_generation.get_plugin_function') as mock_get, \
              patch('ttk.core_modules.framework_api.golden_generation._run_api_on_cpu') as mock_cpu:
-            mock_get.return_value = (None, None)
+            mock_get.return_value = None
             mock_cpu.side_effect = RuntimeError("no CPU impl")
             with pytest.raises(RuntimeError, match="cannot run on CPU"):
                 generate_golden(case, raw)
