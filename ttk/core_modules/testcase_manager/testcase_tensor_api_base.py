@@ -40,6 +40,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         "tensor_view_offsets",
         "tensor_view_strides",
         "output_tensor_indexes",
+        "inplace_input_indexes",
         "np_storages",
         "prof_result",
         "_tensor_list_dist",
@@ -77,6 +78,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         self.tensor_view_offsets = ()
         self.tensor_view_strides = ()
         self.output_tensor_indexes = ()
+        self.inplace_input_indexes = ()
         self.np_storages = None
         self.prof_result = None
         self._tensor_list_dist = None

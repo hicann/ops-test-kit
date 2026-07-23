@@ -57,6 +57,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
         "tensor_view_offsets": (FIELD_TYPES.INT_CONTAINER_NESTED, None, ()),
         "tensor_view_strides": (FIELD_TYPES.SHAPE_STRIDE, None, ()),
         "output_tensor_indexes": (FIELD_TYPES.INT_CONTAINER, None, ()),
+        "inplace_input_indexes": (FIELD_TYPES.INT_CONTAINER, None, ()),
     }
 
     attr_headers = {

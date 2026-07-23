@@ -121,7 +121,7 @@ def resolve_tolerance(tolerance, precision_tolerances, absolute_precision,
         params["legacy"] = {
             "rtol": precision_tolerances[idx][0] if precision_tolerances and idx < len(precision_tolerances) else None,
             "ptol": precision_tolerances[idx][1] if precision_tolerances and idx < len(precision_tolerances) else None,
-            "atol": absolute_precision[idx] if isinstance(absolute_precision, (tuple, list)) else absolute_precision,
+            "atol": absolute_precision[idx] if isinstance(absolute_precision, (tuple, list)) and idx < len(absolute_precision) else (absolute_precision if not isinstance(absolute_precision, (tuple, list)) else None),            
         }
         standards.append(ResolvedStandard(token, params))
     return standards

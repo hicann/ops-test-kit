@@ -333,6 +333,14 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     if not is_inplace:
         result_nps = result_to_numpy(result, backend)
 
+    # Plan A: read back in-place modified input tensors specified by inplace_input_indexes
+    inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
+    if inplace_input_indexes:
+        for idx in sorted(inplace_input_indexes):
+            if idx < len(args) and args[idx] is not None:
+                inplace_np = backend.to_numpy(args[idx].detach().clone())
+                result_nps.append(inplace_np)
+
     del args, kwargs
     return result_nps, perf
 
