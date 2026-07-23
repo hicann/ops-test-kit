@@ -238,9 +238,10 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
-                count = dist[idx] if idx < len(dist) and dist[idx] > 0 else 1
+                num = dist[idx] if idx < len(dist) and dist[idx] > 0 else 0
+                count = max(num, 1)
                 dtypes = self.flat_tensor_dtypes[flat_idx:flat_idx + count]
-                result.append(dtypes[0] if count == 1 else dtypes)
+                result.append(dtypes[0] if num == 0 else dtypes)
             self._output_dtypes = tuple(result)
         return self._output_dtypes
 
@@ -263,9 +264,10 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
-                count = dist[idx] if idx < len(dist) and dist[idx] > 0 else 1
+                num = dist[idx] if idx < len(dist) and dist[idx] > 0 else 0
+                count = max(num, 1)
                 shapes = self.flat_tensor_view_shapes[flat_idx:flat_idx + count]
-                result.append(shapes[0] if count == 1 else shapes)
+                result.append(shapes[0] if num == 0 else shapes)
             self._output_view_shapes = tuple(result)
         return self._output_view_shapes
 
@@ -288,8 +290,9 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
-                count = dist[idx] if idx < len(dist) and dist[idx] > 0 else 1
-                if count == 1:
+                num = dist[idx] if idx < len(dist) and dist[idx] > 0 else 0
+                count = max(num, 1)
+                if num == 0:
                     result.append(self.flat_view_offset(flat_idx))
                 else:
                     result.append(tuple(self.flat_view_offset(flat_idx + i) for i in range(count)))
@@ -315,8 +318,9 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
-                count = dist[idx] if idx < len(dist) and dist[idx] > 0 else 1
-                if count == 1:
+                num = dist[idx] if idx < len(dist) and dist[idx] > 0 else 0
+                count = max(num, 1)
+                if num == 0:
                     result.append(self.flat_view_stride(flat_idx))
                 else:
                     result.append(tuple(self.flat_view_stride(flat_idx + i) for i in range(count)))
@@ -342,8 +346,9 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             result = []
             for idx in self.output_tensor_indexes:
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
-                count = dist[idx] if idx < len(dist) and dist[idx] > 0 else 1
-                if count == 1:
+                num = dist[idx] if idx < len(dist) and dist[idx] > 0 else 0
+                count = max(num, 1)
+                if num == 0:
                     result.append(self.flat_storage_shape(flat_idx))
                 else:
                     result.append(tuple(self.flat_storage_shape(flat_idx + i) for i in range(count)))
