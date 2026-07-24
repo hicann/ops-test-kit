@@ -27,19 +27,19 @@ TTK (ops Test Tool Kit) is a full-pipeline, automated, batch operator testing fr
 
 ## Basic Usage Guide
 
-- [Test Case Generation (CSV Format)](/docs/Test_Case_Generation.md)
-- [Task Execution](/docs/Task_Execution.md)
-- [Result Analysis](/docs/Result_Analysis.md)
+- [Test Case Generation (CSV Format)](./docs/Test_Case_Generation.md)
+- [Task Execution](./docs/Task_Execution.md)
+- [Result Analysis](./docs/Result_Analysis.md)
 
 ## Operator Test Guides
 
-- [Kernel Operator Test Guide](/docs/Operator_Test_Guides/Kernel_Test_Guide.md)
-- [ACLNN Operator Test Guide](/docs/Operator_Test_Guides/ACLNN_Test_Guide.md)
-- [E2E Operator Test Guide](/docs/Operator_Test_Guides/E2E_Test_Guide.md)
+- [Kernel Operator Test Guide](./docs/Operator_Test_Guides/Kernel_Test_Guide.md)
+- [ACLNN Operator Test Guide](./docs/Operator_Test_Guides/ACLNN_Test_Guide.md)
+- [E2E Operator Test Guide](./docs/Operator_Test_Guides/E2E_Test_Guide.md)
 
 ## FAQ & Troubleshooting
 
-- [FAQ](/docs/FAQ/FAQ.md)
+- [FAQ](./docs/FAQ/FAQ.md)
 
 # Quick Start
 
@@ -63,7 +63,7 @@ testcase_name,network_name,op_name,input_shapes,input_dtypes,input_formats,outpu
 add_01,,add,"((128, 1024), (1, 1024))","('float32', 'float32')","('ND',)","((128, 1024),)","('float32',)","('ND',)","((128, 1024), (1, 1024))","('ND',)","((128, 1024),)","('ND',)",{},"((0, 0), (0, 0))","((0.001, 0.001),)",1e-8,(),(),True,,,0,,(),()
 ```
 
-> For detailed CSV format, see [Test Case Generation](/docs/Test_Case_Generation.md)
+> For detailed CSV format, see [Test Case Generation](./docs/Test_Case_Generation.md)
 
 ## Run Tests
 
@@ -88,7 +88,7 @@ python3 -m ttk info
 
 Test results including per-case precision status and overall pass rate are printed to the terminal.
 
-> See [Result Analysis](/docs/Result_Analysis.md) for details.
+> See [Result Analysis](./docs/Result_Analysis.md) for details.
 
 ## Directory Structure
 
