@@ -157,6 +157,7 @@ class SWITCHES:
         "test_mode",
         "force_cpu",
         "fullgraph",
+        "aclgraph_enabled",
         "validate_only",
         # private properties
         "_run_time",
@@ -226,6 +227,7 @@ class SWITCHES:
         self.test_mode: str = "op"
         self.force_cpu: bool = False
         self.fullgraph: int = 0
+        self.aclgraph_enabled: bool = False
         self.validate_only: bool = False
         # private properties below
         self._run_time: Optional[int] = None

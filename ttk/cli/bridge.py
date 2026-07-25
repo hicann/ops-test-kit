@@ -190,6 +190,8 @@ def apply_e2e_args(sw, args):
         sw.force_cpu = True
     if hasattr(args, 'fullgraph'):
         sw.fullgraph = args.fullgraph
+    if getattr(args, "aclgraph", False):
+        sw.aclgraph_enabled = True
 
 
 def run_with_switches(sw):

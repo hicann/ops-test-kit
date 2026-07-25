@@ -35,6 +35,11 @@ def _get_npu_backend():
     config = CompilerConfig()
     return torchair.get_npu_backend(compiler_config=config)
 
+@functools.lru_cache(maxsize=1)
+def _get_npu_backend_aclgraph():
+    """获取 aclgraph 模式的 NPU backend。"""
+    npu_backend = "npugraph_ex"
+    return npu_backend
 
 def _compile_model(model, backend, dynamic, fullgraph):
     """Compile model with torch.compile. Returns compiled callable or raises."""
@@ -46,6 +51,15 @@ def _compile_model(model, backend, dynamic, fullgraph):
     )
     return compiled
 
+def _compile_model_aclgraph(model, backend):
+    """以 aclgraph 模式编译模型"""
+    compiled = torch.compile(
+        model,
+        fullgraph=False,
+        backend=backend,
+        dynamic=False,
+    )
+    return compiled
 
 def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
                   is_inplace, inplace_backup, api_name):
@@ -84,7 +98,7 @@ def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
     return result_nps, perf
 
 
-def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs, dynamic):
+def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs, dynamic, is_aclgraph=False):
     """
     Execute API in GE graph mode via torch.compile with profiling.
 
@@ -107,7 +121,12 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         logging.warning("Graph mode only supports NPU backend, skipping")
         return [], None
 
-    mode_str = "dynamic" if dynamic else "static"
+    if is_aclgraph:
+        mode_str = "aclgraph"
+    elif dynamic:
+        mode_str = "dynamic"
+    else:
+        mode_str = "static"
     logging.info(f"Executing graph mode: {mode_str}")
 
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
@@ -139,7 +158,10 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         model = GraphNetwork(api_caller)
         run_args, run_kwargs, run_inplace = args, kwargs, is_inplace
     try:
-        npu_backend = _get_npu_backend()
+        if is_aclgraph:
+            npu_backend = _get_npu_backend_aclgraph()
+        else:
+            npu_backend = _get_npu_backend()
     except Exception as e:
         logging.error(f"Failed to get TorchAir NPU backend: {e}")
         del args, kwargs
@@ -147,7 +169,10 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
 
     use_fullgraph = bool(switches.fullgraph)
     try:
-        compiled = _compile_model(model, npu_backend, dynamic, use_fullgraph)
+        if is_aclgraph:
+            compiled = _compile_model_aclgraph(model, npu_backend)
+        else:
+            compiled = _compile_model(model, npu_backend, dynamic, use_fullgraph)
         result_nps, perf = _run_compiled(
             compiled, run_args, run_kwargs, backend, dev_id, switches,
             run_inplace, inplace_backup if run_inplace else None, testcase.api_name)
@@ -156,6 +181,15 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)
         del args, kwargs
         return [], None
+
+    if result_nps:
+        inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
+        if inplace_input_indexes:
+            for idx in sorted(inplace_input_indexes):
+                if idx < len(args) and args[idx] is not None:
+                    inplace_np = backend.to_numpy(args[idx].detach().clone())
+                    result_nps.append(inplace_np)
+
     if inplace_backup is not None:
         del inplace_backup
     del args, kwargs

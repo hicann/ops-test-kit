@@ -127,10 +127,12 @@ def _profiling_end_print(testcase, return_struct, golden_nps=None, switches=None
         kernel_table += _format_kernel_table(return_struct.graph_cst_kernel_details, "Graph Cst")
     if return_struct.graph_dyn_kernel_details:
         kernel_table += _format_kernel_table(return_struct.graph_dyn_kernel_details, "Graph Dyn")
+    if return_struct.graph_aclgraph_kernel_details:
+        kernel_table += _format_kernel_table(return_struct.graph_aclgraph_kernel_details, "Graph Aclgraph")
 
     lines = []
     has_eager = return_struct.eager_precision is not None
-    has_graph = return_struct.graph_cst_precision is not None or return_struct.graph_dyn_precision is not None
+    has_graph = return_struct.graph_cst_precision is not None or return_struct.graph_dyn_precision is not None or return_struct.graph_aclgraph_precision is not None
 
     if has_eager:
         lines.append(f"EAGER:       {return_struct.eager_precision}")
@@ -146,6 +148,11 @@ def _profiling_end_print(testcase, return_struct, golden_nps=None, switches=None
         if return_struct.graph_dyn_device_perf_us is not None:
             lines.append(f"  DEVICE: {return_struct.graph_dyn_device_perf_us} us")
             lines.append(f"  CPU:    {return_struct.graph_dyn_cpu_perf_us} us")
+    if return_struct.graph_aclgraph_precision is not None:
+        lines.append(f"GRAPH ACLGRAPH:   {return_struct.graph_aclgraph_precision}")
+        if return_struct.graph_aclgraph_device_perf_us is not None:
+            lines.append(f"  DEVICE: {return_struct.graph_aclgraph_device_perf_us} us")
+            lines.append(f"  CPU:    {return_struct.graph_aclgraph_cpu_perf_us} us")
 
     if not lines and return_struct.precision_status is None:
         return
@@ -560,7 +567,9 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
     process_ctx.notify_status("OnDumpInput")
     _dump_inputs(testcase, raw_inputs, switches)
 
-    graph_enabled = switches.cst_switches.enabled or switches.dyn_switches.enabled
+    graph_enabled = (switches.cst_switches.enabled
+                 or switches.dyn_switches.enabled
+                 or getattr(switches, 'aclgraph_enabled', False))
 
     process_ctx.notify_status("OnAcquireLock")
     use_device = backend.use_device()
@@ -570,6 +579,8 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
     graph_dyn_nps = None
     graph_cst_perf = None
     graph_dyn_perf = None
+    graph_aclgraph_nps = None
+    graph_aclgraph_perf = None
     with DeviceLock(process_ctx, dev_id, use_device=use_device,
                     grant_event=device_grant_events.get(dev_id),
                     granted_idx=device_granted_indices.get(dev_id)):
@@ -581,6 +592,12 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
             testcase, backend, dev_id, switches, plan,
             resolved, is_tensor_method, is_inplace, raw_inputs)
         if graph_enabled:
+            if getattr(switches, 'aclgraph_enabled', False):
+                process_ctx.notify_status("OnGraphAclgraph")
+                graph_aclgraph_nps, graph_aclgraph_perf = _execute_graph(
+                    testcase, backend, dev_id, switches, plan,
+                    resolved, is_tensor_method, is_inplace, raw_inputs,
+                    dynamic=False, is_aclgraph=True)
             if switches.cst_switches.enabled:
                 process_ctx.notify_status("OnGraphCst")
                 graph_cst_nps, graph_cst_perf = _execute_graph(
@@ -610,10 +627,14 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
 
     if graph_enabled:
         process_ctx.notify_status("OnGraphComparison")
+        if getattr(switches, 'aclgraph_enabled', False) and graph_aclgraph_nps:
+            _dump_outputs(testcase, graph_aclgraph_nps, switches)
         if switches.cst_switches.enabled and graph_cst_nps:
             _dump_outputs(testcase, graph_cst_nps, switches)
         if switches.dyn_switches.enabled and graph_dyn_nps:
             _dump_outputs(testcase, graph_dyn_nps, switches)
+        if getattr(switches, 'aclgraph_enabled', False):
+            _evaluate_graph_precision(testcase, raw_inputs, graph_aclgraph_nps, golden_nps, switches, return_struct, "aclgraph", graph_aclgraph_perf)
         if switches.cst_switches.enabled:
             _evaluate_graph_precision(testcase, raw_inputs, graph_cst_nps, golden_nps, switches, return_struct, "static", graph_cst_perf)
         if switches.dyn_switches.enabled:

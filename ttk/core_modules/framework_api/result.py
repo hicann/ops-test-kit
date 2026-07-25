@@ -36,6 +36,11 @@ class FrameworkApiReturnStructure:
         "graph_dyn_cpu_perf_us",
         "graph_dyn_kernel_count",
         "graph_dyn_kernel_details",
+        "graph_aclgraph_precision",
+        "graph_aclgraph_device_perf_us",
+        "graph_aclgraph_cpu_perf_us",
+        "graph_aclgraph_kernel_count",
+        "graph_aclgraph_kernel_details",
         "precision_metrics",
     )
 
@@ -56,6 +61,11 @@ class FrameworkApiReturnStructure:
         self.graph_dyn_cpu_perf_us = None
         self.graph_dyn_kernel_count = None
         self.graph_dyn_kernel_details = None
+        self.graph_aclgraph_precision = None
+        self.graph_aclgraph_device_perf_us = None
+        self.graph_aclgraph_cpu_perf_us = None
+        self.graph_aclgraph_kernel_count = None
+        self.graph_aclgraph_kernel_details = None
         self.precision_metrics = {}
 
     @staticmethod
@@ -65,7 +75,7 @@ class FrameworkApiReturnStructure:
     def pick_data(self, titles):
         return tuple(getattr(self, t, None) for t in titles)
 
-    _MODE_PREFIX = {"static": "cst", "dynamic": "dyn"}
+    _MODE_PREFIX = {"static": "cst", "dynamic": "dyn", "aclgraph": "aclgraph"}
 
     def construct(self, precision_str, precision_passed, profile_result, mode=None, metrics=None):
         """

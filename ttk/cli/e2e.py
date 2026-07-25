@@ -21,6 +21,8 @@ def _add_e2e_args(parser):
                         help="Enable dynamic shape graph test (default: disabled); use -d=false to disable")
     parser.add_argument("-c", "--const", nargs="?", const=True, default=None,
                         help="Enable static shape graph test (default: disabled); use -c=false to disable")
+    parser.add_argument("--aclgraph", action="store_true", default=False,
+                        help="Enable aclgraph mode (reduce-overhead) via torch.compile")
     parser.add_argument("--fullgraph", dest="fullgraph", default=0, type=int,
                         help="Capture full graph in torch.compile (0=off, 1=on; default: 0)")
 
