@@ -1,6 +1,11 @@
+from ttk.cli.bridge import (
+    apply_aclnn_args,
+    args_to_switches,
+    configure_manual_data,
+    run_with_switches,
+)
 from ttk.cli.common import add_common_args
 from ttk.cli.device import add_device_args
-from ttk.cli.bridge import args_to_switches, apply_aclnn_args, run_with_switches
 
 
 def register_aclnn_command(subparsers):
@@ -15,11 +20,13 @@ def register_aclnn_command(subparsers):
 
 
 def _add_aclnn_args(parser):
-    pass
+    parser.add_argument("--no-prof", action="store_true",
+                        help="Prepare input and CPU golden data without running ACLNN")
 
 
 def _handle_aclnn(args):
     sw = args_to_switches(args)
     sw.test_mode = "aclnn"
     apply_aclnn_args(sw, args)
+    configure_manual_data(sw, args, "aclnn")
     run_with_switches(sw)

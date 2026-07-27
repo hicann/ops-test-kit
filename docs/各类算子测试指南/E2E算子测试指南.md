@@ -108,6 +108,28 @@ E2E模式的执行流程如下：
 读取CSV → 生成输入张量 → 在待测后端调用API → 在CPU调用Golden API → 精度比对 → 输出结果
 ```
 
+## 输入/Golden与设备执行分离
+
+```shell
+# prepare：生成并保存input和CPU Golden，不调用目标API、不compare
+python3 -m ttk e2e -i torch_add.csv --plugin /path/to/assets \
+  --no-prof --dump in,golden --dump-format bin \
+  --manual-data-dirs /data/torch_add
+
+# replay：跳过输入和Golden生成，执行目标API并compare
+python3 -m ttk e2e -i torch_add.csv --plugin /path/to/assets \
+  --manual-data-dirs /data/torch_add
+```
+
+两个阶段必须使用相同 CSV 数据契约。replay 不运行 input/Golden plugin，但 wrapper、
+Spec、pre-compare 或自定义 compare 仍可能依赖相同 assets，因此不能仅凭数据目录省略
+运行环境。plugin 内容变化后应重新 prepare；数据文件协议不记录或校验 plugin 内容。
+
+prepare 目录可省略：仅有一个 plugin 路径时默认创建在其 `manual_data/` 下，无 plugin
+时为当前目录的 `manual_data/`；多个 plugin 路径必须显式指定输出目录。完整格式、
+typed data 文件命名、跨服务器迁移和非法参数组合参见
+[手工数据准备与回放](../手工数据准备与回放.md)。
+
 ## 精度对比
 
 ```shell

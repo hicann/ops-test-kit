@@ -52,6 +52,25 @@ python3 -m ttk aclnn -i aclnn_cat.csv -o results.csv
 Read CSV -> Generate input tensors/scalars -> Call aclnn* C API -> Generate golden (CPU) -> Precision compare -> Output results
 ```
 
+## Separate Data Preparation and Device Execution
+
+```shell
+# Prepare without calling the aclnn* target API or compare.
+python3 -m ttk aclnn -i aclnn_cat.csv --plugin /path/to/assets \
+  --no-prof --dump in,golden --dump-format bin \
+  --manual-data-dirs /data/aclnn_cat --plat Ascend950
+
+# Restore tensors/scalars/golden, run the target API, and compare.
+python3 -m ttk aclnn -i aclnn_cat.csv --plugin /path/to/assets \
+  --manual-data-dirs /data/aclnn_cat
+```
+
+Prepare does not query device count or compile clear/warmup helper kernels, but it
+still requires CANN/OPP for CSV and ACLNN API metadata parsing. Pass the target
+`--plat` on a host without SoC detection. Both stages require the same CSV data
+contract. See [Manual-Data Prepare and Replay](../Manual_Data_Prepare_and_Replay.md)
+for complete constraints.
+
 # Common Examples
 
 ```shell

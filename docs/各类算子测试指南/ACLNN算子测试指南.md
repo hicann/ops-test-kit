@@ -112,6 +112,26 @@ ACLNN模式的执行流程如下：
 读取CSV → 生成输入张量/标量 → 调用aclnn* C API → 生成Golden（CPU） → 精度比对 → 输出结果
 ```
 
+## 输入/Golden与设备执行分离
+
+```shell
+# prepare：不调用aclnn*主API、不申请设备锁、不compare
+python3 -m ttk aclnn -i aclnn_cat.csv --plugin /path/to/assets \
+  --no-prof --dump in,golden --dump-format bin \
+  --manual-data-dirs /data/aclnn_cat --plat Ascend950
+
+# replay：恢复tensor/scalar/Golden，执行aclnn*主API并compare
+python3 -m ttk aclnn -i aclnn_cat.csv --plugin /path/to/assets \
+  --manual-data-dirs /data/aclnn_cat
+```
+
+prepare 不查询设备数量，也不编译清理或 warmup 辅助 Kernel，但 CSV 和 ACLNN API
+元信息解析仍要求 CANN/OPP 环境。无卡环境无法探测 SoC 时必须传目标 `--plat`。
+两个阶段必须使用相同 CSV 数据契约；plugin 或 Golden 逻辑变化后必须重新 prepare。
+
+完整目录结构、`bin/npy/pt` typed data 文件校验和参数约束参见
+[手工数据准备与回放](../手工数据准备与回放.md)。
+
 # 多卡并行
 
 ```shell

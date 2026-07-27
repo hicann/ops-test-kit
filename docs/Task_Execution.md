@@ -43,6 +43,40 @@ python3 -m ttk info
 python3 -m ttk list -i cases.csv --op add
 ```
 
+## E2E/ACLNN/Kernel Two-Stage Execution
+
+```shell
+# Prepare input and CPU golden without target API execution or comparison.
+python3 -m ttk e2e -i cases.csv --plugin /path/to/assets \
+  --no-prof --dump in,golden --dump-format bin \
+  --manual-data-dirs /data/manual
+
+# Restore prepared data, execute the target API, and compare.
+python3 -m ttk e2e -i cases.csv --plugin /path/to/assets \
+  --manual-data-dirs /data/manual
+```
+
+ACLNN uses the same options; add `--plat=<target-soc>` when a prepare host cannot
+detect the SoC. See [Manual-Data Prepare and Replay](./Manual_Data_Prepare_and_Replay.md)
+for formats, typed-data filename validation, directory defaults, and option constraints.
+
+Kernel uses the same stage selectors while preserving its execution-mode options:
+
+```shell
+python3 -m ttk kernel -i kernel_cases.csv --plugin /path/to/kernel_assets \
+  -d=false -c=false -b=release \
+  --no-prof --dump in,golden --dump-format bin \
+  --manual-data-dirs /data/kernel_manual
+
+python3 -m ttk kernel -i kernel_cases.csv --plugin /path/to/kernel_assets \
+  -d=false -c=false -b=release \
+  --manual-data-dirs /data/kernel_manual
+```
+
+Standalone Kernel `--no-prof` keeps its existing dry-run behavior. Only the exact
+`--no-prof --dump in,golden` pair selects prepare; `--compile-only` cannot be used
+with either manual-data stage.
+
 # Case Selection
 
 | Parameter | Short | Description | Example |
@@ -85,6 +119,7 @@ python3 -m ttk list -i cases.csv --op add
 | `--dump` | Dump data: `full`/`in`/`out`/`golden` | `--dump full` |
 | `--dump-format` | Dump format: `bin`/`npy`/`pt`/`print` | `--dump-format npy` |
 | `--dump-on-fail` | Auto-dump all data on precision failure | `--dump-on-fail` |
+| `--manual-data-dirs` | Prepare output or ordered replay search roots | `--manual-data-dirs /data/op` |
 | `--single-log` | One log file per test case | `--single-log` |
 | `--plugin` | External plugin path | `--plugin /path/to/plugin.py` |
 | `--validate` | Validate CSV format only (skips compilation, input/golden generation, device execution) | `--validate` |
@@ -105,7 +140,7 @@ python3 -m ttk list -i cases.csv --op add
 | `--const` | `-c` | Static shape compilation | Off |
 | `--binary` | `-b` | Binary mode; `-b release` for released kernels | Off |
 | `--compile-only` | `--co` | Compile only, skip execution | Off |
-| `--no-prof` | | Skip device execution (dry-run: compilation, input/golden generation still run) | Off |
+| `--no-prof` | | Kernel dry-run; with exact `--dump in,golden`, select manual-data prepare | Off |
 | `--compile-opts` | | Compile options (KEY=VALUE, can be specified multiple times) | None |
 | `--tiling-run` | `--tr` | Tiling run times | 3 |
 | `--reuse-hbm` | | Each case runs 3 times on NPU by default; reuse same HBM memory to enable L2 Cache | Off |
@@ -119,9 +154,10 @@ python3 -m ttk list -i cases.csv --op add
 
 > E2E mode runs through a unified Backend abstraction (`framework_api/backends/`); all backends share the same case parsing and precision comparison pipeline. The CPU backend is commonly used as the Golden source. The backend is auto-selected per the configured hardware segment (`yaml` `frameworks.torch.<seg>`); `--cpu` forces the CPU backend.
 
-# ACLNN-Specific Parameters
+# Two-Stage Selector
 
-The ACLNN subcommand reuses the common parameters and has no mode-specific options.
+`--no-prof --dump in,golden` prepares input/CPU-golden data without calling the
+target API or Kernel. See the two-stage guide above for required combinations.
 
 # General Parameters
 

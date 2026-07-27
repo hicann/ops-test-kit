@@ -1,5 +1,15 @@
-import pathlib
 import logging
+import pathlib
+import re
+
+
+_TYPED_CLEAN_VALUE = re.compile(r"(?P<dtype>[A-Za-z][A-Za-z0-9_]*)\((?P<value>[^()]*)\)$")
+_INTEGER_CLEAN_VALUE = re.compile(
+    r"[+-]?(?:0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+)$"
+)
+_FLOAT_CLEAN_VALUE = re.compile(
+    r"[+-]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?)$"
+)
 
 
 def args_to_switches(args):
@@ -148,10 +158,8 @@ def apply_kernel_args(sw, args):
     if hasattr(args, 'clear_atomic') and args.clear_atomic:
         _apply_clear_atomic(sw, args.clear_atomic)
     if hasattr(args, 'clear_ub') and args.clear_ub is not None:
-        import numpy
         sw.force_clear_ub = _parse_clean_val("UB", args.clear_ub)
     if hasattr(args, 'clear_l1') and args.clear_l1 is not None:
-        import numpy
         sw.force_clear_l1 = _parse_clean_val("L1", args.clear_l1)
     if hasattr(args, 'force_block_dim') and args.force_block_dim is not None:
         bd = args.force_block_dim
@@ -194,6 +202,97 @@ def apply_e2e_args(sw, args):
         sw.aclgraph_enabled = True
 
 
+def configure_manual_data(sw, args, command):
+    """Validate and resolve the E2E/ACLNN/Kernel two-stage manual-data mode."""
+    from ttk.utilities.classes import DumpLevel
+
+    raw_dirs = getattr(args, "manual_data_dirs", None)
+    if isinstance(raw_dirs, str):
+        raw_dirs = (raw_dirs,)
+    elif not isinstance(raw_dirs, (tuple, list)):
+        raw_dirs = ()
+    directories = tuple(str(pathlib.Path(item).expanduser().resolve())
+                        for item in raw_dirs if isinstance(item, str) and item)
+
+    no_prof = getattr(args, "no_prof", False) is True
+    expected_dump = DumpLevel.INPUT.value | DumpLevel.GOLDEN.value
+    is_prepare_dump = no_prof and sw.dump_config.mode == expected_dump
+    if not no_prof and not directories:
+        return
+
+    if not no_prof:
+        if sw.golden_mode != "Enable":
+            raise ValueError(
+                "--manual-data-dirs replay loads an existing golden; use --golden-mode Enable"
+            )
+        if sw.validate_only:
+            raise ValueError("--validate cannot be combined with --manual-data-dirs replay")
+        if command == "kernel" and sw.compile_only:
+            raise ValueError("--compile-only cannot be combined with Kernel manual-data replay")
+        if command == "e2e" and sw.force_cpu:
+            raise ValueError("--manual-data-dirs replay is the device stage and cannot use --cpu")
+        sw.manual_data_mode = "replay"
+        sw.manual_data_dirs = directories
+        return
+
+    # Kernel's legacy --no-prof dry run remains valid until a complete prepare dump is requested.
+    if command == "kernel" and not is_prepare_dump:
+        if directories:
+            raise ValueError(
+                "Kernel manual-data preparation requires exactly "
+                "--no-prof --dump in,golden"
+            )
+        return
+
+    if sw.dump_config.mode != expected_dump:
+        raise ValueError(
+            "--no-prof requires exactly --dump in,golden; output/full dump "
+            "cannot be produced before device execution"
+        )
+    if sw.dump_config.file_format not in ("bin", "pt", "npy"):
+        raise ValueError(
+            f"--dump-format {sw.dump_config.file_format!r} is not restorable with "
+            "--no-prof; use bin, pt, or npy"
+        )
+    if sw.dump_config.dump_on_fail:
+        raise ValueError("--dump-on-fail requires comparison and cannot be used with --no-prof")
+    if sw.golden_mode == "Disable":
+        raise ValueError("--no-prof requires CPU golden generation; --golden-mode Disable is invalid")
+    if sw.validate_only:
+        raise ValueError("--validate cannot be combined with --no-prof data preparation")
+    if command == "kernel" and sw.compile_only:
+        raise ValueError("--compile-only cannot be combined with Kernel manual-data preparation")
+    if command == "e2e" and (sw.cst_switches.enabled or sw.dyn_switches.enabled or sw.fullgraph):
+        raise ValueError("graph execution options cannot be combined with --no-prof data preparation")
+    if len(directories) > 1:
+        raise ValueError("--no-prof writes one dataset; specify at most one --manual-data-dirs path")
+    sw.manual_data_mode = "prepare"
+    sw.manual_data_dirs = directories or (_default_manual_data_dir(sw),)
+
+
+def _default_manual_data_dir(sw):
+    if sw.plugin_path:
+        if len(sw.plugin_path) > 1:
+            raise ValueError(
+                "--no-prof with multiple --plugin paths require one explicit "
+                "--manual-data-dirs output directory"
+            )
+        plugin = pathlib.Path(sw.plugin_path[0])
+        plugin_root = plugin.parent if plugin.is_file() or plugin.suffix == ".py" else plugin
+        return str((plugin_root / "manual_data").resolve())
+    return str((pathlib.Path.cwd() / "manual_data").resolve())
+
+
+def _log_manual_data_configuration(sw):
+    default_dir = str((pathlib.Path.cwd() / "manual_data").resolve())
+    if (getattr(sw, "manual_data_mode", None) == "prepare" and
+            not sw.plugin_path and sw.manual_data_dirs == (default_dir,)):
+        logging.info(
+            "No --plugin was provided; using current-directory manual-data output: %s",
+            default_dir,
+        )
+
+
 def run_with_switches(sw):
     import ttk
     from ttk.utilities import set_global_storage
@@ -201,6 +300,7 @@ def run_with_switches(sw):
 
     set_global_storage(sw)
     default_logging_config(file_handler=sw.logging_to_file)
+    _log_manual_data_configuration(sw)
 
     from ttk.utilities import set_process_name, set_thread_name
     set_process_name()
@@ -286,17 +386,49 @@ def _apply_clear_atomic(sw, value):
 
 
 def _parse_clean_val(name, value):
+    """Parse a numeric clear value without evaluating caller-provided code."""
     import numpy
-    if not value:
+
+    if value is None or not str(value).strip():
         return numpy.int32(0)
-    val = value.strip().lower()
-    if "int" not in val and "float" not in val:
-        if val in ("inf", "nan", "-inf"):
-            val = f'float32("{val}")'
-        else:
-            val = f"float32({val})" if "." in val else f"int32({val})"
-    val = f"numpy.{val}"
+
+    raw_value = str(value).strip().lower()
+    match = _TYPED_CLEAN_VALUE.fullmatch(raw_value)
+    if match is None:
+        dtype_name = None
+        literal = raw_value
+    else:
+        dtype_name = match.group("dtype")
+        literal = match.group("value").strip()
+
+    if len(literal) >= 2 and literal[0] == literal[-1] and literal[0] in "\"'":
+        literal = literal[1:-1]
+    if literal in ("inf", "+inf", "-inf", "nan", "+nan", "-nan"):
+        parsed_value = float(literal)
+        is_float = True
+    elif _INTEGER_CLEAN_VALUE.fullmatch(literal):
+        parsed_value = int(literal, 0)
+        is_float = False
+    elif _FLOAT_CLEAN_VALUE.fullmatch(literal):
+        parsed_value = float(literal)
+        is_float = True
+    else:
+        raise ValueError(
+            f"Cannot parse {name} clean value {value!r}; use a numeric literal or "
+            "a NumPy numeric dtype constructor such as float32(1.0)"
+        )
+
+    dtype_name = dtype_name or ("float32" if is_float else "int32")
     try:
-        return eval(val)
-    except Exception as e:
-        raise ValueError(f"Cannot parse {name} clean value [{val}]: {e}")
+        dtype = numpy.dtype(dtype_name)
+    except TypeError as exc:
+        raise ValueError(f"Unsupported {name} clean value dtype {dtype_name!r}") from exc
+    if dtype.kind not in ("i", "u", "f"):
+        raise ValueError(f"Unsupported {name} clean value dtype {dtype_name!r}")
+    constructor = getattr(numpy, dtype_name, None)
+    if constructor is None or not callable(constructor):
+        raise ValueError(f"Unsupported {name} clean value dtype {dtype_name!r}")
+    try:
+        return constructor(parsed_value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"Cannot parse {name} clean value {value!r}: {exc}") from exc

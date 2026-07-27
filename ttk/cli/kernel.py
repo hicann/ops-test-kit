@@ -1,6 +1,11 @@
+from ttk.cli.bridge import (
+    apply_kernel_args,
+    args_to_switches,
+    configure_manual_data,
+    run_with_switches,
+)
 from ttk.cli.common import add_common_args
 from ttk.cli.device import add_device_args
-from ttk.cli.bridge import args_to_switches, apply_kernel_args, run_with_switches
 from ttk.remote import is_remote_configured
 
 
@@ -24,7 +29,8 @@ def _add_kernel_args(parser):
                         help="Enable binary test (only --binary=release supported)")
     parser.add_argument("--co", "--compile-only", dest="compile_only", action="store_true",
                         help="Compile only, skip profiling")
-    parser.add_argument("--no-prof", action="store_true", help="Disable profiling (same as --co)")
+    parser.add_argument("--no-prof", action="store_true",
+                        help="Generate input/golden but suppress dynamic, const, and binary kernel execution")
     parser.add_argument("--tr", "--tiling-run", dest="tiling_run", type=int, default=None,
                         help="Tiling function run times (default: 3)")
 
@@ -74,6 +80,7 @@ def _handle_kernel(args):
     sw = args_to_switches(args)
     sw.test_mode = "op"
     apply_kernel_args(sw, args)
+    configure_manual_data(sw, args, "kernel")
 
     _validate_xpu_perf_precondition(sw)
     run_with_switches(sw)

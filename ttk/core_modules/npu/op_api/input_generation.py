@@ -33,9 +33,11 @@ class InputGenerator:
         self._ctx = context
         self._switch = get_global_storage()
 
-    def gen(self):
+    def gen(self, stored_inputs=None, stored_scalars=None):
         """generate tensor & scalar."""
-        import torch
+        if stored_inputs is not None:
+            self._restore(stored_inputs, stored_scalars or ())
+            return
         # Manual inputs
         if self._ctx.manual_tensor_binaries:
             self._use_manual_input()
@@ -59,6 +61,29 @@ class InputGenerator:
                 "input", "aclnn", self._switch.plugin_path)
             if input_func:
                 self._call_custom_input(input_func)
+
+    def _restore(self, stored_inputs, stored_scalars):
+        """Restore final generated state without rerunning random/input plugins."""
+        self._ctx.np_storages = list(stored_inputs)
+        use_torch = self._ctx.is_torch_dtype_support()
+        if use_torch:
+            self._convert_np_to_torch_tensor()
+        else:
+            self._convert_np_to_numpy_view()
+
+        scalar_values = []
+        flat_scalar_dtypes = self._ctx.flat_scalar_dtypes or ()
+        for index, value in enumerate(stored_scalars):
+            if value is None or not use_torch:
+                scalar_values.append(value)
+                continue
+            dtype = get(flat_scalar_dtypes, index)
+            scalar_values.append(
+                numpy_to_torch_tensor(value, is_complex32="complex32" in str(dtype)).squeeze()
+            )
+        self._ctx.scalars = tuple(apply_as_list(
+            scalar_values, self._ctx.scalar_list_dist
+        ))
 
     def _call_custom_input(self, input_func):
         plan = self._ctx.get_param_plan()

@@ -29,6 +29,7 @@ TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库
 
 - [用例生成（CSV用例编写）](./docs/用例生成.md)
 - [任务执行](./docs/任务执行.md)
+- [手工数据准备与回放](./docs/手工数据准备与回放.md)
 - [结果分析](./docs/结果分析.md)
 
 ## 🧪 各类算子测试详细指南

@@ -32,6 +32,9 @@ def add_common_args(parser):
                         help="Dump file format (default: bin)")
     parser.add_argument("--dump-on-fail", dest="dump_on_fail", action="store_true",
                         help="Dump all data when precision check fails")
+    parser.add_argument("--manual-data-dirs", dest="manual_data_dirs", nargs="+",
+                        help="Prepared input/golden data directories. Without --no-prof, "
+                             "load matching testcase data and run device comparison")
     parser.add_argument("--plugin", help="External plugin path for customized golden/inputs")
     parser.add_argument("--rerun", help="Rerun failed cases, e.g. --rerun=precision_status")
     parser.add_argument("--title", "--titles", dest="title",

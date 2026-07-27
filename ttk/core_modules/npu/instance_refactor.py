@@ -43,7 +43,15 @@ class NpuInstance(InstanceBase):
                                f'Please check Ascend installation.')
 
     def get_device_count(self):
-        if self.switches.mode.is_model():
+        """Resolve worker count and persist it on ``switches.device_count``.
+
+        Manual-data prepare has no device execution, but the normal scheduler
+        still needs one logical worker. That mode deliberately sets the stored
+        count to one and avoids querying DSMI hardware.
+        """
+        if getattr(self.switches, "manual_data_mode", None) == "prepare":
+            self.switches.device_count = 1
+        elif self.switches.mode.is_model():
             self.switches.device_count = 1
         elif self.switches.device_count <= 0:
             if self.switches.compile_only:
@@ -63,7 +71,8 @@ class NpuInstance(InstanceBase):
                 try:
                     self.switches.dev_plat = DSMIInterface().get_chip_info(0).get_complete_platform()
                 except:
-                    if self.switches.compile_only or self.switches.validate_only:
+                    if (self.switches.compile_only or self.switches.validate_only or
+                            getattr(self.switches, "manual_data_mode", None) == "prepare"):
                         raise RuntimeError(f"Try to get Ascend platform failed. "
                                            f"Please specify it with option like: --plat=Ascend910A")
                     else:
@@ -83,10 +92,13 @@ class NpuInstance(InstanceBase):
             self.profile_object = OpProfileObject(*params)
         if self.switches.mode.is_model():
             os.environ["ASCEND_SLOG_PRINT_TO_STDOUT"] = "1"
-        if not self.switches.compile_only:
+        if (not self.switches.compile_only and
+                getattr(self.switches, "manual_data_mode", None) != "prepare"):
             self._compile_help_kernels()
 
     def device_info(self, dev_id: int) -> str:
+        if getattr(self.switches, "manual_data_mode", None) == "prepare":
+            return f"manual-data:{dev_id} {self.switches.dev_plat}"
         if not self.switches.mode.is_online_board() or self.switches.compile_only:
             phyid = str(dev_id)
             platform = self.switches.dev_plat

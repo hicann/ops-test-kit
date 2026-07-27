@@ -159,6 +159,8 @@ class SWITCHES:
         "fullgraph",
         "aclgraph_enabled",
         "validate_only",
+        "manual_data_mode",
+        "manual_data_dirs",
         # private properties
         "_run_time",
         "_compile_only",
@@ -229,6 +231,8 @@ class SWITCHES:
         self.fullgraph: int = 0
         self.aclgraph_enabled: bool = False
         self.validate_only: bool = False
+        self.manual_data_mode: Optional[str] = None
+        self.manual_data_dirs: Tuple[str, ...] = ()
         # private properties below
         self._run_time: Optional[int] = None
         self._compile_only: bool = False

@@ -1,6 +1,11 @@
+from ttk.cli.bridge import (
+    apply_e2e_args,
+    args_to_switches,
+    configure_manual_data,
+    run_with_switches,
+)
 from ttk.cli.common import add_common_args
 from ttk.cli.device import add_device_args
-from ttk.cli.bridge import args_to_switches, apply_e2e_args, run_with_switches
 
 
 def register_e2e_command(subparsers):
@@ -15,6 +20,8 @@ def register_e2e_command(subparsers):
 
 
 def _add_e2e_args(parser):
+    parser.add_argument("--no-prof", action="store_true",
+                        help="Prepare input and CPU golden data without running the main API")
     parser.add_argument("--cpu", action="store_true", default=False,
                         help="Force CPU backend")
     parser.add_argument("-d", "--dynamic", nargs="?", const=True, default=None,
@@ -32,4 +39,5 @@ def _handle_e2e(args):
     sw.test_mode = "framework-api"
     sw.dyn_switches.enabled = False
     apply_e2e_args(sw, args)
+    configure_manual_data(sw, args, "e2e")
     run_with_switches(sw)

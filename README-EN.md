@@ -29,6 +29,7 @@ TTK (ops Test Tool Kit) is a full-pipeline, automated, batch operator testing fr
 
 - [Test Case Generation (CSV Format)](./docs/Test_Case_Generation.md)
 - [Task Execution](./docs/Task_Execution.md)
+- [Manual-Data Prepare and Replay](./docs/Manual_Data_Prepare_and_Replay.md)
 - [Result Analysis](./docs/Result_Analysis.md)
 
 ## Operator Test Guides

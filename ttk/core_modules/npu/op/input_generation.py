@@ -244,10 +244,23 @@ def __realtime_random_input(context: TestcaseOp):
     context.actual_input_data_ranges = tuple(input_apply_as_list(actual_input_data_ranges, context.input_distribution))
 
 
-def __gen_input(context: TestcaseOp):
+def __gen_input(context: TestcaseOp, stored_inputs=None):
     switches = get_global_storage()
 
-    if context.manual_input_binaries:
+    if stored_inputs is not None:
+        logging.info("Using prepared Kernel input data")
+        flat_inputs = list(stored_inputs)
+        context.input_arrays = tuple(
+            input_apply_as_list(flat_inputs, context.input_distribution)
+        )
+        context.actual_input_data_ranges = tuple(
+            input_apply_as_list(
+                [(None, None)] * len(flat_inputs), context.input_distribution
+            )
+        )
+        context.invalidate_flat_cache("input_arrays")
+        __transform_to_original_format(context)
+    elif context.manual_input_binaries:
         # Manual inputs
         __use_manual_input(context)
         # Try to convert to original format if golden needs original input arrays

@@ -46,6 +46,11 @@ from .output_generation import __gen_output
 from .profiling_structure import RTSProfilingParam, RTSProfilingResult
 from .profiling_structure import ComparisonResult, ProfilingReturnStructure
 from .rts_sequence import rts_profiling
+from ...manual_data import (
+    load_manual_data_case,
+    prepare_manual_data_store,
+    snapshot_manual_values,
+)
 from ...runtime import RTSInterface, RTSInterfaceBase
 from ...tbe_logging import default_logging_config
 from ...tbe_multiprocessing import get_process_context, DeviceLock
@@ -92,6 +97,19 @@ def prof_end(context, print_content):
     return_structure = ProfilingReturnStructure()
     return_structure.construct(context, compare_result, print_content)
     __profiling_end_print(context, compare_result, print_content)
+    return return_structure
+
+
+def _manual_data_prepared_end(context: TestcaseOp):
+    compare_result = ComparisonResult(None).set(
+        "MANUAL_DATA_PREPARED",
+        "MANUAL_DATA_PREPARED",
+        "MANUAL_DATA_PREPARED",
+        "PASS",
+    )
+    return_structure = ProfilingReturnStructure()
+    return_structure.construct(context, compare_result, "PASS")
+    __profiling_end_print(context, compare_result, "PASS")
     return return_structure
 
 
@@ -255,6 +273,13 @@ def profile_process(context: TestcaseOp,
     process_ctx.change_name(context.testcase_name)
     if switches.single_testcase_log_mode:
         default_logging_config(file_handler=switches.logging_to_file, testcase_name=context.testcase_name)
+    manual_mode = getattr(switches, "manual_data_mode", None)
+    manual_case = None
+    try:
+        prepare_store = prepare_manual_data_store(context, "kernel", switches)
+    except Exception as exc:
+        logging.exception("Manual Kernel data preparation failure")
+        return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
     process_ctx.notify_status("OnParseParameters")
     __parse_manual_params(context)
     if context.is_valid:
@@ -269,6 +294,19 @@ def profile_process(context: TestcaseOp,
         return prof_compile_only_end(context)
     if context.compile_failed():
         return prof_compile_fail_end(context)
+    if manual_mode != "prepare":
+        try:
+            manual_case = load_manual_data_case(
+                context,
+                "kernel",
+                switches,
+                before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
+            )
+            if manual_case is not None:
+                manual_mode = "replay"
+        except Exception as exc:
+            logging.exception("Manual Kernel data loading failure")
+            return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
     if not switches.no_memory_check:
         process_ctx.notify_status("OnWaitingForMemory")
         waiting_for_memory()
@@ -276,10 +314,24 @@ def profile_process(context: TestcaseOp,
     process_ctx.notify_status("OnGenInput")
     # noinspection PyBroadException
     try:
-        __gen_input(context)
-    except:
+        if manual_case is None:
+            __gen_input(context)
+        else:
+            __gen_input(context, stored_inputs=manual_case.inputs)
+    except Exception as exc:
         logging.exception("Input data generation failure:")
+        if manual_case is not None:
+            return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
         return prof_end(context, "INPUT_GEN_FAILURE")
+    prepared_inputs = None
+    if manual_mode == "prepare":
+        try:
+            prepared_inputs = snapshot_manual_values(
+                tuple(deep_flatten(context.input_arrays or ())), "input"
+            )
+        except Exception as exc:
+            logging.exception("Manual Kernel input snapshot failure")
+            return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
     process_ctx.notify_status("OnGenGolden")
     # resolve 提前到 __gen_output 之前（唯一目的：设 golden_mode_override 让 golden 走 Promote）
     # 3 点相对 import：profiling.py 在 npu/op/，core_modules/comparison 在上 2 级（同 npu/op/comparison.py:20）
@@ -299,15 +351,48 @@ def profile_process(context: TestcaseOp,
         logging.error("[%s] tolerance invalid: %s", context.op_name, e)
         return prof_end(context, "TOLERANCE_INVALID")
 
+    stored_goldens = None
+    if manual_case is not None:
+        try:
+            process_ctx.notify_status("OnLoadManualGolden")
+            stored_goldens = manual_case.load_goldens(
+                shapes=context.flat_output_shapes,
+                dtypes=context.flat_output_dtypes,
+            )
+        except Exception as exc:
+            logging.exception("Manual Kernel golden loading failure")
+            return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+
     # golden gen with override cleanup
     try:
-        __gen_output(context)
-    except:
+        if manual_case is None:
+            __gen_output(context)
+        else:
+            __gen_output(context, stored_goldens=stored_goldens)
+    except Exception as exc:
         logging.exception("Output buffer initialization data or golden data generation failure:")
+        if manual_case is not None:
+            return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
         return prof_end(context, "OUTPUT_GEN_FAILURE")
     finally:
         if hasattr(context, "golden_mode_override"):
             del context.golden_mode_override
+
+    if manual_mode == "prepare":
+        try:
+            process_ctx.notify_status("OnWriteManualData")
+            case_dir = prepare_store.write_case(
+                context,
+                "kernel",
+                prepared_inputs,
+                context.golden_arrays,
+                file_format=switches.dump_config.file_format,
+            )
+        except Exception as exc:
+            logging.exception("Manual Kernel data preparation failure")
+            return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
+        logging.info("[%s] manual Kernel data prepared: %s", context.testcase_name, case_dir)
+        return _manual_data_prepared_end(context)
 
     process_ctx.notify_status("OnXpuProfiling")
     xpu_mode = _xpu_mode(get_global_storage(), need_3party_outputs)

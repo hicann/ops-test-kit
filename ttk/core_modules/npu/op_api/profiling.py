@@ -46,6 +46,11 @@ from .input_generation import InputGenerator
 from .golden_generation import GoldenGenerator
 from .profiling_structure import ApiComparisonResult, ApiProfilingReturnStructure, ApiProfilingResult
 from .comparison import Comparator
+from ...manual_data import (
+    load_manual_data_case,
+    prepare_manual_data_store,
+    snapshot_manual_values,
+)
 from ...testcase_manager import TestcaseAclnn
 from ...tbe_multiprocessing import get_process_context, DeviceLock
 from ...tbe_logging import default_logging_config
@@ -542,16 +547,76 @@ def profile_process(context: TestcaseAclnn,
         process_ctx.notify_status("OnWaitingForMemory")
         waiting_for_memory()
     logging.debug(f"Expecting {context.tensor_bytes} bytes memory usage")
+
+    manual_mode = getattr(switches, "manual_data_mode", None)
+    manual_case = None
+    try:
+        prepare_store = prepare_manual_data_store(context, "aclnn", switches)
+    except Exception as exc:
+        logging.exception("Manual data preparation failure")
+        return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
+    if manual_mode != "prepare":
+        try:
+            manual_case = load_manual_data_case(
+                context,
+                "aclnn",
+                switches,
+                before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
+            )
+            if manual_case is not None:
+                manual_mode = "replay"
+        except Exception as exc:
+            logging.exception("Manual data loading failure")
+            return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+
     process_ctx.notify_status("OnGenInput")
     # noinspection PyBroadException
     try:
-        InputGenerator(context).gen()
-    except:
+        input_generator = InputGenerator(context)
+        if manual_case is not None:
+            input_generator.gen(
+                stored_inputs=manual_case.inputs,
+                stored_scalars=manual_case.scalars,
+            )
+        else:
+            input_generator.gen()
+    except Exception as exc:
         logging.exception("Input data generation failure:")
+        if manual_case is not None:
+            return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
         return prof_end(context, "INPUT_GEN_FAILURE")
-    # TODO
-    process_ctx.notify_status("OnDumpInputDataIfRequired")
-    __dump_input(context)
+
+    if manual_mode != "prepare":
+        process_ctx.notify_status("OnDumpInputDataIfRequired")
+        __dump_input(context)
+
+    if manual_mode == "prepare":
+        try:
+            prepared_inputs = snapshot_manual_values(context.np_storages, "input")
+            prepared_scalars = snapshot_manual_values(
+                context.flatten_scalars or (), "scalar"
+            )
+            process_ctx.notify_status("OnGenGolden")
+            GoldenGenerator(context).gen()
+            process_ctx.notify_status("OnWriteManualData")
+            case_dir = prepare_store.write_case(
+                context,
+                "aclnn",
+                prepared_inputs,
+                context.golden_tensors,
+                scalars=prepared_scalars,
+                file_format=switches.dump_config.file_format,
+            )
+        except Exception as exc:
+            logging.exception("Manual data preparation failure")
+            return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
+        logging.info(f"[{context.testcase_name}] manual data prepared: {case_dir}")
+        compare_result = ApiComparisonResult(None).set("MANUAL_DATA_PREPARED", "PASS")
+        return_structure = ApiProfilingReturnStructure()
+        return_structure.construct(context, compare_result)
+        __profiling_end_print(context, compare_result)
+        return return_structure
+
     # Following actions need to acquire global lock
     process_ctx.notify_status("OnAcquireLock")
     use_device = switches.mode.use_device()
@@ -565,14 +630,26 @@ def profile_process(context: TestcaseAclnn,
     if context.prof_result.failed():
         context.golden_tensors = context.prof_result.api_prof
     else:
-        process_ctx.notify_status("OnGenGolden")
-        # noinspection PyBroadException
-        try:
-            GoldenGenerator(context).gen()
-            process_ctx.notify_status("OnDumpGoldenDataIfRequired")
-            __dump_golden(context)
-        except:
-            logging.exception("Golden data generation failure")
+        if manual_case is not None:
+            try:
+                process_ctx.notify_status("OnLoadManualGolden")
+                context.golden_tensors = manual_case.load_goldens(
+                    shapes=context.prof_result.output_view_shapes,
+                    dtypes=context.flat_output_dtypes,
+                )
+                __dump_golden(context)
+            except Exception as exc:
+                logging.exception("Manual golden loading failure")
+                return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+        else:
+            process_ctx.notify_status("OnGenGolden")
+            # noinspection PyBroadException
+            try:
+                GoldenGenerator(context).gen()
+                process_ctx.notify_status("OnDumpGoldenDataIfRequired")
+                __dump_golden(context)
+            except:
+                logging.exception("Golden data generation failure")
     process_ctx.notify_status("OnDumpOutputDataIfRequired")
     __dump_output(context)
     process_ctx.notify_status("OnComparison")

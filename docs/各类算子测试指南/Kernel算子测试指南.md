@@ -72,7 +72,7 @@ python3 -m ttk kernel -i add.csv -o results.csv
 Kernel模式的完整执行流程如下：
 
 ```
-读取CSV → 编译内核（动态/静态/常量/二进制） → 生成输入数据 → NPU执行 → 生成Golden（CPU） → 精度比对 → 输出结果
+读取CSV → 编译或匹配内核并tiling → 生成输入数据 → 生成Golden（CPU） → NPU执行 → 精度比对 → 输出结果
 ```
 
 ## 编译模式
@@ -118,6 +118,25 @@ python3 -m ttk kernel -i add.csv --dump in,golden --dump-format npy
 ```
 
 精度对比方法的详细说明请参考：[结果分析](../结果分析.md)
+
+# 输入和Golden两阶段执行
+
+使用精确的 prepare 组合先生成 input 和 CPU Golden，但不执行目标 Kernel；随后在目标
+设备恢复数据并执行：
+
+```shell
+python3 -m ttk kernel -i add.csv --plugin /path/to/kernel_assets \
+  --no-prof --dump in,golden --dump-format bin \
+  --manual-data-dirs /data/add
+
+python3 -m ttk kernel -i add.csv --plugin /path/to/kernel_assets \
+  --manual-data-dirs /data/add
+```
+
+两个命令使用相同的 `-d`、`-c` 或 `-b release` 模式。单独 `--no-prof` 仍表示原有
+Kernel dry-run；`--co` 在 input/Golden 生成前停止，不能与手工数据 prepare 或 replay
+组合。文件格式、目录迁移、Kernel plugin 要求和校验规则参见
+[手工数据准备与回放](../手工数据准备与回放.md)。
 
 # 性能测试
 

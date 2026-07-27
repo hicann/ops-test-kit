@@ -24,6 +24,11 @@ from ttk.utilities.container_utils import get_global_storage, apply_as_list, dee
 from ttk.core_modules.tbe_multiprocessing import get_process_context, DeviceLock
 from ttk.core_modules.comparison.comparison import compare
 from ttk.core_modules.comparison.resolve import resolve_tolerance
+from ttk.core_modules.manual_data import (
+    load_manual_data_case,
+    prepare_manual_data_store,
+    snapshot_manual_values,
+)
 from ttk.core_modules.tbe_logging import default_logging_config
 from ttk.utilities import get, dump_to_file, waiting_for_memory
 from ttk.test_spec import get_spec_attr
@@ -351,7 +356,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     return result_nps, perf
 
 
-def _generate_golden_data(testcase, raw_inputs, switches, backend):
+def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
     """Generate golden outputs and dump them. Returns golden_nps list."""
     process_ctx = get_process_context()
     process_ctx.notify_status("OnGenGolden")
@@ -366,8 +371,9 @@ def _generate_golden_data(testcase, raw_inputs, switches, backend):
         except Exception:
             logging.exception(f"[{testcase.testcase_name}] Golden generation failure")
             golden_nps = ["GOLDEN_FAILURE"]
-    process_ctx.notify_status("OnDumpGolden")
-    _dump_goldens(testcase, golden_nps, switches)
+    if dump:
+        process_ctx.notify_status("OnDumpGolden")
+        _dump_goldens(testcase, golden_nps, switches)
     return golden_nps
 
 
@@ -567,20 +573,83 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
         logging.error(f"[{testcase.testcase_name}] Cannot resolve param plan for {testcase.api_name}")
         return
 
-    resolved, is_tensor_method = resolve_api(testcase.api_name)
-    is_inplace = resolved.endswith('_') if is_tensor_method else getattr(resolved, '__name__', '').endswith('_')
+    manual_mode = getattr(switches, "manual_data_mode", None)
+    manual_case = None
+    try:
+        prepare_store = prepare_manual_data_store(testcase, "e2e", switches)
+    except Exception as exc:
+        logging.exception(f"[{testcase.testcase_name}] Manual data preparation failure")
+        return_struct.construct(
+            f"MANUAL_DATA_PREPARE_FAILURE: {exc}", "FAIL", None
+        )
+        _profiling_end_print(testcase, return_struct, switches=switches)
+        return
+    if manual_mode != "prepare":
+        try:
+            manual_case = load_manual_data_case(
+                testcase,
+                "e2e",
+                switches,
+                before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
+            )
+            if manual_case is not None:
+                manual_mode = "replay"
+        except Exception as exc:
+            logging.exception(f"[{testcase.testcase_name}] Manual data loading failure")
+            return_struct.eager_precision = f"MANUAL_DATA_READ_FAILURE: {exc}"
+            return_struct.precision_status = "FAIL"
+            return
 
     process_ctx.notify_status("OnGenInput")
     try:
-        raw_inputs = generate_inputs(testcase, switches, backend, plan)
-    except Exception:
+        if manual_case is not None:
+            raw_inputs = generate_inputs(
+                testcase, switches, backend, plan, stored_inputs=manual_case.inputs
+            )
+        else:
+            raw_inputs = generate_inputs(testcase, switches, backend, plan)
+    except Exception as exc:
         logging.exception(f"[{testcase.testcase_name}] Input generation failure")
-        return_struct.eager_precision = "INPUT_GEN_FAILURE"
+        prefix = "MANUAL_DATA_READ_FAILURE" if manual_case is not None else "INPUT_GEN_FAILURE"
+        return_struct.eager_precision = f"{prefix}: {exc}" if manual_case is not None else prefix
         return_struct.precision_status = "FAIL"
         return
 
-    process_ctx.notify_status("OnDumpInput")
-    _dump_inputs(testcase, raw_inputs, switches)
+    if manual_mode != "prepare":
+        process_ctx.notify_status("OnDumpInput")
+        _dump_inputs(testcase, raw_inputs, switches)
+
+    if manual_mode == "prepare":
+        try:
+            prepared_inputs = snapshot_manual_values(
+                testcase.np_storages if testcase.np_storages is not None else raw_inputs,
+                "input",
+            )
+            golden_nps = _generate_golden_data(
+                testcase, raw_inputs, switches, backend, dump=False
+            )
+            process_ctx.notify_status("OnWriteManualData")
+            case_dir = prepare_store.write_case(
+                testcase,
+                "e2e",
+                prepared_inputs,
+                golden_nps,
+                file_format=switches.dump_config.file_format,
+            )
+        except Exception as exc:
+            logging.exception(f"[{testcase.testcase_name}] Manual data preparation failure")
+            return_struct.construct(
+                f"MANUAL_DATA_PREPARE_FAILURE: {exc}", "FAIL", None
+            )
+            _profiling_end_print(testcase, return_struct, switches=switches)
+            return
+        logging.info(f"[{testcase.testcase_name}] manual data prepared: {case_dir}")
+        return_struct.construct("MANUAL_DATA_PREPARED", "PASS", None)
+        _profiling_end_print(testcase, return_struct, golden_nps, switches)
+        return
+
+    resolved, is_tensor_method = resolve_api(testcase.api_name)
+    is_inplace = resolved.endswith('_') if is_tensor_method else getattr(resolved, '__name__', '').endswith('_')
 
     graph_enabled = (switches.cst_switches.enabled
                  or switches.dyn_switches.enabled
@@ -625,7 +694,23 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
                     resolved, is_tensor_method, is_inplace, raw_inputs, dynamic=True)
     gc.collect()
 
-    golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend)
+    if manual_case is not None:
+        try:
+            process_ctx.notify_status("OnLoadManualGolden")
+            reference_outputs = result_nps
+            if reference_outputs is None:
+                reference_outputs = graph_cst_nps
+            if reference_outputs is None:
+                reference_outputs = graph_dyn_nps
+            golden_nps = manual_case.load_goldens(references=reference_outputs)
+            _dump_goldens(testcase, golden_nps, switches)
+        except Exception as exc:
+            logging.exception(f"[{testcase.testcase_name}] Manual golden loading failure")
+            return_struct.construct(f"MANUAL_DATA_READ_FAILURE: {exc}", "FAIL", None)
+            _profiling_end_print(testcase, return_struct, switches=switches)
+            return
+    else:
+        golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend)
 
     if result_nps is None:
         return_struct.eager_precision = "NO_OUTPUT"
@@ -657,4 +742,3 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
 
     _profiling_end_print(testcase, return_struct, golden_nps, switches)
     del raw_inputs
-

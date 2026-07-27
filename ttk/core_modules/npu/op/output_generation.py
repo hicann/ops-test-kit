@@ -280,13 +280,16 @@ def __load_golden_from_file(fp: str, dtype: str, shape: Optional[Union[list, tup
     return load_numpy_data(fp, dtype, shape)
 
 
-def __gen_output(context: TestcaseOp):
+def __gen_output(context: TestcaseOp, stored_goldens=None):
     # Enable tensorflow numpy bfloat16 support
     output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
     switches = get_global_storage()
     output_arrays = []
 
-    if switches.golden_mode == "Disable":
+    if stored_goldens is not None:
+        logging.info("Using prepared Kernel golden data")
+        golden_arrays = list(stored_goldens)
+    elif switches.golden_mode == "Disable":
         golden_arrays = ["SUPPRESSED"]
     elif context.manual_golden_binaries:
         logging.info("Using manually configured output data")

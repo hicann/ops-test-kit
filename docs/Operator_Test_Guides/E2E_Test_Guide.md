@@ -74,6 +74,25 @@ python3 -m ttk e2e -i torch_add.csv --cpu
 Read CSV -> Generate input tensors -> Call API on test backend -> Call golden API on CPU -> Precision compare -> Output results
 ```
 
+## Separate Data Preparation and Device Execution
+
+```shell
+# Prepare input and CPU golden; do not call the target API or compare.
+python3 -m ttk e2e -i torch_add.csv --plugin /path/to/assets \
+  --no-prof --dump in,golden --dump-format bin \
+  --manual-data-dirs /data/torch_add
+
+# Restore data, run the target API, and compare.
+python3 -m ttk e2e -i torch_add.csv --plugin /path/to/assets \
+  --manual-data-dirs /data/torch_add
+```
+
+Both stages require the same CSV data contract. Replay skips input and golden
+plugins, but wrappers and comparison specs may still require the matching assets
+and `PYTHONPATH`. Re-run prepare after plugin logic changes; the data-only protocol
+does not record or hash plugin contents. See [Manual-Data Prepare and Replay](../Manual_Data_Prepare_and_Replay.md)
+for formats, directory defaults, transfer steps, and invalid option combinations.
+
 # Common Examples
 
 ```shell

@@ -47,7 +47,7 @@ python3 -m ttk kernel -i add.csv -o results.csv
 ## Execution Flow
 
 ```
-Read CSV -> Compile kernel (dynamic/static/const/binary) -> Generate inputs -> Execute on NPU -> Generate golden (CPU) -> Precision compare -> Output results
+Read CSV -> Compile/match kernel and run tiling -> Generate inputs -> Generate golden (CPU) -> Execute on NPU -> Precision compare -> Output results
 ```
 
 ## Compile Modes
@@ -62,6 +62,26 @@ Read CSV -> Compile kernel (dynamic/static/const/binary) -> Generate inputs -> E
 python3 -m ttk kernel -i add.csv --co          # Compile only
 python3 -m ttk kernel -i add.csv --no-prof     # Disable profiling
 ```
+
+# Two-Stage Input/Golden Execution
+
+Use the exact prepare pair to generate input and CPU golden without executing the
+target Kernel, then replay the data on the target device:
+
+```shell
+python3 -m ttk kernel -i add.csv --plugin /path/to/kernel_assets \
+  --no-prof --dump in,golden --dump-format bin \
+  --manual-data-dirs /data/add
+
+python3 -m ttk kernel -i add.csv --plugin /path/to/kernel_assets \
+  --manual-data-dirs /data/add
+```
+
+Use the same `-d`, `-c`, or `-b release` selection in both commands. A standalone
+`--no-prof` remains the original Kernel dry run; `--co` stops before input/golden
+generation and cannot be combined with manual-data prepare or replay. See
+[Manual-Data Prepare and Replay](../Manual_Data_Prepare_and_Replay.md) for file
+formats, directory transfer, plugin requirements, and validation rules.
 
 # Performance Testing
 
