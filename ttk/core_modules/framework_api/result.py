@@ -42,6 +42,7 @@ class FrameworkApiReturnStructure:
         "graph_aclgraph_kernel_count",
         "graph_aclgraph_kernel_details",
         "precision_metrics",
+        "batch_consistency_id",
     )
 
     def __init__(self):
@@ -66,6 +67,7 @@ class FrameworkApiReturnStructure:
         self.graph_aclgraph_cpu_perf_us = None
         self.graph_aclgraph_kernel_count = None
         self.graph_aclgraph_kernel_details = None
+        self.batch_consistency_id = None
         self.precision_metrics = {}
 
     @staticmethod

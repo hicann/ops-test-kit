@@ -134,6 +134,14 @@ def _call_plugin_with_plan(testcase, func, switches=None, backend='cpu'):
         'testcase_name': testcase.testcase_name,
     }
     extra.update(extra_attrs)
+
+    if hasattr(testcase, 'batch_axis') and testcase.batch_axis is not None:
+        extra['batch_axis'] = testcase.batch_axis
+    if hasattr(testcase, 'batch_slice_info') and testcase.batch_slice_info is not None:
+        extra['batch_slice_info'] = testcase.batch_slice_info
+    if hasattr(testcase, 'batch_seed') and testcase.batch_seed is not None:
+        extra['batch_seed'] = testcase.batch_seed
+
     import inspect
     sig = inspect.signature(func)
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):

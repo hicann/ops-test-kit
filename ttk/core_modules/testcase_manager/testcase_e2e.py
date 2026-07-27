@@ -39,6 +39,10 @@ class TestcaseE2e(TensorApiTestcaseBase):
         "golden_data",
         "tensors",
         "_api_info_cache",
+        "batch_axis",
+        "batch_slice_info",
+        "batch_seed",
+        "batch_consistency_id",
     )
 
     identity_headers = {
@@ -64,6 +68,12 @@ class TestcaseE2e(TensorApiTestcaseBase):
         "attributes": (FIELD_TYPES.DICT, None, {}),
     }
 
+    batch_consistency_headers = {
+        "batch_axis": (FIELD_TYPES.FREE_EVAL, None, None),
+        "batch_slice_info": (FIELD_TYPES.FREE_EVAL, None, None),
+        "batch_seed": (FIELD_TYPES.FREE_EVAL, None, None),
+    }
+
     golden_headers = {
         "golden_api": (FIELD_TYPES.STRING, None, ""),
     }
@@ -83,6 +93,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
         **attr_headers,
         **golden_headers,
         **special_property_headers,
+        **batch_consistency_headers,
         **option_headers,
     }
 
@@ -93,6 +104,10 @@ class TestcaseE2e(TensorApiTestcaseBase):
         self.golden_data = None
         self.tensors = None
         self._api_info_cache = None
+        self.batch_axis = None
+        self.batch_slice_info = None
+        self.batch_seed = None
+        self.batch_consistency_id = None
 
     @classmethod
     def get_all_visible_headers(cls):
@@ -317,6 +332,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
         self._check_top_level_counts()
         self._check_tensor_configuration()
         self._check_output_configuration()
+        self._generate_batch_consistency_id()
 
     def _try_get_api_info_for_factory(self):
         """Check if API is a factory function (no required input tensors)."""
@@ -348,6 +364,50 @@ class TestcaseE2e(TensorApiTestcaseBase):
             return
         if not self.output_tensor_indexes:
             self.output_tensor_indexes = (0,)
+
+    def _generate_batch_consistency_id(self):
+        """根据 batch_seed batch和 batch_slice_info 的切片长度生成 batch_consistency_id。
+        
+        相同 batch_seed 且切片长度相同的用例，生成相同 id,
+        标识这些用例的输出切片可以做 batch 一致性比较。
+        """
+        if self.batch_seed is None:
+            self.batch_consistency_id = None
+            return
+        
+        if self.batch_axis is None or self.batch_slice_info is None:
+            self.batch_consistency_id = None
+            return
+        
+        slice_key = []
+        for axis_pos, slices, seed in zip(self.batch_axis ,self.batch_slice_info, self.batch_seed):
+            if axis_pos is None or slices is None or seed is None:
+                continue
+            slice_axes = []
+            for axis_idx , slices_idx, seed_idx in zip(axis_pos, slices, seed):
+                if axis_idx is None or slices_idx is None or seed_idx is None:
+                    slice_id = "None"
+                    slice_axes.append(slice_id)
+                    continue
+                slice_lens = []
+                for sl, seed_value in zip(slices_idx, seed_idx):
+                    if sl is None:
+                        continue
+                    start = sl[0]
+                    stop = sl[1]
+                    step = sl[2]
+                    if step <= 0 or start < 0 or stop < 0:
+                        length = 0
+                    else:
+                        length = stop -start if stop > start else 0
+                    slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
+                    if length == 0:
+                        logging.warning(f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid")
+                    slice_lens.append(slice_id)
+                slice_axes.append(tuple(slice_lens))
+            slice_key.append(tuple(slice_axes))
+        self.batch_consistency_id = tuple(slice_key)
+ 	 
 
     def _check_tensor_configuration(self):
         """Validate tensor parameters match API definition in count and type."""

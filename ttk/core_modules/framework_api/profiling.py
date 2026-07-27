@@ -340,7 +340,6 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     if not is_inplace:
         result_nps = result_to_numpy(result, backend)
 
-    # Plan A: read back in-place modified input tensors specified by inplace_input_indexes
     inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
     if inplace_input_indexes:
         for idx in sorted(inplace_input_indexes):
@@ -437,7 +436,23 @@ def _try_custom_compare(testcase, result_nps, golden_nps, switches):
         nested_result = list(result_nps)
         nested_golden = list(golden_nps)
 
-    ret = func(*nested_result, *nested_golden)
+    compare_kwargs = {}
+    if hasattr(testcase, 'batch_consistency_id') and testcase.batch_consistency_id is not None:
+        compare_kwargs['batch_consistency_id'] = testcase.batch_consistency_id
+    if hasattr(testcase, 'batch_axis') and testcase.batch_axis is not None:
+        compare_kwargs['batch_axis'] = testcase.batch_axis
+    if hasattr(testcase, 'batch_slice_info'):
+        compare_kwargs['batch_slice_info'] = testcase.batch_slice_info
+    if hasattr(testcase, 'batch_seed') and testcase.batch_seed is not None:
+        compare_kwargs['batch_seed'] = testcase.batch_seed
+
+    import inspect
+    sig = inspect.signature(func)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        ret = func(*nested_result, *nested_golden, **compare_kwargs)
+    else:
+        ret = func(*nested_result, *nested_golden,
+                **{k: v for k, v in compare_kwargs.items() if k in sig.parameters})
 
     # 适配 dict → (precision_str, log_str, is_pass)
     if isinstance(ret, dict):
@@ -544,7 +559,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
                 dev_id, switches, return_struct):
     """Core profiling logic."""
     process_ctx = get_process_context()
-
+    return_struct.batch_consistency_id = getattr(testcase, 'batch_consistency_id', None)
     plan = testcase.get_param_plan()
     if plan is None:
         return_struct.eager_precision = "PARAM_PLAN_FAILURE"
