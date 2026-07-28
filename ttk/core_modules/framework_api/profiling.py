@@ -17,12 +17,11 @@ import gc
 import json
 import logging
 import os
-import numpy as np
-from contextlib import nullcontext
 
-from ttk.utilities.container_utils import get_global_storage, apply_as_list, deep_flatten
-from ttk.core_modules.tbe_multiprocessing import get_process_context, DeviceLock
+import numpy as np
+
 from ttk.core_modules.comparison.comparison import compare
+from ttk.core_modules.comparison.custom import apply_pre_compare, try_custom_compare
 from ttk.core_modules.comparison.resolve import resolve_tolerance
 from ttk.core_modules.manual_data import (
     load_manual_data_case,
@@ -30,17 +29,19 @@ from ttk.core_modules.manual_data import (
     snapshot_manual_values,
 )
 from ttk.core_modules.tbe_logging import default_logging_config
-from ttk.utilities import get, dump_to_file, waiting_for_memory
+from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
+from ttk.utilities import dump_to_file, waiting_for_memory
+from ttk.utilities.container_utils import get_global_storage
 
+from .api_resolver import resolve_api
 from .backends import get_backend
 from .eager_execution import call_api
-from .api_resolver import resolve_api
 from .golden_generation import generate_golden
 from .graph_execution import _execute_graph
 from .input_generation import generate_inputs
 from .profiler import get_profiler
-from .profiling_utils import apply_format_cast, prepare_device_args, result_to_numpy
+from .profiling_utils import prepare_device_args, result_to_numpy
 from .result import FrameworkApiReturnStructure
 
 WARMUP_COUNT = 5
@@ -298,8 +299,6 @@ def _dump_on_fail(testcase, raw_inputs, result_nps, golden_nps, switches):
 
 def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf) or raises."""
-    process_ctx = get_process_context()
-
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
     run_count = switches.run_time
@@ -381,112 +380,13 @@ def _apply_pre_compare(testcase, result_nps, golden_nps, switches):
     """加载并调用 pre_compare, 变换 result_nps 和 golden_nps。
     无 spec / golden 无效时什么都不做。异常向上抛。"""
     func = get_spec_attr(testcase.api_name, "pre_compare", switches.plugin_path)
-    if func is None:
-        return
-
-    # result_nps / golden_nps 无效(哨兵场景: SUPPRESSED / UNSUPPORTED / GOLDEN_FAILURE)→ 跳过
-    if not result_nps or not golden_nps or any(isinstance(g, str) for g in golden_nps):
-        return
-
-    # flat → nested(业务视角)
-    output_dist = getattr(testcase, "output_dist", None)
-    if output_dist:
-        nested_result = apply_as_list(result_nps, output_dist)
-        nested_golden = apply_as_list(golden_nps, output_dist)
-    else:
-        nested_result = list(result_nps)
-        nested_golden = list(golden_nps)
-
-    ret = func(*nested_result, *nested_golden)
-
-    if ret is None:
-        return  # in-place 模式: 用户用 [:] 修改数组值, 已反映到原 flat list
-
-    # 有返回值模式: unfold 回 flat
-    n = len(nested_result)
-    if not isinstance(ret, (list, tuple)) or len(ret) != n + len(nested_golden):
-        raise ValueError(
-            f"[{testcase.testcase_name}] pre_compare returned len="
-            f"{len(ret) if hasattr(ret, '__len__') else '?'}, "
-            f"expected {n + len(nested_golden)} (npu={n} + golden={len(nested_golden)})")
-
-    flat_result = deep_flatten(ret[:n])
-    flat_golden = deep_flatten(ret[n:])
-    if len(flat_result) != len(result_nps) or len(flat_golden) != len(golden_nps):
-        raise ValueError(
-            f"[{testcase.testcase_name}] pre_compare unfolded len mismatch: "
-            f"npu={len(flat_result)}/{len(result_nps)}, "
-            f"golden={len(flat_golden)}/{len(golden_nps)} (check tensor-list nesting)")
-    for i in range(len(flat_result)):
-        result_nps[i] = flat_result[i]
-    for i in range(len(flat_golden)):
-        golden_nps[i] = flat_golden[i]
+    apply_pre_compare(testcase, result_nps, golden_nps, func)
 
 
 def _try_custom_compare(testcase, result_nps, golden_nps, switches):
     """尝试定制 compare。返回 (precision_str, log_str, is_pass) 或 None。"""
     func = get_spec_attr(testcase.api_name, "compare", switches.plugin_path)
-    if func is None:
-        return None
-
-    # result_nps / golden_nps 无效 → 走内置
-    if not result_nps or not golden_nps or any(isinstance(g, str) for g in golden_nps):
-        return None
-
-    # fold(与 pre_compare 一致)
-    output_dist = getattr(testcase, "output_dist", None)
-    if output_dist:
-        nested_result = apply_as_list(result_nps, output_dist)
-        nested_golden = apply_as_list(golden_nps, output_dist)
-    else:
-        nested_result = list(result_nps)
-        nested_golden = list(golden_nps)
-
-    compare_kwargs = {}
-    if hasattr(testcase, 'batch_consistency_id') and testcase.batch_consistency_id is not None:
-        compare_kwargs['batch_consistency_id'] = testcase.batch_consistency_id
-    if hasattr(testcase, 'batch_axis') and testcase.batch_axis is not None:
-        compare_kwargs['batch_axis'] = testcase.batch_axis
-    if hasattr(testcase, 'batch_slice_info'):
-        compare_kwargs['batch_slice_info'] = testcase.batch_slice_info
-    if hasattr(testcase, 'batch_seed') and testcase.batch_seed is not None:
-        compare_kwargs['batch_seed'] = testcase.batch_seed
-
-    import inspect
-    sig = inspect.signature(func)
-    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-        ret = func(*nested_result, *nested_golden, **compare_kwargs)
-    else:
-        ret = func(*nested_result, *nested_golden,
-                **{k: v for k, v in compare_kwargs.items() if k in sig.parameters})
-
-    # 适配 dict → (precision_str, log_str, is_pass)
-    if isinstance(ret, dict):
-        ret = [ret]
-
-    if not isinstance(ret, (list, tuple)):
-        raise ValueError(f"[{testcase.testcase_name}] compare must return dict or list[dict]")
-
-    if not ret:
-        raise ValueError(f"[{testcase.testcase_name}] compare returned empty list")
-
-    if any(isinstance(item, (list, tuple)) for item in ret):
-        dicts = deep_flatten(ret)
-    else:
-        dicts = list(ret)
-
-    precisions, passes, logs = [], [], ""
-    for i, d in enumerate(dicts):
-        if not isinstance(d, dict) or "pass" not in d or "precision" not in d:
-            raise ValueError(
-                f"[{testcase.testcase_name}] compare output[{i}] missing 'pass' or 'precision'")
-        p = d["precision"]
-        precisions.append(f"{p}%" if isinstance(p, (int, float)) else str(p))
-        passes.append(bool(d["pass"]))
-        if d.get("error_info"):
-            logs += f"Output {i}: {d['error_info']}\n"
-
-    return ",".join(precisions), logs, all(passes)
+    return try_custom_compare(testcase, result_nps, golden_nps, func)
 
 
 def _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct):

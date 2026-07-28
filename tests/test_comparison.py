@@ -11,9 +11,11 @@ Tests for ttk.core_modules.npu.op.comparison:
 - ComparisonResult output
 """
 
-import pytest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 import numpy as np
-from unittest.mock import patch, MagicMock
+import pytest
 
 from ttk.core_modules.npu.op.comparison import comparing
 
@@ -123,3 +125,227 @@ class TestComparingPass:
     def test_none_thresholds(self):
         result, _ = _call_comparing([("1.0", "", True, {})] * 3)
         assert result.passed == "PASS"
+
+
+def _kernel_case(output_distribution=()):
+    input_array = np.array([7.0], dtype=np.float32)
+    return SimpleNamespace(
+        op_name="custom_kernel",
+        testcase_name="kernel_custom_compare",
+        input_arrays=(input_array,),
+        attributes={"axis": 1},
+        original_dict={"remark": "kernel context"},
+        output_distribution=output_distribution,
+    )
+
+
+def _custom_comparing(case, dyn_outputs, cst_outputs, bin_outputs, goldens,
+                      *, pre_compare=None, custom_compare=None):
+    return comparing(
+        "dyn_k", "cst_k", "bin_k",
+        dyn_outputs, cst_outputs, bin_outputs, goldens,
+        ("float32",), standards=[MagicMock()], testcase=case,
+        pre_compare=pre_compare, custom_compare=custom_compare,
+    )
+
+
+class TestKernelCustomComparing:
+
+    def test_pre_compare_runs_before_custom_compare_for_each_mode(self):
+        case = _kernel_case()
+        calls = []
+
+        def pre_compare(output, golden):
+            calls.append(("pre", float(output[0]), float(golden[0])))
+            return [output + 1, golden + 1]
+
+        def custom_compare(output, golden, *, compare_context):
+            calls.append(("compare", float(output[0]), float(golden[0])))
+            assert compare_context.api_name == "custom_kernel"
+            assert compare_context.testcase_name == "kernel_custom_compare"
+            assert compare_context.input_tensors is case.input_arrays
+            assert compare_context.input_scalars == ()
+            assert compare_context.attributes["axis"] == 1
+            assert compare_context.csv_fields["remark"] == "kernel context"
+            return {"pass": True, "precision": 98.5}
+
+        with patch("ttk.core_modules.npu.op.comparison.compare") as builtin:
+            result = _custom_comparing(
+                case,
+                [np.array([1.0])],
+                [np.array([2.0])],
+                [np.array([3.0])],
+                [np.array([4.0])],
+                pre_compare=pre_compare,
+                custom_compare=custom_compare,
+            )
+
+        assert not builtin.called
+        assert calls == [
+            ("pre", 1.0, 4.0), ("compare", 2.0, 5.0),
+            ("pre", 2.0, 4.0), ("compare", 3.0, 5.0),
+            ("pre", 3.0, 4.0), ("compare", 4.0, 5.0),
+        ]
+        assert result.dyn_precision == "98.5%"
+        assert result.cst_precision == "98.5%"
+        assert result.bin_precision == "98.5%"
+        assert result.passed == "PASS"
+        assert result.metrics == {"dyn": {}, "cst": {}, "bin": {}}
+
+    def test_disabled_mode_keeps_builtin_sentinel_path(self):
+        case = _kernel_case()
+        custom_calls = []
+
+        def custom_compare(output, golden):
+            custom_calls.append(float(output[0]))
+            return {"pass": True, "precision": 100.0}
+
+        with patch("ttk.core_modules.npu.op.comparison.compare") as builtin:
+            builtin.return_value = ("DYN_OFF", "", True, {"standard": "sentinel"})
+            result = _custom_comparing(
+                case,
+                ["DYN_OFF"],
+                [np.array([2.0])],
+                [np.array([3.0])],
+                [np.array([4.0])],
+                custom_compare=custom_compare,
+            )
+
+        assert builtin.call_count == 1
+        assert custom_calls == [2.0, 3.0]
+        assert result.dyn_precision == "DYN_OFF"
+        assert result.cst_precision == "100.0%"
+        assert result.bin_precision == "100.0%"
+        assert result.metrics["dyn"] == {"standard": "sentinel"}
+
+    def test_pre_compare_without_custom_compare_uses_builtin(self):
+        case = _kernel_case()
+        seen = []
+
+        def pre_compare(output, golden):
+            return [output * 2, golden * 3]
+
+        def builtin(outputs, goldens, _dtypes, *, standards, third_parties=None):
+            del standards, third_parties
+            seen.append((float(outputs[0][0]), float(goldens[0][0])))
+            return "100.0%", "", True, {0: {"standard": "builtin"}}
+
+        with patch("ttk.core_modules.npu.op.comparison.compare", side_effect=builtin):
+            result = _custom_comparing(
+                case,
+                [np.array([1.0])],
+                [np.array([2.0])],
+                [np.array([3.0])],
+                [np.array([4.0])],
+                pre_compare=pre_compare,
+            )
+
+        assert seen == [(2.0, 12.0), (4.0, 12.0), (6.0, 12.0)]
+        assert result.passed == "PASS"
+        assert result.metrics["bin"] == {0: {"standard": "builtin"}}
+
+    def test_inplace_pre_compare_gets_fresh_golden_for_each_mode(self):
+        case = _kernel_case()
+        golden_values = []
+
+        def pre_compare(_output, golden):
+            golden[:] += 1
+
+        def custom_compare(_output, golden):
+            golden_values.append(float(golden[0]))
+            return {"pass": True, "precision": 100.0}
+
+        original_golden = np.array([4.0])
+        _custom_comparing(
+            case,
+            [np.array([1.0])],
+            [np.array([2.0])],
+            [np.array([3.0])],
+            [original_golden],
+            pre_compare=pre_compare,
+            custom_compare=custom_compare,
+        )
+
+        assert golden_values == [5.0, 5.0, 5.0]
+        np.testing.assert_array_equal(original_golden, np.array([4.0]))
+
+    def test_custom_compare_gets_fresh_golden_for_each_mode(self):
+        case = _kernel_case()
+        golden_values = []
+
+        def custom_compare(_output, golden):
+            golden_values.append(float(golden[0]))
+            golden[:] += 1
+            return {"pass": True, "precision": 100.0}
+
+        original_golden = np.array([4.0])
+        _custom_comparing(
+            case,
+            [np.array([1.0])],
+            [np.array([2.0])],
+            [np.array([3.0])],
+            [original_golden],
+            custom_compare=custom_compare,
+        )
+
+        assert golden_values == [4.0, 4.0, 4.0]
+        np.testing.assert_array_equal(original_golden, np.array([4.0]))
+
+    def test_kernel_output_distribution_is_folded(self):
+        case = _kernel_case(output_distribution=(2,))
+        folded_lengths = []
+
+        def custom_compare(output_list, golden_list):
+            folded_lengths.append((len(output_list), len(golden_list)))
+            return {"pass": True, "precision": 100.0}
+
+        outputs = [np.array([1.0]), np.array([2.0])]
+        goldens = [np.array([1.0]), np.array([2.0])]
+        result = comparing(
+            "dyn_k", "cst_k", "bin_k",
+            list(outputs), list(outputs), list(outputs), goldens,
+            ("float32", "float32"), standards=[MagicMock(), MagicMock()],
+            testcase=case, custom_compare=custom_compare,
+        )
+
+        assert folded_lengths == [(2, 2), (2, 2), (2, 2)]
+        assert result.passed == "PASS"
+
+    def test_flat_kernel_bytes_are_reshaped_for_custom_compare(self):
+        case = _kernel_case()
+        seen_shapes = []
+
+        def custom_compare(output, golden):
+            seen_shapes.append((output.shape, golden.shape))
+            return {"pass": output.shape == golden.shape, "precision": 100.0}
+
+        flat_output = np.arange(6, dtype=np.float32)
+        golden = np.arange(6, dtype=np.float32).reshape(2, 3)
+        result = _custom_comparing(
+            case,
+            [flat_output.copy()],
+            [flat_output.copy()],
+            [flat_output.copy()],
+            [golden],
+            custom_compare=custom_compare,
+        )
+
+        assert seen_shapes == [((2, 3), (2, 3))] * 3
+        assert result.passed == "PASS"
+
+    def test_custom_compare_exception_returns_compare_failure(self):
+        case = _kernel_case()
+
+        def custom_compare(_output, _golden):
+            raise RuntimeError("kernel compare failed")
+
+        result = _custom_comparing(
+            case,
+            [np.array([1.0])],
+            [np.array([2.0])],
+            [np.array([3.0])],
+            [np.array([4.0])],
+            custom_compare=custom_compare,
+        )
+
+        assert result.passed == "COMPARE_FAILURE"

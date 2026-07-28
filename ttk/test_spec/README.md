@@ -30,6 +30,11 @@ class AbsTestSpec:
 
 所有属性可选。`golden` 三种形式：
 
+`pre_compare`和`compare`可由E2E、ACLNN和Kernel消费。ACLNN必须用CSV中的精确`aclnn*`
+`api_name`注册；Kernel必须用CSV中的精确raw `op_name`注册。Kernel会对每个已启用的dynamic、
+const和binary模式分别调用hook，关闭模式哨兵不进入hook。需要读取当前或replay恢复输入时，
+compare必须显式声明仅关键字参数`compare_context`；仅声明`**kwargs`不会收到该参数。
+
 | 形式 | 示例 | 适用场景 |
 |------|------|---------|
 | 字符串 | `golden = "numpy.abs"` | numpy 有直接对应 API |

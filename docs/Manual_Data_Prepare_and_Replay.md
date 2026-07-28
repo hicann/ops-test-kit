@@ -221,13 +221,18 @@ consumed by replay.
 
 Two-stage execution does not replace comparison behavior:
 
-- E2E pre-compare, custom compare, and built-in compare keep their precedence.
-- ACLNN/Kernel tolerances and CSV precision fields use their normal path.
+- E2E, ACLNN, and Kernel pre-compare/custom compare keep their normal precedence.
+- Without a custom hook, ACLNN/Kernel tolerances and CSV precision fields use their normal path.
 - Pass `--compare close` when CSV `rtol/ptol/atol` must select close comparison.
 - Replay may change precision criteria without re-running prepare.
 
 A custom compare must not depend on process-global state written by an input/golden
 plugin during prepare. Replay on another process or host cannot restore that state.
+When the decision needs input-side data, explicitly declare a keyword-only
+`compare_context` parameter. Its restored `input_tensors`, ACLNN `input_scalars`
+(empty for Kernel),
+CSV `attributes`, and raw `csv_fields` are available in direct execution and replay;
+hooks that only declare `**kwargs` do not receive this context.
 
 ## 6. Provider Extension
 

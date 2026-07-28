@@ -678,7 +678,22 @@ class TestTryCustomCompareAdapt:
         golden = [np.array([2.0])]
         with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=compare):
             _, log, _ = _try_custom_compare(case, result, golden, sw)
-        assert "3 mismatches" in log
+        assert log == "Output 0: 3 mismatches\n"
+
+    def test_multiple_error_info_lines(self):
+        from ttk.core_modules.framework_api.profiling import _try_custom_compare
+        def compare(*outputs):
+            return [
+                {"pass": False, "precision": 50.0, "error_info": "first"},
+                {"pass": False, "precision": 25.0, "error_info": "second"},
+            ]
+        case = self._make_case()
+        sw = self._make_switches()
+        result = [np.array([1.0]), np.array([2.0])]
+        golden = [np.array([3.0]), np.array([4.0])]
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=compare):
+            _, log, _ = _try_custom_compare(case, result, golden, sw)
+        assert log == "Output 0: first\nOutput 1: second\n"
 
     def test_missing_pass_raises(self):
         from ttk.core_modules.framework_api.profiling import _try_custom_compare
@@ -689,7 +704,19 @@ class TestTryCustomCompareAdapt:
         result = [np.array([1.0])]
         golden = [np.array([1.0])]
         with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=compare):
-            with pytest.raises(ValueError, match="missing 'pass' or 'precision'"):
+            with pytest.raises(ValueError, match=r"missing required key\(s\): 'pass'"):
+                _try_custom_compare(case, result, golden, sw)
+
+    def test_non_dict_item_raises_clear_error(self):
+        from ttk.core_modules.framework_api.profiling import _try_custom_compare
+        def compare(*outputs):
+            return [{"pass": True, "precision": 100.0}, "invalid"]
+        case = self._make_case()
+        sw = self._make_switches()
+        result = [np.array([1.0]), np.array([2.0])]
+        golden = [np.array([1.0]), np.array([2.0])]
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=compare):
+            with pytest.raises(ValueError, match=r"compare output\[1\] is not a dict"):
                 _try_custom_compare(case, result, golden, sw)
 
     def test_non_dict_non_list_raises(self):

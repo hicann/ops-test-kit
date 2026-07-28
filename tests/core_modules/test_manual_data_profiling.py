@@ -11,6 +11,7 @@ from ttk.core_modules.manual_data import (
     register_manual_data_directory_provider,
     unregister_manual_data_directory_provider,
 )
+from ttk.core_modules.npu.op_api import comparison as aclnn_comparison
 from ttk.core_modules.npu.op_api import profiling as aclnn_profiling
 from ttk.core_modules.npu.op_api.profiling_structure import (
     ApiComparisonResult,
@@ -182,6 +183,68 @@ def test_e2e_replay_skips_input_and_golden_generation(monkeypatch, tmp_path):
     np.testing.assert_array_equal(evaluated.call_args.args[3][0], golden[0])
 
 
+def test_e2e_replay_custom_compare_receives_restored_inputs(monkeypatch, tmp_path):
+    case = _e2e_case("e2e_replay_compare_context")
+    case.attributes = {"alpha": 1}
+    case.original_dict = {"remark": "replay-context"}
+    inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
+    golden = [np.array([3.0, 4.0], np.float32)]
+    ManualDataStore(tmp_path).write_case(case, "e2e", inputs, golden)
+    switches = _switches(tmp_path, "replay")
+    switches.plugin_path = (str(tmp_path),)
+    captured = {}
+
+    def restore(testcase, _switches, _backend, _plan, stored_inputs=None):
+        testcase.np_storages = list(stored_inputs)
+        testcase.tensors = tuple(stored_inputs)
+        return list(stored_inputs)
+
+    def custom_compare(output, expected, *, compare_context):
+        captured["context"] = compare_context
+        return {
+            "pass": bool(np.array_equal(output, expected)),
+            "precision": "REPLAY_CONTEXT",
+        }
+
+    def spec_attr(_api_name, attribute, _plugin_path):
+        return custom_compare if attribute == "compare" else None
+
+    monkeypatch.setattr(e2e_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(e2e_profiling, "generate_inputs", restore)
+    monkeypatch.setattr(
+        e2e_profiling,
+        "_generate_golden_data",
+        MagicMock(side_effect=AssertionError("golden generation must be skipped")),
+    )
+    monkeypatch.setattr(e2e_profiling, "get_spec_attr", spec_attr)
+    monkeypatch.setattr(e2e_profiling, "resolve_api", lambda *_: (lambda *_: None, False))
+    monkeypatch.setattr(
+        e2e_profiling, "_execute_eager", lambda *_: ([golden[0].copy()], None)
+    )
+    monkeypatch.setattr(
+        e2e_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext()
+    )
+    monkeypatch.setattr(e2e_profiling, "_profiling_print", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_dump_inputs", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_dump_goldens", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_dump_outputs", lambda *_: None)
+    monkeypatch.setattr(
+        e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None
+    )
+    backend = SimpleNamespace(alias=lambda: "npu", use_device=lambda: False)
+    result = FrameworkApiReturnStructure()
+
+    e2e_profiling._do_profile(case, backend, {}, {}, 0, switches, result)
+
+    compare_context = captured["context"]
+    assert result.precision_status == "PASS"
+    assert result.eager_precision == "REPLAY_CONTEXT"
+    np.testing.assert_array_equal(compare_context.input_tensors[0], inputs[0])
+    assert compare_context.input_scalars == ()
+    assert compare_context.attributes == case.attributes
+    assert compare_context.csv_fields == case.original_dict
+
+
 def test_e2e_provider_automatically_selects_replay(monkeypatch, tmp_path):
     case = _e2e_case("e2e_provider_replay")
     inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
@@ -236,6 +299,7 @@ def test_aclnn_prepare_stops_before_device_execution(monkeypatch, tmp_path):
     scalar = np.array(0.5, np.float32)
     golden = [np.array([3.0, 4.0], np.float32)]
     execute = MagicMock(side_effect=AssertionError("ACLNN must not execute"))
+    compare = MagicMock(side_effect=AssertionError("ACLNN must not compare"))
 
     class Inputs:
         def __init__(self, context):
@@ -261,6 +325,7 @@ def test_aclnn_prepare_stops_before_device_execution(monkeypatch, tmp_path):
                         lambda: SimpleNamespace(has_api=lambda *_: True))
     monkeypatch.setattr(aclnn_profiling, "InputGenerator", Inputs)
     monkeypatch.setattr(aclnn_profiling, "GoldenGenerator", Golden)
+    monkeypatch.setattr(aclnn_profiling, "Comparator", compare)
     monkeypatch.setattr(aclnn_profiling, "do_profiling", execute)
     monkeypatch.setattr(aclnn_profiling, "__profiling_end_print", lambda *_: None)
 
@@ -269,6 +334,7 @@ def test_aclnn_prepare_stops_before_device_execution(monkeypatch, tmp_path):
     assert result.precision_status == "PASS"
     assert result.precision == "MANUAL_DATA_PREPARED"
     assert not execute.called
+    assert not compare.called
     loaded = ManualDataStore(tmp_path).load_case(case, "aclnn")
     np.testing.assert_array_equal(
         loaded.inputs[0],
@@ -364,6 +430,81 @@ def test_aclnn_replay_skips_input_and_golden_plugins(monkeypatch, tmp_path):
 
     assert result.precision_status == "PASS"
     assert restore.call_count == 1
+
+
+def test_aclnn_replay_runs_current_custom_compare(monkeypatch, tmp_path):
+    case = _aclnn_case("aclnn_replay_custom_compare")
+    inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
+    scalar = [np.array(0.5, np.float32)]
+    golden = [np.array([3.0, 4.0], np.float32)]
+    ManualDataStore(tmp_path).write_case(
+        case, "aclnn", inputs, golden, scalars=scalar
+    )
+    switches = _switches(tmp_path, "replay")
+    switches.plugin_path = (str(tmp_path),)
+    captured = {}
+
+    def custom_compare(output, expected, *, compare_context):
+        captured["context"] = compare_context
+        return {
+            "pass": bool(np.array_equal(output, expected)),
+            "precision": "REPLAY_CUSTOM",
+        }
+
+    class Inputs:
+        def __init__(self, context):
+            self.context = context
+
+        def gen(self, stored_inputs=None, stored_scalars=None):
+            self.context.np_storages = stored_inputs
+            self.context.tensors = stored_inputs
+            self.context.scalars = stored_scalars
+
+    def spec_attr(_api_name, attribute, _plugin_path):
+        return custom_compare if attribute == "compare" else None
+
+    def restore_outputs(comparator):
+        comparator._ctx.prof_result.output_bytes = [golden[0].copy()]
+
+    monkeypatch.setattr(aclnn_profiling, "get_global_storage", lambda: switches)
+    monkeypatch.setattr(aclnn_comparison, "get_global_storage", lambda: switches)
+    monkeypatch.setattr(aclnn_comparison, "get_spec_attr", spec_attr)
+    monkeypatch.setattr(
+        aclnn_comparison.Comparator, "_output_bytes_to_tensors", restore_outputs
+    )
+    monkeypatch.setattr(aclnn_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(
+        aclnn_profiling, "OpApiInfoKeeper",
+        lambda: SimpleNamespace(has_api=lambda *_: True),
+    )
+    monkeypatch.setattr(aclnn_profiling, "InputGenerator", Inputs)
+    monkeypatch.setattr(
+        aclnn_profiling, "GoldenGenerator",
+        MagicMock(side_effect=AssertionError("golden plugin must be skipped")),
+    )
+    monkeypatch.setattr(aclnn_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(aclnn_profiling, "__profiling_print", lambda *_: None)
+    monkeypatch.setattr(aclnn_profiling, "__profiling_end_print", lambda *_: None)
+    monkeypatch.setattr(aclnn_profiling, "__dump_input", lambda *_: None)
+    monkeypatch.setattr(aclnn_profiling, "__dump_golden", lambda *_: None)
+    monkeypatch.setattr(aclnn_profiling, "__dump_output", lambda *_: None)
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "do_profiling",
+        lambda *_: ApiProfilingResult(
+            True,
+            output_bytes=[golden[0].tobytes()],
+            output_view_shapes=[golden[0].shape],
+        ),
+    )
+
+    result = aclnn_profiling.profile_process(case, {}, {}, 0)
+
+    assert result.precision_status == "PASS"
+    assert result.precision == "REPLAY_CUSTOM"
+    compare_context = captured["context"]
+    np.testing.assert_array_equal(compare_context.input_tensors[0], inputs[0])
+    np.testing.assert_array_equal(compare_context.input_scalars[0], scalar[0])
 
 
 def test_loaded_golden_still_uses_custom_compare(monkeypatch):

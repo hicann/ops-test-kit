@@ -17,24 +17,30 @@ __all__ = ["Comparator"]
 
 # Standard Packages
 import logging
+
 import numpy
 
-# Third-party Packages
-from .profiling_structure import ApiComparisonResult
-from ...testcase_manager import TestcaseAclnn
-from ...comparison import compare
-from ...comparison.resolve import resolve_tolerance
 from ....test_spec import get_spec_attr
-from ....utilities import get, get_global_storage
-from ....utilities import numpy_to_torch_tensor, resolve_custom_numpy_dtypes
+from ....utilities import get, get_global_storage, numpy_to_torch_tensor, resolve_custom_numpy_dtypes
+
+# Third-party Packages
+from ...comparison import compare
+from ...comparison.custom import apply_pre_compare, try_custom_compare
+from ...comparison.resolve import resolve_tolerance
+from ...testcase_manager import TestcaseAclnn
+from .profiling_structure import ApiComparisonResult
 
 
 class Comparator:
     def __init__(self, context: TestcaseAclnn):
         self._ctx = context
+        plugin_path = getattr(get_global_storage(), "plugin_path", None)
         self._tolerance = get_spec_attr(
-            context.api_name, "tolerance",
-            getattr(get_global_storage(), "plugin_path", None))
+            context.api_name, "tolerance", plugin_path)
+        self._pre_compare = get_spec_attr(
+            context.api_name, "pre_compare", plugin_path)
+        self._custom_compare = get_spec_attr(
+            context.api_name, "compare", plugin_path)
 
     def compare(self):
         compare_method = get_global_storage().compare_method
@@ -44,17 +50,26 @@ class Comparator:
         self._output_bytes_to_tensors()
         try:
             logging_data = "\n"
-            logging_data += "Comparing %s with golden\n" % self._ctx.testcase_name
-            precision, _logging_data, passed, metrics = compare(
-                self._ctx.prof_result.output_bytes,
-                self._ctx.golden_tensors,
-                output_dtypes,
-                standards=standards,
-                third_parties=None)
+            logging_data += f"Comparing {self._ctx.testcase_name} with golden\n"
+            outputs = self._ctx.prof_result.output_bytes
+            goldens = self._ctx.golden_tensors
+            apply_pre_compare(self._ctx, outputs, goldens, self._pre_compare)
+            custom_result = try_custom_compare(
+                self._ctx, outputs, goldens, self._custom_compare)
+            if custom_result is not None:
+                precision, _logging_data, passed = custom_result
+                metrics = {}
+            else:
+                precision, _logging_data, passed, metrics = compare(
+                    outputs,
+                    goldens,
+                    output_dtypes,
+                    standards=standards,
+                    third_parties=None)
             logging_data += _logging_data
             logging.debugc(logging_data)
             passed = "PASS" if passed else "FAIL"
-        except:
+        except Exception:
             logging.exception("Comparison failed")
             return ApiComparisonResult("COMPARE_FAILURE")
         return ApiComparisonResult(None).set(precision, passed, metrics)

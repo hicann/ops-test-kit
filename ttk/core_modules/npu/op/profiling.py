@@ -339,6 +339,10 @@ def profile_process(context: TestcaseOp,
     try:
         tolerance = get_spec_attr(context.op_name, "tolerance",
                                   getattr(get_global_storage(), "plugin_path", None))
+        pre_compare = get_spec_attr(context.op_name, "pre_compare",
+                                    getattr(get_global_storage(), "plugin_path", None))
+        custom_compare = get_spec_attr(context.op_name, "compare",
+                                       getattr(get_global_storage(), "plugin_path", None))
         standards = _resolve_tolerance(tolerance,
                                        context.flat_precision_tolerances,
                                        context.flat_absolute_precision,
@@ -443,7 +447,9 @@ def profile_process(context: TestcaseOp,
                                context.bin_prof_result.output_bytes,
                                context.golden_arrays,
                                context.flat_output_dtypes,
-                               standards=standards, third_parties=third_parties)
+                               standards=standards, third_parties=third_parties,
+                               testcase=context, pre_compare=pre_compare,
+                               custom_compare=custom_compare)
     if compare_result.passed != "PASS" and switches.dump_config.dump_on_fail:
         __dump_on_fail(context)
     process_ctx.notify_status("OnReturning")
