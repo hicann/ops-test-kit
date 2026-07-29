@@ -70,7 +70,7 @@ def _source_setenv_bash(ascend_root):
         for entry in result.stdout.split('\0'):
             if '=' in entry:
                 key, _, val = entry.partition('=')
-                if key:
+                if key and "\n" not in key:
                     os.environ[key] = val
     except (subprocess.TimeoutExpired, OSError):
         pass

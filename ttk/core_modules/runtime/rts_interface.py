@@ -93,9 +93,16 @@ class RTSInterface(RTSInterfaceBase):
         self.rt_args_version = ""  # rts changes addrOffset from uint16 to uint32.
         if camodel:
             self.rtsdll = ctypes.CDLL(f"{rts_custom_path}libruntime_camodel.so")
+            self.print_so_path()
         else:
-            self.rtsdll = ctypes.CDLL(f"{rts_custom_path}libruntime.so")
-        self.print_so_path()
+            runtime_path = f"{rts_custom_path}libruntime.so"
+            self._origin_rtsdll = ctypes.CDLL(runtime_path, mode = ctypes.RTLD_GLOBAL)
+            if os.getenv("MSOP_SOCKET_PATH"):
+                self.rtsdll = ctypes.CDLL(None)
+                logging.debug("Using global RTS symbols for msopprof injection")
+            else:
+                self.rtsdll = self._origin_rtsdll
+                self.print_so_path()
         atexit.register(self.reset)
 
     def __del__(self):
