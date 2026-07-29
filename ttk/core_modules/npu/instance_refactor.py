@@ -11,20 +11,19 @@
 Main Sequence for npu profiling
 """
 
-
 __all__ = ["NpuInstance"]
 
 
 # Standard Packages
 import os
-import logging
+
+from ...utilities import cpu_count
+from ...utilities.platform import get_npu_hw_info
 
 # Third-Party Packages
 from ..dsmi import DSMIInterface
 from ..infra import InstanceBase
 from ..operator import Opc
-from ...utilities import cpu_count
-from ...utilities.platform import get_npu_hw_info
 
 
 class NpuInstance(InstanceBase):
@@ -37,10 +36,9 @@ class NpuInstance(InstanceBase):
 
     def env_prepare(self):
         # check environment.
-        opp_path = os.getenv('ASCEND_OPP_PATH', '')
+        opp_path = os.getenv("ASCEND_OPP_PATH", "")
         if not opp_path:
-            raise RuntimeError(f'Install path of opp or compiler is not found. '
-                               f'Please check Ascend installation.')
+            raise RuntimeError("Install path of opp or compiler is not found. Please check Ascend installation.")
 
     def get_device_count(self):
         """Resolve worker count and persist it on ``switches.device_count``.
@@ -65,16 +63,19 @@ class NpuInstance(InstanceBase):
     def get_device_platform(self):
         if self.switches.dev_plat == "AUTO":
             if self.switches.mode.is_model():
-                raise RuntimeError(f"Please specify your platform type "
-                                   f"with --plat in {self.switches.mode.name} mode")
+                raise RuntimeError(f"Please specify your platform type with --plat in {self.switches.mode.name} mode")
             else:
                 try:
                     self.switches.dev_plat = DSMIInterface().get_chip_info(0).get_complete_platform()
                 except:
-                    if (self.switches.compile_only or self.switches.validate_only or
-                            getattr(self.switches, "manual_data_mode", None) == "prepare"):
-                        raise RuntimeError(f"Try to get Ascend platform failed. "
-                                           f"Please specify it with option like: --plat=Ascend910A")
+                    if (
+                        self.switches.compile_only
+                        or self.switches.validate_only
+                        or getattr(self.switches, "manual_data_mode", None) == "prepare"
+                    ):
+                        raise RuntimeError(
+                            "Try to get Ascend platform failed. Please specify it with option like: --plat=Ascend910A"
+                        )
                     else:
                         raise
         hw_info = get_npu_hw_info(self.switches.dev_plat)
@@ -84,16 +85,17 @@ class NpuInstance(InstanceBase):
 
     def setup_profile_object(self):
         params = tuple([self.task_keeper, self.mp_context])
-        if 'api_name' in self.case_original_headers:
+        if "api_name" in self.case_original_headers:
             from .op_api import ApiProfileObject
+
             self.profile_object = ApiProfileObject(*params)
         else:
             from .op import OpProfileObject
+
             self.profile_object = OpProfileObject(*params)
         if self.switches.mode.is_model():
-            os.environ["ASCEND_SLOG_PRINT_TO_STDOUT"] = "1"
-        if (not self.switches.compile_only and
-                getattr(self.switches, "manual_data_mode", None) != "prepare"):
+            os.environ.setdefault("ASCEND_SLOG_PRINT_TO_STDOUT", "1")
+        if not self.switches.compile_only and getattr(self.switches, "manual_data_mode", None) != "prepare":
             self._compile_help_kernels()
 
     def device_info(self, dev_id: int) -> str:
@@ -157,14 +159,15 @@ class NpuInstance(InstanceBase):
             if any(c.isdigit() for c in info):
                 result.append(info)
 
-        _add_info(f"{phyid.ljust(3)} {platform.ljust(13)} {chip_ver.ljust(2)} "
-                  f"{temperature.ljust(2)}C {health.ljust(8)}")
+        _add_info(
+            f"{phyid.ljust(3)} {platform.ljust(13)} {chip_ver.ljust(2)} {temperature.ljust(2)}C {health.ljust(8)}"
+        )
         _add_info(f"AIC   {aicore_util.ljust(3)}% {aicore_freq.ljust(5)}Mhz / {aicore_maxfreq.ljust(5)}Mhz")
         _add_info(f"VEC   {veccore_util.ljust(3)}% {veccore_freq.ljust(5)}Mhz")
         _add_info(f"MEM   {mem_util.ljust(3)}% {mem_freq.ljust(5)}Mhz Bandwidth: {memband_util.ljust(3)}%")
         _add_info(f"DDR   {ddr_util.ljust(3)}%")
         _add_info(f"HBM   {hbm_util.ljust(3)}% {hbm_freq.ljust(5)}Mhz Bandwidth: {hbmband_util.ljust(3)}%")
-        return '\n'.join(result)
+        return "\n".join(result)
 
     @staticmethod
     def _compile_help_kernels():

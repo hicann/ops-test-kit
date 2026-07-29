@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -11,22 +10,23 @@
 testcase base class
 """
 
-
 __all__ = ["TestcaseBase"]
 
 
 from abc import ABCMeta
-from typing import Dict, Optional, Tuple, Any
+from typing import Any, Dict, Optional, Tuple
+
 try:
     from collections.abc import Callable
 except ImportError:
-    from collections import Callable
+    from collections.abc import Callable
 
-from .field_types import FIELD_TYPES
-from .field_parser import *
-from ...utilities import get_global_storage
-from functools import partial
 import logging
+from functools import partial
+
+from ...utilities import get_global_storage
+from .field_parser import *
+from .field_types import FIELD_TYPES
 
 _NO_PAD = object()
 
@@ -55,35 +55,36 @@ type_processing_func: Dict[FIELD_TYPES, Callable] = {
     FIELD_TYPES.INT_CONTAINER_NESTED: partial(scalar_nested, allowed_type=int),
     FIELD_TYPES.SHAPELIKE_FLOAT_SIGNED_NESTED: shapelike_float_signed_nested,
     FIELD_TYPES.SHAPELIKE_FLOAT_NESTED: shapelike_float_nested,
+    FIELD_TYPES.SHAPELIKE_DYN_NESTED: shapelike_dyn_nested,
 }
 
 
 class TestcaseBase(metaclass=ABCMeta):
     __slots__ = (
-                 # === testcase valid configurations === #
-                 "testcase_name",
-                 "network_name",
-                 "input_data_ranges",
-                 "is_enabled",
-                 "priority",
-                 # precision
-                 "precision_tolerances",
-                 "absolute_precision",
-                 # testcase remark
-                 "remark",
-                 # soc series (short soc version) to specify to run or disable.
-                 "soc_series",
-                 # Temp
-                 "original_line",
-                 "original_dict",
-                 # === Runtime parameters below === #
-                 "device_id",
-                 "is_valid",
-                 "fail_reason",
-                 # private
-                 "_actual_input_data_ranges",
-                 "xpu_results",
-                 )
+        # === testcase valid configurations === #
+        "testcase_name",
+        "network_name",
+        "input_data_ranges",
+        "is_enabled",
+        "priority",
+        # precision
+        "precision_tolerances",
+        "absolute_precision",
+        # testcase remark
+        "remark",
+        # soc series (short soc version) to specify to run or disable.
+        "soc_series",
+        # Temp
+        "original_line",
+        "original_dict",
+        # === Runtime parameters below === #
+        "device_id",
+        "is_valid",
+        "fail_reason",
+        # private
+        "_actual_input_data_ranges",
+        "xpu_results",
+    )
 
     identity_headers: Dict[str, tuple] = {
         "testcase_name": (FIELD_TYPES.STRING, None),
@@ -199,11 +200,11 @@ class TestcaseBase(metaclass=ABCMeta):
         return True
 
     def pick_data(self, titles: Tuple[str]) -> tuple:
-        """ Pick testcase input data via titles """
+        """Pick testcase input data via titles"""
         data = []
         legit_headers = self.get_all_legit_headers()
         for t in titles:
-            original_input = self.original_dict.get(t, '')
+            original_input = self.original_dict.get(t, "")
             if get_global_storage().preserve_original_csv:
                 data.append(original_input)
             else:
@@ -278,7 +279,7 @@ class TestcaseBase(metaclass=ABCMeta):
     def _write_back_normalized(self, field_name, result):
         """Write back normalized field and clear its flat cache."""
         setattr(self, field_name, tuple(result))
-        cache_attr = f'_flat_{field_name}'
+        cache_attr = f"_flat_{field_name}"
         if hasattr(self, cache_attr):
             setattr(self, cache_attr, None)
 
@@ -343,7 +344,7 @@ class TestcaseBase(metaclass=ABCMeta):
         if len(field) > len(dist):
             self.is_valid = False
             self.fail_reason = "CASE_FIELD_AMBIGUOUS"
-            logging.error(f'Field [{field_name}] of [{self.testcase_name}] is invalid.')
+            logging.error(f"Field [{field_name}] of [{self.testcase_name}] is invalid.")
             return
         if len(field) == 1:
             val = field[0]
@@ -354,14 +355,14 @@ class TestcaseBase(metaclass=ABCMeta):
             if is_group_fn(val) and len(val) > 1:
                 self.is_valid = False
                 self.fail_reason = "CASE_FIELD_AMBIGUOUS"
-                logging.error(f'Field [{field_name}] of [{self.testcase_name}] is invalid.')
+                logging.error(f"Field [{field_name}] of [{self.testcase_name}] is invalid.")
                 return
             per_param = [val] * len(dist)
         elif len(field) < len(dist):
             if pad_value is _NO_PAD:
                 self.is_valid = False
                 self.fail_reason = "CASE_FIELD_AMBIGUOUS"
-                logging.error(f'Field [{field_name}] of [{self.testcase_name}] is invalid.')
+                logging.error(f"Field [{field_name}] of [{self.testcase_name}] is invalid.")
                 return
             per_param = list(field) + [pad_value] * (len(dist) - len(field))
         else:
@@ -380,7 +381,7 @@ class TestcaseBase(metaclass=ABCMeta):
                 else:
                     self.is_valid = False
                     self.fail_reason = "CASE_FIELD_AMBIGUOUS"
-                    logging.error(f'Field [{field_name}] of [{self.testcase_name}] is invalid.')
+                    logging.error(f"Field [{field_name}] of [{self.testcase_name}] is invalid.")
                     return
             else:
                 result.append(tuple([val] * num))

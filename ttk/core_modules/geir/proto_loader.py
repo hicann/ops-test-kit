@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+
+import logging
+import os
+import re
+from typing import Dict, List, Optional
+
+from ttk.utilities import Singleton
+
+
+class OpProtoInfo:
+    __slots__ = ("op_class", "proto_file", "inputs", "outputs", "dynamic_inputs")
+
+    def __init__(
+        self,
+        op_class: str,
+        proto_file: str,
+        inputs: List[str],
+        outputs: List[str],
+        dynamic_inputs: Optional[List[str]] = None,
+    ):
+        self.op_class = op_class
+        self.proto_file = proto_file
+        self.inputs = inputs
+        self.outputs = outputs
+        self.dynamic_inputs = dynamic_inputs or []
+
+
+class ProtoLoader(metaclass=Singleton):
+    _REG_OP_PATTERN = re.compile(
+        r"REG_OP\((\w+)\)"
+        r"(.*?)"
+        r"\.OP_END_FACTORY_REG\(\1\)",
+        re.DOTALL,
+    )
+    _INPUT_PATTERN = re.compile(r"\.INPUT\(\s*(\w+),")
+    _OPTIONAL_INPUT_PATTERN = re.compile(r"\.OPTIONAL_INPUT\(\s*(\w+),")
+    _DYNAMIC_INPUT_PATTERN = re.compile(r"\.DYNAMIC_INPUT\(\s*(\w+),")
+    _OUTPUT_PATTERN = re.compile(r"\.OUTPUT\(\s*(\w+),")
+
+    def __init__(self, ascend_path=None):
+        from ttk._env import _find_ascend_root
+        from ttk.utilities.platform import get_opp_paths
+
+        root = ascend_path or _find_ascend_root() or ""
+
+        # Built-in proto dir: merged ops_proto_*.h headers
+        builtin_proto_dir = os.path.join(root, "opp", "built-in", "op_graph", "inc")
+
+        # Collect proto dirs in priority order: custom > vendor > built-in.
+        # Custom/vendor packages store individual *_proto.h files in op_proto/inc.
+        proto_dirs: List[tuple] = []
+        for copp in get_opp_paths("custom"):
+            d = os.path.join(copp, "op_proto", "inc")
+            if os.path.isdir(d):
+                proto_dirs.append(("custom", d))
+        for vopp in get_opp_paths("vendor"):
+            d = os.path.join(vopp, "op_proto", "inc")
+            if os.path.isdir(d):
+                proto_dirs.append(("vendor", d))
+        if os.path.isdir(builtin_proto_dir):
+            proto_dirs.append(("builtin", builtin_proto_dir))
+
+        self._proto_dirs = proto_dirs
+        self._cache: Dict[str, OpProtoInfo] = {}
+
+    def get_op_info(self, op_name: str) -> Optional[OpProtoInfo]:
+        if op_name in self._cache:
+            return self._cache[op_name]
+
+        from ttk.test_spec.loader import _snake_to_pascal
+
+        # GE REG_OP uses PascalCase; try pascal first, then original
+        candidates = []
+        pascal = _snake_to_pascal(op_name)
+        if pascal != op_name:
+            candidates.append(pascal)
+        candidates.append(op_name)
+
+        for name in candidates:
+            info = self._scan_proto_files(name)
+            if info:
+                self._cache[op_name] = info
+                return info
+
+        logging.warning(f"Operator '{op_name}' not found in proto files")
+        return None
+
+    def _scan_proto_files(self, op_name: str) -> Optional[OpProtoInfo]:
+        import glob
+
+        for category, proto_dir in self._proto_dirs:
+            if category == "builtin":
+                pattern = "ops_proto_*.h"
+            else:
+                pattern = "*_proto.h"
+            for proto_path in sorted(glob.glob(os.path.join(proto_dir, pattern))):
+                if "ops_proto_legacy.h" in proto_path:
+                    continue
+                try:
+                    with open(proto_path, encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    info = self._parse_reg_op(content, os.path.basename(proto_path), op_name)
+                    if info:
+                        return info
+                except Exception:
+                    continue
+        return None
+
+    def _parse_reg_op(self, content: str, proto_file: str, op_name: str) -> Optional[OpProtoInfo]:
+        pattern = re.compile(
+            r"REG_OP\(" + re.escape(op_name) + r"\)"
+            r"(.*?)"
+            r"\.OP_END_FACTORY_REG\(" + re.escape(op_name) + r"\)",
+            re.DOTALL | re.IGNORECASE,
+        )
+        m = pattern.search(content)
+        if not m:
+            return None
+
+        body = m.group(1)
+
+        # Extract canonical PascalCase name from REG_OP (RoiAlign→ROIAlign)
+        canonical = op_name
+        name_m = self._REG_OP_PATTERN.search(content, m.start())
+        if name_m and name_m.group(1).lower() == op_name.lower():
+            canonical = name_m.group(1)
+
+        inputs = self._INPUT_PATTERN.findall(body)
+        inputs += self._OPTIONAL_INPUT_PATTERN.findall(body)
+        dynamic_inputs = self._DYNAMIC_INPUT_PATTERN.findall(body)
+        outputs = self._OUTPUT_PATTERN.findall(body)
+
+        return OpProtoInfo(canonical, proto_file, inputs, outputs, dynamic_inputs)

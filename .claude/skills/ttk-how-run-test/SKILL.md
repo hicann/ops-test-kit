@@ -24,11 +24,12 @@ python3 -m ttk list -i cases.csv --op add  # 按算子名筛选
 
 ## Step 2: 选择模式
 
-三层架构对应关系见 AGENTS.md。根据 CSV 表头自动判断模式：
+四层架构对应关系见 AGENTS.md。根据 CSV 表头自动判断模式：
 
 | 模式 | 判断条件 | 子命令 |
 |------|---------|--------|
 | Kernel | CSV 无 `api_name` 字段 | `python3 -m ttk kernel` |
+| GEIR | CSV 无 `api_name` 字段 | `python3 -m ttk geir` |
 | ACLNN | CSV 有 `api_name`，值以 `aclnn` 开头 | `python3 -m ttk aclnn` |
 | E2E | CSV 有 `api_name`，值非 `aclnn` 开头 | `python3 -m ttk e2e` |
 
@@ -45,6 +46,14 @@ python3 -m ttk kernel -i cases.csv
 ```
 
 Kernel 支持动态 shape 编译（默认）、静态 shape 编译（`-c`）、二进制执行（`-b release`）三种方式，详见 `references/kernel-params.md`。
+
+### GEIR 模式
+
+```shell
+python3 -m ttk geir -i cases.csv
+```
+
+GEIR 模式通过 GE 图编译+执行测试算子，复用 Kernel 模式的 CSV 和 golden 资产。支持在线编译（默认）和二进制复用（`-b release`），详见 `references/geir-params.md`。
 
 ### ACLNN 模式
 
@@ -119,6 +128,7 @@ E2E 默认自动探测 NPU；`--cpu` 强制 CPU 执行。详见 `references/e2e-
 ```shell
 # 运行自带示例
 python3 -m ttk kernel -i examples/case_store/kernel/add.csv
+python3 -m ttk geir -i examples/case_store/kernel/add.csv
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
 python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
 
@@ -133,6 +143,7 @@ python3 -m ttk kernel -i cases.csv -o results.csv
 
 各模式完整参数列表见 references/：
 - Kernel 专用参数：`references/kernel-params.md`
+- GEIR 专用参数：`references/geir-params.md`
 - ACLNN 专用参数：`references/aclnn-params.md`
 - E2E 专用参数：`references/e2e-params.md`
 

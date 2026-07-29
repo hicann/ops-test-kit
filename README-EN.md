@@ -4,7 +4,7 @@ TTK (ops Test Tool Kit) is a full-pipeline, automated, batch operator testing fr
 
 > Hardware vendor names appearing in this document are for illustration only; TTK is configuration-driven and supports any hardware accelerator that conforms to the interface.
 
-* **Rich operator test types**: Supports Kernel (AscendC), ACLNN (aclnn\* C API), and E2E (PyTorch/torch\_npu framework API) testing
+* **Rich operator test types**: Supports Kernel (AscendC), GEIR (GE graph compile + execute), ACLNN (aclnn\* C API), and E2E (PyTorch/torch\_npu framework API) testing
 * **Multiple hardware backends**: E2E mode runs through a unified Backend abstraction supporting NPU, MLU, CPU, etc. as device under test or reference (available backend auto-selected per configured hardware segment)
 * **Batch CSV-driven**: Define test cases via CSV files and run them in batch with a single command
 * **Multi-card parallel execution**: Supports multi-NPU parallel testing for improved efficiency
@@ -19,7 +19,7 @@ TTK (ops Test Tool Kit) is a full-pipeline, automated, batch operator testing fr
 ┌──────────────────────────────────────────────────┐
 │  Framework   ✅ Torch · TensorFlow · ...          │  ← E2E (end-to-end, full pipeline)
 ├──────────────────────────────────────────────────┤
-│  Engine      GE · ✅ ACLNN                        │  ← ACLNN (engine API, compile+execute)
+│  Engine      ✅ GEIR · GE · ✅ ACLNN              │  ← GEIR (GE graph compile+execute) / ACLNN (engine API)
 ├──────────────────────────────────────────────────┤
 │  Operator    ✅ AiCore · AiCpu                     │  ← Kernel (operator core, compile+execute)
 └──────────────────────────────────────────────────┘

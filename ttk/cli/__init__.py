@@ -1,10 +1,11 @@
-import os
 import argparse
+import os
 
-from ttk.cli.kernel import register_kernel_command
 from ttk.cli.aclnn import register_aclnn_command
 from ttk.cli.e2e import register_e2e_command
+from ttk.cli.geir import register_geir_command
 from ttk.cli.info import register_info_command
+from ttk.cli.kernel import register_kernel_command
 from ttk.cli.list_cmd import register_list_command
 
 
@@ -12,6 +13,7 @@ def main():
     os.environ["TTK_PARENT_PID"] = str(os.getpid())
 
     from ttk._env import setup_env
+
     setup_env()
 
     try:
@@ -19,6 +21,7 @@ def main():
     finally:
         try:
             from ttk.core_modules.tbe_multiprocessing import SimpleCommandProcess
+
             for proc in SimpleCommandProcess.all_processes:
                 proc.close()
         except Exception:
@@ -27,6 +30,7 @@ def main():
 
 def _print_version():
     from ttk._version import __version__, get_build
+
     print(f"TTK v{__version__}, build {get_build()}")
 
 
@@ -37,12 +41,10 @@ def _version_callback(value):
 
 
 def _cli_main():
-    parser = argparse.ArgumentParser(
-        prog="ttk",
-        description="TTK — Ascend NPU Single Operator Test Framework"
-    )
+    parser = argparse.ArgumentParser(prog="ttk", description="TTK — Ascend NPU Single Operator Test Framework")
     parser.add_argument(
-        "-v", "--version",
+        "-v",
+        "--version",
         action="store_true",
         help="Show version and build info",
     )
@@ -51,6 +53,7 @@ def _cli_main():
     register_kernel_command(subparsers)
     register_aclnn_command(subparsers)
     register_e2e_command(subparsers)
+    register_geir_command(subparsers)
     register_info_command(subparsers)
     register_list_command(subparsers)
 

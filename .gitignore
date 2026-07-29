@@ -6,6 +6,7 @@ test.py
 tests/**/*.html
 kernel_meta/
 models/
+geir/
 model_results/
 **/*_result.csv
 *.bin

@@ -10,18 +10,14 @@
 """
 Profiling method for Universal testcases
 """
+
 # Standard Packages
 import logging
 import os
-import shutil
 from typing import NoReturn, Optional, Tuple, Union
 
-from ttk.remote import DATA, get_tenant_id
-from ttk.core_modules.operator import OpInfoKeeper
-
-# third_party key aliases — mirrors server executor.py:_TP_ALIASES; keep in sync.
-# Applied in _extract_spec_providers (resolve_providers) and _build_spec (tp -> server).
-_TP_ALIASES = {"tensorflow": "tf", "np": "numpy"}
+from ttk.remote import DATA
+from ttk.remote.client import dispatch_xpu
 
 try:
     from contextlib import nullcontext
@@ -29,37 +25,43 @@ except ImportError:
     print("Python version too low, from contextlib import nullcontext failed")
     import contextlib
 
-
     @contextlib.contextmanager
     def NULLCXT():
         """NULL CONTEXT"""
         pass
 
-
     nullcontext = NULLCXT
 
 # Third-Party Packages
 import numpy
-from .comparison import comparing
-from .input_generation import __gen_input
-from .output_generation import __gen_output
-from .profiling_structure import RTSProfilingParam, RTSProfilingResult
-from .profiling_structure import ComparisonResult, ProfilingReturnStructure
-from .rts_sequence import rts_profiling
+
+from ....test_spec import get_spec_attr
+from ....utilities import (
+    deep_flatten,
+    dump_to_file,
+    get,
+    get_global_storage,
+    get_str_tiling_data,
+    parse_tiling_data,
+    resolve_custom_numpy_dtypes,
+    table_print,
+    waiting_for_memory,
+)
 from ...manual_data import (
     load_manual_data_case,
     prepare_manual_data_store,
     snapshot_manual_values,
 )
+from ...operator import OpInfoKeeper
 from ...runtime import RTSInterface, RTSInterfaceBase
 from ...tbe_logging import default_logging_config
-from ...tbe_multiprocessing import get_process_context, DeviceLock
+from ...tbe_multiprocessing import DeviceLock, get_process_context
 from ...testcase_manager import TestcaseOp
-from ...operator import OpInfoKeeper
-from ....test_spec import get_spec_attr
-from ....utilities import resolve_custom_numpy_dtypes, get, get_global_storage, get_str_tiling_data
-from ....utilities import parse_tiling_data, table_print, deep_flatten
-from ....utilities import dump_to_file, waiting_for_memory
+from .comparison import comparing
+from .input_generation import __gen_input
+from .output_generation import __gen_output
+from .profiling_structure import ComparisonResult, ProfilingReturnStructure, RTSProfilingParam, RTSProfilingResult
+from .rts_sequence import rts_profiling
 
 
 def __gen_workspaces(workspaces: Tuple[int], debug_buf_size: int) -> Tuple[numpy.ndarray, ...]:
@@ -67,18 +69,16 @@ def __gen_workspaces(workspaces: Tuple[int], debug_buf_size: int) -> Tuple[numpy
     workspace_byte_arrays = []
     for workspace_size in workspaces:
         if workspace_size:
-            workspace_byte_arrays.append(numpy.random.randint(0, 255,
-                                                              size=(int(workspace_size),),
-                                                              dtype=numpy.uint8))
+            workspace_byte_arrays.append(numpy.random.randint(0, 255, size=(int(workspace_size),), dtype=numpy.uint8))
         else:
             workspace_byte_arrays.append(None)
     if debug_buf_size > 0:
         if not workspace_byte_arrays:
             workspace_byte_arrays.append(None)
         first_ws_size = 0 if workspace_byte_arrays[0] is None else workspace_byte_arrays[0].size
-        workspace_byte_arrays[0] = numpy.random.randint(0, 255,
-                                                        size=(first_ws_size + debug_buf_size,),
-                                                        dtype=numpy.uint8)
+        workspace_byte_arrays[0] = numpy.random.randint(
+            0, 255, size=(first_ws_size + debug_buf_size,), dtype=numpy.uint8
+        )
     return tuple(workspace_byte_arrays)
 
 
@@ -116,10 +116,12 @@ def _manual_data_prepared_end(context: TestcaseOp):
 def prof_compile_fail_end(context: TestcaseOp):
     construct_compile_result(context)
     passed = handle_profiling_result(context)
-    compare_result = ComparisonResult(passed).set(context.dyn_compile_result.compile_result,
-                                                  context.cst_compile_result.compile_result,
-                                                  context.bin_compile_result.compile_result,
-                                                  passed)
+    compare_result = ComparisonResult(passed).set(
+        context.dyn_compile_result.compile_result,
+        context.cst_compile_result.compile_result,
+        context.bin_compile_result.compile_result,
+        passed,
+    )
     return_structure = ProfilingReturnStructure()
     return_structure.construct(context, compare_result, passed)
     __profiling_end_print(context, compare_result, passed)
@@ -136,136 +138,77 @@ def prof_compile_only_end(context: TestcaseOp):
 
 
 def _extract_spec_providers(tp):
-    """Spec-layer provider keys (priority order = insertion order).
+    """Spec-layer provider keys. Delegates to ttk.remote.client."""
+    from ttk.remote.client import extract_spec_providers
 
-    dict -> keys; str -> single provider derived from API prefix; None/empty -> [].
-    (Empty -> caller lets EndpointView.resolve_providers use detect∩yaml∩alive.)
-    """
-    if isinstance(tp, dict):
-        return [_TP_ALIASES.get(k, k) for k in tp.keys()]
-    if isinstance(tp, str):
-        from ttk.remote import _derive_provider_from_api
-        return [_derive_provider_from_api(tp, "torch")]
-    return []
+    return extract_spec_providers(tp)
 
 
 def _build_spec(provider, tp, spec_file, spec_class, op_name, op_type):
-    """Build one ExecutionSpec. api source: third_party dict | str | None.
+    """Build one ExecutionSpec. op_name/op_type 保留入参兼容旧调用，实际不参与 spec 构造。"""
+    from ttk.remote.client import build_spec
 
-    - dict[str, str]      -> type='api', api=value
-    - dict[str, type]     -> type='spec' (impl class; server resolves
-                             cls.third_party[provider]); spec_file/class
-                             carried so the server can sync the module
-    - str                 -> type='api', api=tp
-    - None / no spec      -> type='api', api=None (server _resolve_3party_api
-                             derives api from op_name + op_type)
-    """
-    from pathlib import Path
-    from ttk.remote import ExecutionSpec
-    if isinstance(tp, dict) and provider in tp:
-        v = tp[provider]
-        if isinstance(v, str):
-            return ExecutionSpec(provider=provider, type="api", api=v)
-        # impl class -> spec mode (server resolves cls.third_party[provider])
-        return ExecutionSpec(provider=provider, type="spec",
-                             spec_file=spec_file,
-                             spec_module=Path(spec_file).stem if spec_file else None,
-                             spec_class=spec_class)
-    if isinstance(tp, str):
-        return ExecutionSpec(provider=provider, type="api", api=tp)
-    # no spec / no third_party -> api=None, server _resolve_3party_api(op_name, op_type)
-    return ExecutionSpec(provider=provider, type="api", api=None)
+    return build_spec(provider, tp, spec_file, spec_class)
 
 
 def _xpu_inputs(context):
     """XPU (torch/tf) needs the logical ori-shape arrays; NPU run-format
     (input_arrays, e.g. NC1HWC0) is unusable on non-NPU accelerators. Fallback if unset."""
-    return context.original_input_arrays or context.input_arrays
+    ori = getattr(context, "original_input_arrays", None)
+    return ori or context.input_arrays
 
 
 def _xpu_mode(switches, need_data):
-    """按位或：xpu_perf→PERF，need_data→DATA。返回 0/PERF/DATA/DATA|PERF。"""
-    from ttk.remote import DATA, PERF
-    mode = 0
-    if switches.xpu_perf:
-        mode |= PERF
-    if need_data:
-        mode |= DATA
-    return mode
+    """按位或：xpu_perf→PERF，need_data→DATA。委托 ttk.remote.client。"""
+    from ttk.remote.client import xpu_mode_of
+
+    return xpu_mode_of(switches, need_data)
 
 
 def _extract_third_party(xpu_results, priority):
-    """从 priority provider 取 outputs（纯函数，直接索引，不靠 dict 序）。
-    fail-closed：无 results / 无 priority / 非 PASS / 无 outputs → None（cross_check → GOLDEN_FAILURE）。"""
-    if not xpu_results or priority is None:
-        return None
-    entry = xpu_results.get(priority, {})
-    if entry.get("status") != "PASS" or "outputs" not in entry:
-        return None
-    return entry["outputs"]
+    """从 priority provider 取 outputs。委托 ttk.remote.client。"""
+    from ttk.remote.client import extract_third_party
+
+    return extract_third_party(xpu_results, priority)
 
 
 def _do_xpu_profiling(context, xpu_mode):
     """Run XPU dispatch，return priority provider name（specs[0].provider）。
-    resolve_providers 失败 → xpu_results={} + return None（→ _extract_third_party None → GOLDEN_FAILURE）。"""
+    resolve_providers 失败 → xpu_results={} + return None（→ _extract_third_party None → GOLDEN_FAILURE）。
+
+    Kernel 适配层：从 context + OpInfoKeeper 提取参数，委托 client.dispatch_xpu。
+    """
     try:
         op_info = OpInfoKeeper().info_of(context.op_name)
         input_names = [ipt["name"] for ipt in op_info["inputs"]] if op_info else []
     except Exception:
         input_names = []
 
-    from ttk.test_spec import get_spec_attr, get_spec_class_meta
-    from ttk.remote.endpoint_view import EndpointView, _parse_provider_filter
-
     op_type = OpInfoKeeper().op_type_of(context.op_name)
-    paths = get_global_storage().plugin_path or ()
-    tp = get_spec_attr(context.op_name, "third_party", paths)
-    if isinstance(tp, dict):
-        tp = {_TP_ALIASES.get(k, k): v for k, v in tp.items()}
-    meta = get_spec_class_meta(context.op_name, paths)
-    spec_file = meta["spec_file"] if meta else None
-    spec_class = meta["class_name"] if meta else None
-
-    ev = EndpointView()
-    spec_providers = _extract_spec_providers(tp)
     sw = get_global_storage()
-    cli_providers = _parse_provider_filter(sw.provider_filter if sw else None)
-
-    try:
-        providers = ev.resolve_providers(spec_providers, cli_providers)
-    except RuntimeError as e:
-        context.xpu_results = {}
-        logging.error("[%s] XPU resolve failed: %s",
-                      getattr(context, "testcase_name", context.op_name), e)
-        return None
-
-    specs = [_build_spec(p, tp, spec_file, spec_class, context.op_name, op_type) for p in providers]
-
-    from ttk.remote.xpu_collector import collect_xpu_results
-    _tmp_root = os.path.join(get_global_storage().root_path, ".ttk", "xpu_tmp")
-    context.xpu_results = collect_xpu_results(
-        specs,
+    need_data = bool(xpu_mode & DATA)
+    xpu_results, priority = dispatch_xpu(
+        op_name=context.op_name,
         inputs=_xpu_inputs(context),
         input_names=input_names,
-        mode=xpu_mode,
-        tenant_id=get_tenant_id(),
-        op_name=context.op_name,
         op_type=op_type,
-        attrs=context.attributes if hasattr(context, 'attributes') else {},
-        tmp_root=_tmp_root,
-        runtime=get_global_storage().run_time,
+        attributes=context.attributes if hasattr(context, "attributes") else {},
+        testcase_name=getattr(context, "testcase_name", context.op_name),
+        switches=sw,
+        need_data=need_data,
     )
-    return specs[0].provider if specs else None
+    context.xpu_results = xpu_results
+    return priority
 
 
-def profile_process(context: TestcaseOp,
-                    device_grant_events: dict,
-                    device_granted_indices: dict,
-                    dev_id: int) -> ProfilingReturnStructure:
+def profile_process(
+    context: TestcaseOp, device_grant_events: dict, device_granted_indices: dict, dev_id: int
+) -> ProfilingReturnStructure:
     """
     Universal Testcase Profiling Entrance
     """
     from ..error_cleaner import clear_error_manager
+
     clear_error_manager()
 
     switches = get_global_storage()
@@ -326,9 +269,7 @@ def profile_process(context: TestcaseOp,
     prepared_inputs = None
     if manual_mode == "prepare":
         try:
-            prepared_inputs = snapshot_manual_values(
-                tuple(deep_flatten(context.input_arrays or ())), "input"
-            )
+            prepared_inputs = snapshot_manual_values(tuple(deep_flatten(context.input_arrays or ())), "input")
         except Exception as exc:
             logging.exception("Manual Kernel input snapshot failure")
             return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
@@ -336,18 +277,18 @@ def profile_process(context: TestcaseOp,
     # resolve 提前到 __gen_output 之前（唯一目的：设 golden_mode_override 让 golden 走 Promote）
     # 3 点相对 import：profiling.py 在 npu/op/，core_modules/comparison 在上 2 级（同 npu/op/comparison.py:20）
     from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
+
     try:
-        tolerance = get_spec_attr(context.op_name, "tolerance",
-                                  getattr(get_global_storage(), "plugin_path", None))
-        pre_compare = get_spec_attr(context.op_name, "pre_compare",
-                                    getattr(get_global_storage(), "plugin_path", None))
-        custom_compare = get_spec_attr(context.op_name, "compare",
-                                       getattr(get_global_storage(), "plugin_path", None))
-        standards = _resolve_tolerance(tolerance,
-                                       context.flat_precision_tolerances,
-                                       context.flat_absolute_precision,
-                                       context.flat_output_dtypes,
-                                       get_global_storage().compare_method)
+        tolerance = get_spec_attr(context.op_name, "tolerance", getattr(get_global_storage(), "plugin_path", None))
+        pre_compare = get_spec_attr(context.op_name, "pre_compare", getattr(get_global_storage(), "plugin_path", None))
+        custom_compare = get_spec_attr(context.op_name, "compare", getattr(get_global_storage(), "plugin_path", None))
+        standards = _resolve_tolerance(
+            tolerance,
+            context.flat_precision_tolerances,
+            context.flat_absolute_precision,
+            context.flat_output_dtypes,
+            get_global_storage().compare_method,
+        )
         need_3party_outputs = any(s.token == "cross_check" for s in standards)
         if need_3party_outputs:
             context.golden_mode_override = "Promote"
@@ -403,16 +344,22 @@ def profile_process(context: TestcaseOp,
     xpu_priority = _do_xpu_profiling(context, xpu_mode) if xpu_mode else None
     third_parties_nested = _extract_third_party(getattr(context, "xpu_results", None), xpu_priority)
     if need_3party_outputs and third_parties_nested is None:
-        logging.warning("[%s] cross_check configured but no third_party output (no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE", context.op_name)
+        logging.warning(
+            "[%s] cross_check configured but no third_party output (no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE",
+            context.op_name,
+        )
     third_parties = list(deep_flatten(third_parties_nested)) if third_parties_nested is not None else None
 
     process_ctx.notify_status("OnGenWorkspace")
-    context.dyn_workspace_arrays = __gen_workspaces(context.dyn_compile_result.workspaces,
-                                                    context.dyn_compile_result.debug_buf_size)
-    context.cst_workspace_arrays = __gen_workspaces(context.cst_compile_result.workspaces,
-                                                    context.cst_compile_result.debug_buf_size)
-    context.bin_workspace_arrays = __gen_workspaces(context.bin_compile_result.workspaces,
-                                                    context.bin_compile_result.debug_buf_size)
+    context.dyn_workspace_arrays = __gen_workspaces(
+        context.dyn_compile_result.workspaces, context.dyn_compile_result.debug_buf_size
+    )
+    context.cst_workspace_arrays = __gen_workspaces(
+        context.cst_compile_result.workspaces, context.cst_compile_result.debug_buf_size
+    )
+    context.bin_workspace_arrays = __gen_workspaces(
+        context.bin_compile_result.workspaces, context.bin_compile_result.debug_buf_size
+    )
     process_ctx.notify_status("OnDumpInputDataIfRequired")
     __dump_input(context)
     process_ctx.notify_status("OnDumpGoldenDataIfRequired")
@@ -421,9 +368,13 @@ def profile_process(context: TestcaseOp,
     process_ctx.notify_status("OnAcquireLock")
     device_id = [dev_id]
     use_device = switches.mode.use_device()
-    with DeviceLock(process_ctx, dev_id, use_device=use_device,
-                    grant_event=device_grant_events.get(dev_id),
-                    granted_idx=device_granted_indices.get(dev_id)):
+    with DeviceLock(
+        process_ctx,
+        dev_id,
+        use_device=use_device,
+        grant_event=device_grant_events.get(dev_id),
+        granted_idx=device_granted_indices.get(dev_id),
+    ):
         context.device_id = device_id[0]
         process_ctx.notify_status("OnProfilingPrint")
         __profiling_print(context)
@@ -439,17 +390,21 @@ def profile_process(context: TestcaseOp,
     __dump_output(context)
     process_ctx.notify_status("OnComparison")
     __adapt_output_shape_unknown(context)
-    compare_result = comparing(context.dyn_compile_result.kernel_name,
-                               context.cst_compile_result.kernel_name,
-                               context.bin_compile_result.kernel_name,
-                               context.dyn_prof_result.output_bytes,
-                               context.cst_prof_result.output_bytes,
-                               context.bin_prof_result.output_bytes,
-                               context.golden_arrays,
-                               context.flat_output_dtypes,
-                               standards=standards, third_parties=third_parties,
-                               testcase=context, pre_compare=pre_compare,
-                               custom_compare=custom_compare)
+    compare_result = comparing(
+        context.dyn_compile_result.kernel_name,
+        context.cst_compile_result.kernel_name,
+        context.bin_compile_result.kernel_name,
+        context.dyn_prof_result.output_bytes,
+        context.cst_prof_result.output_bytes,
+        context.bin_prof_result.output_bytes,
+        context.golden_arrays,
+        context.flat_output_dtypes,
+        standards=standards,
+        third_parties=third_parties,
+        testcase=context,
+        pre_compare=pre_compare,
+        custom_compare=custom_compare,
+    )
     if compare_result.passed != "PASS" and switches.dump_config.dump_on_fail:
         __dump_on_fail(context)
     process_ctx.notify_status("OnReturning")
@@ -459,53 +414,86 @@ def profile_process(context: TestcaseOp,
     return return_structure
 
 
-def __profiling_end_print(context: TestcaseOp,
-                          compare_result: ComparisonResult, passed: str):
+def __profiling_end_print(context: TestcaseOp, compare_result: ComparisonResult, passed: str):
     c = compare_result
-    logging.info("\n########################\n"
-                 f"Performance result:                Comparison result:                 "
-                 f"Memory check:\n"
-                 f"DYN_PERF: {str(context.dyn_prof_result.cycle).ljust(24)} "
-                 f"DYN_GOLD: {c.dyn_precision.ljust(24)} "
-                 f"DYN_MEM: {str(context.dyn_prof_result.oob).ljust(24)}\n"
-                 f"CST_PERF: {str(context.cst_prof_result.cycle).ljust(24)} "
-                 f"CST_GOLD: {c.cst_precision.ljust(24)} "
-                 f"CST_MEM: {str(context.cst_prof_result.oob).ljust(24)}\n"
-                 f"BIN_PERF: {str(context.bin_prof_result.cycle).ljust(24)} "
-                 f"BIN_GOLD: {c.bin_precision.ljust(24)} "
-                 f"BIN_MEM: {str(context.bin_prof_result.oob).ljust(24)}\n"
-                 f"STATUS: {passed.ljust(26)} PRECISION_STATUS: {c.passed}\n"
-                 "########################\n")
+    logging.info(
+        "\n########################\n"
+        f"Performance result:                Comparison result:                 "
+        f"Memory check:\n"
+        f"DYN_PERF: {str(context.dyn_prof_result.cycle).ljust(24)} "
+        f"DYN_GOLD: {c.dyn_precision.ljust(24)} "
+        f"DYN_MEM: {str(context.dyn_prof_result.oob).ljust(24)}\n"
+        f"CST_PERF: {str(context.cst_prof_result.cycle).ljust(24)} "
+        f"CST_GOLD: {c.cst_precision.ljust(24)} "
+        f"CST_MEM: {str(context.cst_prof_result.oob).ljust(24)}\n"
+        f"BIN_PERF: {str(context.bin_prof_result.cycle).ljust(24)} "
+        f"BIN_GOLD: {c.bin_precision.ljust(24)} "
+        f"BIN_MEM: {str(context.bin_prof_result.oob).ljust(24)}\n"
+        f"STATUS: {passed.ljust(26)} PRECISION_STATUS: {c.passed}\n"
+        "########################\n"
+    )
 
 
 def __compile_only_end_print(context: TestcaseOp):
     def __normalize(compile_time, tiling_time, tiling_key, block_dim, local_memory, kernel_name):
         if isinstance(tiling_time, (tuple, list)):
             tiling_time = numpy.median(tiling_time[1:]) if len(tiling_time) > 1 else tiling_time[0]
-        return ("%.3f" % compile_time if isinstance(compile_time, float) else compile_time,
-                tiling_time, tiling_key, block_dim, local_memory, kernel_name)
+        return (
+            "%.3f" % compile_time if isinstance(compile_time, float) else compile_time,
+            tiling_time,
+            tiling_key,
+            block_dim,
+            local_memory,
+            kernel_name,
+        )
 
     dc = context.dyn_compile_result
     cc, bc = context.cst_compile_result, context.bin_compile_result
-    lines = [("COMPILE", "Compile/s", "Tiling/s", "TilingKey", "BlockDim", "SimtUB/B", "KernelName"),
-             ("DYN", *__normalize(dc.compile_time, dc.tiling_result.tiling_time,
-                                  dc.tiling_key, dc.block_dim, dc.simt_ub_size, dc.kernel_name)),
-             ("CST", *__normalize(cc.compile_time, "\\\\\\\\\\\\", "\\\\\\\\\\\\", cc.block_dim,
-                                  cc.simt_ub_size, cc.kernel_name)),
-             ("BIN", *__normalize(bc.compile_time, bc.tiling_result.tiling_time,
-                                  bc.tiling_key, bc.block_dim, bc.simt_ub_size, bc.kernel_name))
-             ]
+    lines = [
+        ("COMPILE", "Compile/s", "Tiling/s", "TilingKey", "BlockDim", "SimtUB/B", "KernelName"),
+        (
+            "DYN",
+            *__normalize(
+                dc.compile_time,
+                dc.tiling_result.tiling_time,
+                dc.tiling_key,
+                dc.block_dim,
+                dc.simt_ub_size,
+                dc.kernel_name,
+            ),
+        ),
+        (
+            "CST",
+            *__normalize(
+                cc.compile_time, "\\\\\\\\\\\\", "\\\\\\\\\\\\", cc.block_dim, cc.simt_ub_size, cc.kernel_name
+            ),
+        ),
+        (
+            "BIN",
+            *__normalize(
+                bc.compile_time,
+                bc.tiling_result.tiling_time,
+                bc.tiling_key,
+                bc.block_dim,
+                bc.simt_ub_size,
+                bc.kernel_name,
+            ),
+        ),
+    ]
     logging.info("\n" + table_print(lines))
 
 
 def __parse_binary_tiling_data(context: TestcaseOp):
     # noinspection PyBroadException
     try:
-        context.bin_tiling_data_bytes, context.bin_tuple_tiling_data = \
-            parse_tiling_data(context.bin_compile_result.tiling_data)
-        context.bin_str_tiling_data = \
-            get_str_tiling_data(context.bin_tuple_tiling_data, context.bin_compile_result.compile_info,
-                                context.bin_compile_result.tiling_key)
+        context.bin_tiling_data_bytes, context.bin_tuple_tiling_data = parse_tiling_data(
+            context.bin_compile_result.tiling_data
+        )
+        context.bin_str_tiling_data = get_str_tiling_data(
+            context.bin_tuple_tiling_data,
+            context.bin_compile_result.compile_info,
+            context.bin_compile_result.tiling_key,
+        )
     except:
         logging.exception("Binary tiling data parsing failure")
         context.bin_compile_result.compile_result = "TILING_PARSE_FAILURE"
@@ -514,11 +502,14 @@ def __parse_binary_tiling_data(context: TestcaseOp):
 def __parse_dynamic_tiling_data(context: TestcaseOp):
     # noinspection PyBroadException
     try:
-        context.dyn_tiling_data_bytes, context.dyn_tuple_tiling_data = \
-            parse_tiling_data(context.dyn_compile_result.tiling_data)
-        context.dyn_str_tiling_data = \
-            get_str_tiling_data(context.dyn_tuple_tiling_data, context.dyn_compile_result.compile_info,
-                                context.dyn_compile_result.tiling_key)
+        context.dyn_tiling_data_bytes, context.dyn_tuple_tiling_data = parse_tiling_data(
+            context.dyn_compile_result.tiling_data
+        )
+        context.dyn_str_tiling_data = get_str_tiling_data(
+            context.dyn_tuple_tiling_data,
+            context.dyn_compile_result.compile_info,
+            context.dyn_compile_result.tiling_key,
+        )
     except:
         logging.exception("Dynamic tiling data parsing failure")
         context.dyn_compile_result.compile_result = "TILING_PARSE_FAILURE"
@@ -554,11 +545,11 @@ def __parse_manual_params(context: TestcaseOp):
 
 
 def __print_get_shape(golden):
-    return golden.shape if hasattr(golden, 'shape') else golden
+    return golden.shape if hasattr(golden, "shape") else golden
 
 
 def __print_get_dtype(golden):
-    return golden.dtype if hasattr(golden, 'dtype') else golden
+    return golden.dtype if hasattr(golden, "dtype") else golden
 
 
 def __profiling_print(context: TestcaseOp):
@@ -619,9 +610,7 @@ def __profiling_print(context: TestcaseOp):
 def __dump_to_file(data: Union[numpy.ndarray, bytes], file_name: str, dtype: Optional[str] = None):
     switches = get_global_storage()
     file_path = os.getenv("NPU_DUMP_PATH") or switches.root_path
-    dump_to_file(data, file_path, file_name,
-                 file_format=switches.dump_config.file_format,
-                 dtype=dtype)
+    dump_to_file(data, file_path, file_name, file_format=switches.dump_config.file_format, dtype=dtype)
 
 
 def __dump_input(context: TestcaseOp, force: bool = False) -> NoReturn:
@@ -641,7 +630,7 @@ def __dump_output(context: TestcaseOp, force: bool = False) -> NoReturn:
         output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
         for typ in ("dyn", "cst", "bin"):
             logging.info(f"Dump {typ} Output data....")
-            output_bytes = getattr(getattr(context, f"{typ}_prof_result"), "output_bytes")
+            output_bytes = getattr(context, f"{typ}_prof_result").output_bytes
             for idx, _output in enumerate(output_bytes):
                 __dump_to_file(_output, f"{dump_output_name}_{typ}_output_{idx}", get(output_dtypes, idx))
 
@@ -649,7 +638,7 @@ def __dump_output(context: TestcaseOp, force: bool = False) -> NoReturn:
 def __dump_golden(context: TestcaseOp, force: bool = False) -> NoReturn:
     dump_output_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_golden_enabled():
-        logging.info(f"Dump Golden data....")
+        logging.info("Dump Golden data....")
         for idx, golden in enumerate(context.golden_arrays):
             __dump_to_file(golden, f"{dump_output_name}_golden_{idx}")
 
@@ -664,51 +653,56 @@ def __dump_on_fail(context: TestcaseOp) -> NoReturn:
         __dump_golden(context, force=True)
 
 
-def __construct_profiling_param(context: TestcaseOp, mode: str,
-                                output_placeholder: bool = True) -> tuple:
+def __construct_profiling_param(context: TestcaseOp, mode: str, output_placeholder: bool = True) -> tuple:
     flat_input_arrays = tuple(deep_flatten(context.input_arrays or ()))
     if mode == "dynamic":
-        return (context.dyn_compile_result,  # 0
-                flat_input_arrays,  # 1
-                context.output_arrays,  # 2
-                context.dyn_workspace_arrays,  # 3
-                context.dyn_tiling_data_bytes,  # 4
-                output_placeholder,  # 5
-                context.dyn_clear_atomic,  # 6
-                get_global_storage().dyn_switches.prof,  # 7
-                context.is_valid,  # 8
-                context.fail_reason,  # 9
-                context.tensor_list_distribution,  # 10
-                context.testcase_name,  # 11
-                mode)  # 12
+        return (
+            context.dyn_compile_result,  # 0
+            flat_input_arrays,  # 1
+            context.output_arrays,  # 2
+            context.dyn_workspace_arrays,  # 3
+            context.dyn_tiling_data_bytes,  # 4
+            output_placeholder,  # 5
+            context.dyn_clear_atomic,  # 6
+            get_global_storage().dyn_switches.prof,  # 7
+            context.is_valid,  # 8
+            context.fail_reason,  # 9
+            context.tensor_list_distribution,  # 10
+            context.testcase_name,  # 11
+            mode,
+        )  # 12
     elif mode == "const":
-        return (context.cst_compile_result,  # 0
-                flat_input_arrays,  # 1
-                context.output_arrays,  # 2
-                context.cst_workspace_arrays,  # 3
-                None,  # 4
-                output_placeholder,  # 5
-                context.cst_clear_atomic,  # 6
-                get_global_storage().cst_switches.prof,  # 7
-                context.is_valid,  # 8
-                context.fail_reason,  # 9
-                context.tensor_list_distribution,  # 10
-                context.testcase_name,  # 11
-                mode)  # 12
+        return (
+            context.cst_compile_result,  # 0
+            flat_input_arrays,  # 1
+            context.output_arrays,  # 2
+            context.cst_workspace_arrays,  # 3
+            None,  # 4
+            output_placeholder,  # 5
+            context.cst_clear_atomic,  # 6
+            get_global_storage().cst_switches.prof,  # 7
+            context.is_valid,  # 8
+            context.fail_reason,  # 9
+            context.tensor_list_distribution,  # 10
+            context.testcase_name,  # 11
+            mode,
+        )  # 12
     elif mode == "binary":
-        return (context.bin_compile_result,  # 0
-                flat_input_arrays,  # 1
-                context.output_arrays,  # 2
-                context.bin_workspace_arrays,  # 3
-                context.bin_tiling_data_bytes,  # 4
-                output_placeholder,  # 5
-                context.bin_clear_atomic,  # 6
-                get_global_storage().bin_switches.prof,  # 7
-                context.is_valid,  # 8
-                context.fail_reason,  # 9
-                context.tensor_list_distribution,  # 10
-                context.testcase_name,  # 11
-                mode)  # 12
+        return (
+            context.bin_compile_result,  # 0
+            flat_input_arrays,  # 1
+            context.output_arrays,  # 2
+            context.bin_workspace_arrays,  # 3
+            context.bin_tiling_data_bytes,  # 4
+            output_placeholder,  # 5
+            context.bin_clear_atomic,  # 6
+            get_global_storage().bin_switches.prof,  # 7
+            context.is_valid,  # 8
+            context.fail_reason,  # 9
+            context.tensor_list_distribution,  # 10
+            context.testcase_name,  # 11
+            mode,
+        )  # 12
     else:
         raise RuntimeError(f"Unknown profiling mode {mode}")
 
@@ -717,17 +711,13 @@ def _get_rts_interface(device_id: int, testcase_name: str, test_mode: str) -> RT
     switches = get_global_storage()
     device: RTSInterface = get_process_context().storage.get("device", None)
     if not device or device.device_id is None:
-        device = RTSInterface(switches.mode.is_model(),
-                              short_soc_version=switches.short_soc_version)
+        device = RTSInterface(switches.mode.is_model(), short_soc_version=switches.short_soc_version)
         if device.is_model():
-            device.set_simt_stack_size(switches.simt_cfg.dcu_stack,
-                                       switches.simt_cfg.dvg_stack,
-                                       device_id)
+            device.set_simt_stack_size(switches.simt_cfg.dcu_stack, switches.simt_cfg.dvg_stack, device_id)
         device.set_device(device_id)
         device.set_float_overflow_mode(switches.overflow_mode)
         if not device.is_model():
-            device.set_simt_stack_size(switches.simt_cfg.dcu_stack,
-                                       switches.simt_cfg.dvg_stack)
+            device.set_simt_stack_size(switches.simt_cfg.dcu_stack, switches.simt_cfg.dvg_stack)
         get_process_context().storage["device"] = device
     return device
 
@@ -772,10 +762,7 @@ def __adapt_output_shape_unknown(context: TestcaseOp):
     for x in ("dyn", "cst", "bin"):
         # translate to uint64 for all.
         # considering stc tbe & dyn asc different implement.
-        x_output_bytes = getattr(
-            getattr(context, f"{x}_prof_result"),
-            "output_bytes"
-        )
+        x_output_bytes = getattr(context, f"{x}_prof_result").output_bytes
         if not x_output_bytes:
             continue
         last_array = x_output_bytes[-1]
@@ -787,7 +774,7 @@ def __adapt_output_shape_unknown(context: TestcaseOp):
             pass
         else:
             # uint32 implement. use half bytes.
-            np_array = np_array[:np_array.size//2]
+            np_array = np_array[: np_array.size // 2]
             np_array = np_array.view(numpy.uint32).astype(numpy.uint64, copy=False)
             for i in range(np_array.size // 9):
                 effective_num = np_array[i * 9]
@@ -808,18 +795,26 @@ def handle_profiling_result(context: TestcaseOp):
     :param context:
     :return:
     """
-    fake_fail = ("DYN_OFF", "CST_OFF", "BIN_OFF",
-                 "DYN_UNSUPPORTED", "CST_UNSUPPORTED", "BIN_UNSUPPORTED",
-                 "DYN_OPERATOR_NOT_FOUND",
-                 "CST_OPERATOR_NOT_FOUND", "BIN_OPERATOR_NOT_FOUND",
-                 "SUPPRESSED", "DYN_INPUT_MISSING")
+    fake_fail = (
+        "DYN_OFF",
+        "CST_OFF",
+        "BIN_OFF",
+        "DYN_UNSUPPORTED",
+        "CST_UNSUPPORTED",
+        "BIN_UNSUPPORTED",
+        "DYN_OPERATOR_NOT_FOUND",
+        "CST_OPERATOR_NOT_FOUND",
+        "BIN_OPERATOR_NOT_FOUND",
+        "SUPPRESSED",
+        "DYN_INPUT_MISSING",
+    )
 
     # noinspection PyBroadException
     def _get_cycle(result, off_flag):
         if isinstance(result.cycle, str):
             if result.cycle in off_flag:
                 return "PASS"
-            cs = result.cycle.split(',')
+            cs = result.cycle.split(",")
             if all([s.strip() == "OK" for s in cs]):  # in case  --task-prof=false
                 return "PASS"
         elif get_global_storage().mode.is_model() and isinstance(result.cycle, (list, tuple)):

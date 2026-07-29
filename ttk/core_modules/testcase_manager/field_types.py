@@ -11,17 +11,17 @@
 CSV Field types
 """
 
-
 __all__ = ["FIELD_TYPES"]
 
 # Standard Packages
-from enum import auto, Enum
+from enum import Enum, auto
 
 
 class FIELD_TYPES(Enum):
     """
     Expected types for all columns
     """
+
     STRING = auto()  # This is a pure string
     SHAPELIKE_DYN = auto()  # This is a dynamic shape, which means it supports negative values
     SHAPELIKE_STC = auto()  # This is a static shape, which means it doesn't support negative values
@@ -45,3 +45,4 @@ class FIELD_TYPES(Enum):
     INT_CONTAINER_NESTED = auto()  # int container with TensorList nesting support
     SHAPELIKE_FLOAT_SIGNED_NESTED = auto()  # signed float shapelike with TensorList nesting support
     SHAPELIKE_FLOAT_NESTED = auto()  # float shapelike with TensorList nesting support (positive only)
+    SHAPELIKE_DYN_NESTED = auto()  # dynamic shape with TensorList nesting support, allows -1/-2

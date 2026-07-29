@@ -2,180 +2,172 @@ import logging
 import pathlib
 import re
 
-
 _TYPED_CLEAN_VALUE = re.compile(r"(?P<dtype>[A-Za-z][A-Za-z0-9_]*)\((?P<value>[^()]*)\)$")
-_INTEGER_CLEAN_VALUE = re.compile(
-    r"[+-]?(?:0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+)$"
-)
-_FLOAT_CLEAN_VALUE = re.compile(
-    r"[+-]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?)$"
-)
+_INTEGER_CLEAN_VALUE = re.compile(r"[+-]?(?:0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+)$")
+_FLOAT_CLEAN_VALUE = re.compile(r"[+-]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?)$")
 
 
 def args_to_switches(args):
-    from ttk.utilities.classes import SWITCHES, DumpConfig, DumpLevel, SoCSimtCfg
+    from ttk.utilities.classes import SWITCHES
 
     sw = SWITCHES()
     sw.logging_to_file = True
-    sw.config_path = getattr(args, 'config', None)        # NEW: 经 SWITCHES pickle 传 worker
-    sw.provider_filter = getattr(args, 'provider', None)  # NEW: --provider CLI 过滤器
+    sw.config_path = getattr(args, "config", None)  # NEW: 经 SWITCHES pickle 传 worker
+    sw.provider_filter = getattr(args, "provider", None)  # NEW: --provider CLI 过滤器
 
     # 无条件加载配置（config_path=None 时走标准路径：default.yaml + ~/.config/ttk + ./ttk.conf.yaml）。
     # 删 get_config lazy fallback 后，这是 parent 侧唯一的 load 入口。
     from ttk.config.loader import load_config
+
     load_config(sw.config_path)
 
     sw.input_files = [args.input]
     sw.output_file_name = args.output
 
-    if hasattr(args, 'testcase') and args.testcase:
+    if hasattr(args, "testcase") and args.testcase:
         sw.selected_testcases = args.testcase.split(",")
-    if hasattr(args, 'testcase_index') and args.testcase_index:
+    if hasattr(args, "testcase_index") and args.testcase_index:
         sw.selected_testcase_indexes = _parse_indexes(args.testcase_index)
-    if hasattr(args, 'testcase_count') and args.testcase_count is not None:
+    if hasattr(args, "testcase_count") and args.testcase_count is not None:
         sw.selected_testcase_count = args.testcase_count
 
-    if hasattr(args, 'priority') and args.priority:
+    if hasattr(args, "priority") and args.priority:
         sw.priorities = _parse_priorities(args.priority)
-    if hasattr(args, 'operator') and args.operator:
+    if hasattr(args, "operator") and args.operator:
         sw.selected_operators = tuple(args.operator.split(","))
-    if hasattr(args, 'exclude_operator') and args.exclude_operator:
+    if hasattr(args, "exclude_operator") and args.exclude_operator:
         sw.excluded_operators = tuple(args.exclude_operator.split(","))
 
-    if hasattr(args, 'random_seed') and args.random_seed is not None:
+    if hasattr(args, "random_seed") and args.random_seed is not None:
         sw.random_seed = args.random_seed
-    if hasattr(args, 'input_dist'):
+    if hasattr(args, "input_dist"):
         sw.input_distribution = args.input_dist
-    if hasattr(args, 'compare'):
+    if hasattr(args, "compare"):
         sw.compare_method = args.compare
-    if hasattr(args, 'golden_mode'):
+    if hasattr(args, "golden_mode"):
         sw.golden_mode = args.golden_mode
 
-    if hasattr(args, 'dump') and args.dump is not None:
+    if hasattr(args, "dump") and args.dump is not None:
         _apply_dump_config(sw.dump_config, args.dump)
-    if hasattr(args, 'dump_format'):
+    if hasattr(args, "dump_format"):
         sw.dump_config.file_format = args.dump_format
-    if hasattr(args, 'dump_on_fail') and args.dump_on_fail:
+    if hasattr(args, "dump_on_fail") and args.dump_on_fail:
         sw.dump_config.dump_on_fail = True
-    if hasattr(args, 'xpu_perf') and args.xpu_perf:
+    if hasattr(args, "xpu_perf") and args.xpu_perf:
         sw.xpu_perf = True
 
-    if hasattr(args, 'plugin') and args.plugin:
-        sw.plugin_path = tuple(
-            pathlib.Path(p.strip()).resolve()
-            for p in args.plugin.split(',')
-            if p.strip()
-        )
+    if hasattr(args, "plugin") and args.plugin:
+        sw.plugin_path = tuple(pathlib.Path(p.strip()).resolve() for p in args.plugin.split(",") if p.strip())
 
-    if hasattr(args, 'rerun') and args.rerun:
+    if hasattr(args, "rerun") and args.rerun:
         sw.rerun_targets = args.rerun.lower().split(",")
 
-    if hasattr(args, 'title') and args.title:
+    if hasattr(args, "title") and args.title:
         sw.custom_columns = args.title.split(",")
-    if hasattr(args, 'csv_preserve') and args.csv_preserve:
+    if hasattr(args, "csv_preserve") and args.csv_preserve:
         sw.preserve_original_csv = True
-    if hasattr(args, 'single_log') and args.single_log:
+    if hasattr(args, "single_log") and args.single_log:
         sw.single_testcase_log_mode = True
-    if hasattr(args, 'summary_print') and not args.summary_print:
+    if hasattr(args, "summary_print") and not args.summary_print:
         sw.summary_print = False
-    if hasattr(args, 'proc_no_reuse') and args.proc_no_reuse:
+    if hasattr(args, "proc_no_reuse") and args.proc_no_reuse:
         sw.proc_no_reuse = True
-    if hasattr(args, 'no_memory_check') and args.no_memory_check:
+    if hasattr(args, "no_memory_check") and args.no_memory_check:
         sw.no_memory_check = True
-    if hasattr(args, 'task_prof') and not args.task_prof:
+    if hasattr(args, "task_prof") and not args.task_prof:
         sw.TASK_PROFILING = False
-    if hasattr(args, 'progress_output') and args.progress_output:
+    if hasattr(args, "progress_output") and args.progress_output:
         sw.progress_output = args.progress_output
-    if hasattr(args, 'device') and args.device is not None:
+    if hasattr(args, "device") and args.device is not None:
         sw.device_count = args.device
-    if hasattr(args, 'device_blacklist') and args.device_blacklist:
+    if hasattr(args, "device_blacklist") and args.device_blacklist:
         sw.device_blacklist = tuple(int(x) for x in args.device_blacklist.split(","))
-    if hasattr(args, 'device_whitelist') and args.device_whitelist:
+    if hasattr(args, "device_whitelist") and args.device_whitelist:
         sw.device_whitelist = tuple(int(x) for x in args.device_whitelist.split(","))
-    if hasattr(args, 'process_count') and args.process_count is not None:
+    if hasattr(args, "process_count") and args.process_count is not None:
         sw.process_per_device = args.process_count
-    if hasattr(args, 'platform') and args.platform:
+    if hasattr(args, "platform") and args.platform:
         sw.dev_plat = args.platform
-    if hasattr(args, 'proc_timeout') and args.proc_timeout:
+    if hasattr(args, "proc_timeout") and args.proc_timeout:
         sw.proc_timeout = args.proc_timeout
-    if hasattr(args, 'validate_only') and args.validate_only:
+    if hasattr(args, "validate_only") and args.validate_only:
         sw.validate_only = True
-    if hasattr(args, 'warmup') and not args.warmup:
+    if hasattr(args, "warmup") and not args.warmup:
         sw.warmup = False
-    if hasattr(args, 'run') and args.run is not None:
+    if hasattr(args, "run") and args.run is not None:
         sw.run_time = args.run
-    if hasattr(args, 'npu_timeout') and args.npu_timeout:
+    if hasattr(args, "npu_timeout") and args.npu_timeout:
         sw.run_timeout = args.npu_timeout
 
     return sw
 
 
 def apply_kernel_args(sw, args):
-    if hasattr(args, 'dynamic') and args.dynamic is not None:
+    if hasattr(args, "dynamic") and args.dynamic is not None:
         val = args.dynamic
         if isinstance(val, str):
-            val = val.lower() not in ('false', '0', 'no', 'off')
+            val = val.lower() not in ("false", "0", "no", "off")
         sw.dyn_switches.enabled = val
-    if hasattr(args, 'const') and args.const is not None:
+    if hasattr(args, "const") and args.const is not None:
         val = args.const
         if isinstance(val, str):
-            val = val.lower() not in ('false', '0', 'no', 'off')
+            val = val.lower() not in ("false", "0", "no", "off")
         sw.cst_switches.enabled = val
-    if hasattr(args, 'binary') and args.binary is not None:
+    if hasattr(args, "binary") and args.binary is not None:
         if args.binary == "release":
             sw.bin_switches.enabled = True
             sw.bin_switches.realtime = "release"
         elif args.binary is not True:
             val = args.binary
             if isinstance(val, str):
-                val = val.lower() not in ('false', '0', 'no', 'off')
+                val = val.lower() not in ("false", "0", "no", "off")
             sw.bin_switches.enabled = val
-    if hasattr(args, 'compile_only') and args.compile_only:
+    if hasattr(args, "compile_only") and args.compile_only:
         sw.compile_only = True
     # --compile-opts key=value (append, direct passthrough)
-    if hasattr(args, 'compile_opts') and args.compile_opts:
+    if hasattr(args, "compile_opts") and args.compile_opts:
         for pair in args.compile_opts:
-            if '=' not in pair:
+            if "=" not in pair:
                 raise ValueError(f"--compile-opts requires KEY=VALUE format, got: {pair}")
-            key, value = pair.split('=', 1)
+            key, value = pair.split("=", 1)
             sw.compile_options[key] = value
-    if hasattr(args, 'impl_mode') and args.impl_mode:
+    if hasattr(args, "impl_mode") and args.impl_mode:
         sw.op_impl_mode = args.impl_mode
-    if hasattr(args, 'limit') and args.limit is not None:
+    if hasattr(args, "limit") and args.limit is not None:
         sw.DAVINCI_HBM_SIZE_LIMIT = args.limit
-    if hasattr(args, 'reuse_hbm') and args.reuse_hbm:
+    if hasattr(args, "reuse_hbm") and args.reuse_hbm:
         sw.reuse_hbm = True
-    if hasattr(args, 'reserve_hbm') and args.reserve_hbm is not None:
+    if hasattr(args, "reserve_hbm") and args.reserve_hbm is not None:
         sw.reserve_hbm = args.reserve_hbm
-    if hasattr(args, 'no_prof') and args.no_prof:
+    if hasattr(args, "no_prof") and args.no_prof:
         sw.dyn_switches.prof = False
         sw.cst_switches.prof = False
         sw.bin_switches.prof = False
-    if hasattr(args, 'tiling_run') and args.tiling_run is not None:
+    if hasattr(args, "tiling_run") and args.tiling_run is not None:
         sw.tiling_run_time = args.tiling_run
-    if hasattr(args, 'cce') and args.cce is not None:
+    if hasattr(args, "cce") and args.cce is not None:
         _apply_cce(sw, args.cce)
-    if hasattr(args, 'clear_atomic') and args.clear_atomic:
+    if hasattr(args, "clear_atomic") and args.clear_atomic:
         _apply_clear_atomic(sw, args.clear_atomic)
-    if hasattr(args, 'clear_ub') and args.clear_ub is not None:
+    if hasattr(args, "clear_ub") and args.clear_ub is not None:
         sw.force_clear_ub = _parse_clean_val("UB", args.clear_ub)
-    if hasattr(args, 'clear_l1') and args.clear_l1 is not None:
+    if hasattr(args, "clear_l1") and args.clear_l1 is not None:
         sw.force_clear_l1 = _parse_clean_val("L1", args.clear_l1)
-    if hasattr(args, 'force_block_dim') and args.force_block_dim is not None:
+    if hasattr(args, "force_block_dim") and args.force_block_dim is not None:
         bd = args.force_block_dim
         if isinstance(bd, int):
             sw.force_block_dim = [bd] * 3
         else:
             sw.force_block_dim = list(bd)
-    if hasattr(args, 'simt_ub') and args.simt_ub is not None:
+    if hasattr(args, "simt_ub") and args.simt_ub is not None:
         v = args.simt_ub
         if isinstance(v, int):
             sw.force_simt_ub_size = [v] * 3
         else:
             sw.force_simt_ub_size = list(v[:3])
-    if hasattr(args, 'simt_stack_dcu') and args.simt_stack_dcu is not None:
+    if hasattr(args, "simt_stack_dcu") and args.simt_stack_dcu is not None:
         sw.simt_cfg.dcu_stack = args.simt_stack_dcu
-    if hasattr(args, 'simt_stack_dvg') and args.simt_stack_dvg is not None:
+    if hasattr(args, "simt_stack_dvg") and args.simt_stack_dvg is not None:
         sw.simt_cfg.dvg_stack = args.simt_stack_dvg
 
 
@@ -184,19 +176,19 @@ def apply_aclnn_args(sw, args):
 
 
 def apply_e2e_args(sw, args):
-    if hasattr(args, 'dynamic') and args.dynamic is not None:
+    if hasattr(args, "dynamic") and args.dynamic is not None:
         val = args.dynamic
         if isinstance(val, str):
-            val = val.lower() not in ('false', '0', 'no', 'off')
+            val = val.lower() not in ("false", "0", "no", "off")
         sw.dyn_switches.enabled = val
-    if hasattr(args, 'const') and args.const is not None:
+    if hasattr(args, "const") and args.const is not None:
         val = args.const
         if isinstance(val, str):
-            val = val.lower() not in ('false', '0', 'no', 'off')
+            val = val.lower() not in ("false", "0", "no", "off")
         sw.cst_switches.enabled = val
     if getattr(args, "cpu", False):
         sw.force_cpu = True
-    if hasattr(args, 'fullgraph'):
+    if hasattr(args, "fullgraph"):
         sw.fullgraph = args.fullgraph
     if getattr(args, "aclgraph", False):
         sw.aclgraph_enabled = True
@@ -211,8 +203,9 @@ def configure_manual_data(sw, args, command):
         raw_dirs = (raw_dirs,)
     elif not isinstance(raw_dirs, (tuple, list)):
         raw_dirs = ()
-    directories = tuple(str(pathlib.Path(item).expanduser().resolve())
-                        for item in raw_dirs if isinstance(item, str) and item)
+    directories = tuple(
+        str(pathlib.Path(item).expanduser().resolve()) for item in raw_dirs if isinstance(item, str) and item
+    )
 
     no_prof = getattr(args, "no_prof", False) is True
     expected_dump = DumpLevel.INPUT.value | DumpLevel.GOLDEN.value
@@ -222,9 +215,7 @@ def configure_manual_data(sw, args, command):
 
     if not no_prof:
         if sw.golden_mode != "Enable":
-            raise ValueError(
-                "--manual-data-dirs replay loads an existing golden; use --golden-mode Enable"
-            )
+            raise ValueError("--manual-data-dirs replay loads an existing golden; use --golden-mode Enable")
         if sw.validate_only:
             raise ValueError("--validate cannot be combined with --manual-data-dirs replay")
         if command == "kernel" and sw.compile_only:
@@ -238,21 +229,16 @@ def configure_manual_data(sw, args, command):
     # Kernel's legacy --no-prof dry run remains valid until a complete prepare dump is requested.
     if command == "kernel" and not is_prepare_dump:
         if directories:
-            raise ValueError(
-                "Kernel manual-data preparation requires exactly "
-                "--no-prof --dump in,golden"
-            )
+            raise ValueError("Kernel manual-data preparation requires exactly --no-prof --dump in,golden")
         return
 
     if sw.dump_config.mode != expected_dump:
         raise ValueError(
-            "--no-prof requires exactly --dump in,golden; output/full dump "
-            "cannot be produced before device execution"
+            "--no-prof requires exactly --dump in,golden; output/full dump cannot be produced before device execution"
         )
     if sw.dump_config.file_format not in ("bin", "pt", "npy"):
         raise ValueError(
-            f"--dump-format {sw.dump_config.file_format!r} is not restorable with "
-            "--no-prof; use bin, pt, or npy"
+            f"--dump-format {sw.dump_config.file_format!r} is not restorable with --no-prof; use bin, pt, or npy"
         )
     if sw.dump_config.dump_on_fail:
         raise ValueError("--dump-on-fail requires comparison and cannot be used with --no-prof")
@@ -274,8 +260,7 @@ def _default_manual_data_dir(sw):
     if sw.plugin_path:
         if len(sw.plugin_path) > 1:
             raise ValueError(
-                "--no-prof with multiple --plugin paths require one explicit "
-                "--manual-data-dirs output directory"
+                "--no-prof with multiple --plugin paths require one explicit --manual-data-dirs output directory"
             )
         plugin = pathlib.Path(sw.plugin_path[0])
         plugin_root = plugin.parent if plugin.is_file() or plugin.suffix == ".py" else plugin
@@ -285,8 +270,11 @@ def _default_manual_data_dir(sw):
 
 def _log_manual_data_configuration(sw):
     default_dir = str((pathlib.Path.cwd() / "manual_data").resolve())
-    if (getattr(sw, "manual_data_mode", None) == "prepare" and
-            not sw.plugin_path and sw.manual_data_dirs == (default_dir,)):
+    if (
+        getattr(sw, "manual_data_mode", None) == "prepare"
+        and not sw.plugin_path
+        and sw.manual_data_dirs == (default_dir,)
+    ):
         logging.info(
             "No --plugin was provided; using current-directory manual-data output: %s",
             default_dir,
@@ -294,15 +282,15 @@ def _log_manual_data_configuration(sw):
 
 
 def run_with_switches(sw):
-    import ttk
-    from ttk.utilities import set_global_storage
     from ttk.core_modules.tbe_logging import default_logging_config
+    from ttk.utilities import set_global_storage
 
     set_global_storage(sw)
     default_logging_config(file_handler=sw.logging_to_file)
     _log_manual_data_configuration(sw)
 
     from ttk.utilities import set_process_name, set_thread_name
+
     set_process_name()
     set_thread_name()
 
@@ -310,9 +298,15 @@ def run_with_switches(sw):
 
     if sw.test_mode == "framework-api":
         from ttk.core_modules.framework_api.instance import FrameworkApiInstance
+
         ins = FrameworkApiInstance()
+    elif sw.test_mode == "geir":
+        from ttk.core_modules.geir.instance import GeirInstance
+
+        ins = GeirInstance()
     else:
         from ttk.core_modules.npu.instance_refactor import NpuInstance
+
         ins = NpuInstance()
 
     ins.profile()
@@ -321,8 +315,8 @@ def run_with_switches(sw):
 def _parse_indexes(spec):
     selected = []
     for part in spec.split(","):
-        if '-' in part:
-            lo, hi = part.split('-', 1)
+        if "-" in part:
+            lo, hi = part.split("-", 1)
             selected.extend(range(int(lo), int(hi) + 1))
         else:
             selected.append(int(part))
@@ -332,9 +326,9 @@ def _parse_indexes(spec):
 def _parse_priorities(spec):
     priorities = []
     for p in spec.split(","):
-        if '-' in p:
-            lo, hi = p.split('-', 1)
-            priorities.append((int(lo) if lo else 0, int(hi) if hi else float('inf')))
+        if "-" in p:
+            lo, hi = p.split("-", 1)
+            priorities.append((int(lo) if lo else 0, int(hi) if hi else float("inf")))
         else:
             priorities.append((int(p), int(p)))
     return tuple(priorities)
@@ -362,12 +356,12 @@ def _apply_cce(sw, value):
         if sw.bin_switches.realtime != "release":
             sw.bin_switches.realtime = False
     else:
-        for mode in value.lower().split(','):
-            if mode in ('d', 'dyn', 'dynamic'):
+        for mode in value.lower().split(","):
+            if mode in ("d", "dyn", "dynamic"):
                 sw.dyn_switches.realtime = False
-            elif mode in ('c', 'cst', 'const'):
+            elif mode in ("c", "cst", "const"):
                 sw.cst_switches.realtime = False
-            elif mode in ('b', 'bin', 'binary'):
+            elif mode in ("b", "bin", "binary"):
                 if sw.bin_switches.realtime != "release":
                     sw.bin_switches.realtime = False
 

@@ -4,7 +4,7 @@ TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库
 
 > 文档中出现的硬件厂商名仅作示例，TTK 通过配置驱动支持任意符合接口的硬件加速器。
 
-* **支持丰富的算子测试类型**：支持Kernel（AscendC）、ACLNN（aclnn* C API）、E2E（PyTorch/torch_npu框架API）等算子测试
+* **支持丰富的算子测试类型**：支持Kernel（AscendC）、GEIR（GE图编译+执行）、ACLNN（aclnn* C API）、E2E（PyTorch/torch_npu框架API）等算子测试
 * **支持多种硬件类型**：E2E 模式经统一 Backend 抽象层支持 NPU、MLU、CPU 等作为待测或标杆设备（按配置 hardware segment 自动选择可用后端）
 * **批量CSV用例驱动**：通过CSV文件定义测试用例，一条命令批量运行
 * **多卡并行执行**：支持多NPU设备并行测试，提升测试效率
@@ -19,7 +19,7 @@ TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库
 ┌──────────────────────────────────────────────────┐
 │  应用框架层  ✅ Torch · TensorFlow · ...          │  ← E2E（端到端，覆盖全链路）
 ├──────────────────────────────────────────────────┤
-│  引擎层     GE · ✅ ACLNN                        │  ← ACLNN（引擎 API，覆盖编译+执行）
+│  引擎层     ✅ GEIR · GE · ✅ ACLNN              │  ← GEIR（GE图编译+执行）/ ACLNN（引擎 API）
 ├──────────────────────────────────────────────────┤
 │  算子层     ✅ AiCore · AiCpu                     │  ← Kernel（算子内核，覆盖编译+执行）
 └──────────────────────────────────────────────────┘
@@ -35,6 +35,7 @@ TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库
 ## 🧪 各类算子测试详细指南
 
 - [Kernel算子测试指南](./docs/各类算子测试指南/Kernel算子测试指南.md)
+- [GEIR算子测试指南](./docs/各类算子测试指南/GEIR算子测试指南.md)
 - [ACLNN算子测试指南](./docs/各类算子测试指南/ACLNN算子测试指南.md)
 - [E2E算子测试指南](./docs/各类算子测试指南/E2E算子测试指南.md)
 
@@ -71,6 +72,9 @@ add_01,,add,"((128, 1024), (1, 1024))","('float32', 'float32')","('ND',)","((128
 ```shell
 # Kernel模式：编译 + 执行 + 精度比对
 python3 -m ttk kernel -i examples/case_store/kernel/add.csv
+
+# GEIR模式：GE图编译 + 执行 + 精度比对
+python3 -m ttk geir -i examples/case_store/kernel/add.csv
 
 # ACLNN模式
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv

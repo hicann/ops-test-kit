@@ -11,22 +11,34 @@
 Parser for each csv field
 """
 
-
-__all__ = ["process_bool", "process_string",
-           "process_dynamic_shapelike", "process_dynamic_inferable_shapelike",
-           "shapelike_stc", "shapelike_stc_ex",
-           "shapelike_float", "shapelike_float_signed",
-           "rangelike", "shape_stride",
-           "shapelike_stc_nested", "shapelike_stc_ex_nested",
-           "shapelike_float_signed_nested", "shapelike_float_nested",
-           "string_container",
-           "scalar_nested",
-           "int_container",
-           "process_eval",
-           "process_int", "process_float", "process_dict"]
+__all__ = [
+    "process_bool",
+    "process_string",
+    "process_dynamic_shapelike",
+    "process_dynamic_inferable_shapelike",
+    "shapelike_stc",
+    "shapelike_stc_ex",
+    "shapelike_float",
+    "shapelike_float_signed",
+    "rangelike",
+    "shape_stride",
+    "shapelike_stc_nested",
+    "shapelike_stc_ex_nested",
+    "shapelike_float_signed_nested",
+    "shapelike_float_nested",
+    "shapelike_dyn_nested",
+    "string_container",
+    "scalar_nested",
+    "int_container",
+    "process_eval",
+    "process_int",
+    "process_float",
+    "process_dict",
+]
 
 
 # Standard Packages
+import ast
 import logging
 import re
 from typing import Union
@@ -81,20 +93,25 @@ def process_string(value) -> str:
             return value
 
 
-def _shapelike(value: str,
-               allow_inference=False, positive_only=False,
-               allow_float=False, allow_sub_value_none=False,
-               allow_none=False, allow_empty_tensor=False,
-               allow_inf=False) -> Union[tuple, str, type(None)]:
+def _shapelike(
+    value: str,
+    allow_inference=False,
+    positive_only=False,
+    allow_float=False,
+    allow_sub_value_none=False,
+    allow_none=False,
+    allow_empty_tensor=False,
+    allow_inf=False,
+) -> Union[tuple, str, type(None)]:
     if allow_float:
         # convert -0.0 or -0 to -float(0) for powf & atan operator
-        value = value.replace('\'', '').replace('\"', '')
-        value = re.sub(r'(-0+\.0*|-0+\.?)(?!(\d|\.))', r'-float(0)', value)
+        value = value.replace("'", "").replace('"', "")
+        value = re.sub(r"(-0+\.0*|-0+\.?)(?!(\d|\.))", r"-float(0)", value)
         if allow_inf:
             # convert inf to float(inf)
-            value = re.sub(r'(?<!float\(["\'])\b(inf|nan)\b(?!["\']\))',
-                           lambda match: f'float("{match.group(1)}")',
-                           value)
+            value = re.sub(
+                r'(?<!float\(["\'])\b(inf|nan)\b(?!["\']\))', lambda match: f'float("{match.group(1)}")', value
+            )
     if allow_inference:
         if _is_inference(value):
             return value
@@ -116,26 +133,34 @@ def _shapelike(value: str,
         allowed_type += (type(None),)
     if all(isinstance(sub_value, allowed_type) for sub_value in parsed):
         # sub_value is single value, convert to tuple and return
-        if positive_only and not (all((i > 0 for i in parsed if i is not None)) or
-                                  (any([i == 0 for i in parsed]) if allow_empty_tensor else False)):
-            raise ValueError("shapelike value should not have %s dim %s" %
-                            ("non-positive" if not allow_empty_tensor else "negative", value))
-        return parsed,
+        if positive_only and not (
+            all(i > 0 for i in parsed if i is not None)
+            or (any([i == 0 for i in parsed]) if allow_empty_tensor else False)
+        ):
+            raise ValueError(
+                "shapelike value should not have %s dim %s"
+                % ("non-positive" if not allow_empty_tensor else "negative", value)
+            )
+        return (parsed,)
     for sub_value in parsed:
         if isinstance(sub_value, (tuple, list)):
             if not is_shape(sub_value, allowed_type):
                 raise TypeError("%s is not a valid shape in type %s" % (str(sub_value), str(allowed_type)))
-            if not all((isinstance(i, allowed_type) for i in sub_value)):
+            if not all(isinstance(i, allowed_type) for i in sub_value):
                 raise ValueError("shapelike value should not have invalid dim %s" % value)
-            if positive_only and not (all((i > 0 for i in sub_value)) or
-                                      (any([i == 0 for i in sub_value]) if allow_empty_tensor else False)):
-                raise ValueError("shapelike value should not have %s dim %s" %
-                                ("non-positive" if not allow_empty_tensor else "negative", value))
+            if positive_only and not (
+                all(i > 0 for i in sub_value) or (any([i == 0 for i in sub_value]) if allow_empty_tensor else False)
+            ):
+                raise ValueError(
+                    "shapelike value should not have %s dim %s"
+                    % ("non-positive" if not allow_empty_tensor else "negative", value)
+                )
         elif isinstance(sub_value, type(None)):
             pass
         else:
-            raise TypeError("%s of %s is not a valid shapelike value for its corresponding field" % (str(sub_value),
-                                                                                                      value))
+            raise TypeError(
+                "%s of %s is not a valid shapelike value for its corresponding field" % (str(sub_value), value)
+            )
     new_parsed = tuple(tuple(element) if element is not None else None for element in parsed)
     return new_parsed
 
@@ -173,8 +198,9 @@ def shapelike_stc_ex(value: str):
     :param value:
     :return:
     """
-    return _shapelike(value, allow_inference=True, positive_only=True,
-                      allow_sub_value_none=True, allow_empty_tensor=True)
+    return _shapelike(
+        value, allow_inference=True, positive_only=True, allow_sub_value_none=True, allow_empty_tensor=True
+    )
 
 
 def shapelike_float(value: str):
@@ -183,8 +209,7 @@ def shapelike_float(value: str):
     :param value:
     :return:
     """
-    return _shapelike(value, positive_only=True, allow_float=True,
-                      allow_none=True, allow_empty_tensor=True)
+    return _shapelike(value, positive_only=True, allow_float=True, allow_none=True, allow_empty_tensor=True)
 
 
 def shapelike_float_signed(value: str):
@@ -261,6 +286,60 @@ def shapelike_stc_ex_nested(value: str):
     return shapelike_stc_nested(value)
 
 
+def shapelike_dyn_nested(value: str):
+    """Parse dynamic shapelike with TensorList nesting support.
+
+    Same structure as shapelike_stc_nested but allows -1 (unknown dim) and -2
+    (unknown rank).  e.g. ((-1,-1,-1),) or ((-2,),)
+    """
+    if value is None or (isinstance(value, str) and value.strip() in ("", "None")):
+        return None
+    parsed = ast.literal_eval(value)
+    if not isinstance(parsed, (tuple, list)):
+        raise TypeError("%s is not a valid shapelike value!" % value)
+    parsed = tuple(parsed)
+    if len(parsed) == 0:
+        return parsed
+
+    def _check_dyn(sub, raw):
+        for d in sub:
+            if d < 0 and d not in (-1, -2):
+                raise ValueError("dynamic shape dim %d invalid in %s (only -1/-2 allowed)" % (d, raw))
+
+    if all(isinstance(e, int) for e in parsed):
+        _check_dyn(parsed, value)
+        return (parsed,)
+
+    result = []
+    for element in parsed:
+        if element is None:
+            result.append(None)
+        elif isinstance(element, (tuple, list)):
+            if len(element) == 0:
+                result.append(tuple(element))
+            elif isinstance(element[0], (tuple, list)):
+                sub_shapes = []
+                for sub in element:
+                    if sub is None:
+                        sub_shapes.append(None)
+                    elif isinstance(sub, (tuple, list)):
+                        if not is_shape(sub, (int,)):
+                            raise TypeError("%s is not a valid shape in %s" % (str(sub), value))
+                        _check_dyn(sub, value)
+                        sub_shapes.append(tuple(sub))
+                    else:
+                        raise TypeError("%s is not a valid shape in %s" % (str(sub), value))
+                result.append(tuple(sub_shapes))
+            else:
+                if not is_shape(element, (int,)):
+                    raise TypeError("%s is not a valid shape in %s" % (str(element), value))
+                _check_dyn(element, value)
+                result.append(tuple(element))
+        else:
+            raise TypeError("%s of %s is not a valid shapelike value" % (str(element), value))
+    return tuple(result)
+
+
 def shapelike_float_signed_nested(value: str):
     """Parse signed float shapelike with TensorList nesting support.
 
@@ -268,10 +347,8 @@ def shapelike_float_signed_nested(value: str):
     e.g. ((None, 1.0), (-1.0, 1.0))                → flat
          (((None, 1.0), (None, 1.0)), (-1.0, 1.0))  → nested TensorList
     """
-    value = re.sub(r'(-0+\.0*|-0+\.?)(?!(\d|\.))', r'-float(0)', value)
-    value = re.sub(r'(?<!float\(["\'])\b(inf|nan)\b(?!["\']\))',
-                   lambda match: f'float("{match.group(1)}")',
-                   value)
+    value = re.sub(r"(-0+\.0*|-0+\.?)(?!(\d|\.))", r"-float(0)", value)
+    value = re.sub(r'(?<!float\(["\'])\b(inf|nan)\b(?!["\']\))', lambda match: f'float("{match.group(1)}")', value)
     allowed = (int, float, type(None))
     parsed = eval(value)
     if parsed is None:
@@ -396,8 +473,9 @@ def _container(value: str, allowed_type: Union[type, tuple, list]):
     result = tuple(result)
     for element in result:
         if allowed_type and not isinstance(element, allowed_type):
-            raise TypeError("Received type %s for element %s instead of %s"
-                            % (str(type(element)), str(element), str(allowed_type)))
+            raise TypeError(
+                "Received type %s for element %s instead of %s" % (str(type(element)), str(element), str(allowed_type))
+            )
     return result
 
 
@@ -437,9 +515,7 @@ def scalar_nested(value: str, allowed_type=None) -> tuple:
         raise TypeError("%s is not a valid scalar value!" % value)
     if not isinstance(parsed, (tuple, list)):
         if allowed_type and not isinstance(parsed, allowed_type):
-            raise TypeError(
-                "Value %r (type %s) is not %s" %
-                (parsed, type(parsed).__name__, allowed_type))
+            raise TypeError("Value %r (type %s) is not %s" % (parsed, type(parsed).__name__, allowed_type))
         return (parsed,)
     result = []
     for element in parsed:
@@ -450,14 +526,12 @@ def scalar_nested(value: str, allowed_type=None) -> tuple:
                 for e in element:
                     if not isinstance(e, allowed_type):
                         raise TypeError(
-                            "Element %r (type %s) in nested group is not %s" %
-                            (e, type(e).__name__, allowed_type))
+                            "Element %r (type %s) in nested group is not %s" % (e, type(e).__name__, allowed_type)
+                        )
             result.append(tuple(element))
         else:
             if allowed_type and not isinstance(element, allowed_type):
-                raise TypeError(
-                    "Element %r (type %s) is not %s" %
-                    (element, type(element).__name__, allowed_type))
+                raise TypeError("Element %r (type %s) is not %s" % (element, type(element).__name__, allowed_type))
             result.append(element)
     return tuple(result)
 
@@ -477,15 +551,11 @@ def int_container(value: str) -> tuple:
     try:
         result = _container(value, (int, type(None)))
     except TypeError as terr:
-        raise TypeError(("Invalid value %s for int_container: " + str(terr.args))
-                        % value)
+        raise TypeError(("Invalid value %s for int_container: " + str(terr.args)) % value)
     except Exception as e:
-        raise ValueError(("Invalid value %s for int_container: " + str(e.args))
-                         % value)
+        raise ValueError(("Invalid value %s for int_container: " + str(e.args)) % value)
     else:
         return result
-
-
 
     return tuple(result)
 
@@ -516,8 +586,7 @@ def process_float(value: str) -> float:
     try:
         result = float(value)
     except:
-        raise TypeError(("Invalid value %s for float: " + value)
-                        % value)
+        raise TypeError(("Invalid value %s for float: " + value) % value)
     else:
         return result
 
@@ -530,7 +599,8 @@ def process_dict(value: str) -> dict:
     """
     try:
         # convert -0.0 or -0 to -float(0) for powf & atan operator
-        value = re.sub(r'(-0+\.0*|-0+\.?)(?!(\d|\.))', r'-float(0)', value)
+        value = re.sub(r"(-0+\.0*|-0+\.?)(?!(\d|\.))", r"-float(0)", value)
+
         # convert inf to float(inf), nan to float(nan)
         # but skip when nan/inf is inside single/double quotes (dict key)
         def _replace_nan_inf(m):
@@ -538,9 +608,8 @@ def process_dict(value: str) -> dict:
             if start > 0 and value[start - 1] in ("'", '"'):
                 return m.group(0)
             return f'float("{m.group(1)}")'
-        value = re.sub(r'(?<!float\(["\'])\b(inf|nan)\b(?!["\']\))',
-                       _replace_nan_inf,
-                       value)
+
+        value = re.sub(r'(?<!float\(["\'])\b(inf|nan)\b(?!["\']\))', _replace_nan_inf, value)
         result = eval(value)
     except:
         raise ValueError("Invalid value %s for dict" % value)

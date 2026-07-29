@@ -2,17 +2,17 @@
 
 ## 定位
 
-面向算子开发者的 TTK 使用指南。适用于 Claude Code、OpenCode 等 CLI 类 AI 编程助手。TTK 当前面向昇腾 NPU 单算子测试，支持 Kernel 编译执行、ACLNN API 测试、E2E 框架 API 对比三种测试模式。
+面向算子开发者的 TTK 使用指南。适用于 Claude Code、OpenCode 等 CLI 类 AI 编程助手。TTK 当前面向昇腾 NPU 单算子测试，支持 Kernel 编译执行、GEIR GE 图编译执行、ACLNN API 测试、E2E 框架 API 对比四种测试模式。
 
 ## 架构层级
 
-TTK 的三种测试模式对应昇腾技术栈的不同层级，越往上覆盖通路越全：
+TTK 的四种测试模式对应昇腾技术栈的不同层级，越往上覆盖通路越全：
 
 ```
 ┌──────────────────────────────────────────────────┐
 │  应用框架层  ✅ Torch · TensorFlow · ...          │  ← E2E（端到端，覆盖全链路）
 ├──────────────────────────────────────────────────┤
-│  引擎层     GE · ✅ ACLNN                        │  ← ACLNN（引擎 API，覆盖编译+执行）
+│  引擎层     ✅ GEIR · GE · ✅ ACLNN              │  ← GEIR（GE图编译+执行）/ ACLNN（引擎 API）
 ├──────────────────────────────────────────────────┤
 │  算子层     ✅ AiCore · AiCpu                     │  ← Kernel（算子内核，覆盖编译+执行）
 └──────────────────────────────────────────────────┘
@@ -24,6 +24,7 @@ TTK 的三种测试模式对应昇腾技术栈的不同层级，越往上覆盖�
 
 执行 TTK 命令需要在本仓库（ops-test-kit）目录下运行：
 - Kernel 模式：`python3 -m ttk kernel -i cases.csv`
+- GEIR 模式：`python3 -m ttk geir -i cases.csv`
 - ACLNN 模式：`python3 -m ttk aclnn -i cases.csv`
 - E2E 模式：`python3 -m ttk e2e -i cases.csv`（默认自动探测 NPU；`--cpu` 强制 CPU）
 

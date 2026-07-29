@@ -11,25 +11,26 @@
 Universal testcase manager for csv support
 """
 
-
 __all__ = ["UniversalTestcaseFactory"]
 
 
 # Standard Packages
 import csv
-import random
 import logging
+import random
 from typing import Any, Dict, List, Optional, Set, TextIO
+
+from ...utilities import get_global_storage, set_process_name, set_thread_name
 
 # Third-Party Packages
 from .testcase_base import TestcaseBase
-from ...utilities import set_process_name, set_thread_name, get_global_storage
 
 
 class PLACEHOLDER:
     """
     Simple Placeholder
     """
+
     pass
 
 
@@ -38,12 +39,7 @@ class UniversalTestcaseFactory:
     Universal Testcase Factory
     """
 
-    __slots__ = ["raw_data",
-                 "header",
-                 "real_header_indexes",
-                 "testcase_instance",
-                 "testcases",
-                 "_skip_validate"]
+    __slots__ = ["raw_data", "header", "real_header_indexes", "testcase_instance", "testcases", "_skip_validate"]
 
     def __init__(self, file: TextIO, skip_validate=False):
         """
@@ -90,8 +86,9 @@ class UniversalTestcaseFactory:
 
     @staticmethod
     def set_case_default_value(testcases: List[TestcaseBase]) -> None:
-        def __process(_result: Dict[str, Any], _case: TestcaseBase,
-                      result_keys: list = None, apply_default: bool = False):
+        def __process(
+            _result: Dict[str, Any], _case: TestcaseBase, result_keys: list = None, apply_default: bool = False
+        ):
             changed_ = False
             placeholder_queue = []
             keys = result_keys if result_keys else _result
@@ -135,8 +132,9 @@ class UniversalTestcaseFactory:
                     else:
                         _result[header] = value
                 except:
-                    logging.exception(f"Failed to process header {header} of case {_case.testcase_name} with "
-                                      f"value {value}")
+                    logging.exception(
+                        f"Failed to process header {header} of case {_case.testcase_name} with value {value}"
+                    )
                     raise
             return changed_, placeholder_queue
 
@@ -184,8 +182,8 @@ class UniversalTestcaseFactory:
         # Skip testcase if it is disabled in current soc
         current_soc = get_global_storage().short_soc_version
         if testcase_struct.soc_series and current_soc:
-            enabled_soc = [s for s in testcase_struct.soc_series if not s.startswith('-')]
-            disabled_soc = [s[1:] for s in testcase_struct.soc_series if s.startswith('-')]
+            enabled_soc = [s for s in testcase_struct.soc_series if not s.startswith("-")]
+            disabled_soc = [s[1:] for s in testcase_struct.soc_series if s.startswith("-")]
             if not enabled_soc and not disabled_soc:  # both enabled_soc and disabled_soc are empty
                 enabled = True
             elif not disabled_soc:  # only enabled_soc
@@ -195,8 +193,9 @@ class UniversalTestcaseFactory:
             else:  # enabled_soc and disabled_soc all fill with options
                 enabled = True if current_soc in enabled_soc and current_soc not in disabled_soc else False
             if not enabled:
-                logging.debug(f"Testcase {testcase_struct.testcase_name} skipped "
-                              f"bcz it's disabled in current soc {current_soc}.")
+                logging.debug(
+                    f"Testcase {testcase_struct.testcase_name} skipped bcz it's disabled in current soc {current_soc}."
+                )
             return enabled
         return True
 
@@ -251,8 +250,7 @@ class UniversalTestcaseFactory:
                 i = i + 1
                 continue
             else:
-                logging.warning(f"Detected duplicate testcase name: {ori_name}. "
-                                f"Rename it to {new_name}")
+                logging.warning(f"Detected duplicate testcase name: {ori_name}. Rename it to {new_name}")
                 return new_name
 
     def _read_csv(self, file: TextIO):
@@ -273,29 +271,37 @@ class UniversalTestcaseFactory:
         set_thread_name("HeaderCheckTestcaseName")
         # Testcase name generation
         if "testcase_name" not in self.header:
-            logging.warning("Testcase name not found!"
-                            " It is important to add a testcase_name in order to identify your testcases")
+            logging.warning(
+                "Testcase name not found! It is important to add a testcase_name in order to identify your testcases"
+            )
             self.header.append("testcase_name")
             for idx, row in enumerate(self.raw_data):
                 row.append("auto_testcase_name_%d" % (idx + 1))
 
-        if 'api_name' in self.header:
+        if "api_name" in self.header:
             # Auto-detect from api_name values: aclnnXxx -> aclnn, others -> framework-api
             first_api = None
-            api_idx = self.header.index('api_name')
+            api_idx = self.header.index("api_name")
             for row in self.raw_data:
                 if api_idx < len(row) and row[api_idx]:
                     first_api = row[api_idx].strip()
                     break
 
-            if first_api and not first_api.lower().startswith('aclnn'):
+            if first_api and not first_api.lower().startswith("aclnn"):
                 from .testcase_e2e import TestcaseE2e
+
                 self.testcase_instance = TestcaseE2e()
             else:
                 from .testcase_aclnn import TestcaseAclnn
+
                 self.testcase_instance = TestcaseAclnn()
+        elif get_global_storage().test_mode == "geir":
+            from ttk.core_modules.geir.testcase import GeirTestcase
+
+            self.testcase_instance = GeirTestcase()
         else:
             from .testcase_op import TestcaseOp
+
             self.testcase_instance = TestcaseOp()
 
         set_thread_name("HeaderCheckUnidentifiedHeaders")
@@ -330,8 +336,7 @@ class UniversalTestcaseFactory:
             try:
                 sub_result = self._process(line, idx)
             except:
-                logging.exception(f"Failed to process row index [{idx}]. "
-                                  f"Whole row is: {','.join(line)}")
+                logging.exception(f"Failed to process row index [{idx}]. Whole row is: {','.join(line)}")
                 raise
             raw_testcases.append(tuple(sub_result.values()))
         logging.debug(f"Processed {len(raw_testcases)} raw testcases")
@@ -359,16 +364,19 @@ class UniversalTestcaseFactory:
             for equivalent in equivalents:
                 if equivalent not in searched_tag:
                     searched_tag.append(header_name)
-                    result = self._get_idx_of_header(equivalent,
-                                                     searched_tag)
+                    result = self._get_idx_of_header(equivalent, searched_tag)
                     if result is not None:
                         break
         return result
 
     def _process(self, row: list, row_index: int) -> Dict[str, Any]:
         # Initialize full testcase fields
-        result = dict(zip(self.testcase_instance.get_all_legit_headers(),
-                          [PLACEHOLDER() for _ in self.testcase_instance.get_all_legit_headers()]))
+        result = dict(
+            zip(
+                self.testcase_instance.get_all_legit_headers(),
+                [PLACEHOLDER() for _ in self.testcase_instance.get_all_legit_headers()],
+            )
+        )
         changed, queue = self._process_over_result(result, row, row_index)
         while changed:
             changed, queue = self._process_over_result(result, row, row_index, queue)
@@ -412,8 +420,9 @@ class UniversalTestcaseFactory:
                     # Check for default value
                     changed = True
                     default_value = str(self.testcase_instance.get_default_value(current_header_name))
-                    result[current_header_name] = \
-                        self.testcase_instance.get_header_func(current_header_name)(default_value)
+                    result[current_header_name] = self.testcase_instance.get_header_func(current_header_name)(
+                        default_value
+                    )
                     continue
                 else:
                     placeholder_queue.append(current_header_name)
@@ -427,8 +436,9 @@ class UniversalTestcaseFactory:
                 else:
                     result[current_header_name] = value
             except:
-                logging.exception(f"Failed to process header [{current_header_name}] of row [{row_index}] with "
-                                  f"value [{value}]")
+                logging.exception(
+                    f"Failed to process header [{current_header_name}] of row [{row_index}] with value [{value}]"
+                )
                 raise
         return changed, placeholder_queue
 
@@ -448,8 +458,7 @@ class UniversalTestcaseFactory:
                 else:
                     unidentified_headers.append(header)
             if unidentified_headers:
-                raise KeyError(f"TestcaseManager header not match. "
-                               f"Report Bug to us: {unidentified_headers}")
+                raise KeyError(f"TestcaseManager header not match. Report Bug to us: {unidentified_headers}")
             # Skip testcase if it is disabled
             if not self._check_testcase_enabled(testcase_struct):
                 continue
@@ -474,15 +483,16 @@ class UniversalTestcaseFactory:
             if testcase_struct not in self.testcases:
                 self.testcases.add(testcase_struct)
                 if testcase_struct.testcase_name in testcase_names:
-                    testcase_struct.testcase_name = self._rename_duplicate_case_name(testcase_struct.testcase_name,
-                                                                                     testcase_struct.op_name,
-                                                                                     testcase_names)
+                    testcase_struct.testcase_name = self._rename_duplicate_case_name(
+                        testcase_struct.testcase_name, testcase_struct.op_name, testcase_names
+                    )
                 testcase_names.add(testcase_struct.testcase_name)
             else:
                 logging.warning("Duplicate testcase: %s" % testcase_struct.testcase_name)
         # For testcase_count selector
         if 0 < get_global_storage().selected_testcase_count < len(self.testcases):
             logging.info("Selecting %d cases from all testcases" % get_global_storage().selected_testcase_count)
-            all_indexes = random.sample(tuple(range(len(self.testcases))),
-                                        k=get_global_storage().selected_testcase_count)
+            all_indexes = random.sample(
+                tuple(range(len(self.testcases))), k=get_global_storage().selected_testcase_count
+            )
             self.testcases = set([testcase for idx, testcase in enumerate(self.testcases) if idx in all_indexes])
