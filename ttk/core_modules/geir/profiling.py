@@ -162,6 +162,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     finally:
         if hasattr(testcase, "golden_mode_override"):
             del testcase.golden_mode_override
+    testcase.output_arrays = ()
 
     # 三方输出采集（cross_check 需要 / xpu-perf 需要）。GEIR 的 input_names 来自
     # ProtoLoader，op_type 无概念传 None（服务端靠 op_name 推导）。
@@ -213,6 +214,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             path = f"{input_prefix}_{data_idx}.bin"
             arr.tofile(path)
             data_idx += 1
+    testcase.original_input_arrays = None
 
     # Execute C++ program
     # Data channel: os.pipe() carries the binary output protocol (8B num_outputs
@@ -295,8 +297,13 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         testcase.flat_output_shapes,
         case_name=testcase.testcase_name,
     )
+    data_holder.clear()
 
     golden_arrays = testcase.golden_arrays
+
+    dump_cfg = switches.dump_config
+    if not dump_cfg.is_input_enabled() and not dump_cfg.dump_on_fail:
+        testcase.input_arrays = None
 
     # Compare
     process_ctx.notify_status("OnGeirCompare")
@@ -315,7 +322,6 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     logging.debugc(f"\nComparing geir_{testcase.testcase_name} with {_std}\n{log_str}")
 
     # Dump
-    dump_cfg = switches.dump_config
     dump_path = getattr(switches, "root_path", os.getcwd())
     if dump_cfg.is_input_enabled():
         for i, arr in enumerate(testcase.input_arrays):

@@ -199,7 +199,8 @@ int main(int argc, char* argv[]) {
 {% endfor %}
 {% for inp in inputs %}
     {
-        TensorDesc __id{{ loop.index0 }}(Shape({{ inp.desc_shape }}), {{ inp.format_enum }}, {{ inp.dtype_enum }});
+        vector<int64_t> __is{{ loop.index0 }} = {{ inp.desc_shape }};
+        TensorDesc __id{{ loop.index0 }}(Shape(__is{{ loop.index0 }}), {{ inp.format_enum }}, {{ inp.dtype_enum }});
         __id{{ loop.index0 }}.SetOriginFormat({{ inp.ori_format_enum }});
         op_inst.update_input_desc_{{ inp.name }}(__id{{ loop.index0 }});
         op_inst.set_input_{{ inp.name }}(data_ops[{{ inp.data_idx }}]);
