@@ -267,7 +267,8 @@ def str_to_torch_dtype(dtype_str: str):
             return getattr(torch, canonical, None)
         else:
             import torch_npu
-            return getattr(torch_npu, canonical, None)
+            npu_attr_name = "float8_e8m0fnu" if canonical == "float8_e8m0" else canonical
+            return getattr(torch_npu, npu_attr_name, None)
     else:
         if module not in ('torch', 'torch_npu'):
             return None
@@ -820,13 +821,19 @@ def numpy_to_torch_tensor(np_array: numpy.ndarray, is_complex32: bool = False):
         raise RuntimeError(f"Can only transfer numpy.ndarray "
                            f"to torch.Tensor with dtype [{np_dtype}]")
     elif "float8" in np_dtype:
-        if np_dtype not in ("float8_e4m3fn", "float8_e5m2"):
+        if np_dtype not in ("float8_e4m3fn", "float8_e5m2", "float8_e8m0"):
             raise RuntimeError(f"Dtype [{np_dtype}] is not supported to "
                                f"convert to torch.Tensor yet.")
-        if not hasattr(torch, np_dtype):
+        # numpy float8_e8m0 has no suffix; torch dtype is float8_e8m0fnu
+        torch_dtype_name = {
+            "float8_e4m3fn": "float8_e4m3fn",
+            "float8_e5m2": "float8_e5m2",
+            "float8_e8m0": "float8_e8m0fnu",
+        }[np_dtype]
+        if not hasattr(torch, torch_dtype_name):
             raise RuntimeError(f"Current pytorch version [{torch.__version__}] is too old. "
-                               f"{np_dtype} is not supported.")
-        return torch.from_numpy(np_array.view(dtype=numpy.uint8)).view(getattr(torch, np_dtype))
+                               f"{torch_dtype_name} is not supported.")
+        return torch.from_numpy(np_array.view(dtype=numpy.uint8)).view(getattr(torch, torch_dtype_name))
     elif is_complex32:
         if np_dtype != "float16":
             raise RuntimeError(f"Can only transfer numpy.float16 to torch.complex32 "
@@ -857,7 +864,8 @@ def torch_to_numpy_tensor(torch_tensor) -> numpy.ndarray:
         t_fp16 = torch_tensor.view(torch.float16)
         return t_fp16.numpy()
     elif "float8" in torch_dtype_str:
-        np_dtype = eval(f"numpy_{torch_dtype_str.split('.')[-1]}()")
+        np_func_suffix = torch_dtype_str.split('.')[-1].replace("fnu", "")
+        np_dtype = eval(f"numpy_{np_func_suffix}()")
         np_uint8 = torch_tensor.view(torch.uint8).numpy()
         return np_uint8.view(np_dtype)
     else:

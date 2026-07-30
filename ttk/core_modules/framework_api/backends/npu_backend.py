@@ -43,6 +43,8 @@ class NpuTorchBackend(TorchBackend):
         else:
             if str_dtype == 'int4':
                 raise RuntimeError(f"Dtype [{str_dtype}] is not supported yet.")
+            elif str_dtype == 'float8_e8m0':
+                return self.from_numpy(tensor).npu(dev_id)
             else:
                 np_fp32 = tensor.astype(np.float32)
                 npu_torch_tensor = torch_npu.npu_dtype_cast(
