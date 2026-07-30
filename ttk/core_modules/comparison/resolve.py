@@ -38,8 +38,15 @@ _BIN_DTYPES = {"float4_e2m1", "float4_e1m2", "float8_e8m0"}
 
 
 def _dtype_str(dtype) -> str:
-    # torch.float16 -> "float16"
-    return str(dtype).split(".")[-1]
+    # torch.float16 -> "float16"；ml_dtypes.bfloat16 类对象 / numpy dtype 也需归一。
+    # 直接 str().split('.')[-1] 对类对象会得到 "bfloat16'>"（残留 "'>"），
+    # 使 THRESHOLDS 查表 miss 而回落 DEFAULT(2**-13, fp32 级)，令 bf16 阈值被误判为过严。
+    # 优先用 numpy.dtype(...).name 做鲁棒解析，失败再回退旧逻辑。
+    try:
+        import numpy as _np
+        return _np.dtype(dtype).name
+    except Exception:
+        return str(dtype).split(".")[-1].rstrip("'>\" ")
 
 
 def _is_int_or_bool(s: str) -> bool:
