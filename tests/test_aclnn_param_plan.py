@@ -106,8 +106,9 @@ class TestAclnnParamPlanBuildArgs:
         ])
         plan = AclnnParamPlan("aclnnAdd", info)
         tensors = ["T_X", "T_Y"]
-        args = plan.build_args(tensors, [], {})
+        args, extra = plan.build_args(tensors, [], {})
         assert args == ["T_X", "T_Y"]
+        assert extra == {}
 
     def test_interleaved_tensor_scalar_attr(self):
         info = _make_op_api_info([
@@ -118,8 +119,9 @@ class TestAclnnParamPlanBuildArgs:
         plan = AclnnParamPlan("aclnnSoftmax", info)
         tensors = ["T_SELF", "T_OUT"]
         scalars = ["S_DIM"]
-        args = plan.build_args(tensors, scalars, {})
+        args, extra = plan.build_args(tensors, scalars, {})
         assert args == ["T_SELF", "S_DIM", "T_OUT"]
+        assert extra == {}
 
     def test_attribute_from_dict(self):
         info = _make_op_api_info([
@@ -127,8 +129,9 @@ class TestAclnnParamPlanBuildArgs:
             ("alpha", {"type": "float", "default": "1.0"}),
         ])
         plan = AclnnParamPlan("aclnnAddAlpha", info)
-        args = plan.build_args(["T_X"], [], {"alpha": 2.5})
+        args, extra = plan.build_args(["T_X"], [], {"alpha": 2.5})
         assert args == ["T_X", 2.5]
+        assert extra == {}
 
     def test_attribute_default_fallback(self):
         info = _make_op_api_info([
@@ -136,8 +139,9 @@ class TestAclnnParamPlanBuildArgs:
             ("alpha", {"type": "float", "default": "1.0"}),
         ])
         plan = AclnnParamPlan("aclnnAddAlpha", info)
-        args = plan.build_args(["T_X"], [], {})
+        args, extra = plan.build_args(["T_X"], [], {})
         assert args == ["T_X", "1.0"]
+        assert extra == {}
 
     def test_attribute_missing_no_default(self):
         info = _make_op_api_info([
@@ -145,8 +149,9 @@ class TestAclnnParamPlanBuildArgs:
             ("dtype", {"type": "aclDataType", "default": None}),
         ])
         plan = AclnnParamPlan("aclnnCast", info)
-        args = plan.build_args(["T_X"], [], {})
+        args, extra = plan.build_args(["T_X"], [], {})
         assert args == ["T_X", None]
+        assert extra == {}
 
     def test_full_conv2d_like(self):
         info = _make_op_api_info([
@@ -160,8 +165,9 @@ class TestAclnnParamPlanBuildArgs:
         tensors = ["T_X", "T_W", "T_B"]
         scalars = ["S_SCALE"]
         attrs = {"groups": 4}
-        args = plan.build_args(tensors, scalars, attrs)
+        args, extra = plan.build_args(tensors, scalars, attrs)
         assert args == ["T_X", "T_W", "T_B", "S_SCALE", 4]
+        assert extra == {}
 
     def test_tensor_list_preserved(self):
         info = _make_op_api_info([
@@ -170,9 +176,10 @@ class TestAclnnParamPlanBuildArgs:
         ])
         plan = AclnnParamPlan("aclnnCat", info)
         tensor_list = [["T_A", "T_B", "T_C"]]
-        args = plan.build_args(tensor_list, [], {"dim": 1})
+        args, extra = plan.build_args(tensor_list, [], {"dim": 1})
         assert args[0] == ["T_A", "T_B", "T_C"]
         assert args[1] == 1
+        assert extra == {}
 
 
 class TestGetParamPlan:
@@ -205,5 +212,5 @@ class TestGetParamPlan:
         case.api_name = "aclnnAddAlpha"
         plan = AclnnParamPlan("aclnnAddAlpha", info)
         case._param_plan_cache = plan
-        args = plan.build_args(["T_X"], [], {"alpha": 3.0})
+        args, extra = plan.build_args(["T_X"], [], {"alpha": 3.0})
         assert args == ["T_X", 3.0]

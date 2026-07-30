@@ -83,6 +83,7 @@ class ApiProfilingReturnStructure:
                  "precision",
                  "precision_status",
                  "precision_metrics",
+                 "batch_consistency_id",
                  "soc"
                  )
 
@@ -92,6 +93,7 @@ class ApiProfilingReturnStructure:
         self.precision_status = default_value
         self.precision_metrics = default_value
         # Special
+        self.batch_consistency_id = default_value
         self.soc = get_global_storage().dev_plat
 
     # noinspection DuplicatedCode
@@ -102,6 +104,7 @@ class ApiProfilingReturnStructure:
         self.precision = compare_result.precision
         self.precision_status = compare_result.passed
         self.precision_metrics = compare_result.metrics or {}
+        self.batch_consistency_id = getattr(context, 'batch_consistency_id', None)
 
     @staticmethod
     def get_titles() -> tuple:

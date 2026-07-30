@@ -90,16 +90,17 @@ class AclnnParamPlan:
         args = []
         tensor_queue = list(tensors)
         scalar_queue = list(scalars)
-
+        param_names = set()
         for kind, name, acl_type, default in self.param_layout:
+            param_names.add(name)
             if kind == self.TENSOR:
                 args.append(tensor_queue.pop(0))
             elif kind == self.SCALAR:
                 args.append(scalar_queue.pop(0))
             else:
                 args.append(attributes.get(name, default))
-
-        return args
+        extra_attrs = {k: v for k, v in attributes.items() if k not in param_names}
+        return args, extra_attrs
 
 
 class TestcaseAclnn(TensorApiTestcaseBase):
@@ -122,6 +123,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "manual_tensor_binaries",
         # used for compare.
         "manual_golden_binaries",
+        # === batch consistency === #
+        "batch_axis",
+        "batch_slice_info",
+        "batch_seed",
+        "batch_consistency_id",
         # === Runtime parameters below === #
         # torch.Tensor or sequence of torch.Tensor with strides & offsets.
         "tensors",
@@ -178,10 +184,19 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "manual_tensor_binaries": (FIELD_TYPES.FREE_EVAL, None, ()),
         "manual_golden_binaries": (FIELD_TYPES.STRING_CONTAINER, None, ()),
     }
-    complete_headers: Dict[str, tuple] = {**identity_headers, **property_headers, **option_headers}
+    batch_consistency_headers: Dict[str, tuple] = {
+        "batch_axis": (FIELD_TYPES.FREE_EVAL, None, None),
+        "batch_slice_info": (FIELD_TYPES.FREE_EVAL, None, None),
+        "batch_seed": (FIELD_TYPES.FREE_EVAL, None, None),
+    }
+    complete_headers: Dict[str, tuple] = {**identity_headers, **property_headers, **option_headers, **batch_consistency_headers}
 
     def __init__(self):
         super().__init__()
+        self.batch_axis = None
+        self.batch_slice_info = None
+        self.batch_seed = None
+        self.batch_consistency_id = None
         # output properties
         self.output_inplace_indexes: Optional[tuple] = None
         # scalar or scalarList dtype
@@ -427,6 +442,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self._check_output_configuration()
         self._parse_scalar_dtypes()
         self._check_params_count()
+        self._generate_batch_consistency_id()
 
     def _normalize_compressed_fields(self):
         """Expand compressed tensor/scalar fields to fully specified nested format.
@@ -847,6 +863,40 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self._check_param_configuration(
             self.tensor_view_shapes, op_api_info.tensors, "Tensor",
             self._is_tensor_list_element)
+
+    def _generate_batch_consistency_id(self):
+        """根据 batch_seed、batch_axis 和 batch_slice_info 生成 batch_consistency_id。"""
+        if self.batch_seed is None:
+            self.batch_consistency_id = None
+            return
+        if self.batch_axis is None or self.batch_slice_info is None:
+            self.batch_consistency_id = None
+            return
+        slice_key = []
+        for axis_pos, slices, seed in zip(self.batch_axis, self.batch_slice_info, self.batch_seed):
+            if axis_pos is None or slices is None or seed is None:
+                continue
+            slice_axes = []
+            for axis_idx, slices_idx, seed_idx in zip(axis_pos, slices, seed):
+                if axis_idx is None or slices_idx is None or seed_idx is None:
+                    slice_axes.append("None")
+                    continue
+                slice_lens = []
+                for sl, seed_value in zip(slices_idx, seed_idx):
+                    if sl is None:
+                        continue
+                    start, stop, step = sl[0], sl[1], sl[2]
+                    if step <= 0 or start < 0 or stop < 0:
+                        length = 0
+                    else:
+                        length = stop -start if stop > start else 0
+                    slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
+                    if length == 0:
+                        logging.warning(f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid")
+                    slice_lens.append(slice_id)
+                slice_axes.append(tuple(slice_lens))
+            slice_key.append(tuple(slice_axes))
+        self.batch_consistency_id = tuple(slice_key) if slice_key else None
 
     def _check_scalar_list_configuration(self):
         """Validate scalar parameters match API definition in count and type (Scalar/ScalarList).

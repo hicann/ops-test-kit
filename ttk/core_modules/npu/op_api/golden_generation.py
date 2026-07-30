@@ -89,7 +89,7 @@ class GoldenGenerator:
 
     def _call_custom_golden(self, gf):
         plan = self._ctx.get_param_plan()
-        args = plan.build_args(self._ctx.tensors, self._ctx.scalars,
+        args, extra_attrs = plan.build_args(self._ctx.tensors, self._ctx.scalars,
                                self._ctx.attributes)
         kwargs = {
             'short_soc_version': self._switch.short_soc_version,
@@ -99,6 +99,13 @@ class GoldenGenerator:
             'scalar_dtypes': self._ctx.scalar_dtypes,
             'use_torch': self._ctx.is_torch_dtype_support(),
         }
+        if hasattr(self._ctx, 'batch_axis') and self._ctx.batch_axis is not None:
+            kwargs['batch_axis'] = self._ctx.batch_axis
+        if hasattr(self._ctx, 'batch_slice_info') and self._ctx.batch_slice_info is not None:
+            kwargs['batch_slice_info'] = self._ctx.batch_slice_info
+        if hasattr(self._ctx, 'batch_seed') and self._ctx.batch_seed is not None:
+            kwargs['batch_seed'] = self._ctx.batch_seed
+        kwargs.update(extra_attrs)
         results = gf(*args, **kwargs)
         return results
 

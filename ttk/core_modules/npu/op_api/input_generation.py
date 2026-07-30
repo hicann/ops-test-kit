@@ -87,7 +87,7 @@ class InputGenerator:
 
     def _call_custom_input(self, input_func):
         plan = self._ctx.get_param_plan()
-        args = plan.build_args(self._ctx.tensors, self._ctx.scalars,
+        args, extra_attrs = plan.build_args(self._ctx.tensors, self._ctx.scalars,
                                self._ctx.attributes)
         kwargs = {
             'short_soc_version': self._switch.short_soc_version,
@@ -98,6 +98,13 @@ class InputGenerator:
             'input_ranges': self._ctx.input_data_ranges,
             'use_torch': self._ctx.is_torch_dtype_support(),
         }
+        if hasattr(self._ctx, 'batch_axis') and self._ctx.batch_axis is not None:
+            kwargs['batch_axis'] = self._ctx.batch_axis
+        if hasattr(self._ctx, 'batch_slice_info') and self._ctx.batch_slice_info is not None:
+            kwargs['batch_slice_info'] = self._ctx.batch_slice_info
+        if hasattr(self._ctx, 'batch_seed') and self._ctx.batch_seed is not None:
+            kwargs['batch_seed'] = self._ctx.batch_seed
+        kwargs.update(extra_attrs)
         input_func(*args, **kwargs)
 
     def _use_manual_input(self):
