@@ -304,6 +304,13 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     run_count = switches.run_time
     profiler = get_profiler(testcase.api_name, backend)
 
+    inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
+    inplace_input_backups = {}
+    if inplace_input_indexes:
+        for idx in inplace_input_indexes:
+            if idx < len(args) and args[idx] is not None:
+                inplace_input_backups[idx] = args[idx].clone()
+
     if is_inplace:
         inplace_backup = args[0].clone() if args and args[0] is not None else None
         if is_tensor_method:
@@ -329,8 +336,13 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
                 resolved(*args, **kwargs)
         backend.synchronize(dev_id)
 
+    for idx, backup in inplace_input_backups.items():
+        args[idx][:] = backup
+
     with profiler:
         for _ in range(run_count):
+            for idx, backup in inplace_input_backups.items():
+                args[idx][:] = backup
             if is_tensor_method:
                 r = getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
             else:
@@ -344,7 +356,6 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     if not is_inplace:
         result_nps = result_to_numpy(result, backend)
 
-    inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
     if inplace_input_indexes:
         for idx in sorted(inplace_input_indexes):
             if idx < len(args) and args[idx] is not None:
