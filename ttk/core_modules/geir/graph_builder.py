@@ -77,10 +77,15 @@ class GeirGraphBuilder:
         self._switches = switches
         self._proto_loader = ProtoLoader()
         self._work_dir: Optional[str] = None
+        self._last_proto_file: Optional[str] = None
 
     @property
     def work_dir(self) -> Optional[str]:
         return self._work_dir
+
+    @property
+    def last_proto_file(self) -> Optional[str]:
+        return self._last_proto_file
 
     def generate(self, testcase, mode="const", work_dir: str = None) -> Optional[str]:
         """Generate C++ source for *testcase*, return file path."""
@@ -104,6 +109,7 @@ class GeirGraphBuilder:
         if proto_info is None:
             logging.error("No proto info for operator '%s'", op_name)
             return None
+        self._last_proto_file = proto_info.proto_file
 
         # ---- inputs ----
         input_names = proto_info.inputs[:]

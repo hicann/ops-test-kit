@@ -202,7 +202,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         raise RuntimeError("GEIR source generation failed")
 
     compiler = GeirCompiler(switches, build_dir=builder.work_dir)
-    binary = compiler.compile(source_path, testcase.testcase_name)
+    binary = compiler.compile(source_path, testcase.testcase_name, proto_file=builder.last_proto_file)
     if binary is None:
         raise RuntimeError("GEIR compilation failed")
 
