@@ -163,6 +163,15 @@ class AclInterface:
     def set_float_overflow_mode(self, mode: int):
         self._rts_interface.set_float_overflow_mode(mode)
 
+    def set_deterministic_level(self, level: int):
+        if level <= 0:
+            return
+        api = getattr(self._acl_dll, "aclrtCtxSetSysParamOpt")
+        api.restype = ctypes.c_uint64
+        rt_error = api(ctypes.c_uint32(level), ctypes.c_uint32(0))
+        self.parse_error(rt_error, "aclrtCtxSetSysParamOpt",
+                         f"set deterministic level={level}")
+
     def get_device_mem_addr(self, acl_tensor: Union[ctypes.c_void_p, int]) \
             -> Union[ctypes.c_void_p, List[ctypes.c_void_p]]:
         """

@@ -228,6 +228,9 @@ int main(int argc, char* argv[]) {
 {% if compile_dynamic_mode %}
     build_options["ge.compile_dynamic_mode"] = "{{ compile_dynamic_mode }}";
 {% endif %}
+{% if ge_deterministic_level %}
+    build_options["ge.deterministicLevel"] = "{{ ge_deterministic_level }}";
+{% endif %}
     Session* session = new (nothrow) Session(build_options);
     if (session == nullptr) {
         fprintf(stderr, "[TTK-GEIR] Failed to create Session\n");

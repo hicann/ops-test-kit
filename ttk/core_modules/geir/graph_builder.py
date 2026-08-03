@@ -214,6 +214,9 @@ class GeirGraphBuilder:
         # ---- render ----
         jit_compile = "0" if is_binary else "1"
         compile_dynamic_mode = "1" if (is_dynamic and not is_binary) else ""
+        ge_deterministic_level = ""
+        if getattr(self._switches, "deterministic_level", 0) == 1:
+            ge_deterministic_level = "1"
         source = _render_template(
             "geir_test_template.cpp.j2",
             proto_file=proto_info.proto_file,
@@ -223,6 +226,7 @@ class GeirGraphBuilder:
             attributes=attr_entries,
             jit_compile=jit_compile,
             compile_dynamic_mode=compile_dynamic_mode,
+            ge_deterministic_level=ge_deterministic_level,
         )
 
         base_dir = "dynamic" if is_dynamic else "const"

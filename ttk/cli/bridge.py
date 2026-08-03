@@ -98,6 +98,8 @@ def args_to_switches(args):
         sw.run_time = args.run
     if hasattr(args, "npu_timeout") and args.npu_timeout:
         sw.run_timeout = args.npu_timeout
+    if hasattr(args, "deterministic_level") and args.deterministic_level:
+        sw.deterministic_level = args.deterministic_level
 
     return sw
 

@@ -76,6 +76,7 @@ class InstanceBase(metaclass=ABCMeta):
             numpy.random.seed(self.switches.random_seed)
         self._commit_id: Optional[str] = None
         self.heartbeat_manager = None  # HeartbeatManager or None
+        self.collected_results: list = []
 
     @abstractmethod
     def env_prepare(self):
@@ -131,6 +132,8 @@ class InstanceBase(metaclass=ABCMeta):
             time.sleep(0.01)  # pacing before next iteration; avoids busy-spin 100% CPU on one core. Placed after the break-check so we don't sleep on the exiting iteration.
         # close all processes
         self.close_subprocesses()
+        # batch consistency post-processing (level=2)
+        self._post_process_batch_consistency()
         # clean up
         self._pre_exit()
 
@@ -283,6 +286,27 @@ class InstanceBase(metaclass=ABCMeta):
             self._output_progress()
         if self.result_csv_file:
             self.result_csv_file.close()
+
+    def _post_process_batch_consistency(self):
+        """Level=2: cross-testcase batch consistency comparison."""
+        if self.switches.deterministic_level != 2:
+            return
+        if not self.collected_results:
+            return
+        from ttk.core_modules.comparison.batch_consistency import compare_batch_consistency
+
+        results = compare_batch_consistency(self.collected_results)
+        if not results:
+            logging.info("No batch consistency groups found (testcases lack batch_seed)")
+            return
+        total = len(results)
+        passed = sum(1 for r in results if r["pass"])
+        logging.info(f"Batch consistency: {passed}/{total} groups passed")
+        for r in results:
+            status = "PASS" if r["pass"] else "FAIL"
+            names = [m["testcase"] for m in r["members"]]
+            logging.info(f"  [{status}] group={r['batch_consistency_id'][:32]}... "
+                         f"members={names}")
 
     def _prepare_device_locks(self):
         # TODO: device-id not start from 0 to max-count in docker.
@@ -496,6 +520,8 @@ class InstanceBase(metaclass=ABCMeta):
             output_data = self.profile_object.handle_task_result_runtime_error(task, result, pid)
         else:
             output_data, kill_proc = self.profile_object.handle_task_result_complete(task, result)
+            if self.switches.deterministic_level > 0:
+                self.collected_results.append((task.testcase, result))
             if self.switches.proc_no_reuse or kill_proc:
                 proc.close()
                 proc.resurrect()

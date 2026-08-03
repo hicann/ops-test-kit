@@ -126,6 +126,10 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
 
 
 def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
+    if getattr(switches, "deterministic_level", 0) == 2:
+        logging.warning(
+            f"[{testcase.testcase_name}] GEIR mode does not support deterministic level=2 (batch consistency), ignored"
+        )
     process_ctx.notify_status("OnGenerateInput")
     testcase.device_id = dev_id
 
@@ -229,75 +233,113 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         prof_path = os.path.join(root, "msprof", "geir", testcase.testcase_name, mode)
         os.makedirs(prof_path, exist_ok=True)
 
-    data_r, data_w = os.pipe()
-    data_holder = []
-
-    def _drain_pipe():
-        chunks = []
-        while True:
-            chunk = os.read(data_r, 65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-        data_holder.append(b"".join(chunks))
-
-    reader = threading.Thread(target=_drain_pipe, name=f"geir_data_{testcase.testcase_name}")
-    reader.start()
-    try:
-        try:
-            proc = subprocess.Popen(
-                [binary, str(dev_id), input_prefix, str(data_w), prof_path],
-                pass_fds=(data_w,),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=compiler.build_dir,
-            )
-        finally:
-            os.close(data_w)  # parent closes write-end so reader gets EOF
-    except Exception:
-        os.close(data_r)
-        reader.join(timeout=5)
-        raise
-
-    try:
-        stdout_bytes, stderr_bytes = proc.communicate(timeout=switches.proc_timeout or 1800)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        reader.join(timeout=5)
-        os.close(data_r)
-        compiler.cleanup(input_prefix, source_path)
-        raise RuntimeError("GEIR execution timed out")
-    reader.join(timeout=30)
-    os.close(data_r)
-
-    if proc.returncode != 0:
-        stderr = stderr_bytes.decode("utf-8", errors="replace")[:2000]
-        compiler.cleanup(input_prefix, source_path)
-        raise RuntimeError(f"GEIR execution failed (rc={proc.returncode}): {stderr}")
-
-    # Capture plog to TTK logging. stdout holds plog echo (when
-    # ASCEND_SLOG_PRINT_TO_STDOUT=1); stderr holds [TTK-GEIR] markers.
-    if stdout_bytes:
-        for line in stdout_bytes.decode("utf-8", errors="replace").splitlines():
-            if line.strip():
-                logging.info("[GEIR/%s] %s", testcase.testcase_name, line)
-    if stderr_bytes:
-        logging.debugc("[GEIR/%s] stderr:\n%s", testcase.testcase_name, stderr_bytes.decode("utf-8", errors="replace"))
-
-    # Device profiling: run msprof.py export summary, parse op_summary CSV for Task Duration(us)
+    deterministic = getattr(switches, "deterministic_level", 0) == 1
+    geir_run_count = switches.run_time if deterministic else 1
+    md5_list = []
+    det_status = None
+    output_arrays = []
     device_perf_us = None
-    if prof_path:
-        device_perf_us = _parse_msprof_task_duration(prof_path)
 
-    # Parse outputs from data channel
-    output_arrays = _parse_stdout(
-        data_holder[0] if data_holder else b"",
-        testcase.output_dtypes,
-        testcase.flat_output_shapes,
-        case_name=testcase.testcase_name,
-    )
-    data_holder.clear()
+    for run_idx in range(geir_run_count):
+        if run_idx > 0:
+            data_idx = 0
+            for i, arr in enumerate(testcase.input_arrays):
+                if arr is not None:
+                    path = f"{input_prefix}_{data_idx}.bin"
+                    arr.tofile(path)
+                    data_idx += 1
+
+        data_r, data_w = os.pipe()
+        data_holder = []
+
+        def _drain_pipe():
+            chunks = []
+            while True:
+                chunk = os.read(data_r, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            data_holder.append(b"".join(chunks))
+
+        reader = threading.Thread(target=_drain_pipe, name=f"geir_data_{testcase.testcase_name}")
+        reader.start()
+        try:
+            try:
+                proc = subprocess.Popen(
+                    [binary, str(dev_id), input_prefix, str(data_w), prof_path],
+                    pass_fds=(data_w,),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=compiler.build_dir,
+                )
+            finally:
+                os.close(data_w)  # parent closes write-end so reader gets EOF
+        except Exception:
+            os.close(data_r)
+            reader.join(timeout=5)
+            raise
+
+        try:
+            stdout_bytes, stderr_bytes = proc.communicate(timeout=switches.proc_timeout or 1800)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            reader.join(timeout=5)
+            os.close(data_r)
+            compiler.cleanup(input_prefix, source_path)
+            raise RuntimeError("GEIR execution timed out")
+        reader.join(timeout=30)
+        os.close(data_r)
+
+        if proc.returncode != 0:
+            stderr = stderr_bytes.decode("utf-8", errors="replace")[:2000]
+            compiler.cleanup(input_prefix, source_path)
+            raise RuntimeError(f"GEIR execution failed (rc={proc.returncode}): {stderr}")
+
+        # Capture plog to TTK logging. stdout holds plog echo (when
+        # ASCEND_SLOG_PRINT_TO_STDOUT=1); stderr holds [TTK-GEIR] markers.
+        if stdout_bytes:
+            for line in stdout_bytes.decode("utf-8", errors="replace").splitlines():
+                if line.strip():
+                    logging.info("[GEIR/%s] %s", testcase.testcase_name, line)
+        if stderr_bytes:
+            logging.debugc(
+                "[GEIR/%s] stderr:\n%s", testcase.testcase_name, stderr_bytes.decode("utf-8", errors="replace")
+            )
+
+        # Device profiling: run msprof.py export summary, parse op_summary CSV for Task Duration(us)
+        if prof_path:
+            device_perf_us = _parse_msprof_task_duration(prof_path)
+
+        # Parse outputs from data channel
+        run_outputs = _parse_stdout(
+            data_holder[0] if data_holder else b"",
+            testcase.output_dtypes,
+            testcase.flat_output_shapes,
+            case_name=testcase.testcase_name,
+        )
+        data_holder.clear()
+
+        if deterministic > 0:
+            import hashlib
+
+            md5_list.append(
+                hashlib.md5(
+                    b"".join(arr.tobytes() if isinstance(arr, np.ndarray) else b"" for arr in run_outputs)
+                ).hexdigest()
+            )
+
+        output_arrays = run_outputs
+
+    if deterministic > 0 and len(md5_list) > 1:
+        if len(set(md5_list)) != 1:
+            logging.error(f"[{testcase.testcase_name}] GEIR MD5 mismatch across {len(md5_list)} runs: {md5_list}")
+            det_status = "FAIL"
+        else:
+            logging.info(f"[{testcase.testcase_name}] GEIR MD5 consistent across {len(md5_list)} runs: {md5_list[0]}")
+            det_status = "PASS"
+    elif deterministic > 0 and len(md5_list) == 1:
+        det_status = "PASS"
 
     golden_arrays = testcase.golden_arrays
 
@@ -355,6 +397,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     result.status = "SUCCESS" if passed else "FAIL"
     result.log = log_str
     result.xpu_metrics = xpu_metrics
+    result.deterministic_status = det_status
     if mode in ("const", "const_binary"):
         result.cst_perf_us = device_perf_us
     elif mode in ("dynamic", "dynamic_binary"):

@@ -17,6 +17,7 @@ class GeirReturnStructure:
     cst_perf_us: Optional[float] = None
     dyn_perf_us: Optional[float] = None
     xpu_metrics: Dict[str, Any] = field(default_factory=dict)
+    deterministic_status: Optional[str] = None
 
     @staticmethod
     def get_titles(is_binary: bool = False) -> Tuple[str, ...]:
@@ -34,6 +35,7 @@ class GeirReturnStructure:
             cst_gold,
             dyn_gold,
             "xpu_metrics",
+            "deterministic_status",
             "log",
         )
 
@@ -63,6 +65,8 @@ class GeirReturnStructure:
                 data.append(self.dyn_precision)
             elif title == "xpu_metrics":
                 data.append(self.xpu_metrics)
+            elif title == "deterministic_status":
+                data.append(self.deterministic_status)
             elif title == "log":
                 data.append(self.log)
             else:

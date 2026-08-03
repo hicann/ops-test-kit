@@ -169,6 +169,7 @@ class SWITCHES:
         "provider_filter",  # NEW: --provider CLI 值（provider 过滤器），经 SWITCHES pickle 传 worker
         # GEIR mode
         "geir_binary",
+        "deterministic_level",
     ]
 
     def __init__(self):
@@ -243,6 +244,7 @@ class SWITCHES:
         self.provider_filter: Optional[str] = None
         # GEIR mode
         self.geir_binary: bool = False
+        self.deterministic_level: int = 0
 
     @property
     def overflow_mode(self) -> int:

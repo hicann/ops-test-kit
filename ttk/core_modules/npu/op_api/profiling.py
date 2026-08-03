@@ -11,7 +11,6 @@
 Profiling method for Op Api testcases
 """
 
-
 __all__ = ["profile_process"]
 
 
@@ -32,12 +31,10 @@ try:
 except ImportError:
     print("Python version too low, from contextlib import nullcontext failed")
 
-
     @contextlib.contextmanager
     def NULLCXT():
         """NULL CONTEXT"""
         pass
-
 
     nullcontext = NULLCXT
 
@@ -60,13 +57,11 @@ from ....utilities import get_global_storage, get, waiting_for_memory, frameless
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file, extract_plog_errors
 
 
-def __profiling_end_print(context: TestcaseAclnn,
-                          compare_result: ApiComparisonResult):
+def __profiling_end_print(context: TestcaseAclnn, compare_result: ApiComparisonResult):
     c = compare_result
-    logging.info("\n########################\n"
-                 f"GOLD: {c.precision}\n"
-                 f"PRECISION_STATUS: {c.passed}\n"
-                 "########################\n")
+    logging.info(
+        f"\n########################\nGOLD: {c.precision}\nPRECISION_STATUS: {c.passed}\n########################\n"
+    )
 
 
 def __print_get_shape(golden):
@@ -90,9 +85,7 @@ def __profiling_print(context: TestcaseAclnn, dev_id: int):
     scalar_values = []
     for group in scalars:
         if isinstance(group, (list, tuple)):
-            scalar_values.append(tuple(
-                s.item() if s is not None else None for s in group
-            ))
+            scalar_values.append(tuple(s.item() if s is not None else None for s in group))
         else:
             scalar_values.append(group.item() if group is not None else None)
     scalar_values = tuple(scalar_values)
@@ -141,8 +134,7 @@ def __get_aclnn_device(dev_id: int) -> AclInterface:
     device: AclInterface = get_process_context().storage.get("device", None)
     switches = get_global_storage()
     if not device:
-        device = AclInterface(switches.short_soc_version,
-                              switches.mode.is_model())
+        device = AclInterface(switches.short_soc_version, switches.mode.is_model())
         get_process_context().storage["device"] = device
     if device.device_id is None:
         device.set_device(dev_id)
@@ -179,16 +171,16 @@ class Phase1ParamBuilder:
         case_params = []
         plan = self._ctx.get_param_plan()
         for kind, param_name, acl_type, default in plan.param_layout:
-            if kind == 'tensor':
+            if kind == "tensor":
                 case_params.append(acl_tensors.pop(0))
-            elif kind == 'scalar':
+            elif kind == "scalar":
                 case_params.append(acl_scalars.pop(0))
             else:
                 # consider remaining as attribute.
                 val = self._ctx.attributes.get(param_name, default)
                 if "Array" in acl_type:
                     # aclBoolArray/aclIntArray/aclFloatArray
-                    typ = acl_type[3:acl_type.index('Array')]
+                    typ = acl_type[3 : acl_type.index("Array")]
                     if val is None:
                         case_params.append(None)
                     else:
@@ -224,7 +216,7 @@ class Phase1ParamBuilder:
                         if isinstance(np_storage.base, numpy.ndarray):
                             np_storage = np_storage.base
                             break
-                        if hasattr(np_storage.base, '__array_interface__'):
+                        if hasattr(np_storage.base, "__array_interface__"):
                             np_storage = numpy.asarray(np_storage.base)
                             break
                         np_storage = np_storage.base
@@ -300,13 +292,13 @@ class AclOpExecutor:
         self._ctx = context
         self._dvc = device
         self._prof_type = TtkMsProfType.API if self._switches.TASK_PROFILING else TtkMsProfType.NONE
-        self._prof_result_path = os.path.join(self._switches.root_path,
-                                              "msprof", "op_api",
-                                              self._ctx.testcase_name)
+        self._prof_result_path = os.path.join(self._switches.root_path, "msprof", "op_api", self._ctx.testcase_name)
 
     @contextlib.contextmanager
     def rts_context(self):
         self._dvc.create_context()
+        if self._switches.deterministic_level >= 1:
+            self._dvc.set_deterministic_level(self._switches.deterministic_level)
         try:
             yield
         finally:
@@ -330,7 +322,7 @@ class AclOpExecutor:
             # Model warmup
             self._dvc.warmup(self._switches)
             with self.rts_stream() as stm:
-                output_byte_arrays, output_view_shapes, success = self._acl_sequence(stm)
+                output_byte_arrays, output_view_shapes, success, det_status = self._acl_sequence(stm)
             # Cycle Analysis
             if self._dvc.is_model():
                 # TODO
@@ -339,16 +331,14 @@ class AclOpExecutor:
                 op_prof = "TOTAL_CYCLE_TODO"
             else:
                 api_prof, op_prof = self._process_total_cycles()
-            return ApiProfilingResult(success, 
-                                      api_prof, op_prof, 
-                                      output_byte_arrays, 
-                                      output_view_shapes, )
+            return ApiProfilingResult(
+                success, api_prof, op_prof, output_byte_arrays, output_view_shapes, deterministic_status=det_status
+            )
 
     @staticmethod
-    def _extract_csv_cell(filename, extract_cols,
-                          cmp=None) -> list:
+    def _extract_csv_cell(filename, extract_cols, cmp=None) -> list:
         results = []
-        with open(filename, 'r') as f:
+        with open(filename, "r") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 if cmp is None or cmp(row):
@@ -366,11 +356,18 @@ class AclOpExecutor:
         output_byte_arrays = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         output_view_shapes = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         status = "NOK"
+        deterministic = self._switches.deterministic_level == 1
+        md5_list = []
+        det_status = None
         try:
             prof_start_at = 1 if self._run_time > 1 else 0
-            with MsProfiler(self._dvc.device_id, result_path=self._prof_result_path,
-                            ttk_prof_type=self._prof_type, start_step=prof_start_at,
-                            is_model=self._dvc.is_model()) as profiler:
+            with MsProfiler(
+                self._dvc.device_id,
+                result_path=self._prof_result_path,
+                ttk_prof_type=self._prof_type,
+                start_step=prof_start_at,
+                is_model=self._dvc.is_model(),
+            ) as profiler:
                 for repeat_idx in range(self._run_time):
                     profiler.step()
                     self._dvc.clear_l1(self._switches)
@@ -381,34 +378,61 @@ class AclOpExecutor:
                     # call L2 interface.
                     try:
                         # call phase 1 interface
-                        workspace_size, c_executor = self._dvc.acl_get_workspace(self._ctx.api_name,
-                                                                                 phase1_params)
+                        workspace_size, c_executor = self._dvc.acl_get_workspace(self._ctx.api_name, phase1_params)
                         # call phase 2 interface
-                        status = self._dvc.acl_execute(self._ctx.api_name, workspace_size,
-                                                       c_executor, stream)
+                        status = self._dvc.acl_execute(self._ctx.api_name, workspace_size, c_executor, stream)
                     except Exception as e:
                         time.sleep(0.5)
                         plog_errors = extract_plog_errors()
                         if plog_errors:
-                            logging.error(f"aclnn interface {self._ctx.api_name} execute failed: \n"
-                                          f"***************************************************************************\n"
-                                          f"{os.linesep.join(plog_errors)}\n"
-                                          f"***************************************************************************")
+                            logging.error(
+                                f"aclnn interface {self._ctx.api_name} execute failed: \n"
+                                f"***************************************************************************\n"
+                                f"{os.linesep.join(plog_errors)}\n"
+                                f"***************************************************************************"
+                            )
                         else:
                             error_detail = str(e)
                             logging.exception(f"aclnn interface {self._ctx.api_name} execute failed:\n{error_detail}")
                         status = "ACLNN_EXECUTE_FAILED"
 
-                    if repeat_idx == self._run_time - 1 and status == "OK":
-                        # copy output (tensor storage data) from device
-                        output_byte_arrays = self._phase1_param_builder.copy_output_from_hbm()
-                        output_view_shapes = self._phase1_param_builder.collect_output_view_shapes()
+                    if status == "OK":
+                        if deterministic > 0:
+                            out_bytes = self._phase1_param_builder.copy_output_from_hbm()
+                            import hashlib
+
+                            md5_list.append(
+                                hashlib.md5(
+                                    b"".join(
+                                        bytes(b) if isinstance(b, (bytearray, memoryview)) else b for b in out_bytes
+                                    )
+                                ).hexdigest()
+                            )
+                            if repeat_idx == self._run_time - 1:
+                                output_byte_arrays = out_bytes
+                                output_view_shapes = self._phase1_param_builder.collect_output_view_shapes()
+                        elif repeat_idx == self._run_time - 1:
+                            # copy output (tensor storage data) from device
+                            output_byte_arrays = self._phase1_param_builder.copy_output_from_hbm()
+                            output_view_shapes = self._phase1_param_builder.collect_output_view_shapes()
                     self._dvc.free_all_memory()
                     if status != "OK":
                         break
         finally:
             self._dvc.free_all_memory()
-        return output_byte_arrays, output_view_shapes, status == "OK"
+
+        if deterministic > 0 and len(md5_list) > 1:
+            if len(set(md5_list)) != 1:
+                logging.error(f"[{self._ctx.testcase_name}] MD5 mismatch across {len(md5_list)} runs: {md5_list}")
+                status = "DETERMINISTIC_MD5_MISMATCH"
+                det_status = "FAIL"
+            else:
+                logging.info(f"[{self._ctx.testcase_name}] MD5 consistent across {len(md5_list)} runs: {md5_list[0]}")
+                det_status = "PASS"
+        elif deterministic > 0 and len(md5_list) == 1:
+            det_status = "PASS"
+
+        return output_byte_arrays, output_view_shapes, status == "OK", det_status
 
     def _process_total_cycles(self):
         """
@@ -429,29 +453,49 @@ class AclOpExecutor:
             if item.is_dir():
                 shutil.rmtree(item)
             elif item.name.startswith("api_statistic_"):
-                api_prof = self._extract_csv_cell(item, ('API Name', 'Time(us)', 'Count',
-                                                         'Avg(us)', 'Min(us)', 'Max(us)'),
-                                                  cmp=lambda row: row["Level"] == "acl")
+                api_prof = self._extract_csv_cell(
+                    item,
+                    ("API Name", "Time(us)", "Count", "Avg(us)", "Min(us)", "Max(us)"),
+                    cmp=lambda row: row["Level"] == "acl",
+                )
             elif item.name.startswith("op_statistic_"):
-                op_prof = self._extract_csv_cell(item, ('OP Type', 'Total Time(us)', 'Count',
-                                                        'Avg Time(us)', 'Min Time(us)', 'Max Time(us)',
-                                                        'Core Type'))
+                op_prof = self._extract_csv_cell(
+                    item,
+                    ("OP Type", "Total Time(us)", "Count", "Avg Time(us)", "Min Time(us)", "Max Time(us)", "Core Type"),
+                )
                 for p in op_prof:
-                    p['OP Type'] = p['OP Type'] + ("_AiCpu" if 'cpu' in p['Core Type'].lower()
-                                                   else "_AiCore")
-                    del p['Core Type']
+                    p["OP Type"] = p["OP Type"] + ("_AiCpu" if "cpu" in p["Core Type"].lower() else "_AiCore")
+                    del p["Core Type"]
         # print
-        lines = [['Name', 'Total/us', 'Avg/us', 'Min/us', 'Max/us', '# of Calls']]
+        lines = [["Name", "Total/us", "Avg/us", "Min/us", "Max/us", "# of Calls"]]
         if not isinstance(api_prof, str):
-            lines.extend([[item['API Name'], "%.2f" % item['Time(us)'],
-                           "%.2f" % item['Avg(us)'], "%.2f" % item['Min(us)'],
-                           "%.2f" % item['Max(us)'], int(item['Count'])]
-                          for item in api_prof])
+            lines.extend(
+                [
+                    [
+                        item["API Name"],
+                        "%.2f" % item["Time(us)"],
+                        "%.2f" % item["Avg(us)"],
+                        "%.2f" % item["Min(us)"],
+                        "%.2f" % item["Max(us)"],
+                        int(item["Count"]),
+                    ]
+                    for item in api_prof
+                ]
+            )
         if not isinstance(op_prof, str):
-            lines.extend([[item['OP Type'], "%.2f" % item['Total Time(us)'],
-                           "%.2f" % item['Avg Time(us)'], "%.2f" % item['Min Time(us)'],
-                           "%.2f" % item['Max Time(us)'], int(item['Count'])]
-                          for item in op_prof])
+            lines.extend(
+                [
+                    [
+                        item["OP Type"],
+                        "%.2f" % item["Total Time(us)"],
+                        "%.2f" % item["Avg Time(us)"],
+                        "%.2f" % item["Min Time(us)"],
+                        "%.2f" % item["Max Time(us)"],
+                        int(item["Count"]),
+                    ]
+                    for item in op_prof
+                ]
+            )
         logging.info(frameless_table_print(lines))
         return api_prof, op_prof
 
@@ -478,9 +522,7 @@ def do_profiling(context: TestcaseAclnn, dev_id: int) -> ApiProfilingResult:
 def __dump_to_file(data, file_name: str, dtype: Optional[str] = None):
     switches = get_global_storage()
     file_path = os.getenv("NPU_DUMP_PATH") or switches.root_path
-    dump_to_file(data, file_path, file_name,
-                 file_format=switches.dump_config.file_format,
-                 dtype=dtype)
+    dump_to_file(data, file_path, file_name, file_format=switches.dump_config.file_format, dtype=dtype)
 
 
 def __dump_input(context: TestcaseAclnn, force: bool = False):
@@ -500,8 +542,7 @@ def __dump_output(context: TestcaseAclnn, force: bool = False):
         logging.info(f"Dump Output data....")
         output_bytes = context.prof_result.output_bytes
         for idx, _output in enumerate(output_bytes):
-            __dump_to_file(_output, f"{dump_output_name}_output_{idx}",
-                           get(output_dtypes, idx))
+            __dump_to_file(_output, f"{dump_output_name}_output_{idx}", get(output_dtypes, idx))
 
 
 def __dump_golden(context: TestcaseAclnn, force: bool = False):
@@ -522,10 +563,7 @@ def __dump_on_fail(context: TestcaseAclnn):
         __dump_golden(context, force=True)
 
 
-def profile_process(context: TestcaseAclnn,
-                    device_grant_events: dict,
-                    device_granted_indices: dict,
-                    dev_id: int):
+def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_granted_indices: dict, dev_id: int):
     """
     Op Api Testcase Profiling Entrance
     """
@@ -533,8 +571,7 @@ def profile_process(context: TestcaseAclnn,
     process_ctx = get_process_context()
     process_ctx.change_name(context.testcase_name)
     if switches.single_testcase_log_mode:
-        default_logging_config(file_handler=switches.logging_to_file,
-                               testcase_name=context.testcase_name)
+        default_logging_config(file_handler=switches.logging_to_file, testcase_name=context.testcase_name)
     process_ctx.notify_status("OnParseParameters")
     ####################
     # Check whether there is need to do further test
@@ -593,9 +630,7 @@ def profile_process(context: TestcaseAclnn,
     if manual_mode == "prepare":
         try:
             prepared_inputs = snapshot_manual_values(context.np_storages, "input")
-            prepared_scalars = snapshot_manual_values(
-                context.flatten_scalars or (), "scalar"
-            )
+            prepared_scalars = snapshot_manual_values(context.flatten_scalars or (), "scalar")
             process_ctx.notify_status("OnGenGolden")
             GoldenGenerator(context).gen()
             process_ctx.notify_status("OnWriteManualData")
@@ -620,9 +655,13 @@ def profile_process(context: TestcaseAclnn,
     # Following actions need to acquire global lock
     process_ctx.notify_status("OnAcquireLock")
     use_device = switches.mode.use_device()
-    with DeviceLock(process_ctx, dev_id, use_device=use_device,
-                    grant_event=device_grant_events.get(dev_id),
-                    granted_idx=device_granted_indices.get(dev_id)):
+    with DeviceLock(
+        process_ctx,
+        dev_id,
+        use_device=use_device,
+        grant_event=device_grant_events.get(dev_id),
+        granted_idx=device_granted_indices.get(dev_id),
+    ):
         process_ctx.notify_status("OnProfilingPrint")
         __profiling_print(context, dev_id)
         process_ctx.notify_status("OnProfiling")
@@ -659,5 +698,6 @@ def profile_process(context: TestcaseAclnn,
     process_ctx.notify_status("OnReturning")
     return_structure = ApiProfilingReturnStructure()
     return_structure.construct(context, compare_result)
+    return_structure.deterministic_status = getattr(context.prof_result, "deterministic_status", None)
     __profiling_end_print(context, compare_result)
     return return_structure

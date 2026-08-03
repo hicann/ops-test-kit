@@ -29,13 +29,14 @@ class ApiProfilingResult:
 
     def __init__(self, success: bool, api_prof=None, op_prof=None,
                  output_bytes=(None,), output_view_shapes=(None,),
-                 oob: str = "UNKNOWN"):
+                 oob: str = "UNKNOWN", deterministic_status: Optional[str] = None):
         self.api_prof: Union[str, List[dict]] = api_prof
         self.op_prof: Union[str, List[dict]] = op_prof
         self.output_bytes: Optional[Union[tuple, list]] = output_bytes
         self.output_view_shapes: Optional[Union[tuple, list]] = output_view_shapes
         self.oob: Optional[str] = oob
         self.success = success
+        self.deterministic_status: Optional[str] = deterministic_status
 
     @classmethod
     def fail(cls, fail_result: str) -> "ApiProfilingResult":
@@ -84,6 +85,7 @@ class ApiProfilingReturnStructure:
                  "precision_status",
                  "precision_metrics",
                  "batch_consistency_id",
+                 "deterministic_status",
                  "soc"
                  )
 
@@ -94,6 +96,7 @@ class ApiProfilingReturnStructure:
         self.precision_metrics = default_value
         # Special
         self.batch_consistency_id = default_value
+        self.deterministic_status = default_value
         self.soc = get_global_storage().dev_plat
 
     # noinspection DuplicatedCode

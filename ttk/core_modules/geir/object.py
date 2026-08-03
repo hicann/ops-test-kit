@@ -58,6 +58,7 @@ class GeirProfileObject(ProfileObject):
             data["dyn_precision"] = result.dyn_precision
             data["dyn_bin_precision"] = result.dyn_precision
             data["xpu_metrics"] = result.xpu_metrics
+            data["deterministic_status"] = result.deterministic_status
             data["log"] = result.log
             row = tuple(data.get(t, "") for t in titles)
             return row, False
