@@ -224,7 +224,7 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
         waiting_for_memory()
 
     backend = _get_or_create_backend(switches)
-
+    _ensure_deterministic_level_e2e(process_ctx, backend, testcase)
     try:
         _do_profile(testcase, backend, device_grant_events, device_granted_indices,
                     dev_id, switches, return_struct)
@@ -296,6 +296,23 @@ def _dump_on_fail(testcase, raw_inputs, result_nps, golden_nps, switches):
         if isinstance(golden, np.ndarray):
             _dump_data(golden, f"{testcase.testcase_name}_golden_{idx}", switches)
 
+def _ensure_deterministic_level_e2e(process_ctx, backend, testcase):
+    """e2e 模式：设置 NPU 确定性计算级别
+    """
+    det_level = getattr(get_global_storage(), 'deterministic_level', 0)
+    if not getattr(testcase, 'batch_axis', None) and not getattr(testcase, 'batch_slice_info', None) and not getattr(testcase, 'batch_seed', None):
+        return
+    if process_ctx.storage.get("_deterministic_level_set"):
+        return
+    if backend.is_npu():
+        try:
+            import torch_npu
+            torch_npu.npu.set_deterministic_level(det_level)
+            logging.info(f"NPU deterministic level set to {det_level} "
+                         f"(e2e batch consistency for {testcase.testcase_name})")
+        except Exception as e:
+            logging.warning(f"Failed to set deterministic level: {e}")
+    process_ctx.storage["_deterministic_level_set"] = True
 
 def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf) or raises."""

@@ -168,7 +168,7 @@ class AclInterface:
             return
         api = getattr(self._acl_dll, "aclrtCtxSetSysParamOpt")
         api.restype = ctypes.c_uint64
-        rt_error = api(ctypes.c_uint32(level), ctypes.c_uint32(0))
+        rt_error = api(ctypes.c_uint32(0), ctypes.c_uint32(level))
         self.parse_error(rt_error, "aclrtCtxSetSysParamOpt",
                          f"set deterministic level={level}")
 

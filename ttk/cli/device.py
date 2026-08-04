@@ -21,7 +21,8 @@ def add_device_args(parser):
     parser.add_argument("-l", "--limit", type=int, default=None,
                         help="HBM memory limit per testcase in GB (default: 30)")
     parser.add_argument("--deterministic-level", "--dl", dest="deterministic_level",
-                        type=int, default=0, choices=[0, 1, 2],
+                        type=int, default=0, choices=[0, 1, 2, 3],
                         help="Deterministic level: 0=off (default), 1=deterministic "
                              "compute (MD5 consistent across NPU runs), "
-                             "2=batch consistency (cross-testcase slice compare)")
+                             "2=strong consistency,"
+                             "3=batch consistency (cross-testcase slice compare)")

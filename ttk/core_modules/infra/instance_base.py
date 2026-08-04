@@ -311,8 +311,8 @@ class InstanceBase(metaclass=ABCMeta):
         logging.info(summary)
 
     def _post_process_batch_consistency(self):
-        """Level=2: cross-testcase batch consistency comparison."""
-        if self.switches.deterministic_level != 2:
+        """Level=3: cross-testcase batch consistency comparison."""
+        if self.switches.deterministic_level != 3:
             return
         if not self.collected_results:
             return

@@ -1218,6 +1218,9 @@ def _annotation_to_type(annotation) -> str:
         return "int"
     if annotation is bool: return "bool"
     if annotation is int: return "int"
+    try:
+        if isinstance(annotation, type) and issubclass(annotation, int): return "int"
+    except TypeError: pass
     if annotation is float: return "float"
     if annotation is str: return "str"
     try:

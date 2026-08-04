@@ -126,9 +126,9 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
 
 
 def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
-    if getattr(switches, "deterministic_level", 0) == 2:
+    if getattr(switches, "deterministic_level", 0) == 3:
         logging.warning(
-            f"[{testcase.testcase_name}] GEIR mode does not support deterministic level=2 (batch consistency), ignored"
+            f"[{testcase.testcase_name}] GEIR mode does not support deterministic level=3 (batch consistency), ignored"
         )
     process_ctx.notify_status("OnGenerateInput")
     testcase.device_id = dev_id
