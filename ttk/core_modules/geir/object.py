@@ -48,7 +48,7 @@ class GeirProfileObject(ProfileObject):
             data["testcase_name"] = testcase.testcase_name
             data["op_name"] = testcase.op_name
             data["precision"] = result.precision
-            data["status"] = result.status
+            data["precision_status"] = result.precision_status
             data["cst_perf_us"] = result.cst_perf_us if result.cst_perf_us is not None else "CST_OFF"
             data["cst_bin_perf_us"] = result.cst_perf_us if result.cst_perf_us is not None else "CST_OFF"
             data["dyn_perf_us"] = result.dyn_perf_us if result.dyn_perf_us is not None else "DYN_OFF"

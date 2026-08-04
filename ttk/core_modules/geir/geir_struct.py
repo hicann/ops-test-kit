@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Tuple
 class GeirReturnStructure:
     precision: str = ""
     passed: bool = False
-    status: str = "UNKNOWN"
+    precision_status: str = "UNKNOWN"
     log: str = ""
     cst_precision: str = ""
     dyn_precision: str = ""
@@ -29,7 +29,7 @@ class GeirReturnStructure:
             "testcase_name",
             "op_name",
             "precision",
-            "status",
+            "precision_status",
             cst_perf,
             dyn_perf,
             cst_gold,
@@ -53,8 +53,8 @@ class GeirReturnStructure:
                 data.append("")
             elif title == "precision":
                 data.append(self.precision)
-            elif title == "status":
-                data.append(self.status)
+            elif title == "precision_status":
+                data.append(self.precision_status)
             elif title in ("cst_perf_us", "cst_bin_perf_us"):
                 data.append(self.cst_perf_us)
             elif title in ("dyn_perf_us", "dyn_bin_perf_us"):

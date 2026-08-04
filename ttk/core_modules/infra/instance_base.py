@@ -51,6 +51,12 @@ class InstanceBase(metaclass=ABCMeta):
         self.flatten_testcases: Set[TestcaseBase] = set()
         self.total_case_count = 0
         self.completed_case_count = 0
+        # Final summary counters (driven by precision_status in result rows)
+        self.pass_count = 0
+        self.fail_count = 0
+        self.other_count = 0
+        self._header_flushed = False
+        self._precision_status_idx: Optional[int] = None
         # Test Result CSV Storage
         self.result_csv_writer = None
         self.result_csv_file: Optional[IO[Any]] = None
@@ -286,6 +292,23 @@ class InstanceBase(metaclass=ABCMeta):
             self._output_progress()
         if self.result_csv_file:
             self.result_csv_file.close()
+        self._print_final_summary()
+
+    def _print_final_summary(self):
+        total = self.pass_count + self.fail_count + self.other_count
+        if total <= 0:
+            return
+        pass_rate = (self.pass_count / total * 100) if total else 0.0
+        summary = (
+            "\n==================== TTK Test Summary ===================\n"
+            f"  Total    : {total}\n"
+            f"  PASS     : {self.pass_count}\n"
+            f"  FAIL     : {self.fail_count}\n"
+            f"  SKIP/NA  : {self.other_count}\n"
+            f"  PassRate : {pass_rate:.2f}%  ({self.pass_count}/{total})\n"
+            "========================================================="
+        )
+        logging.info(summary)
 
     def _post_process_batch_consistency(self):
         """Level=2: cross-testcase batch consistency comparison."""
@@ -531,6 +554,29 @@ class InstanceBase(metaclass=ABCMeta):
     def _flush(self, row: tuple):
         self.result_csv_writer.writerow(row)
         self.result_csv_file.flush()
+        if not self._header_flushed:
+            self._header_flushed = True
+            self._precision_status_idx = self._resolve_precision_status_idx(row)
+            return
+        self._update_summary(row)
+
+    def _resolve_precision_status_idx(self, header: tuple) -> Optional[int]:
+        try:
+            return header.index("precision_status")
+        except ValueError:
+            return None
+
+    def _update_summary(self, row: tuple):
+        idx = self._precision_status_idx
+        if idx is None or idx >= len(row):
+            return
+        status = str(row[idx]).upper()
+        if status == "PASS":
+            self.pass_count += 1
+        elif status == "FAIL":
+            self.fail_count += 1
+        else:
+            self.other_count += 1
 
     def _load_case_from_zip(self, testcase_path: str):
         with zipfile.ZipFile(testcase_path) as zipped_file:

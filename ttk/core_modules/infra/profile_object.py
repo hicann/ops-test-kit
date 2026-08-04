@@ -37,6 +37,7 @@ class ProfileObject(metaclass=ABCMeta):
         self.case_result_title: Tuple[str] = tuple()
         self.case_input_title: Tuple[str] = tuple()
         self.skipped_cases: int = 0
+        self._front_input_count: int = 0
 
     @abstractmethod
     def setup(self):
@@ -115,9 +116,39 @@ class ProfileObject(metaclass=ABCMeta):
                                   if title in self.switches.custom_columns)
             input_titles = tuple(title for title in input_titles
                                  if title in self.switches.custom_columns)
+        input_titles = self._reorder_input_titles(input_titles)
         self.case_input_title = tuple(input_titles)
         self.case_result_title = tuple(result_titles)
-        return (*self.case_input_title, *self.case_result_title)
+        return self._compose_header()
+
+    _FRONT_IDENTITY_HEADERS = ("testcase_name", "op_name", "api_name")
+
+    def _reorder_input_titles(self, input_titles: tuple) -> tuple:
+        """Move identity headers (testcase_name, op_name/api_name) to the front,
+        preserving the relative order of the remaining titles. Returns a tuple;
+        caller reads ``self._front_input_count`` for the count of moved headers."""
+        self._front_input_count = 0
+        if self.switches.preserve_original_csv or self.switches.custom_columns:
+            return input_titles
+        if not input_titles or input_titles[0] != "testcase_name":
+            return input_titles
+        front = ["testcase_name"]
+        rest = list(input_titles[1:])
+        for h in self._FRONT_IDENTITY_HEADERS[1:]:
+            if h in rest:
+                rest.remove(h)
+                front.append(h)
+        self._front_input_count = len(front)
+        return tuple(front + rest)
+
+    def _compose_header(self) -> tuple:
+        return self._assemble_row(self.case_input_title, self.case_result_title)
+
+    def _assemble_row(self, inputs: tuple, results: tuple) -> tuple:
+        n = self._front_input_count
+        if n > 0 and len(inputs) > n:
+            return (*inputs[:n], *results, *inputs[n:])
+        return (*inputs, *results)
 
     def _compile_crash(self, task: TaskA, result: SystemError, last_stage: str, pid: int):
         if not issubclass(task.testcase.__class__, TestcaseBase):
@@ -160,9 +191,9 @@ class ProfileObject(metaclass=ABCMeta):
                       f"for testcase {task.testcase.testcase_name} with pid {pid}. "
                       f"System error: {result}")
         results = self._profile_fail_result(f"PROFILE_CRASH",
-                                            f"Crashed at profiling stage: {result}")
+                                             f"Crashed at profiling stage: {result}")
         inputs = task.testcase.pick_data(self.case_input_title)
-        return (*inputs, *results)
+        return self._assemble_row(inputs, results)
 
     def _profile_fail(self, task: TaskA, result: RuntimeError, pid: int) -> tuple:
         if not issubclass(task.testcase.__class__, TestcaseBase):
@@ -174,7 +205,7 @@ class ProfileObject(metaclass=ABCMeta):
                       f"fail reason:\n{exception}")
         results = self._profile_fail_result(f"FAILURE", exception)
         inputs = task.testcase.pick_data(self.case_input_title)
-        return (*inputs, *results)
+        return self._assemble_row(inputs, results)
 
     def _profile_normal_complete(self, task: TaskA, result: object) -> tuple:
         if not issubclass(task.testcase.__class__, TestcaseBase):
@@ -182,4 +213,4 @@ class ProfileObject(metaclass=ABCMeta):
                                f"But got {task.testcase.__class__}")
         results, kill_Proc = self.apply_profile_success_result(task.testcase, result)
         inputs = task.testcase.pick_data(self.case_input_title)
-        return (*inputs, *results), kill_Proc
+        return self._assemble_row(inputs, results), kill_Proc

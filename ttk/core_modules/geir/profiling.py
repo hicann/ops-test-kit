@@ -41,7 +41,7 @@ def _geir_profiling_end_print(result):
         f"{cst_label}: {result.cst_precision.ljust(24)}\n"
         f"{dyn_perf_label}: {str(result.dyn_perf_us).ljust(24)} "
         f"{dyn_label}: {result.dyn_precision.ljust(24)}\n"
-        f"STATUS: {result.status.ljust(26)} PRECISION_STATUS: {passed_str}\n"
+        f"PRECISION_STATUS: {result.precision_status.ljust(20)} PASSED: {passed_str}\n"
         "########################\n"
     )
 
@@ -58,7 +58,7 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
         from .geir_struct import GeirReturnStructure
 
         result = GeirReturnStructure()
-        result.status = "INVALID"
+        result.precision_status = "INVALID"
         result.precision = testcase.fail_reason or "INVALID"
         result.passed = False
         return result
@@ -108,14 +108,14 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
                     if mode_result.passed and not result.passed:
                         result.precision = mode_result.precision
                         result.passed = True
-                        result.status = mode_result.status
+                        result.precision_status = mode_result.precision_status
                         result.log = mode_result.log
     except Exception as e:
         logging.exception("GEIR profiling exception")
         from .geir_struct import GeirReturnStructure
 
         result = GeirReturnStructure()
-        result.status = f"ERROR: {str(e)[:200]}"
+        result.precision_status = f"ERROR: {str(e)[:200]}"
         result.precision = "EXEC_FAILURE"
         result.passed = False
 
@@ -394,7 +394,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     result = GeirReturnStructure()
     result.precision = precision
     result.passed = passed
-    result.status = "SUCCESS" if passed else "FAIL"
+    result.precision_status = "PASS" if passed else "FAIL"
     result.log = log_str
     result.xpu_metrics = xpu_metrics
     result.deterministic_status = det_status
