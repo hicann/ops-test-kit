@@ -16,6 +16,7 @@ from ttk.utilities import Singleton
 from ttk.utilities.simple_param_extractor import (
     APIParamInfo, get_api_params, register_api_params, ParamInfo
 )
+from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
 
 class FrameworkApiInfoKeeper(metaclass=Singleton):
@@ -27,6 +28,7 @@ class FrameworkApiInfoKeeper(metaclass=Singleton):
         if api_name in self._cache:
             return self._cache[api_name]
         try:
+            TorchOpsPackageLoader.ensure_registered(api_name)
             info = get_api_params(api_name)
         except Exception as e:
             logging.warning(f"Parse {api_name} signature failed: {type(e).__name__}: {e}")

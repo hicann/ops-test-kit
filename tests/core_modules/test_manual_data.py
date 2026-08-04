@@ -219,6 +219,26 @@ def test_e2e_noncontiguous_backing_storage_and_none_slot_round_trip(tmp_path):
     assert (loaded.case_dir / "golden_1_none.bin").stat().st_size == 0
 
 
+def test_e2e_none_golden_suppresses_optional_device_output(tmp_path):
+    case = _e2e_case("none_golden_optional_device_output")
+    store = ManualDataStore(tmp_path)
+    store.write_case(
+        case,
+        "e2e",
+        [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
+        [np.ones((2, 2), np.float32), None],
+    )
+
+    loaded = store.load_case(case, "e2e")
+    goldens = loaded.load_goldens(references=[
+        np.zeros((2, 2), np.float32),
+        np.zeros((1, 2), np.float32),
+    ])
+
+    np.testing.assert_array_equal(goldens[0], np.ones((2, 2), np.float32))
+    assert goldens[1] is None
+
+
 def test_tensor_list_grouping_is_rebuilt_from_csv_structure(tmp_path):
     case = _e2e_case("tensor_list")
     case.tensor_view_shapes = (((2,), (3,)), (2,))

@@ -185,6 +185,9 @@ prepare to regenerate the case directory.
 
 - Input, scalar, and golden indexes are independently contiguous from zero.
 - Optional `None` uses a zero-byte `*_none.<format>` marker and must not be omitted.
+- A Golden `*_none` marker suppresses comparison for that output slot. The device API
+  may still materialize the output; replay restores the Golden as `None` so custom or
+  default comparison reports the slot as suppressed.
 - `*_none.npy` and `*_none.pt` are TTK markers, not native NumPy/PyTorch files.
 - A zero-element tensor keeps its real dtype name, such as `input_0_float32.bin`.
 - Inputs store final backing storage. The current CSV rebuilds views, strides, offsets,

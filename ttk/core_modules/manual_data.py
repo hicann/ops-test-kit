@@ -137,13 +137,14 @@ class ManualDataCase:
         values = []
         for entry, expected_shape, storage_shape in zip(
                 self._golden_files, expected_shapes, storage_shapes):
+            # A None golden suppresses comparison for an optional output. The
+            # device API may still materialize that output during replay.
+            if entry.dtype == _NONE_DTYPE:
+                values.append(_load_none(entry, "golden"))
+                continue
             if expected_shape is None:
                 values.append(_load_none(entry, "golden"))
                 continue
-            if entry.dtype == _NONE_DTYPE:
-                raise ManualDataError(
-                    f"golden[{entry.index}] is saved as None but the device returned an output"
-                )
             if entry.saved_shape is not None:
                 if (expected_shape is not _UNKNOWN_SHAPE and
                         tuple(expected_shape) != entry.saved_shape):

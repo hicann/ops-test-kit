@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional, List, Dict, Tuple
 
+from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
+
 
 @dataclass
 class ParamInfo:
@@ -1147,7 +1149,9 @@ def _extract_params_from_aten_schemas(api_name: str) -> Optional[Tuple[List[Para
         return None
     primary = max(all_overloads, key=lambda ov: sum(1 for p in ov if p.is_optional))
     primary_rc = return_counts[all_overloads.index(primary)]
-    source = f"aten._schemas({len(all_overloads)} overloads)" if len(all_overloads) > 1 else "aten._schemas"
+    namespace = api_name.split('.')[2]
+    source = (f"{namespace}._schemas({len(all_overloads)} overloads)"
+              if len(all_overloads) > 1 else f"{namespace}._schemas")
     return primary, source, all_overloads, return_counts
 
 
@@ -1835,8 +1839,10 @@ def extract_api_params(api_name: str) -> Optional[APIParamInfo]:
 
 
 def _extract_api_params_impl(api_name: str) -> Optional[APIParamInfo]:
-    # aten APIs: use OpOverloadPacket._schemas
-    if api_name.startswith('torch.ops.aten.'):
+    TorchOpsPackageLoader.ensure_registered(api_name)
+
+    # Registered torch.ops APIs expose an authoritative FunctionSchema.
+    if api_name.startswith('torch.ops.'):
         result = _extract_params_from_aten_schemas(api_name)
         if result:
             params, source, overloads, return_counts = result

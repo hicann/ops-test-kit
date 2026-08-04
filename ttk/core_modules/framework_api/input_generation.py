@@ -21,6 +21,7 @@ from ttk.core_modules.plugin_loader import get_plugin_function
 from ttk.utilities import get
 from ttk.utilities.container_utils import apply_as_list
 from ttk.utilities.data import RandomData, resolve_custom_numpy_dtypes
+from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
 
 def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
@@ -34,6 +35,9 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
     Plugin has no return value, modifies tensor arrays in-place via x[:] = value.
     Called with same ParamPlan arg order as profiling execution and golden generation.
     """
+    # Custom input runs before API resolution in worker processes. Register the
+    # installed torch.ops package before a callback calls a companion metadata op.
+    TorchOpsPackageLoader.ensure_registered(testcase.api_name)
     if stored_inputs is not None:
         testcase.np_storages = list(stored_inputs)
         raw_inputs = build_views_from_storages(testcase)

@@ -14,6 +14,8 @@ Resolve api_name string to callable object.
 Handles both module functions (torch.add) and Tensor methods (torch.Tensor.relu_).
 """
 
+from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
+
 _MODULE_ALIAS = {}
 
 
@@ -32,6 +34,8 @@ def resolve_api(api_name: str):
 
     if len(parts) < 2:
         raise ValueError(f"Invalid api_name: {api_name}, expected format: module.func")
+
+    TorchOpsPackageLoader.ensure_registered(api_name)
 
     # torch.Tensor.xxx -> Tensor method
     if len(parts) >= 3 and parts[1] == "Tensor":
