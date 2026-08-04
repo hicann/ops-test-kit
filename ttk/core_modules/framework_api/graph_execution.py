@@ -62,8 +62,15 @@ def _compile_model_aclgraph(model, backend):
     return compiled
 
 def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
-                  is_inplace, inplace_backup, api_name):
+                  is_inplace, inplace_backup, api_name,
+                  inplace_backups=None):
     """Run compiled model with warmup + profiling. Returns (result_nps, perf)."""
+    def _restore_inplace_inputs():
+        if inplace_backups:
+            for idx, bak in inplace_backups.items():
+                if idx < len(args) and args[idx] is not None:
+                    args[idx][:] = bak
+
     result = compiled(*args, **kwargs)
     backend.synchronize(dev_id)
     result_nps = result_to_numpy(result, backend, copy=is_inplace)
@@ -75,17 +82,19 @@ def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
 
     if switches.warmup:
         for _ in range(WARMUP_COUNT):
-            compiled(*args, **kwargs)
             if is_inplace and inplace_backup is not None:
                 args[0][:] = inplace_backup
+            _restore_inplace_inputs()
+            compiled(*args, **kwargs)
         backend.synchronize(dev_id)
 
     profiler = get_profiler(api_name, backend)
     with profiler:
         for _ in range(run_count):
-            r = compiled(*args, **kwargs)
             if is_inplace and inplace_backup is not None:
                 args[0][:] = inplace_backup
+            _restore_inplace_inputs()
+            r = compiled(*args, **kwargs)
             if not is_inplace:
                 result = r
         backend.synchronize(dev_id)
@@ -133,6 +142,13 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
 
     inplace_backup = None
 
+    inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
+    inplace_backups = {}
+    if inplace_input_indexes:
+        for idx in sorted(inplace_input_indexes):
+            if idx < len(args) and args[idx] is not None:
+                inplace_backups[idx] = args[idx].clone()
+
     custom_cls = get_spec_attr(testcase.api_name, "torch_graph", switches.plugin_path)
 
     if custom_cls:
@@ -175,7 +191,8 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
             compiled = _compile_model(model, npu_backend, dynamic, use_fullgraph)
         result_nps, perf = _run_compiled(
             compiled, run_args, run_kwargs, backend, dev_id, switches,
-            run_inplace, inplace_backup if run_inplace else None, testcase.api_name)
+            run_inplace, inplace_backup if run_inplace else None, testcase.api_name,
+            inplace_backups=inplace_backups if inplace_input_indexes and not custom_cls else None)
 
     except Exception as e:
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)
@@ -183,12 +200,12 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         return [], None
 
     if result_nps:
-        inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
-        if inplace_input_indexes:
-            for idx in sorted(inplace_input_indexes):
-                if idx < len(args) and args[idx] is not None:
-                    inplace_np = backend.to_numpy(args[idx].detach().clone())
-                    result_nps.append(inplace_np)
+        if not custom_cls:
+            if inplace_input_indexes:
+                for idx in sorted(inplace_input_indexes):
+                    if idx < len(args) and args[idx] is not None:
+                        inplace_np = backend.to_numpy(args[idx].detach().clone())
+                        result_nps.append(inplace_np)
 
     if inplace_backup is not None:
         del inplace_backup
