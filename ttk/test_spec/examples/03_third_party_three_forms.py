@@ -1,15 +1,13 @@
 """third_party in three forms: string / dict / class"""
 
-import numpy
+import torch
 
 
 class SoftmaxSimpleSpec:
     """Single API string — torch auto-mapped"""
     def golden(x, *, axis=-1, **kwargs):
-        x = x.astype("float32")
-        max_x = numpy.amax(x, axis=axis, keepdims=True)
-        exp_x = numpy.exp(x - max_x)
-        return [exp_x / numpy.sum(exp_x, axis=axis, keepdims=True)]
+        x_t = torch.from_numpy(x.astype("float32"))
+        return [torch.softmax(x_t, dim=axis).numpy()]
 
     third_party = "torch.nn.functional.softmax"
 
@@ -17,9 +15,8 @@ class SoftmaxSimpleSpec:
 class SoftmaxMultiVendorSpec:
     """Dict multi-vendor — supports torch / tf / flash_attn / npu_decompose"""
     def golden(x, *, axis=-1, **kwargs):
-        x = x.astype("float32")
-        exp_x = numpy.exp(x)
-        return [exp_x / numpy.sum(exp_x, axis=axis, keepdims=True)]
+        x_t = torch.from_numpy(x.astype("float32"))
+        return [torch.softmax(x_t, dim=axis).numpy()]
 
     third_party = {
         "torch": "torch.nn.functional.softmax",
@@ -30,8 +27,8 @@ class SoftmaxMultiVendorSpec:
 class SoftmaxComposeSpec:
     """Class form — small-op composition"""
     def golden(x, *, axis=-1, **kwargs):
-        exp_x = numpy.exp(x)
-        return [exp_x / numpy.sum(exp_x, axis=axis, keepdims=True)]
+        x_t = torch.from_numpy(x.astype("float32"))
+        return [torch.softmax(x_t, dim=axis).numpy()]
 
     class NpuDecomposeImpl:
         # 参数绑定契约见 README「类形式参数绑定」: input/attr 喂给声明它的方法
@@ -40,7 +37,6 @@ class SoftmaxComposeSpec:
             self.axis = axis
 
         def __call__(self, x, **kwargs):
-            import torch
             exp_x = torch.exp(x)
             sum_exp = torch.sum(exp_x, dim=self.axis, keepdim=True)
             return [exp_x / sum_exp]

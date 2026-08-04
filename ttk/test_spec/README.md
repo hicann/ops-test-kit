@@ -4,42 +4,87 @@
 
 ## 快速上手
 
+以 `abs` 算子为例，四种测试路径的 spec 注册汇总：
+
+| 测试路径 | 注册名 | 参数名来源 | Golden 参数类型 | 无 spec 时默认行为 |
+|---------|--------|----------|----------------|-------------------|
+| Kernel | `abs`（CSV `op_name`） | 算子 `def.cpp` 形参 | numpy.ndarray | 无 golden，报 UNSUPPORTED |
+| GEIR | `abs`（CSV `op_name`） | 算子 `def.cpp` 形参 | numpy.ndarray | 无 golden，报 UNSUPPORTED |
+| ACLNN | `aclnnAbs`（CSV `api_name`） | `aclnn_abs.h` 形参 | torch.Tensor | 自动从 torch 同名 API 映射 |
+| E2E | `torch.abs`（CSV `api_name`） | torch API 签名 | torch.Tensor | 框架自动在 CPU 跑同 API 作 golden |
+
+> 注册名即 `get_spec_attr` 的查找 key：Kernel/GEIR 用 `op_name`，ACLNN/E2E 用 `api_name`。GEIR 复用 Kernel 的 spec，无需额外编写。类名按 PascalCase+TestSpec 约定或通过 `__spec__` dict 显式注册。
+
+### Kernel
+
 ```python
-import numpy
+__spec__ = {"abs": "AbsTestSpec"}
+
+import torch
 
 class AbsTestSpec:
-    """Abs 算子测试规范"""
+    """Abs 算子测试规范（kernel 流程）"""
     def golden(x, **kwargs):
-        return [numpy.abs(x)]
+        return [torch.abs(torch.from_numpy(x)).numpy()]
 
-    third_party = {"torch": "torch.abs", "tf": "tf.raw_ops.Abs"}
     tolerance = {"float32": {"standard": "binary_equal"}}
 ```
 
-## 约定速查
+### ACLNN
 
-| 属性 | 用途 | 合法类型 |
-|------|------|---------|
-| `golden` | CPU 真值 | `str` / 函数 / 类 |
-| `third_party` | 三方标杆 | `str` / `dict` / 类 |
-| `compare` | 自定义比对 | 函数 |
-| `pre_compare` | 比对前处理 | 函数 |
-| `customize_inputs` | 自定义输入 | 函数 |
-| `tolerance` | 精度标准 | `dict(dtype→{standard, ...})` |
-| `torch_graph` | Graph 模式 | `torch.nn.Module` 子类（仅 torch.API） |
+```python
+__spec__ = {"aclnnAbs": "AclnnAbsTestSpec"}
+
+import torch
+
+class AclnnAbsTestSpec:
+    """Abs 算子测试规范（aclnn 流程）"""
+    def golden(x, **kwargs):
+        return [torch.abs(x)]
+
+    third_party = {"torch": "torch.abs"}
+    tolerance = {"float32": {"standard": "binary_equal"}}
+```
+
+### E2E
+
+```python
+__spec__ = {"torch.abs": "TorchAbsTestSpec"}
+
+import torch
+
+class TorchAbsTestSpec:
+    """Abs 算子测试规范（e2e 流程）"""
+    def golden(x, **kwargs):
+        return [torch.abs(x)]
+
+    tolerance = {"float32": {"standard": "binary_equal"}}
+```
+
+## Spec 字段一览
+
+所有字段可选，按需声明：
+
+| 字段 | 用途 | 合法类型 | 适用路径 |
+|------|------|---------|---------|
+| `golden` | CPU 真值 | `str` / 函数 / 类 | Kernel / GEIR / ACLNN / E2E |
+| `third_party` | 三方标杆 | `str` / `dict` / 类 | Kernel / GEIR / ACLNN / E2E |
+| `compare` | 自定义比对 | 函数 | Kernel / GEIR / ACLNN / E2E |
+| `pre_compare` | 比对前处理 | 函数 | Kernel / GEIR / ACLNN / E2E |
+| `customize_inputs` | 自定义输入 | 函数 | Kernel / GEIR / ACLNN / E2E |
+| `tolerance` | 精度标准 | `dict(dtype→{standard, ...})` | Kernel / GEIR / ACLNN / E2E |
+| `torch_graph` | Graph 模式 | `torch.nn.Module` 子类 | E2E（仅 torch API） |
+| `describe` | 算子描述信息 | 函数 | 全路径 |
 
 所有属性可选。`golden` 三种形式：
-
-`pre_compare`和`compare`可由E2E、ACLNN和Kernel消费。ACLNN必须用CSV中的精确`aclnn*`
-`api_name`注册；Kernel必须用CSV中的精确raw `op_name`注册。Kernel会对每个已启用的dynamic、
-const和binary模式分别调用hook，关闭模式哨兵不进入hook。需要读取当前或replay恢复输入时，
-compare必须显式声明仅关键字参数`compare_context`；仅声明`**kwargs`不会收到该参数。
 
 | 形式 | 示例 | 适用场景 |
 |------|------|---------|
 | 字符串 | `golden = "numpy.abs"` | numpy 有直接对应 API |
 | 函数 | `def golden(x, *, axis=-1):` | 中等复杂度，`*` 前=输入，`*` 后=属性 |
 | 类 | `class Golden: def __call__(self, x):` | 需要状态管理，`__init__` + `__call__` + `__del__` |
+
+> golden 在 CPU 计算，Kernel/GEIR 传入 numpy.ndarray，ACLNN/E2E 传入已 H2D 的 torch.Tensor。
 
 `third_party` 三种形式：
 
@@ -49,14 +94,16 @@ compare必须显式声明仅关键字参数`compare_context`；仅声明`**kwarg
 | dict | `third_party = {"torch": "...", "tf": "..."}` | 多 vendor / 多框架 |
 | 类 | `third_party = MyImplClass` | 小算子拼接，需要 `__call__` |
 
-## 类形式参数绑定（Impl class）
+> third_party 调用三方 API（如 torch），Kernel/GEIR 会将 numpy 转 torch 后调用，ACLNN/E2E 直接传入设备侧 torch.Tensor。
 
-`golden` / `third_party` 用**类**形式时（`__init__` + `__call__`），输入 tensor 在调用前已完成 H2D，出现在 `__init__` 还是 `__call__` 都行。绑定规则：
+### 类形式参数绑定（Impl class）
 
-- **参数名必须是算子输入/属性名**：`__init__`/`__call__` 所有参数（除 `self`/`**kwargs`）的并集 ⊆ `inputs ∪ attrs`，否则 `UnknownParamError`。
-- **喂给声明它的方法**：每个 input/attr 绑到声明它的方法；两边都声明同名参数则两边都喂。
-- **有默认值的参数可省略**：未传时用默认值（`def __call__(self, x, axis=-1)` 不传 axis 即用 -1）。
-- **`device` 是框架保留参数**：有输入 tensor 时算子内部用 `tensor.device`（不必声明）；无输入 tensor 的算子（`range`/`eye` 等）声明 `device` 参数，框架注入目标设备。
+> `golden` / `third_party` 用类形式时适用。框架按参数名从算子输入/属性池中按名匹配，分别传给 `__init__` 和 `__call__`。
+
+- **参数名必须匹配算子定义**：`__init__` 与 `__call__` 的参数（除 `self`、`**kwargs`）并集须为算子输入/属性的子集，不匹配则抛 `UnknownParamError`。
+- **按方法声明分发**：每个输入/属性只传给声明了该参数名的方法；若 `__init__` 和 `__call__` 同时声明同名参数，则两者都收到。
+- **带默认值的参数可不传**：算子定义中未出现的参数，若声明了默认值则取默认值（如 `def __call__(self, x, axis=-1)` 中 `axis` 未传时取 -1）。
+- **`device` 为框架保留参数**：有输入 tensor 时设备信息取自 `tensor.device`，无需声明；无输入 tensor 的算子（如 `range`/`eye`）可声明 `device` 参数，由框架注入目标设备。
 
 ```python
 class AddImpl:
@@ -73,7 +120,63 @@ class EyeImpl:
         return [torch.eye(self.n, device=self.device)]
 ```
 
-## 类命名
+`compare` / `pre_compare` 消费规则：
+
+- ACLNN 必须用 CSV 中的精确 `aclnn*` `api_name` 注册；Kernel 必须用 CSV 中的精确 raw `op_name` 注册。
+- Kernel 会对每个已启用的 dynamic、const 和 binary 模式分别调用 hook，关闭模式哨兵不进入 hook。
+- 需要读取当前或 replay 恢复输入时，compare 必须显式声明仅关键字参数 `compare_context`；仅声明 `**kwargs` 不会收到该参数。
+
+`customize_inputs` 自定义输入生成：
+
+- 参数名与算子定义一致，返回修改后的输入（结构与原输入一致）。
+- Kernel/GEIR 传入 numpy.ndarray，ACLNN/E2E 传入 torch.Tensor。
+- 若只需调整随机数据范围，可不写此字段，直接在 CSV 中设置 `input_data_ranges`。
+
+```python
+def customize_inputs(x, min_val, max_val, **kwargs):
+    if min_val[0] == max_val[0]:
+        min_val[0] = numpy.min(x)
+        max_val[0] = numpy.max(x)
+    return (x, min_val, max_val)
+```
+
+`tolerance` 精度标准：
+
+按 dtype 声明每个输出的精度比对标准。`standard` 字段只接受 2.1 官方标准：
+
+| standard 值 | 含义 | `--compare` 传参 |
+|-------------|------|------------------|
+| `stat_rel_err` | 统计相对误差（默认） | `stat_rel_err` |
+| `binary_equal` | 逐 bit 相等 | `binary`、`bin` |
+| `cross_check` | 交叉比对（需配合 `third_party`） | `cross_check` |
+| `quant` | 量化比对（待支持） | `requant` |
+| `isclose` | numpy.isclose 容差比对 | `close` |
+| `cosine` | 余弦相似度 | `cosine` |
+
+> 前四行为 2.1 官方标准，可写入 `Spec.tolerance`；`isclose` 和 `cosine` 为 CLI 框架增强，仅通过 `--compare` 指定。CLI 可用值列中的名字均可直接用于 `--compare`。
+
+`torch_graph` Graph 模式（仅 E2E）：
+
+声明一个 `torch.nn.Module` 子类，用于 E2E 的 Graph 模式构图测试。仅适用于 torch API。
+
+```python
+import torch.nn as nn
+
+class SoftmaxGraph(nn.Module):
+    def forward(self, x):
+        return torch.softmax(x, dim=-1)
+
+class TorchSoftmaxTestSpec:
+    torch_graph = SoftmaxGraph
+```
+
+`describe` 算子描述信息：
+
+返回算子的描述性信息（如约束、备注等），供框架展示。函数形式，返回 str。
+
+## 命名与注册
+
+### 类命名约定
 
 `op_name` → 类名 = `PascalCase + TestSpec`：
 
@@ -83,12 +186,21 @@ class EyeImpl:
 | `softmax_v2` | `SoftmaxV2TestSpec` |
 | `layer_norm` | `LayerNormTestSpec` |
 
-也可用 `__spec__` dict 显式注册：
+> 仅处理纯 snake_case（如 `softmax_v2` → `SoftmaxV2`）。对于已是 PascalCase 或含数字拼接的算子名（如 `BatchMatMul`、`matmul_3d`），需用 `__spec__` 显式注册。
+
+### `__spec__` 显式注册
 
 ```python
-# 值为类名字符串（非类对象）—— loader AST 扫描不 exec、spec 隔离 + 惰性 load；可写文件顶部
+# 值为类名字符串（非类对象）；可写在文件顶部
 __spec__ = {"abs": "AbsTestSpec"}
 ```
+
+### 文件与发现规则
+
+- **文件命名**：spec 文件名不以 `_` 开头，否则 loader 跳过该文件。
+- **静态索引**：首次加载时，loader 遍历目录下所有 `.py` 文件，通过 `ast.parse` 解析模块级 `__spec__` 赋值，构建 `op → (file, classname)` 索引。此过程仅做语法解析，不执行文件代码，无副作用。
+- **惰性执行**：仅当某个 op 被查询命中时，loader 才加载（exec）其所在的 spec 文件并缓存模块对象；未命中的文件在本次会话中不会被执行。
+- **`__spec__` 位置不限**：因索引阶段只读 AST 不执行代码，`__spec__` 写在文件顶部或底部效果相同；建议写在顶部，使 op→class 映射一目了然。
 
 ## 消费方式
 
@@ -102,12 +214,13 @@ meta = get_spec_class_meta("softmax_v2", ("path/to/specs",))   # {spec_file, cla
 
 ## 更多示例
 
-见 `examples/` 目录，从 `01_minimal.py` 开始渐进阅读。
+见 `examples/` 目录：
 
-## 命名与发现规则
-
-- **文件命名**: spec 文件不能以 `_` 开头（loader 跳过 `_` 前缀文件）
-- **`_snake_to_pascal` 限制**: 仅处理纯 snake_case（如 `softmax_v2` → `SoftmaxV2`）。对于已是 PascalCase 或含数字拼接的算子名（如 `BatchMatMul`、`matmul_3d`），请使用 `__spec__` dict 显式注册。
-- **AST 静态建索引**: loader 首次 `load` 时遍历所有 `.py` 文件，用 `ast.parse` 扫描模块级 `__spec__` 赋值（**不 exec 文件**），构建 `op → (file, classname)` 索引。扫描零副作用，spec 文件不会被提前执行。
-- **惰性 load**: 仅当某个 op 被 `load(op)` 命中、且索引解析出它的来源文件时，loader 才 `exec` 那一个文件（按文件缓存模块对象）。其余文件在本次会话里可能永不 exec。
-- **`__spec__` 可写顶部**: 因为扫描只读 AST、不 exec，`__spec__` 写在文件顶部（class 定义之前）和写在底部等价 —— 但写顶部更清晰，让阅读者一眼看到 op→class 映射。`01_minimal.py` 即采用顶部写法示范。
+| 文件 | 场景 |
+|------|------|
+| `01_minimal_golden.py` | 最简 golden（单个函数） |
+| `02_golden_three_forms.py` | golden 三种形式：字符串/函数/类 |
+| `03_third_party_three_forms.py` | third_party 三种形式：字符串/dict/类 |
+| `04_golden_tolerance_compare.py` | golden + tolerance + compare 组合 |
+| `05_pre_compare_customize_inputs.py` | pre_compare 两种模式、customize_inputs、多输出 compare |
+| `06_golden_multi_path.py` | 同一算子在 Kernel/ACLNN/E2E 不同路径下的 golden 编写 |

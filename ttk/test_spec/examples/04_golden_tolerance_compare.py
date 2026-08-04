@@ -1,6 +1,7 @@
 """Full example: golden + third_party + tolerance + compare"""
 
 import numpy
+import torch
 
 
 class LayerNormFullSpec:
@@ -8,10 +9,13 @@ class LayerNormFullSpec:
 
     # -- golden — function form --
     def golden(x, gamma, beta, *, epsilon=1e-5, **kwargs):
-        mean = numpy.mean(x, axis=-1, keepdims=True)
-        var = numpy.var(x, axis=-1, keepdims=True)
-        x_norm = (x - mean) / numpy.sqrt(var + epsilon)
-        return [x_norm * gamma + beta]
+        x_t = torch.from_numpy(x)
+        g_t = torch.from_numpy(gamma)
+        b_t = torch.from_numpy(beta)
+        mean = x_t.mean(dim=-1, keepdim=True)
+        var = x_t.var(dim=-1, keepdim=True, unbiased=False)
+        x_norm = (x_t - mean) / torch.sqrt(var + epsilon)
+        return [(x_norm * g_t + b_t).numpy()]
 
     # -- third_party — dict multi-vendor --
     class ThirdPartyImpl:
@@ -19,7 +23,6 @@ class LayerNormFullSpec:
             self.eps = epsilon
 
         def __call__(self, x, gamma, beta, **kwargs):
-            import torch
             return [torch.nn.functional.layer_norm(
                 x, [x.shape[-1]], gamma, beta, self.eps
             )]

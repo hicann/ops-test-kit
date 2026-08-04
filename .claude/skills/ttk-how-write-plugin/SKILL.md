@@ -18,31 +18,49 @@ description: 编写/定义算子测试规范（TestSpec，尚未跑或要新增 
 
 ## 快速上手
 
+以 `abs` 算子为例，四种测试路径的 spec 注册汇总：
+
+| 测试路径 | 注册名 | 参数名来源 | Golden 参数类型 | 无 spec 时默认行为 |
+|---------|--------|----------|----------------|-------------------|
+| Kernel | `abs`（CSV `op_name`） | 算子 `def.cpp` 形参 | numpy.ndarray | 无 golden，报 UNSUPPORTED |
+| GEIR | `abs`（CSV `op_name`） | 算子 `def.cpp` 形参 | numpy.ndarray | 无 golden，报 UNSUPPORTED |
+| ACLNN | `aclnnAbs`（CSV `api_name`） | `aclnn_abs.h` 形参 | torch.Tensor | 自动从 torch 同名 API 映射 |
+| E2E | `torch.abs`（CSV `api_name`） | torch API 签名 | torch.Tensor | 框架自动在 CPU 跑同 API 作 golden |
+
+> 注册名即 `get_spec_attr` 的查找 key：Kernel/GEIR 用 `op_name`，ACLNN/E2E 用 `api_name`。GEIR 复用 Kernel 的 spec，无需额外编写。
+
 ```python
-import numpy
+__spec__ = {"abs": "AbsTestSpec"}
 
-__spec__ = {"add": "AddTestSpec"}
+import torch
 
-class AddTestSpec:
-    """Add 算子测试规范（kernel 流程，numpy）"""
-    def golden(x, y, **kwargs):
-        return [numpy.add(x, y)]
+class AbsTestSpec:
+    """Abs 算子测试规范（kernel 流程）"""
+    def golden(x, **kwargs):
+        return [torch.abs(torch.from_numpy(x)).numpy()]
 
-    third_party = {"torch": "torch.add"}
-    tolerance = {"float32": {"standard": "stat_rel_err"}}
+    tolerance = {"float32": {"standard": "binary_equal"}}
 ```
 
 ## 数据类型
 
-- **`golden` / `customize_inputs`**：按消费流程区分（golden 在 CPU 计算真值，不下设备、不 H2D）
+- **`golden`**：在 CPU 计算真值，按测试路径区分入参类型
 
-  | 流程 | 数据类型 | 参数来源 |
-  |------|---------|---------|
-  | kernel | numpy.ndarray | 算子 def.cpp 输入参数 |
-  | aclnn | torch.Tensor | aclnn*.h 头文件参数 |
-  | e2e | torch.Tensor | torch API 参数 |
+  | 流程 | 入参类型 | 说明 |
+  |------|---------|------|
+  | Kernel / GEIR | numpy.ndarray | 需内部 `torch.from_numpy()` 转 torch 计算后 `.numpy()` 转回 |
+  | ACLNN / E2E | torch.Tensor | 已完成 H2D，直接用 torch 计算 |
+
+- **`third_party`**：调用三方 API（如 torch）
+
+  | 流程 | 入参类型 | 说明 |
+  |------|---------|------|
+  | Kernel / GEIR | torch.Tensor | 框架将 numpy 转 torch 后调用 |
+  | ACLNN / E2E | torch.Tensor | 直接传入设备侧 tensor |
 
 - **`compare` / `pre_compare`**：入参**始终为 numpy ndarray**（任何场景；框架把输出转 numpy 再传入）
+
+> 字符串形式（`golden = "torch.abs"`）由框架自动处理 numpy↔torch 转换，所有路径通用。
 
 > E2E 默认由框架在 CPU 跑同 API 作 Golden；如需控制输入范围用 CSV 的 `input_data_ranges` 字段。
 
@@ -53,18 +71,19 @@ class AddTestSpec:
 | 属性 | 用途 | 类型 |
 |------|------|------|
 | `golden` | CPU 真值 | `str` / 函数 / 类 |
-| `customize_inputs` | 自定义输入生成 | 函数 |
+| `customize_inputs` | 自定义输入 | 函数 |
 | `third_party` | 三方标杆 | `str` / `dict` / 类 |
 | `tolerance` | 精度标准 | `dict(dtype→{standard,...})` |
 | `compare` | 自定义比对 | 函数 |
 | `pre_compare` | 比对前处理 | 函数 |
 | `torch_graph` | Graph 模式 | `torch.nn.Module` 子类（仅 torch API） |
+| `describe` | 算子描述信息 | 函数 |
 
 ## golden 三形式
 
 | 形式 | 示例 | 适用 |
 |------|------|------|
-| 字符串 | `golden = "numpy.abs"` | 有直接对应 API |
+| 字符串 | `golden = "torch.abs"` | 有直接对应 API，框架自动处理类型转换 |
 | 函数 | `def golden(x, *, axis=-1):` | 中等复杂度 |
 | 类 | `golden = GoldenCls` | 需要状态管理（`__init__` + `__call__`） |
 
@@ -73,11 +92,11 @@ class AddTestSpec:
 ```python
 class AbsTestSpec:
     def golden(x, **kwargs):          # 写法1：类内方法
-        return [numpy.abs(x)]
+        return [torch.abs(torch.from_numpy(x)).numpy()]
 
 # 写法2：独立函数 + 类属性赋值
 def abs_golden(x, **kwargs):
-    return [numpy.abs(x)]
+    return [torch.abs(torch.from_numpy(x)).numpy()]
 
 class AbsTestSpec:
     golden = abs_golden
@@ -128,20 +147,32 @@ def customize_inputs(x, min_val, max_val, **kwargs):
 
 ```python
 def sort_golden(x, descending=False, **kwargs):
-    values = numpy.sort(x, axis=-1)
-    indices = numpy.argsort(x, axis=-1)
-    return [values, indices]
+    x_t = torch.from_numpy(x)
+    values, indices = torch.sort(x_t, descending=descending)
+    return [values.numpy(), indices.numpy()]
 ```
 
 ## tolerance（精度标准）
 
-按 dtype 声明 **2.1 官方标准**：`stat_rel_err` / `binary_equal` / `cross_check`（`quant` 待支持）。
+按 dtype 声明 `standard` 字段，只接受 2.1 官方标准：
+
+| standard 值 | 含义 | `--compare` 传参 |
+|-------------|------|------------------|
+| `stat_rel_err` | 统计相对误差（默认） | `stat_rel_err` |
+| `binary_equal` | 逐 bit 相等 | `binary`、`bin` |
+| `cross_check` | 交叉比对（需配合 `third_party`） | `cross_check` |
+| `quant` | 量化比对（待支持） | `requant` |
+| `isclose` | numpy.isclose 容差比对 | `close` |
+| `cosine` | 余弦相似度 | `cosine` |
+
+> 前四行可写入 `Spec.tolerance`；`isclose` 和 `cosine` 为 CLI 框架增强，仅通过 `--compare` 指定。
 
 ```python
-tolerance = {"float32": {"standard": "stat_rel_err"}}
+tolerance = {
+    "float32": {"standard": "stat_rel_err"},
+    "int8": {"standard": "binary_equal"},
+}
 ```
-
-> CLI 框架别名（`close`/`cosine`/`binary`/`requant`）走 `--compare`，不进 `Spec.tolerance`。
 
 ## 注册与发现
 
@@ -195,7 +226,16 @@ input_data_ranges,"((-1, 1), (0.1, 10))"
 
 ## 详细规范
 
-完整规范见 `ttk/test_spec/README.md`，渐进示例见 `ttk/test_spec/examples/`（从 `01_minimal.py` 开始）。
+完整规范见 `ttk/test_spec/README.md`，渐进示例见 `ttk/test_spec/examples/`：
+
+| 文件 | 场景 |
+|------|------|
+| `01_minimal_golden.py` | 最简 golden（单个函数） |
+| `02_golden_three_forms.py` | golden 三种形式：字符串/函数/类 |
+| `03_third_party_three_forms.py` | third_party 三种形式：字符串/dict/类 |
+| `04_golden_tolerance_compare.py` | golden + tolerance + compare 组合 |
+| `05_pre_compare_customize_inputs.py` | pre_compare 两种模式、customize_inputs、多输出 compare |
+| `06_golden_multi_path.py` | 同一算子在 Kernel/ACLNN/E2E 不同路径下的 golden 编写 |
 
 按流程的示例与 kwargs 字段：
 - kernel 流程（numpy）→ `references/kernel-plugin.md`

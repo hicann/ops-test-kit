@@ -1,6 +1,7 @@
 """Advanced: small-op composition, golden reusing bench, customize_inputs, pre_compare"""
 
 import numpy
+import torch
 
 
 class SoftmaxAdvancedSpec:
@@ -8,7 +9,6 @@ class SoftmaxAdvancedSpec:
 
     def golden(x, *, axis=-1, **kwargs):
         """golden reusing bench logic — calls ThirdPartyImpl on CPU tensor"""
-        import torch
         cpu_tensor = torch.from_numpy(x)
         result = SoftmaxAdvancedSpec._BenchImpl()(cpu_tensor, axis=axis)
         return [r.numpy() for r in result]
@@ -18,7 +18,6 @@ class SoftmaxAdvancedSpec:
             self.axis = axis
 
         def __call__(self, x, *, axis=None, **kwargs):
-            import torch
             dim = axis if axis is not None else self.axis
             return [torch.nn.functional.softmax(x, dim=dim)]
 

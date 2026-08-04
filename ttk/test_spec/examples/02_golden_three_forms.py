@@ -1,17 +1,21 @@
-"""golden in three forms: string / function / class"""
+"""golden in three forms: string / function / class
 
-import numpy
+kernel 流程 golden 收到 numpy.ndarray，需内部转 torch 计算后转回 numpy。
+ACLNN/E2E 流程 golden 直接收到 torch.Tensor，无需转换。
+"""
+
+import torch
 
 
 class AbsStrSpec:
-    """Form 1: string — framework auto-maps. Simplest, for ops with direct numpy API."""
-    golden = "numpy.abs"
+    """Form 1: string — framework auto-maps. Simplest, for ops with direct API."""
+    golden = "torch.abs"
 
 
 class AbsFuncSpec:
     """Form 2: function — params before * are inputs, after * are attrs."""
     def golden(x, **kwargs):
-        return [numpy.abs(x)]
+        return [torch.abs(torch.from_numpy(x)).numpy()]
 
 
 class _AbsGolden:
@@ -20,10 +24,10 @@ class _AbsGolden:
         self.low_precision = kwargs.get("low_precision", False)
 
     def __call__(self, x, **kwargs):
-        result = numpy.abs(x)
+        result = torch.abs(torch.from_numpy(x))
         if self.low_precision:
-            result = result.astype(numpy.float16)
-        return [result]
+            result = result.to(torch.float16)
+        return [result.numpy()]
 
 
 class AbsClassSpec:
