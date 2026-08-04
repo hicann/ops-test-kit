@@ -255,6 +255,14 @@ class AclInterface:
             # as_strided 产生的 DummyArray，取其内部的 ndarray
             if hasattr(np_storage.base, '__array_interface__'):
                 np_storage = numpy.asarray(np_storage.base)
+                # np.asarray 会将 as_strided 产生的 DummyArray 转为 ndarray，
+                # 但会丢失自定义 dtype（如 float4_e2m1 变为 |V1），导致后续
+                # _flatten_numpy_array 无法识别 4bit 类型并调用 pack_4bits。
+                # 因此需要用原始 tensor 的 dtype 重新 view，恢复正确的 dtype。
+                # 仅在 4bit 类型（int4/float4）且 dtype 丢失时才恢复，避免影响其他 dtype。
+                if ('int4' in str(np_tensor.dtype) or 'float4' in str(np_tensor.dtype)) \
+                        and 'int4' not in str(np_storage.dtype) and 'float4' not in str(np_storage.dtype):
+                    np_storage = np_storage.view(np_tensor.dtype)
                 break
             np_storage = np_storage.base
 
