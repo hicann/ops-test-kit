@@ -63,6 +63,8 @@ ACLNN_ERROR_DESC_DICT = {
     561119: "ACLNN_ERR_INNER_STATIC_BLOCK_DIM_INVALID",
 }
 
+ACL_ERROR_REPEAT_INITIALIZE = 100002
+
 
 class AclInterface:
     """
@@ -88,6 +90,7 @@ class AclInterface:
         # map aclTensor* -> device_mem_addr only
         self._acl_tensor_to_device_mem: Dict[int, ctypes.c_void_p] = {}
         self._acl_inited: bool = False
+        self._owns_acl_runtime: bool = False
         self._device_id = None
         self._rts_interface = RTSInterface(camodel=camodel,
                                            short_soc_version=short_soc_version)
@@ -103,7 +106,9 @@ class AclInterface:
         return self._device_id
 
     @staticmethod
-    def parse_error(acl_ret: ctypes.c_uint64, api_name: str, extra_info: str):
+    def parse_error(
+            acl_ret: ctypes.c_uint64, api_name: str, extra_info: str,
+            accepted_errors=()):
         # Convert aclnnStatus to int if received ctypes object
         if isinstance(acl_ret, ctypes.c_uint64):
             acl_ret = acl_ret.value
@@ -112,7 +117,7 @@ class AclInterface:
         else:
             raise TypeError("Invalid acl_ret type %s for %s" % (str(type(acl_ret)), str(acl_ret)))
         # Success
-        if acl_ret == 0x0:
+        if acl_ret == 0x0 or acl_ret in accepted_errors:
             logging.debug(f"Acl API Call {api_name}() Success, {extra_info}")
             return
         # Fail
@@ -158,7 +163,10 @@ class AclInterface:
         self._release_acl_memory()
         if hasattr(self, "_rts_interface") and self._rts_interface is not None:
             self._rts_interface.reset(skip_rt_intf=True)
-        self._acl_reset_device()
+        if self._owns_acl_runtime:
+            self._acl_reset_device()
+        else:
+            self._device_id = None
 
     def set_float_overflow_mode(self, mode: int):
         self._rts_interface.set_float_overflow_mode(mode)
@@ -514,13 +522,18 @@ class AclInterface:
 
     def _acl_init(self):
         if not self._acl_inited:
-            self._acl_api_call("aclInit", None, None)
+            status = self._api_call(
+                "ACL", "aclInit", None, None,
+                accepted_errors=(ACL_ERROR_REPEAT_INITIALIZE,),
+            )
             self._acl_inited = True
+            self._owns_acl_runtime = status == 0
 
     def _acl_finalize(self):
-        if self._acl_inited:
+        if self._acl_inited and self._owns_acl_runtime:
             self._acl_api_call("aclFinalize", None)
-            self._acl_inited = False
+        self._acl_inited = False
+        self._owns_acl_runtime = False
 
     def _acl_set_device(self, device_id: int):
         self._acl_api_call("aclrtSetDevice", f"on device {device_id}",
@@ -560,7 +573,9 @@ class AclInterface:
                       f"costs {round(time.time() - start_time, 3)} seconds")
         return ctypes.c_void_p(rt_ptr)
 
-    def _api_call(self, kind: str, api_name: str, extra_log: Optional[str], *api_args):
+    def _api_call(
+            self, kind: str, api_name: str, extra_log: Optional[str],
+            *api_args, accepted_errors=()):
         if extra_log is None:
             extra_log = ""
         if kind == "ACL":
@@ -574,8 +589,13 @@ class AclInterface:
         start_time = time.time()
         api.restype = ctypes.c_uint64
         rt_error = api(*api_args)
-        self.parse_error(rt_error, api_name,
-                         f"{extra_log} costs {round(time.time() - start_time, 3)} seconds")
+        self.parse_error(
+            rt_error,
+            api_name,
+            f"{extra_log} costs {round(time.time() - start_time, 3)} seconds",
+            accepted_errors=accepted_errors,
+        )
+        return rt_error
 
     def _on_exit(self):
         self.reset()
@@ -610,4 +630,3 @@ class AclInterface:
 
     def _get_opbase_dll(self, api_name):
         return getattr(self._opbase_dll, api_name)
-
