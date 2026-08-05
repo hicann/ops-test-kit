@@ -25,6 +25,7 @@ import logging
 import traceback
 import re
 import subprocess
+import importlib
 import multiprocessing as mp
 import numpy
 from enum import Enum, auto
@@ -171,6 +172,47 @@ def on_exit():
         atexit._run_exitfuncs()
 
 
+def _preload_plugin_frameworks(plugin_path):
+    """Pre-import heavy frameworks (tensorflow/torch) declared in plugin files.
+
+    CANN tbe native libs conflict with TensorFlow C extensions when tbe is
+    loaded first (SIGSEGV). Importing TF/torch BEFORE tbe avoids the clash.
+    Scan plugin .py for import statements (any scope) and pre-load matching frameworks.
+    """
+    import ast
+    from pathlib import Path
+
+    framework_names = {"tensorflow", "torch"}
+    to_load = set()
+    if not plugin_path:
+        return
+    paths = plugin_path if isinstance(plugin_path, (list, tuple)) else (plugin_path,)
+    for p in paths:
+        p = Path(p) if not isinstance(p, Path) else p
+        files = [p] if p.is_file() else (list(p.rglob("*.py")) if p.is_dir() else [])
+        for py_file in files:
+            try:
+                tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            except (OSError, SyntaxError):
+                continue
+            for node in ast.walk(tree):
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    names = [node.module]
+                for name in names:
+                    root = name.split(".")[0]
+                    if root in framework_names:
+                        to_load.add(root)
+    for fw in to_load:
+        try:
+            importlib.import_module(fw)
+            logging.debug(f"Pre-imported {fw} before tbe to avoid native lib conflict")
+        except Exception as e:
+            logging.warning(f"Pre-import {fw} failed (will try lazy import later): {e}")
+
+
 def worker_bootstrap(global_storage):
     """Worker 进程初始化：设全局存储 + 加载配置 + 日志 + 随机种子。
 
@@ -184,6 +226,7 @@ def worker_bootstrap(global_storage):
     default_logging_config(file_handler=global_storage.logging_to_file)
     if global_storage.random_seed:
         numpy.random.seed(global_storage.random_seed)
+    _preload_plugin_frameworks(getattr(global_storage, "plugin_path", None))
 
 
 def intermediate_func(pipe: "mp.connection.Connection", global_storage) -> NoReturn:
