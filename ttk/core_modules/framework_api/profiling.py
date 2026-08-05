@@ -600,9 +600,10 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
         _profiling_print(testcase, backend, dev_id, switches)
 
         process_ctx.notify_status("OnEagerProfiling")
-        result_nps, perf = _execute_eager(
-            testcase, backend, dev_id, switches, plan,
-            resolved, is_tensor_method, is_inplace, raw_inputs)
+        if not getattr(switches, 'aclgraph_enabled', False):
+            result_nps, perf = _execute_eager(
+                testcase, backend, dev_id, switches, plan,
+                resolved, is_tensor_method, is_inplace, raw_inputs)
         if graph_enabled:
             if getattr(switches, 'aclgraph_enabled', False):
                 process_ctx.notify_status("OnGraphAclgraph")
@@ -630,6 +631,8 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
                 reference_outputs = graph_cst_nps
             if reference_outputs is None:
                 reference_outputs = graph_dyn_nps
+            if reference_outputs is None:
+                reference_outputs = graph_aclgraph_nps
             golden_nps = manual_case.load_goldens(references=reference_outputs)
             _dump_goldens(testcase, golden_nps, switches)
         except Exception as exc:
@@ -642,7 +645,6 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
 
     if result_nps is None:
         return_struct.eager_precision = "NO_OUTPUT"
-        return_struct.precision_status = "FAIL"
         if not graph_enabled:
             return
     else:
