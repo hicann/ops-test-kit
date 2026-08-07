@@ -20,7 +20,7 @@ import os
 import logging
 import time
 from multiprocessing.context import BaseContext
-from typing import Optional, Set, Any
+from typing import Optional, Iterable, Any
 
 # Third-Party Packages
 from .compilation import compilation_process
@@ -49,7 +49,7 @@ class OpProfileObject(ProfileObject):
         """ return all result titles as per current command options """
         return ProfilingReturnStructure.get_titles()
 
-    def init_tasks(self, testcases: Set[TestcaseOp]):
+    def init_tasks(self, testcases: Iterable[TestcaseOp]):
         for case in testcases:
             case.kb_pid = self.kb.get_pid()
         grouped_testcases = TestcaseOp.hash_cases_to_groups(testcases)

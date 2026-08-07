@@ -12,7 +12,7 @@
 """
 FrameworkApiProfileObject — ProfileObject implementation for framework_api tests.
 """
-from typing import Set, Any
+from typing import Iterable, Any
 
 from ttk.core_modules.infra.profile_object import ProfileObject
 from ttk.core_modules.infra.task import TaskA, TaskType
@@ -36,7 +36,7 @@ class FrameworkApiProfileObject(ProfileObject):
     def possible_result_titles(self) -> tuple:
         return FrameworkApiReturnStructure.get_titles()
 
-    def init_tasks(self, testcases: Set[TestcaseBase]):
+    def init_tasks(self, testcases: Iterable[TestcaseBase]):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
         for testcase in testcases:

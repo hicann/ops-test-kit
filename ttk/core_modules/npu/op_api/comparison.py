@@ -118,7 +118,7 @@ class Comparator:
                 except RuntimeError:
                     logging.error(
                         f"torch.as_strided failed. storage_shape={t_storage.shape} "
-                        f"view_shape={v_shape}, view_stride={v_shape}, view_offset={v_offset}"
+                        f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}"
                     )
                     raise
             else:

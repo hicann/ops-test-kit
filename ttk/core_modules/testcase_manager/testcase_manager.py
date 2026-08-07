@@ -54,7 +54,7 @@ class UniversalTestcaseFactory:
         # testcase instance
         self.testcase_instance: Optional[TestcaseBase] = None
         # testcase.
-        self.testcases: Set[TestcaseBase] = set()
+        self.testcases: List[TestcaseBase] = []
         self._skip_validate = skip_validate
 
         set_process_name("TestcaseManager")
@@ -66,7 +66,7 @@ class UniversalTestcaseFactory:
         set_process_name()
         set_thread_name()
 
-    def get(self) -> Set[TestcaseBase]:
+    def get(self) -> List[TestcaseBase]:
         """
         Get all testcases
         :return:
@@ -481,7 +481,7 @@ class UniversalTestcaseFactory:
             if not self._skip_validate:
                 testcase_struct.validate()
             if testcase_struct not in self.testcases:
-                self.testcases.add(testcase_struct)
+                self.testcases.append(testcase_struct)
                 if testcase_struct.testcase_name in testcase_names:
                     testcase_struct.testcase_name = self._rename_duplicate_case_name(
                         testcase_struct.testcase_name, testcase_struct.op_name, testcase_names
@@ -495,4 +495,4 @@ class UniversalTestcaseFactory:
             all_indexes = random.sample(
                 tuple(range(len(self.testcases))), k=get_global_storage().selected_testcase_count
             )
-            self.testcases = set([testcase for idx, testcase in enumerate(self.testcases) if idx in all_indexes])
+            self.testcases = [testcase for idx, testcase in enumerate(self.testcases) if idx in all_indexes]

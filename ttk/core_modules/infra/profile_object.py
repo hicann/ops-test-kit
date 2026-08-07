@@ -20,7 +20,7 @@ import copy
 import logging
 from abc import ABCMeta, abstractmethod
 from multiprocessing.context import BaseContext
-from typing import Optional, Set, Tuple, Any
+from typing import Optional, Iterable, Tuple, Any
 
 # Third-Party Packages
 from ...utilities import get_global_storage, list_exclude
@@ -49,7 +49,7 @@ class ProfileObject(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def init_tasks(self, testcases: Set[TestcaseBase]):
+    def init_tasks(self, testcases: Iterable[TestcaseBase]):
         pass
 
     @abstractmethod

@@ -29,7 +29,7 @@ import time
 import zipfile
 from abc import ABCMeta, abstractmethod
 from multiprocessing.context import BaseContext
-from typing import Optional, IO, Any, Dict, List, Tuple, Set
+from typing import Optional, IO, Any, Dict, List, Tuple
 
 # Third-Party Packages
 from .process_group import ProcessGroup
@@ -48,7 +48,7 @@ class InstanceBase(metaclass=ABCMeta):
 
     def __init__(self):
         self.switches = get_global_storage()
-        self.flatten_testcases: Set[TestcaseBase] = set()
+        self.flatten_testcases: List[TestcaseBase] = []
         self.total_case_count = 0
         self.completed_case_count = 0
         # Final summary counters (driven by precision_status in result rows)
@@ -593,14 +593,14 @@ class InstanceBase(metaclass=ABCMeta):
                 with zipped_file.open(file) as real_file:
                     testcase_manager = UniversalTestcaseFactory(
                         io.TextIOWrapper(real_file, encoding="UTF-8", newline=''))
-                    self.flatten_testcases = self.flatten_testcases.union(testcase_manager.get())
+                    self.flatten_testcases.extend(testcase_manager.get())
                     list_append_union(self.case_original_headers, testcase_manager.header)
 
     def _load_case_from_csv(self, testcase_path: str):
         logging.info("Reading normal csv testcases...")
         with open(testcase_path, newline='', encoding='utf-8') as file:
             testcase_manager = UniversalTestcaseFactory(file)
-            self.flatten_testcases = self.flatten_testcases.union(testcase_manager.get())
+            self.flatten_testcases.extend(testcase_manager.get())
             list_append_union(self.case_original_headers, testcase_manager.header)
 
     def _get_head_commit_id(self):

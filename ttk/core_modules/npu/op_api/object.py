@@ -17,7 +17,7 @@ __all__ = ["ApiProfileObject"]
 
 # Standard Packages
 from multiprocessing.context import BaseContext
-from typing import Set, Any
+from typing import Iterable, Any
 
 # Third-Party Packages
 from .profiling_structure import ApiProfilingReturnStructure
@@ -38,7 +38,7 @@ class ApiProfileObject(ProfileObject):
         """ return all possible result titles """
         return ApiProfilingReturnStructure.get_titles()
 
-    def init_tasks(self, testcases: Set[TestcaseBase]):
+    def init_tasks(self, testcases: Iterable[TestcaseBase]):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
         for t in testcases:

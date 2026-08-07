@@ -18,7 +18,7 @@ __all__ = ["TestcaseOp"]
 # Standard Packages
 import logging
 import numpy
-from typing import Dict, Optional, Tuple, Union, Set
+from typing import Dict, Optional, Tuple, Union, Iterable
 
 try:
     from collections.abc import Callable
@@ -584,7 +584,7 @@ class TestcaseOp(TestcaseBase):
         return "dyn_perf_us", "cst_perf_us", "bin_perf_us", "perf_status", "precision_status"
 
     @staticmethod
-    def hash_cases_to_groups(testcases: Set["TestcaseOp"]) -> Dict[int, set]:
+    def hash_cases_to_groups(testcases: Iterable["TestcaseOp"]) -> Dict[int, set]:
         testcase_group_dict = {}
         if not testcases:
             return testcase_group_dict

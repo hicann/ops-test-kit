@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 
-from typing import Any, Set
+from typing import Any, Iterable
 
 from ttk.core_modules.infra.profile_object import ProfileObject
 from ttk.core_modules.infra.task import TaskA, TaskType
@@ -24,7 +24,7 @@ class GeirProfileObject(ProfileObject):
         is_binary = getattr(self.switches, "geir_binary", False)
         return GeirReturnStructure.get_titles(is_binary=is_binary)
 
-    def init_tasks(self, testcases: Set[TestcaseBase]):
+    def init_tasks(self, testcases: Iterable[TestcaseBase]):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
 
