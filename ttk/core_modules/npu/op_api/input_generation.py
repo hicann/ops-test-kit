@@ -118,6 +118,8 @@ class InputGenerator:
         flat_shapes = self._ctx.flat_tensor_view_shapes
 
         ranges = self._ctx.flat_input_data_ranges or ()
+        base_seed = getattr(self._switche, 'random_seed', None)
+        batch_seed = getattr(self._ctx, 'batch_seed', None)
         for idx, vs in enumerate(flat_shapes):
             if vs is None:
                 arrays.append(None)
@@ -128,6 +130,9 @@ class InputGenerator:
             dtype = get(dtypes, idx)
             if idx not in self._ctx.pure_output_indexes:
                 # pure input & inplace output
+                if base_seed and batch_seed is not None:
+                    # batch consistency compare different case support same shape tensor has same value
+                    numpy.random.seed(base_seed + idx)  
                 rd = RandomData(dtype, ss, data_range)
                 arrays.append(rd.generate(self._switch.input_distribution))
                 actual_data_ranges.append(tuple(rd.data_range))
