@@ -11,7 +11,6 @@
 output generation method for Universal testcases
 """
 
-
 __all__ = ["GoldenGenerator"]
 
 
@@ -24,6 +23,7 @@ import logging
 import numpy
 import os
 from typing import Sequence
+
 try:
     from collections.abc import Callable
 except ImportError:
@@ -74,7 +74,7 @@ class GoldenGenerator:
 
         # golden_arrays now is flatten.
         # maybe torch or numpy arrays.
-        self._ctx.golden_tensors = golden_arrays[:len(self._ctx.output_tensor_indexes)]
+        self._ctx.golden_tensors = golden_arrays[: len(self._ctx.output_tensor_indexes)]
 
     def _load_golden_from_file(self):
         # TODO
@@ -89,22 +89,21 @@ class GoldenGenerator:
 
     def _call_custom_golden(self, gf):
         plan = self._ctx.get_param_plan()
-        args, extra_attrs = plan.build_args(self._ctx.tensors, self._ctx.scalars,
-                               self._ctx.attributes)
+        args, extra_attrs = plan.build_args(self._ctx.tensors, self._ctx.scalars, self._ctx.attributes)
         kwargs = {
-            'short_soc_version': self._switch.short_soc_version,
-            'testcase_name': self._ctx.testcase_name,
-            'tensor_dtypes': self._ctx.tensor_dtypes,
-            'tensor_formats': self._ctx.tensor_formats,
-            'scalar_dtypes': self._ctx.scalar_dtypes,
-            'use_torch': self._ctx.is_torch_dtype_support(),
+            "short_soc_version": self._switch.short_soc_version,
+            "testcase_name": self._ctx.testcase_name,
+            "tensor_dtypes": self._ctx.tensor_dtypes,
+            "tensor_formats": self._ctx.tensor_formats,
+            "scalar_dtypes": self._ctx.scalar_dtypes,
+            "use_torch": self._ctx.is_torch_dtype_support(),
         }
-        if hasattr(self._ctx, 'batch_axis') and self._ctx.batch_axis is not None:
-            kwargs['batch_axis'] = self._ctx.batch_axis
-        if hasattr(self._ctx, 'batch_slice_info') and self._ctx.batch_slice_info is not None:
-            kwargs['batch_slice_info'] = self._ctx.batch_slice_info
-        if hasattr(self._ctx, 'batch_seed') and self._ctx.batch_seed is not None:
-            kwargs['batch_seed'] = self._ctx.batch_seed
+        if hasattr(self._ctx, "batch_axis") and self._ctx.batch_axis is not None:
+            kwargs["batch_axis"] = self._ctx.batch_axis
+        if hasattr(self._ctx, "batch_slice_info") and self._ctx.batch_slice_info is not None:
+            kwargs["batch_slice_info"] = self._ctx.batch_slice_info
+        if hasattr(self._ctx, "batch_seed") and self._ctx.batch_seed is not None:
+            kwargs["batch_seed"] = self._ctx.batch_seed
         kwargs.update(extra_attrs)
         results = gf(*args, **kwargs)
         return results
@@ -113,15 +112,15 @@ class GoldenGenerator:
         """Build a name→value pool (input tensors + scalars + attrs) for class-form bind_by_name."""
         pool = {}
         op_api_info = OpApiInfoKeeper().info_of(self._ctx.api_name)
-        tensors = self._package_golden_tensors()       # input tensors only (pure outputs skipped)
+        tensors = self._package_golden_tensors()  # input tensors only (pure outputs skipped)
         if op_api_info is not None:
             # op_api_info.tensors includes input+output names; skip pure_output_indexes to align with tensors.
             # NOTE: TensorList (one param → multiple flat tensors) may break this 1:1 alignment.
-            names = [n for i, n in enumerate(op_api_info.tensors)
-                     if i not in self._ctx.pure_output_indexes]
-            assert len(names) == len(tensors), \
-                f"_named_values alignment mismatch: {len(names)} names vs {len(tensors)} tensors " \
+            names = [n for i, n in enumerate(op_api_info.tensors) if i not in self._ctx.pure_output_indexes]
+            assert len(names) == len(tensors), (
+                f"_named_values alignment mismatch: {len(names)} names vs {len(tensors)} tensors "
                 f"(possible TensorList nesting — name count != flat tensor count)"
+            )
             for name, t in zip(names, tensors):
                 pool[name] = t
             for idx, s in enumerate(self._ctx.flatten_scalars or ()):
@@ -174,8 +173,7 @@ class GoldenGenerator:
         return golden_arrays
 
     def _import_golden_funcs(self):
-        golden_func = get_plugin_function(
-            self._ctx.api_name, 'golden', 'aclnn', self._switch.plugin_path)
+        golden_func = get_plugin_function(self._ctx.api_name, "golden", "aclnn", self._switch.plugin_path)
         if golden_func:
             return golden_func
         golden_func = ACLNN_GOLDEN.get(self._ctx.api_name, None)
@@ -196,20 +194,22 @@ class GoldenGenerator:
             # will throw RuntimeError when absent.
             torch_api = None
         if torch_api and isinstance(torch_api, Callable):
-            logging.debug(f"Using function [{getattr(torch_module, '__name__')}.{snake_name}] "
-                            f"for api {self._ctx.api_name} to generate golden.")
+            logging.debug(
+                f"Using function [{getattr(torch_module, '__name__')}.{snake_name}] "
+                f"for api {self._ctx.api_name} to generate golden."
+            )
             return torch_api
         else:
             if snake_name.startswith("inplace_"):
-                return self._find_torch_api(torch_module, snake_name[len("inplace_"):])
+                return self._find_torch_api(torch_module, snake_name[len("inplace_") :])
             elif snake_name.endswith("_scalar"):
-                return self._find_torch_api(torch_module, snake_name[:-len("_scalar")])
+                return self._find_torch_api(torch_module, snake_name[: -len("_scalar")])
             elif snake_name.endswith("_tensor"):
-                return self._find_torch_api(torch_module, snake_name[:-len("_tensor")])
+                return self._find_torch_api(torch_module, snake_name[: -len("_tensor")])
             elif snake_name.endswith("_v2"):
-                return self._find_torch_api(torch_module, snake_name[:-len("_v2")])
+                return self._find_torch_api(torch_module, snake_name[: -len("_v2")])
             elif snake_name.endswith("s"):
-                return self._find_torch_api(torch_module, snake_name[:-len("s")])
+                return self._find_torch_api(torch_module, snake_name[: -len("s")])
             elif not snake_name.startswith("_"):  # _add_relu
                 return self._find_torch_api(torch_module, "_" + snake_name)
             else:
@@ -217,6 +217,7 @@ class GoldenGenerator:
 
     def _auto_import_from_torch(self, snake_name: str):
         import torch
+
         # torch api first
         torch_api = self._find_torch_api(torch, snake_name)
         if torch_api is not None:
@@ -228,7 +229,8 @@ class GoldenGenerator:
 
     @contextlib.contextmanager
     def _golden_mode(self):
-        if self._switch.golden_mode != "Promote":
+        mode = getattr(self._ctx, "golden_mode_override", None) or self._switch.golden_mode
+        if mode != "Promote":
             yield
         else:
             yield from self._promote_dtype()
@@ -242,6 +244,7 @@ class GoldenGenerator:
         NotImplementedError (numpy<->torch conversion not yet implemented).
         Bare generator (no @contextlib.contextmanager) — _golden_mode uses yield from."""
         import torch
+
         ctx = self._ctx
         t_dtypes = list(ctx.flat_tensor_dtypes)
         s_dtypes = list(ctx.flat_scalar_dtypes or ())
@@ -257,7 +260,8 @@ class GoldenGenerator:
                 if not is_torch_native_dtype(d) and is_torch_native_dtype(tgt):
                     raise NotImplementedError(
                         f"ACLNN promote crosses torch native boundary {d}->{tgt}: "
-                        f"numpy<->torch conversion not implemented")
+                        f"numpy<->torch conversion not implemented"
+                    )
         # backup nested attrs (flat caches go through invalidate, not backup)
         bak = (ctx.tensors, ctx.tensor_dtypes, ctx.scalars, ctx.scalar_dtypes)
         try:
@@ -290,14 +294,14 @@ class GoldenGenerator:
             ctx.invalidate_flat_cache("tensors", "tensor_dtypes", "scalars", "scalar_dtypes")
 
     def _package_golden_torch_kwargs(self):
-        DEL_KWARG = ('impl_mode', 'cube_math_type')
+        DEL_KWARG = ("impl_mode", "cube_math_type")
         # torch api both support keepdims & keepdim.
         # but dim / dims diffs.
         RENAME_KWARG = {
-            'keep_dim': 'keepdim',
-            'keep_dims': 'keepdims',
-            'keepDims': 'keepdims',
-            'keepDim': 'keepdim',
+            "keep_dim": "keepdim",
+            "keep_dims": "keepdims",
+            "keepDims": "keepdims",
+            "keepDim": "keepdim",
         }
         kwargs_camel = copy.deepcopy(self._ctx.attributes)
         op_api_info: OpApiInfo = OpApiInfoKeeper().info_of(self._ctx.api_name)
@@ -314,18 +318,18 @@ class GoldenGenerator:
                 kwargs_snake[v] = kwargs_snake[k]
                 del kwargs_snake[k]
         for ele in DEL_KWARG:
-            if  ele in kwargs_snake:
+            if ele in kwargs_snake:
                 del kwargs_snake[ele]
         # dtype from aclDType to torchDtype automatically
-        if 'dtype' in kwargs_snake:
-            if isinstance(kwargs_snake['dtype'], int):
-                kwargs_snake['dtype'] = acl_to_torch_dtype([kwargs_snake['dtype']])[0]
-        if 'dim' in kwargs_snake:
-            if isinstance(kwargs_snake['dim'], list):
-                kwargs_snake['dim'] = tuple(kwargs_snake['dim'])
-        if 'dims' in kwargs_snake:
-            if isinstance(kwargs_snake['dims'], list):
-                kwargs_snake['dims'] = tuple(kwargs_snake['dims'])
+        if "dtype" in kwargs_snake:
+            if isinstance(kwargs_snake["dtype"], int):
+                kwargs_snake["dtype"] = acl_to_torch_dtype([kwargs_snake["dtype"]])[0]
+        if "dim" in kwargs_snake:
+            if isinstance(kwargs_snake["dim"], list):
+                kwargs_snake["dim"] = tuple(kwargs_snake["dim"])
+        if "dims" in kwargs_snake:
+            if isinstance(kwargs_snake["dims"], list):
+                kwargs_snake["dims"] = tuple(kwargs_snake["dims"])
         return kwargs_snake
 
     def _package_golden_tensors(self) -> list:

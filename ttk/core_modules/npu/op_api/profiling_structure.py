@@ -11,12 +11,12 @@
 Op Api NPU Profiling Structure
 """
 
-
 __all__ = ["ApiProfilingReturnStructure", "ApiComparisonResult", "ApiProfilingResult"]
 
 
 # Standard Packages
 from typing import Optional, Union, Tuple, List
+
 # Third-party Packages
 from ...testcase_manager import TestcaseAclnn
 from ....utilities import get_global_storage
@@ -27,9 +27,16 @@ class ApiProfilingResult:
     RTS Profiling output
     """
 
-    def __init__(self, success: bool, api_prof=None, op_prof=None,
-                 output_bytes=(None,), output_view_shapes=(None,),
-                 oob: str = "UNKNOWN", deterministic_status: Optional[str] = None):
+    def __init__(
+        self,
+        success: bool,
+        api_prof=None,
+        op_prof=None,
+        output_bytes=(None,),
+        output_view_shapes=(None,),
+        oob: str = "UNKNOWN",
+        deterministic_status: Optional[str] = None,
+    ):
         self.api_prof: Union[str, List[dict]] = api_prof
         self.op_prof: Union[str, List[dict]] = op_prof
         self.output_bytes: Optional[Union[tuple, list]] = output_bytes
@@ -40,15 +47,13 @@ class ApiProfilingResult:
 
     @classmethod
     def fail(cls, fail_result: str) -> "ApiProfilingResult":
-        return cls(False, fail_result, fail_result,
-                   (fail_result,), ("NO_OUTPUT",),
-                   "UNKNOWN")
+        return cls(False, fail_result, fail_result, (fail_result,), ("NO_OUTPUT",), "UNKNOWN")
 
     @property
     def oob_status(self):
         if not self.oob:
             return "PASS"
-        oob_lst = self.oob.split(',')
+        oob_lst = self.oob.split(",")
         return "FAIL" if "FAIL" in oob_lst else "PASS"
 
     def failed(self):
@@ -56,9 +61,7 @@ class ApiProfilingResult:
 
 
 class ApiComparisonResult:
-    __slots__ = ("precision",
-                 "passed",
-                 "metrics")
+    __slots__ = ("precision", "passed", "metrics")
 
     def __init__(self, default_value):
         self.precision = default_value
@@ -81,13 +84,14 @@ class ApiProfilingReturnStructure:
     """
 
     __slots__ = (
-                 "precision",
-                 "precision_status",
-                 "precision_metrics",
-                 "batch_consistency_id",
-                 "deterministic_status",
-                 "soc"
-                 )
+        "precision",
+        "precision_status",
+        "precision_metrics",
+        "batch_consistency_id",
+        "deterministic_status",
+        "soc",
+        "xpu_metrics",
+    )
 
     def __init__(self, default_value=None):
         self.precision = default_value
@@ -98,27 +102,28 @@ class ApiProfilingReturnStructure:
         self.batch_consistency_id = default_value
         self.deterministic_status = default_value
         self.soc = get_global_storage().dev_plat
+        self.xpu_metrics = {}
 
     # noinspection DuplicatedCode
-    def construct(self, context: TestcaseAclnn,
-                  compare_result: ApiComparisonResult):
+    def construct(self, context: TestcaseAclnn, compare_result: ApiComparisonResult):
         """Construct the structure with context"""
         # Check prof_results and construct one if necessary
         self.precision = compare_result.precision
         self.precision_status = compare_result.passed
         self.precision_metrics = compare_result.metrics or {}
-        self.batch_consistency_id = getattr(context, 'batch_consistency_id', None)
+        self.batch_consistency_id = getattr(context, "batch_consistency_id", None)
+        self.xpu_metrics = getattr(context, "xpu_metrics", {})
 
     @staticmethod
     def get_titles() -> tuple:
         return ApiProfilingReturnStructure.__slots__
 
     def pick_data(self, titles: Tuple[str]) -> tuple:
-        """ Pick result data via titles """
+        """Pick result data via titles"""
         data = []
         for t in titles:
             if hasattr(self, t):
                 data.append(getattr(self, t))
             else:
-                data.append('')
+                data.append("")
         return tuple(data)

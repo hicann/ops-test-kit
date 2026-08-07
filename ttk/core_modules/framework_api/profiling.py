@@ -13,6 +13,7 @@
 Main profiling process function for framework_api.
 This function runs in a subprocess — must be top-level importable.
 """
+
 import gc
 import json
 import logging
@@ -32,7 +33,8 @@ from ttk.core_modules.tbe_logging import default_logging_config
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
 from ttk.utilities import dump_to_file, waiting_for_memory
-from ttk.utilities.container_utils import get_global_storage
+from ttk.utilities.container_utils import apply_as_list, get_global_storage
+from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
 
 from .api_resolver import resolve_api
 from .backends import get_backend
@@ -46,12 +48,13 @@ from .result import FrameworkApiReturnStructure
 
 WARMUP_COUNT = 5
 
+
 def _print_get_shape(arr):
-    return arr.shape if hasattr(arr, 'shape') else arr
+    return arr.shape if hasattr(arr, "shape") else arr
 
 
 def _print_get_dtype(arr):
-    return arr.dtype if hasattr(arr, 'dtype') else arr
+    return arr.dtype if hasattr(arr, "dtype") else arr
 
 
 def _profiling_print(testcase, backend, dev_id, switches):
@@ -110,12 +113,14 @@ def _profiling_end_print(testcase, return_struct, golden_nps=None, switches=None
             name_width = min(max_name_len + 2, separator_len - total_fixed_width)
             header = f"{label} Kernels" if label else ""
             table = f"\n{header}\n{separator}\n" if header else f"\n{separator}\n"
-            table += f"{'Name':<{name_width}}{'avg':<{avg_width}}{'max':<{max_width}}{'min':<{min_width}}{calls_header}\n"
+            table += (
+                f"{'Name':<{name_width}}{'avg':<{avg_width}}{'max':<{max_width}}{'min':<{min_width}}{calls_header}\n"
+            )
             table += f"{separator}\n"
             for k in kernels:
                 name = k.get("name", "")
                 if len(name) > name_width:
-                    name = name[:name_width-2] + ".."
+                    name = name[: name_width - 2] + ".."
                 avg = f"{k.get('avg', 0):.3f}"
                 max_val = f"{k.get('max', 0):.3f}"
                 min_val = f"{k.get('min', 0):.3f}"
@@ -138,7 +143,11 @@ def _profiling_end_print(testcase, return_struct, golden_nps=None, switches=None
 
     lines = []
     has_eager = return_struct.eager_precision is not None
-    has_graph = return_struct.graph_cst_precision is not None or return_struct.graph_dyn_precision is not None or return_struct.graph_aclgraph_precision is not None
+    has_graph = (
+        return_struct.graph_cst_precision is not None
+        or return_struct.graph_dyn_precision is not None
+        or return_struct.graph_aclgraph_precision is not None
+    )
 
     if has_eager:
         lines.append(f"EAGER:       {return_struct.eager_precision}")
@@ -190,6 +199,36 @@ def _profiling_end_print(testcase, return_struct, golden_nps=None, switches=None
     logging.info("\n".join(msg_parts))
 
 
+def _e2e_xpu_inputs(testcase, raw_inputs):
+    """raw_inputs (flat numpy) re-nested, pure outputs filtered → top-level input slots."""
+    dist = testcase.tensor_list_dist
+    nested = apply_as_list(list(raw_inputs), dist) if dist else list(raw_inputs)
+    out_indices = set(testcase.output_tensor_indexes or ())
+    inputs = []
+    real_idx = 0
+    for slot in nested:
+        if real_idx not in out_indices:
+            inputs.append(slot)
+        real_idx += len(slot) if isinstance(slot, (list, tuple)) else 1
+    return inputs
+
+
+def _e2e_xpu_input_names(testcase):
+    """Input tensor param names (pure outputs filtered) for XPU schema."""
+    plan = testcase.get_param_plan()
+    if plan is None:
+        return []
+    out_indices = set(testcase.output_tensor_indexes or ())
+    names = []
+    real_idx = 0
+    for p in plan.overload_params:
+        if p.is_tensor_like and p.name != "out":
+            if real_idx not in out_indices:
+                names.append(p.name)
+            real_idx += 1
+    return names
+
+
 def profile_process(testcase, device_grant_events, device_granted_indices, dev_id):
     """
     Framework API profiling process — executed in subprocess.
@@ -208,8 +247,7 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
     process_ctx.change_name(testcase.testcase_name)
 
     if switches.single_testcase_log_mode:
-        default_logging_config(file_handler=switches.logging_to_file,
-                               testcase_name=testcase.testcase_name)
+        default_logging_config(file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name)
 
     return_struct = FrameworkApiReturnStructure()
 
@@ -226,8 +264,7 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
     backend = _get_or_create_backend(switches)
     _ensure_deterministic_level_e2e(process_ctx, backend, testcase)
     try:
-        _do_profile(testcase, backend, device_grant_events, device_granted_indices,
-                    dev_id, switches, return_struct)
+        _do_profile(testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct)
     except Exception as e:
         logging.error(f"[{testcase.testcase_name}] Error: {e}", exc_info=True)
         return_struct.eager_precision = str(e)
@@ -250,8 +287,7 @@ def _get_or_create_backend(switches):
 def _dump_data(data, file_name, switches):
     """Dump data to file using global dump config."""
     dump_path = os.getenv("NPU_DUMP_PATH") or switches.root_path
-    dump_to_file(data, dump_path, file_name,
-                 file_format=switches.dump_config.file_format)
+    dump_to_file(data, dump_path, file_name, file_format=switches.dump_config.file_format)
 
 
 def _dump_inputs(testcase, raw_inputs, switches):
@@ -296,23 +332,30 @@ def _dump_on_fail(testcase, raw_inputs, result_nps, golden_nps, switches):
         if isinstance(golden, np.ndarray):
             _dump_data(golden, f"{testcase.testcase_name}_golden_{idx}", switches)
 
+
 def _ensure_deterministic_level_e2e(process_ctx, backend, testcase):
-    """e2e 模式：设置 NPU 确定性计算级别
-    """
-    det_level = getattr(get_global_storage(), 'deterministic_level', 0)
-    if not getattr(testcase, 'batch_axis', None) and not getattr(testcase, 'batch_slice_info', None) and not getattr(testcase, 'batch_seed', None):
+    """e2e 模式：设置 NPU 确定性计算级别"""
+    det_level = getattr(get_global_storage(), "deterministic_level", 0)
+    if (
+        not getattr(testcase, "batch_axis", None)
+        and not getattr(testcase, "batch_slice_info", None)
+        and not getattr(testcase, "batch_seed", None)
+    ):
         return
     if process_ctx.storage.get("_deterministic_level_set"):
         return
     if backend.is_npu():
         try:
             import torch_npu
+
             torch_npu.npu.set_deterministic_level(det_level)
-            logging.info(f"NPU deterministic level set to {det_level} "
-                         f"(e2e batch consistency for {testcase.testcase_name})")
+            logging.info(
+                f"NPU deterministic level set to {det_level} (e2e batch consistency for {testcase.testcase_name})"
+            )
         except Exception as e:
             logging.warning(f"Failed to set deterministic level: {e}")
     process_ctx.storage["_deterministic_level_set"] = True
+
 
 def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf) or raises."""
@@ -321,7 +364,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     run_count = switches.run_time
     profiler = get_profiler(testcase.api_name, backend)
 
-    inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
+    inplace_input_indexes = getattr(testcase, "inplace_input_indexes", None) or ()
     inplace_input_backups = {}
     if inplace_input_indexes:
         for idx in inplace_input_indexes:
@@ -332,8 +375,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         inplace_backup = args[0].clone() if args and args[0] is not None else None
         if is_tensor_method:
             if args[0] is not None:
-                result = call_api(testcase.api_name, plan.overload_index,
-                                  getattr(args[0], resolved), args[1:], kwargs)
+                result = call_api(testcase.api_name, plan.overload_index, getattr(args[0], resolved), args[1:], kwargs)
             else:
                 result = None
         else:
@@ -387,14 +429,11 @@ def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
     """Generate golden outputs and dump them. Returns golden_nps list."""
     process_ctx = get_process_context()
     process_ctx.notify_status("OnGenGolden")
-    if (switches.golden_mode == "Disable" or
-            str(testcase.golden_api).lower() == "disable"):
+    if switches.golden_mode == "Disable" or str(testcase.golden_api).lower() == "disable":
         golden_nps = ["SUPPRESSED"]
     else:
         try:
-            golden_nps = generate_golden(
-                testcase, raw_inputs, switches.plugin_path, switches,
-                backend.alias())
+            golden_nps = generate_golden(testcase, raw_inputs, switches.plugin_path, switches, backend.alias())
         except Exception:
             logging.exception(f"[{testcase.testcase_name}] Golden generation failure")
             golden_nps = ["GOLDEN_FAILURE"]
@@ -417,13 +456,19 @@ def _try_custom_compare(testcase, result_nps, golden_nps, switches):
     return try_custom_compare(testcase, result_nps, golden_nps, func)
 
 
-def _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct):
+def _evaluate_eager_precision(
+    testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct, third_parties=None
+):
     """Compare eager mode results against golden, set return_struct. Returns True if pass."""
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in result_nps)
     tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
-    standards = resolve_tolerance(tolerance, testcase.flat_precision_tolerances,
-                                  testcase.flat_absolute_precision, output_dtypes,
-                                  switches.compare_method)
+    standards = resolve_tolerance(
+        tolerance,
+        testcase.flat_precision_tolerances,
+        testcase.flat_absolute_precision,
+        output_dtypes,
+        switches.compare_method,
+    )
     try:
         custom_result = _try_custom_compare(testcase, result_nps, golden_nps, switches)
         if custom_result is not None:
@@ -431,8 +476,7 @@ def _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, swit
             metrics = {}
         else:
             precision_str, log_str, is_pass, metrics = compare(
-                result_nps, golden_nps, output_dtypes,
-                standards=standards, third_parties=None
+                result_nps, golden_nps, output_dtypes, standards=standards, third_parties=third_parties
             )
     except Exception:
         logging.exception(f"[{testcase.testcase_name}] Eager comparison failure")
@@ -449,7 +493,9 @@ def _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, swit
     return True
 
 
-def _evaluate_graph_precision(testcase, raw_inputs, graph_nps, golden_nps, switches, return_struct, mode, perf=None):
+def _evaluate_graph_precision(
+    testcase, raw_inputs, graph_nps, golden_nps, switches, return_struct, mode, perf=None, third_parties=None
+):
     """Compare graph mode results against golden.
 
     Args:
@@ -464,18 +510,22 @@ def _evaluate_graph_precision(testcase, raw_inputs, graph_nps, golden_nps, switc
 
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in graph_nps)
     tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
-    standards = resolve_tolerance(tolerance, testcase.flat_precision_tolerances,
-                                  testcase.flat_absolute_precision, output_dtypes,
-                                  switches.compare_method)
-    log_str, metrics = "", {}                  # try 前初始化（防 except 路径 NameError）
+    standards = resolve_tolerance(
+        tolerance,
+        testcase.flat_precision_tolerances,
+        testcase.flat_absolute_precision,
+        output_dtypes,
+        switches.compare_method,
+    )
+    log_str, metrics = "", {}  # try 前初始化（防 except 路径 NameError）
     try:
         custom_result = _try_custom_compare(testcase, graph_nps, golden_nps, switches)
         if custom_result is not None:
-            precision_str, log_str, is_pass = custom_result   # metrics 保持 {}
+            precision_str, log_str, is_pass = custom_result  # metrics 保持 {}
         else:
             precision_str, log_str, is_pass, metrics = compare(
-                graph_nps, golden_nps, output_dtypes,
-                standards=standards, third_parties=None)
+                graph_nps, golden_nps, output_dtypes, standards=standards, third_parties=third_parties
+            )
     except Exception:
         logging.exception(f"Graph {mode} comparison failure")
         precision_str, log_str, is_pass = "COMPARE_FAILURE", "", False
@@ -489,11 +539,10 @@ def _evaluate_graph_precision(testcase, raw_inputs, graph_nps, golden_nps, switc
     return_struct.construct(precision_str, status, perf, mode=mode, metrics=metrics)
 
 
-def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
-                dev_id, switches, return_struct):
+def _do_profile(testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct):
     """Core profiling logic."""
     process_ctx = get_process_context()
-    return_struct.batch_consistency_id = getattr(testcase, 'batch_consistency_id', None)
+    return_struct.batch_consistency_id = getattr(testcase, "batch_consistency_id", None)
     plan = testcase.get_param_plan()
     if plan is None:
         return_struct.eager_precision = "PARAM_PLAN_FAILURE"
@@ -507,9 +556,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
         prepare_store = prepare_manual_data_store(testcase, "e2e", switches)
     except Exception as exc:
         logging.exception(f"[{testcase.testcase_name}] Manual data preparation failure")
-        return_struct.construct(
-            f"MANUAL_DATA_PREPARE_FAILURE: {exc}", "FAIL", None
-        )
+        return_struct.construct(f"MANUAL_DATA_PREPARE_FAILURE: {exc}", "FAIL", None)
         _profiling_end_print(testcase, return_struct, switches=switches)
         return
     if manual_mode != "prepare":
@@ -531,9 +578,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
     process_ctx.notify_status("OnGenInput")
     try:
         if manual_case is not None:
-            raw_inputs = generate_inputs(
-                testcase, switches, backend, plan, stored_inputs=manual_case.inputs
-            )
+            raw_inputs = generate_inputs(testcase, switches, backend, plan, stored_inputs=manual_case.inputs)
         else:
             raw_inputs = generate_inputs(testcase, switches, backend, plan)
     except Exception as exc:
@@ -553,9 +598,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
                 testcase.np_storages if testcase.np_storages is not None else raw_inputs,
                 "input",
             )
-            golden_nps = _generate_golden_data(
-                testcase, raw_inputs, switches, backend, dump=False
-            )
+            golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
             process_ctx.notify_status("OnWriteManualData")
             case_dir = prepare_store.write_case(
                 testcase,
@@ -566,9 +609,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
             )
         except Exception as exc:
             logging.exception(f"[{testcase.testcase_name}] Manual data preparation failure")
-            return_struct.construct(
-                f"MANUAL_DATA_PREPARE_FAILURE: {exc}", "FAIL", None
-            )
+            return_struct.construct(f"MANUAL_DATA_PREPARE_FAILURE: {exc}", "FAIL", None)
             _profiling_end_print(testcase, return_struct, switches=switches)
             return
         logging.info(f"[{testcase.testcase_name}] manual data prepared: {case_dir}")
@@ -577,11 +618,11 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
         return
 
     resolved, is_tensor_method = resolve_api(testcase.api_name)
-    is_inplace = resolved.endswith('_') if is_tensor_method else getattr(resolved, '__name__', '').endswith('_')
+    is_inplace = resolved.endswith("_") if is_tensor_method else getattr(resolved, "__name__", "").endswith("_")
 
-    graph_enabled = (switches.cst_switches.enabled
-                 or switches.dyn_switches.enabled
-                 or getattr(switches, 'aclgraph_enabled', False))
+    graph_enabled = (
+        switches.cst_switches.enabled or switches.dyn_switches.enabled or getattr(switches, "aclgraph_enabled", False)
+    )
 
     process_ctx.notify_status("OnAcquireLock")
     use_device = backend.use_device()
@@ -593,34 +634,65 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
     graph_dyn_perf = None
     graph_aclgraph_nps = None
     graph_aclgraph_perf = None
-    with DeviceLock(process_ctx, dev_id, use_device=use_device,
-                    grant_event=device_grant_events.get(dev_id),
-                    granted_idx=device_granted_indices.get(dev_id)):
+    with DeviceLock(
+        process_ctx,
+        dev_id,
+        use_device=use_device,
+        grant_event=device_grant_events.get(dev_id),
+        granted_idx=device_granted_indices.get(dev_id),
+    ):
         process_ctx.notify_status("OnProfilingPrint")
         _profiling_print(testcase, backend, dev_id, switches)
 
         process_ctx.notify_status("OnEagerProfiling")
-        if not getattr(switches, 'aclgraph_enabled', False):
+        if not getattr(switches, "aclgraph_enabled", False):
             result_nps, perf = _execute_eager(
-                testcase, backend, dev_id, switches, plan,
-                resolved, is_tensor_method, is_inplace, raw_inputs)
+                testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs
+            )
         if graph_enabled:
-            if getattr(switches, 'aclgraph_enabled', False):
+            if getattr(switches, "aclgraph_enabled", False):
                 process_ctx.notify_status("OnGraphAclgraph")
                 graph_aclgraph_nps, graph_aclgraph_perf = _execute_graph(
-                    testcase, backend, dev_id, switches, plan,
-                    resolved, is_tensor_method, is_inplace, raw_inputs,
-                    dynamic=False, is_aclgraph=True)
+                    testcase,
+                    backend,
+                    dev_id,
+                    switches,
+                    plan,
+                    resolved,
+                    is_tensor_method,
+                    is_inplace,
+                    raw_inputs,
+                    dynamic=False,
+                    is_aclgraph=True,
+                )
             if switches.cst_switches.enabled:
                 process_ctx.notify_status("OnGraphCst")
                 graph_cst_nps, graph_cst_perf = _execute_graph(
-                    testcase, backend, dev_id, switches, plan,
-                    resolved, is_tensor_method, is_inplace, raw_inputs, dynamic=False)
+                    testcase,
+                    backend,
+                    dev_id,
+                    switches,
+                    plan,
+                    resolved,
+                    is_tensor_method,
+                    is_inplace,
+                    raw_inputs,
+                    dynamic=False,
+                )
             if switches.dyn_switches.enabled:
                 process_ctx.notify_status("OnGraphDyn")
                 graph_dyn_nps, graph_dyn_perf = _execute_graph(
-                    testcase, backend, dev_id, switches, plan,
-                    resolved, is_tensor_method, is_inplace, raw_inputs, dynamic=True)
+                    testcase,
+                    backend,
+                    dev_id,
+                    switches,
+                    plan,
+                    resolved,
+                    is_tensor_method,
+                    is_inplace,
+                    raw_inputs,
+                    dynamic=True,
+                )
     gc.collect()
 
     if manual_case is not None:
@@ -643,9 +715,51 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
     else:
         golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend)
 
+    # E2E does NOT set golden_mode_override (unlike kernel/aclnn): E2E golden
+    # runs the same torch API on CPU, where bfloat16 is computed natively and
+    # reliably. kernel/aclnn need Promote because numpy/handwritten goldens
+    # cannot compute bfloat16 accurately. cross_check's ratio-based metric is
+    # also tolerant to golden's own bf16 rounding (shared in numerator/denominator).
+    third_parties = None
+    xpu_results = None
+    if golden_nps and not any(isinstance(g, str) for g in golden_nps):
+        tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
+        output_dtypes = tuple(str(g.dtype) if g is not None and hasattr(g, "dtype") else None for g in golden_nps)
+        standards = resolve_tolerance(
+            tolerance,
+            testcase.flat_precision_tolerances,
+            testcase.flat_absolute_precision,
+            output_dtypes,
+            switches.compare_method,
+        )
+        need_3party = any(s.token == "cross_check" for s in standards)
+        from ttk.remote.client import xpu_mode_of, collect_third_party
+
+        xpu_mode = xpu_mode_of(switches, need_3party)
+        if xpu_mode:
+            process_ctx.notify_status("OnXpuProfiling")
+            _, third_parties, xpu_results = collect_third_party(
+                op_name=testcase.api_name,
+                inputs=_e2e_xpu_inputs(testcase, raw_inputs),
+                input_names=_e2e_xpu_input_names(testcase),
+                op_type=None,
+                attributes=testcase.attributes or {},
+                testcase_name=testcase.testcase_name,
+                switches=switches,
+                need_data=need_3party,
+            )
+            if need_3party and third_parties is None:
+                logging.warning(
+                    "[%s] cross_check configured but no third_party output "
+                    "(no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE",
+                    testcase.testcase_name,
+                )
+    return_struct.xpu_metrics = _format_xpu_metrics(xpu_results) if xpu_results else {}
+
     if result_nps is None:
         return_struct.eager_precision = "NO_OUTPUT"
         if not graph_enabled:
+            _profiling_end_print(testcase, return_struct, golden_nps, switches)
             return
     else:
         process_ctx.notify_status("OnDumpOutput")
@@ -653,22 +767,54 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
 
         _apply_pre_compare(testcase, result_nps, golden_nps, switches)
         process_ctx.notify_status("OnEagerComparison")
-        _evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct)
+        _evaluate_eager_precision(
+            testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct, third_parties
+        )
 
     if graph_enabled:
         process_ctx.notify_status("OnGraphComparison")
-        if getattr(switches, 'aclgraph_enabled', False) and graph_aclgraph_nps:
+        if getattr(switches, "aclgraph_enabled", False) and graph_aclgraph_nps:
             _dump_outputs(testcase, graph_aclgraph_nps, switches)
         if switches.cst_switches.enabled and graph_cst_nps:
             _dump_outputs(testcase, graph_cst_nps, switches)
         if switches.dyn_switches.enabled and graph_dyn_nps:
             _dump_outputs(testcase, graph_dyn_nps, switches)
-        if getattr(switches, 'aclgraph_enabled', False):
-            _evaluate_graph_precision(testcase, raw_inputs, graph_aclgraph_nps, golden_nps, switches, return_struct, "aclgraph", graph_aclgraph_perf)
+        if getattr(switches, "aclgraph_enabled", False):
+            _evaluate_graph_precision(
+                testcase,
+                raw_inputs,
+                graph_aclgraph_nps,
+                golden_nps,
+                switches,
+                return_struct,
+                "aclgraph",
+                graph_aclgraph_perf,
+                third_parties,
+            )
         if switches.cst_switches.enabled:
-            _evaluate_graph_precision(testcase, raw_inputs, graph_cst_nps, golden_nps, switches, return_struct, "static", graph_cst_perf)
+            _evaluate_graph_precision(
+                testcase,
+                raw_inputs,
+                graph_cst_nps,
+                golden_nps,
+                switches,
+                return_struct,
+                "static",
+                graph_cst_perf,
+                third_parties,
+            )
         if switches.dyn_switches.enabled:
-            _evaluate_graph_precision(testcase, raw_inputs, graph_dyn_nps, golden_nps, switches, return_struct, "dynamic", graph_dyn_perf)
+            _evaluate_graph_precision(
+                testcase,
+                raw_inputs,
+                graph_dyn_nps,
+                golden_nps,
+                switches,
+                return_struct,
+                "dynamic",
+                graph_dyn_perf,
+                third_parties,
+            )
 
     _profiling_end_print(testcase, return_struct, golden_nps, switches)
     del raw_inputs

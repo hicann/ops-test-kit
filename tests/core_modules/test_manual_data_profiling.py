@@ -396,7 +396,7 @@ def test_aclnn_replay_skips_input_and_golden_plugins(monkeypatch, tmp_path):
             self.context.scalars = stored_scalars
 
     class Comparator:
-        def __init__(self, context):
+        def __init__(self, context, standards=None, third_parties=None):
             self.context = context
 
         def compare(self):

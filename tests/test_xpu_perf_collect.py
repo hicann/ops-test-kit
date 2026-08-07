@@ -68,31 +68,31 @@ def test_xpu_mode_bitwise_or(monkeypatch):
 
 
 def test_validate_xpu_perf_raises_when_no_remote(monkeypatch):
-    from ttk.cli import kernel as kernel_mod
+    from ttk.cli import common as common_mod
     from ttk.utilities.classes import SWITCHES
-    monkeypatch.setattr(kernel_mod, "is_remote_configured", lambda: False)
+    monkeypatch.setattr(common_mod, "is_remote_configured", lambda: False)
     sw = SWITCHES()
     sw.xpu_perf = True
     with pytest.raises(RuntimeError, match="xpu-perf"):
-        kernel_mod._validate_xpu_perf_precondition(sw)
+        common_mod.validate_xpu_perf_precondition(sw)
 
 
 def test_validate_xpu_perf_ok_when_remote(monkeypatch):
-    from ttk.cli import kernel as kernel_mod
+    from ttk.cli import common as common_mod
     from ttk.utilities.classes import SWITCHES
-    monkeypatch.setattr(kernel_mod, "is_remote_configured", lambda: True)
+    monkeypatch.setattr(common_mod, "is_remote_configured", lambda: True)
     sw = SWITCHES()
     sw.xpu_perf = True
-    kernel_mod._validate_xpu_perf_precondition(sw)  # 不抛
+    common_mod.validate_xpu_perf_precondition(sw)  # 不抛
 
 
 def test_validate_xpu_perf_skip_when_not_enabled(monkeypatch):
-    from ttk.cli import kernel as kernel_mod
+    from ttk.cli import common as common_mod
     from ttk.utilities.classes import SWITCHES
-    monkeypatch.setattr(kernel_mod, "is_remote_configured", lambda: False)
+    monkeypatch.setattr(common_mod, "is_remote_configured", lambda: False)
     sw = SWITCHES()
     sw.xpu_perf = False
-    kernel_mod._validate_xpu_perf_precondition(sw)  # 没开 → 不校验、不抛
+    common_mod.validate_xpu_perf_precondition(sw)  # 没开 → 不校验、不抛
 
 
 def test_extract_third_party_fail_closed():

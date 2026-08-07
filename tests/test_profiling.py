@@ -470,7 +470,7 @@ class TestPreCompareEndToEnd:
         captured = {}
 
         def fake_evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps,
-                                     switches, perf, return_struct):
+                                     switches, perf, return_struct, third_parties=None):
             captured["result"] = list(result_nps)
             captured["golden"] = list(golden_nps)
 
@@ -495,7 +495,8 @@ class TestPreCompareEndToEnd:
         fake_result = [np.array([1.0, 2.0])]
         fake_golden = [np.array([10.0, 20.0])]
 
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=pre_compare), \
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr",
+                   side_effect=lambda api, attr, path: pre_compare if attr == "pre_compare" else None), \
              patch.object(prof_module, "get_process_context"), \
              patch.object(prof_module, "resolve_api", return_value=(MagicMock(__name__="add"), False)), \
              patch.object(prof_module, "generate_inputs", return_value=[np.array([1.0])]), \

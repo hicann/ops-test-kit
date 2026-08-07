@@ -3,9 +3,8 @@
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 
 from ttk.cli.bridge import args_to_switches, run_with_switches
-from ttk.cli.common import add_common_args
+from ttk.cli.common import add_common_args, validate_xpu_perf_precondition
 from ttk.cli.device import add_device_args
-from ttk.remote import is_remote_configured
 
 
 def register_geir_command(subparsers):
@@ -50,11 +49,6 @@ def _add_geir_args(parser):
     )
 
 
-def _validate_xpu_perf_precondition(sw):
-    if sw.xpu_perf and not is_remote_configured():
-        raise RuntimeError("--xpu-perf requires remote XPU config (ttk.conf.yaml or --config), but none is configured.")
-
-
 def _handle_geir(args):
     sw = args_to_switches(args)
     sw.test_mode = "geir"
@@ -72,5 +66,5 @@ def _handle_geir(args):
         sw.geir_binary = val
     else:
         sw.geir_binary = False
-    _validate_xpu_perf_precondition(sw)
+    validate_xpu_perf_precondition(sw)
     run_with_switches(sw)

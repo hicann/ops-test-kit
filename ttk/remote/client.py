@@ -146,6 +146,14 @@ def dispatch_xpu(
 
     specs = [build_spec(p, tp, spec_file, spec_class) for p in providers]
 
+    # E2E: op_name is a dotted API path (e.g. "torch.add"); use it as api
+    # when no explicit third_party is configured, so the server resolves it
+    # via resolve_callable (dotted) instead of _resolve_3party_api (snake_case).
+    if tp is None and op_name and "." in op_name:
+        for s in specs:
+            if s.api is None:
+                s.api = op_name
+
     from ttk.remote.xpu_collector import collect_xpu_results
 
     _tmp_root = os.path.join(getattr(switches, "root_path", os.getcwd()), ".ttk", "xpu_tmp")

@@ -55,6 +55,8 @@ from ...aclnn import AclInterface, OpApiInfoKeeper, OpApiInfo
 from ...msprof import MsProfiler, TtkMsProfType
 from ....utilities import get_global_storage, get, waiting_for_memory, frameless_table_print
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file, extract_plog_errors
+from ....test_spec import get_spec_attr
+from ..op.profiling_structure import _format_xpu_metrics
 
 
 def __profiling_end_print(context: TestcaseAclnn, compare_result: ApiComparisonResult):
@@ -519,6 +521,31 @@ def do_profiling(context: TestcaseAclnn, dev_id: int) -> ApiProfilingResult:
             os.chdir(switches.root_path)
 
 
+def _aclnn_xpu_inputs(context: TestcaseAclnn) -> list:
+    """np_storages re-nested, pure outputs filtered → top-level input slots for XPU.
+
+    np_storages is flat (one per flat tensor index). Re-nest by tensor_list_dist
+    to get top-level slots, then skip pure_output_indexes (inplace outputs kept).
+    """
+    dist = context.tensor_list_dist
+    nested = apply_as_list(list(context.np_storages), dist) if dist else list(context.np_storages)
+    inputs = []
+    real_idx = 0
+    for slot in nested:
+        if real_idx not in context.pure_output_indexes:
+            inputs.append(slot)
+        real_idx += len(slot) if isinstance(slot, (list, tuple)) else 1
+    return inputs
+
+
+def _aclnn_xpu_input_names(context: TestcaseAclnn) -> list:
+    """Input tensor param names (pure outputs filtered) for XPU schema."""
+    op_api_info = OpApiInfoKeeper().info_of(context.api_name)
+    if op_api_info is None:
+        return []
+    return [n for i, n in enumerate(op_api_info.tensors) if i not in context.pure_output_indexes]
+
+
 def __dump_to_file(data, file_name: str, dtype: Optional[str] = None):
     switches = get_global_storage()
     file_path = os.getenv("NPU_DUMP_PATH") or switches.root_path
@@ -666,33 +693,79 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
         __profiling_print(context, dev_id)
         process_ctx.notify_status("OnProfiling")
         context.prof_result = do_profiling(context, dev_id)
+    standards = None
+    need_3party = False
     if context.prof_result.failed():
         context.golden_tensors = context.prof_result.api_prof
     else:
-        if manual_case is not None:
-            try:
-                process_ctx.notify_status("OnLoadManualGolden")
-                context.golden_tensors = manual_case.load_goldens(
-                    shapes=context.prof_result.output_view_shapes,
-                    dtypes=context.flat_output_dtypes,
-                )
-                __dump_golden(context)
-            except Exception as exc:
-                logging.exception("Manual golden loading failure")
-                return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
-        else:
-            process_ctx.notify_status("OnGenGolden")
-            # noinspection PyBroadException
-            try:
-                GoldenGenerator(context).gen()
-                process_ctx.notify_status("OnDumpGoldenDataIfRequired")
-                __dump_golden(context)
-            except:
-                logging.exception("Golden data generation failure")
+        from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
+
+        plugin_path = getattr(switches, "plugin_path", None)
+        tolerance = get_spec_attr(context.api_name, "tolerance", plugin_path)
+        output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
+        standards = _resolve_tolerance(
+            tolerance,
+            context.flat_precision_tolerances,
+            context.flat_absolute_precision,
+            output_dtypes,
+            switches.compare_method,
+        )
+        need_3party = any(s.token == "cross_check" for s in standards)
+        if need_3party:
+            context.golden_mode_override = "Promote"
+        try:
+            if manual_case is not None:
+                try:
+                    process_ctx.notify_status("OnLoadManualGolden")
+                    context.golden_tensors = manual_case.load_goldens(
+                        shapes=context.prof_result.output_view_shapes,
+                        dtypes=context.flat_output_dtypes,
+                    )
+                    __dump_golden(context)
+                except Exception as exc:
+                    logging.exception("Manual golden loading failure")
+                    return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+            else:
+                process_ctx.notify_status("OnGenGolden")
+                # noinspection PyBroadException
+                try:
+                    GoldenGenerator(context).gen()
+                    process_ctx.notify_status("OnDumpGoldenDataIfRequired")
+                    __dump_golden(context)
+                except:
+                    logging.exception("Golden data generation failure")
+        finally:
+            if hasattr(context, "golden_mode_override"):
+                del context.golden_mode_override
     process_ctx.notify_status("OnDumpOutputDataIfRequired")
     __dump_output(context)
+    third_parties = None
+    xpu_results = None
+    if not context.prof_result.failed():
+        from ttk.remote.client import xpu_mode_of, collect_third_party
+
+        xpu_mode = xpu_mode_of(switches, need_3party)
+        if xpu_mode:
+            process_ctx.notify_status("OnXpuProfiling")
+            _, third_parties, xpu_results = collect_third_party(
+                op_name=context.api_name,
+                inputs=_aclnn_xpu_inputs(context),
+                input_names=_aclnn_xpu_input_names(context),
+                op_type=None,
+                attributes=context.pure_attrs,
+                testcase_name=context.testcase_name,
+                switches=switches,
+                need_data=need_3party,
+            )
+            if need_3party and third_parties is None:
+                logging.warning(
+                    "[%s] cross_check configured but no third_party output "
+                    "(no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE",
+                    context.testcase_name,
+                )
+    context.xpu_metrics = _format_xpu_metrics(xpu_results) if xpu_results else {}
     process_ctx.notify_status("OnComparison")
-    compare_result = Comparator(context).compare()
+    compare_result = Comparator(context, standards, third_parties).compare()
     if compare_result.passed != "PASS" and switches.dump_config.dump_on_fail:
         __dump_on_fail(context)
     process_ctx.notify_status("OnReturning")

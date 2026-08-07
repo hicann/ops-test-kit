@@ -13,6 +13,7 @@
 Result data structures for framework_api profiling.
 Follows TTK convention: __slots__-based class with get_titles() and pick_data().
 """
+
 import json
 
 
@@ -43,6 +44,7 @@ class FrameworkApiReturnStructure:
         "graph_aclgraph_kernel_details",
         "precision_metrics",
         "batch_consistency_id",
+        "xpu_metrics",
     )
 
     def __init__(self):
@@ -69,6 +71,7 @@ class FrameworkApiReturnStructure:
         self.graph_aclgraph_kernel_details = None
         self.batch_consistency_id = None
         self.precision_metrics = {}
+        self.xpu_metrics = {}
 
     @staticmethod
     def get_titles():
@@ -108,13 +111,23 @@ class FrameworkApiReturnStructure:
                 kd = profile_result.kernel_details
                 setattr(self, f"{prefix}cpu_perf_us", f"{kd.total_cpu_us:.3f}")
                 setattr(self, f"{prefix}kernel_count", str(len(kd.kernels)))
-                setattr(self, f"{prefix}kernel_details", json.dumps(
-                    [{"name": k.name, "avg": round(k.avg_us, 3),
-                      "max": round(k.max_us, 3), "min": round(k.min_us, 3),
-                      "calls": k.calls}
-                      for k in kd.kernels],
-                    ensure_ascii=False
-                ))
+                setattr(
+                    self,
+                    f"{prefix}kernel_details",
+                    json.dumps(
+                        [
+                            {
+                                "name": k.name,
+                                "avg": round(k.avg_us, 3),
+                                "max": round(k.max_us, 3),
+                                "min": round(k.min_us, 3),
+                                "calls": k.calls,
+                            }
+                            for k in kd.kernels
+                        ],
+                        ensure_ascii=False,
+                    ),
+                )
 
         if metrics:
             mode_key = "eager" if mode is None else f"graph_{self._MODE_PREFIX[mode]}"

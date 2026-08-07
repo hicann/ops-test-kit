@@ -11,7 +11,6 @@
 Comparison for op api
 """
 
-
 __all__ = ["Comparator"]
 
 
@@ -32,21 +31,28 @@ from .profiling_structure import ApiComparisonResult
 
 
 class Comparator:
-    def __init__(self, context: TestcaseAclnn):
+    def __init__(self, context: TestcaseAclnn, standards=None, third_parties=None):
         self._ctx = context
+        self._standards = standards
+        self._third_parties = third_parties
         plugin_path = getattr(get_global_storage(), "plugin_path", None)
-        self._tolerance = get_spec_attr(
-            context.api_name, "tolerance", plugin_path)
-        self._pre_compare = get_spec_attr(
-            context.api_name, "pre_compare", plugin_path)
-        self._custom_compare = get_spec_attr(
-            context.api_name, "compare", plugin_path)
+        self._tolerance = get_spec_attr(context.api_name, "tolerance", plugin_path)
+        self._pre_compare = get_spec_attr(context.api_name, "pre_compare", plugin_path)
+        self._custom_compare = get_spec_attr(context.api_name, "compare", plugin_path)
 
     def compare(self):
-        compare_method = get_global_storage().compare_method
-        output_dtypes = resolve_custom_numpy_dtypes(self._ctx.flat_output_dtypes)
-        standards = resolve_tolerance(self._tolerance, self._ctx.flat_precision_tolerances,
-                                      self._ctx.flat_absolute_precision, output_dtypes, compare_method)
+        if self._standards is not None:
+            standards = self._standards
+        else:
+            compare_method = get_global_storage().compare_method
+            output_dtypes = resolve_custom_numpy_dtypes(self._ctx.flat_output_dtypes)
+            standards = resolve_tolerance(
+                self._tolerance,
+                self._ctx.flat_precision_tolerances,
+                self._ctx.flat_absolute_precision,
+                output_dtypes,
+                compare_method,
+            )
         self._output_bytes_to_tensors()
         try:
             logging_data = "\n"
@@ -54,8 +60,7 @@ class Comparator:
             outputs = self._ctx.prof_result.output_bytes
             goldens = self._ctx.golden_tensors
             apply_pre_compare(self._ctx, outputs, goldens, self._pre_compare)
-            custom_result = try_custom_compare(
-                self._ctx, outputs, goldens, self._custom_compare)
+            custom_result = try_custom_compare(self._ctx, outputs, goldens, self._custom_compare)
             if custom_result is not None:
                 precision, _logging_data, passed = custom_result
                 metrics = {}
@@ -63,9 +68,10 @@ class Comparator:
                 precision, _logging_data, passed, metrics = compare(
                     outputs,
                     goldens,
-                    output_dtypes,
+                    resolve_custom_numpy_dtypes(self._ctx.flat_output_dtypes),
                     standards=standards,
-                    third_parties=None)
+                    third_parties=self._third_parties,
+                )
             logging_data += _logging_data
             logging.debugc(logging_data)
             passed = "PASS" if passed else "FAIL"
@@ -94,8 +100,8 @@ class Comparator:
             if self._ctx.is_torch_dtype_support():
                 # torch 路径
                 import torch
-                t_storage = numpy_to_torch_tensor(np_array,
-                                                  is_complex32=complex32)
+
+                t_storage = numpy_to_torch_tensor(np_array, is_complex32=complex32)
                 s_shape = self._ctx.flat_output_storage_shapes[idx]
                 t_storage = t_storage.reshape(s_shape)
                 v_shape = self._ctx.flat_output_view_shapes[idx]
@@ -110,12 +116,15 @@ class Comparator:
                     if ret_v_shape != tuple(v_shape):
                         outputs[idx] = outputs[idx].resize_(ret_v_shape)
                 except RuntimeError:
-                    logging.error(f"torch.as_strided failed. storage_shape={t_storage.shape} "
-                                  f"view_shape={v_shape}, view_stride={v_shape}, view_offset={v_offset}")
+                    logging.error(
+                        f"torch.as_strided failed. storage_shape={t_storage.shape} "
+                        f"view_shape={v_shape}, view_stride={v_shape}, view_offset={v_offset}"
+                    )
                     raise
             else:
                 # numpy 路径
                 from ttk.utilities.dtypes import np_as_strided_safe
+
                 s_shape = self._ctx.flat_output_storage_shapes[idx]
                 np_storage = np_array.reshape(s_shape)
                 v_shape = self._ctx.flat_output_view_shapes[idx]
@@ -135,6 +144,8 @@ class Comparator:
                     if ret_v_shape != tuple(v_shape):
                         outputs[idx] = outputs[idx].reshape(ret_v_shape)
                 except Exception:
-                    logging.error(f"numpy.as_strided failed. storage_shape={np_storage.shape} "
-                                  f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}")
+                    logging.error(
+                        f"numpy.as_strided failed. storage_shape={np_storage.shape} "
+                        f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}"
+                    )
                     raise

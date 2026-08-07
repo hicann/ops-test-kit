@@ -11,7 +11,6 @@
 API Testcase Structure
 """
 
-
 __all__ = ["TestcaseAclnn", "AclnnParamPlan"]
 
 
@@ -20,6 +19,7 @@ import copy
 import logging
 import numpy.random
 from typing import Dict, List, Optional, Tuple, Union, Any
+
 try:
     from collections.abc import Callable
 except ImportError:
@@ -47,12 +47,15 @@ class AclnnParamPlan:
       - tensor_count / scalar_count: for quick validation
     """
 
-    TENSOR = 'tensor'
-    SCALAR = 'scalar'
-    OTHER = 'other'
+    TENSOR = "tensor"
+    SCALAR = "scalar"
+    OTHER = "other"
 
     __slots__ = (
-        'api_name', 'param_layout', 'tensor_count', 'scalar_count',
+        "api_name",
+        "param_layout",
+        "tensor_count",
+        "scalar_count",
     )
 
     def __init__(self, api_name: str, op_api_info: OpApiInfo):
@@ -144,6 +147,8 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "_pure_attrs",
         "_pure_output_indexes",
         "_scalar_list_dist",
+        "golden_mode_override",
+        "xpu_metrics",
     )
 
     identity_headers: Dict[str, tuple] = {
@@ -173,9 +178,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "scalar_data_ranges": (FIELD_TYPES.SHAPELIKE_FLOAT_SIGNED_NESTED, None, ((None, None),)),
     }
     property_headers: Dict[str, tuple] = {
-        **tensor_property_headers, **output_property_headers,
-        **attr_property_headers, **scalar_property_headers,
-        **special_property_headers
+        **tensor_property_headers,
+        **output_property_headers,
+        **attr_property_headers,
+        **scalar_property_headers,
+        **special_property_headers,
     }
     option_headers: Dict[str, tuple] = {
         **TensorApiTestcaseBase.option_headers,
@@ -189,7 +196,12 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "batch_slice_info": (FIELD_TYPES.FREE_EVAL, None, None),
         "batch_seed": (FIELD_TYPES.FREE_EVAL, None, None),
     }
-    complete_headers: Dict[str, tuple] = {**identity_headers, **property_headers, **option_headers, **batch_consistency_headers}
+    complete_headers: Dict[str, tuple] = {
+        **identity_headers,
+        **property_headers,
+        **option_headers,
+        **batch_consistency_headers,
+    }
 
     def __init__(self):
         super().__init__()
@@ -224,6 +236,8 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self._pure_attrs: Optional[dict] = None
         self._pure_output_indexes: Optional[tuple] = None
         self._scalar_list_dist: Optional[tuple] = None
+        self.golden_mode_override = None
+        self.xpu_metrics = {}
 
     @property
     def tensor_bytes(self):
@@ -233,9 +247,9 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             if vs is None:
                 continue
             try:
-                bytes_lst.append(shape_product(self.flat_storage_shape(idx)) *
-                                 get_dtype_width(get(self.flat_tensor_dtypes, idx))
-                                 )
+                bytes_lst.append(
+                    shape_product(self.flat_storage_shape(idx)) * get_dtype_width(get(self.flat_tensor_dtypes, idx))
+                )
             except:
                 bytes_lst.append(0)
         return sum(bytes_lst)
@@ -255,7 +269,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
                 num = dist[idx] if idx < len(dist) and dist[idx] > 0 else 0
                 count = max(num, 1)
-                dtypes = self.flat_tensor_dtypes[flat_idx:flat_idx + count]
+                dtypes = self.flat_tensor_dtypes[flat_idx : flat_idx + count]
                 result.append(dtypes[0] if num == 0 else dtypes)
             self._output_dtypes = tuple(result)
         return self._output_dtypes
@@ -281,7 +295,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
                 num = dist[idx] if idx < len(dist) and dist[idx] > 0 else 0
                 count = max(num, 1)
-                shapes = self.flat_tensor_view_shapes[flat_idx:flat_idx + count]
+                shapes = self.flat_tensor_view_shapes[flat_idx : flat_idx + count]
                 result.append(shapes[0] if num == 0 else shapes)
             self._output_view_shapes = tuple(result)
         return self._output_view_shapes
@@ -418,7 +432,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 count = dist[idx] if idx < len(dist) and dist[idx] > 0 else 1
                 flat_output.update(range(flat_idx, flat_idx + count))
             flat_inplace = set()
-            for idx in (self.output_inplace_indexes or ()):
+            for idx in self.output_inplace_indexes or ():
                 flat_idx = sum(max(d, 1) for d in dist[:idx])
                 count = dist[idx] if idx < len(dist) and dist[idx] > 0 else 1
                 flat_inplace.update(range(flat_idx, flat_idx + count))
@@ -456,8 +470,8 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             return
         sdist = self.scalar_list_dist
         if sdist:
-            self._normalize_scalar_field_by_dist('scalar_dtypes', sdist)
-            self._normalize_range_field_by_dist('scalar_data_ranges', sdist)
+            self._normalize_scalar_field_by_dist("scalar_dtypes", sdist)
+            self._normalize_range_field_by_dist("scalar_data_ranges", sdist)
         super()._normalize_compressed_fields()
 
     @property
@@ -523,8 +537,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             return self.scalar_data_ranges
         dist = self.scalar_list_dist
         if dist:
-            return self._flatten_by_distribution(
-                self.scalar_data_ranges, dist)
+            return self._flatten_by_distribution(self.scalar_data_ranges, dist)
         return self.scalar_data_ranges
 
     @staticmethod
@@ -550,6 +563,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
     def is_torch_dtype_support(self) -> bool:
         """Check if all dtypes in testcase are supported by the current torch natively."""
         from ttk.utilities.dtypes import is_torch_native_dtype
+
         for dtype in self.flat_tensor_dtypes:
             if dtype is not None and not is_torch_native_dtype(dtype):
                 return False
@@ -595,8 +609,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if not storage_shape:
             storage_shape = view_shape
         if len(view_shape) != len(view_stride):
-            logging.error(f"Rank of view_shape/view_strides should be same: "
-                          f"{view_shape} vs {view_stride}")
+            logging.error(f"Rank of view_shape/view_strides should be same: {view_shape} vs {view_stride}")
             return False
         for idx, v in enumerate(view_stride):
             if v < 0:
@@ -608,9 +621,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             return True
         storage_numel = shape_product(storage_shape)
         if view_numel + view_offset > storage_numel:
-            logging.error(f"view_shape ({view_shape}), view_strides ({view_stride}), view_offset ({view_offset}) "
-                          f"requiring a storage with elements {view_numel + view_offset} "
-                          f"is out of bounds for storage with elements {storage_numel} ({storage_shape})")
+            logging.error(
+                f"view_shape ({view_shape}), view_strides ({view_stride}), view_offset ({view_offset}) "
+                f"requiring a storage with elements {view_numel + view_offset} "
+                f"is out of bounds for storage with elements {storage_numel} ({storage_shape})"
+            )
             return False
         return True
 
@@ -652,8 +667,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 return (1,), view_shape + offset
             else:
                 return (2,), self._infer_storage_shape(view_shape, (2,), offset)
-        elif all([view_shape[idx] == view_shape[0]
-                  for idx in range(len(view_shape))]):
+        elif all([view_shape[idx] == view_shape[0] for idx in range(len(view_shape))]):
             stride = list(shape_stride(view_shape))
             ex_idx = sorted(numpy.random.choice(len(stride), size=2, replace=False))
             stride[ex_idx[0]], stride[ex_idx[1]] = stride[ex_idx[1]], stride[ex_idx[0]]
@@ -696,8 +710,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             view_stride = get(flat_strides, idx, out_of_range=())
             view_offset = get(flat_offsets, idx, out_of_range=0)
             storage_shape = get(flat_storages, idx, out_of_range=())
-            if not self._tensor_param_valid(view_shape, view_stride,
-                                            view_offset, storage_shape):
+            if not self._tensor_param_valid(view_shape, view_stride, view_offset, storage_shape):
                 self.is_valid = False
                 self.fail_reason = "TENSOR_PARAM_INVALID"
                 return
@@ -714,13 +727,15 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if len(field) not in (0, 1, len(self.flat_tensor_view_shapes), top_count):
             self.is_valid = False
             self.fail_reason = "TENSOR_PARAM_INVALID"
-            logging.error(f"{field_name} length [{len(field)}] is inconsistent with "
-                          f"tensor_view_shapes top-level count [{top_count}].")
+            logging.error(
+                f"{field_name} length [{len(field)}] is inconsistent with "
+                f"tensor_view_shapes top-level count [{top_count}]."
+            )
 
     def _build_non_contiguous_tensor(self):
         """Auto-generate random non-contiguous strides and storage shapes for tensors that lack them."""
-        def __fill(_fill_size: int, _fill_ele: Any,
-                   _to_fill: Union[list, tuple]):
+
+        def __fill(_fill_size: int, _fill_ele: Any, _to_fill: Union[list, tuple]):
             if not _to_fill:
                 _to_fill = [_fill_ele] * _fill_size
             _num = len(_to_fill)
@@ -752,8 +767,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 continue
             if not view_strides[idx]:
                 # neither storage shape or stride is specified. random it.
-                view_strides[idx], storage_shapes[idx] = self._random_non_contiguous(view_shape,
-                                                                                     view_offsets[idx])
+                view_strides[idx], storage_shapes[idx] = self._random_non_contiguous(view_shape, view_offsets[idx])
             else:
                 # if storage shape is not specified. try to infer it.
                 if len(view_shape) != len(view_strides[idx]):
@@ -762,8 +776,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 if any([d < 0 for d in view_strides[idx]]):
                     # invalid !! leave it to validate later.
                     continue
-                storage_shapes[idx] = self._infer_storage_shape(view_shape, view_strides[idx],
-                                                                view_offsets[idx])
+                storage_shapes[idx] = self._infer_storage_shape(view_shape, view_strides[idx], view_offsets[idx])
         self.tensor_view_strides = tuple(view_strides)
         self.tensor_view_offsets = tuple(view_offsets)
         self.tensor_storage_shapes = tuple(storage_shapes)
@@ -824,8 +837,10 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if case_count != api_count:
             self.is_valid = False
             self.fail_reason = f"{kind}_COUNT_MISMATCH"
-            logging.error(f"L2 interface [{self.api_name}] has {api_count} {kind.lower()} parameters, "
-                          f"but testcase configured {case_count}.")
+            logging.error(
+                f"L2 interface [{self.api_name}] has {api_count} {kind.lower()} parameters, "
+                f"but testcase configured {case_count}."
+            )
             return
         single_type = f"acl{kind}*"
         list_type = f"acl{kind}List*"
@@ -836,15 +851,13 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 if typ != list_type:
                     self.is_valid = False
                     self.fail_reason = "PARAM_TYPE_MISMATCH"
-                    logging.error(f"Parameter [{name}] type is [{typ}]. "
-                                  f"But got {kind}List.")
+                    logging.error(f"Parameter [{name}] type is [{typ}]. But got {kind}List.")
                     return
             elif element is not None:
                 if typ != single_type:
                     self.is_valid = False
                     self.fail_reason = "PARAM_TYPE_MISMATCH"
-                    logging.error(f"Parameter [{name}] type is [{typ}]. "
-                                  f"But got {kind}.")
+                    logging.error(f"Parameter [{name}] type is [{typ}]. But got {kind}.")
                     return
 
     @staticmethod
@@ -861,8 +874,8 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         """Validate tensor parameters match API definition in count and type (Tensor/TensorList)."""
         op_api_info: OpApiInfo = OpApiInfoKeeper().info_of(self.api_name)
         self._check_param_configuration(
-            self.tensor_view_shapes, op_api_info.tensors, "Tensor",
-            self._is_tensor_list_element)
+            self.tensor_view_shapes, op_api_info.tensors, "Tensor", self._is_tensor_list_element
+        )
 
     def _generate_batch_consistency_id(self):
         """根据 batch_seed、batch_axis 和 batch_slice_info 生成 batch_consistency_id。"""
@@ -889,10 +902,12 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                     if step <= 0 or start < 0 or stop < 0:
                         length = 0
                     else:
-                        length = stop -start if stop > start else 0
+                        length = stop - start if stop > start else 0
                     slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
                     if length == 0:
-                        logging.warning(f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid")
+                        logging.warning(
+                            f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid"
+                        )
                     slice_lens.append(slice_id)
                 slice_axes.append(tuple(slice_lens))
             slice_key.append(tuple(slice_axes))
@@ -915,26 +930,29 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if case_count != api_count:
             self.is_valid = False
             self.fail_reason = "Scalar_COUNT_MISMATCH"
-            logging.error(f"L2 interface [{self.api_name}] has {api_count} scalar parameters, "
-                          f"but testcase configured {case_count}.")
+            logging.error(
+                f"L2 interface [{self.api_name}] has {api_count} scalar parameters, "
+                f"but testcase configured {case_count}."
+            )
             return
         for idx, name in enumerate(api_scalars):
             typ = op_api_info.params[name]["type"]
             element = self.scalar_dtypes[idx]
-            is_list_type = (typ == "aclScalarList*")
+            is_list_type = typ == "aclScalarList*"
             is_nested = isinstance(element, (tuple, list)) and len(element) > 0
             if is_list_type and not is_nested:
                 self.is_valid = False
                 self.fail_reason = "PARAM_TYPE_MISMATCH"
-                logging.error(f"Parameter [{name}] type is [{typ}]. "
-                              f"But scalar_dtypes element is not a tuple/list (expected ScalarList). "
-                              f"Got: {element}")
+                logging.error(
+                    f"Parameter [{name}] type is [{typ}]. "
+                    f"But scalar_dtypes element is not a tuple/list (expected ScalarList). "
+                    f"Got: {element}"
+                )
                 return
             if not is_list_type and is_nested and isinstance(element[0], (tuple, list)):
                 self.is_valid = False
                 self.fail_reason = "PARAM_TYPE_MISMATCH"
-                logging.error(f"Parameter [{name}] type is [{typ}]. "
-                              f"But got ScalarList.")
+                logging.error(f"Parameter [{name}] type is [{typ}]. But got ScalarList.")
                 return
 
     def _auto_fill_output_inplace_indices(self):
@@ -947,17 +965,21 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if self.output_inplace_indexes:
             return
         op_api_info: OpApiInfo = OpApiInfoKeeper().info_of(self.api_name)
-        ref_lst = [n for n in op_api_info.tensors if n.endswith('Ref')]
+        ref_lst = [n for n in op_api_info.tensors if n.endswith("Ref")]
         ref_cnt = len(ref_lst)
         if ref_cnt == 0:
             return
-        logging.warning(f"L2 interface [{self.api_name}] has some inplace tensors: {ref_lst}. "
-                        f"But `output_inplace_indexes` is not configured. "
-                        f"Try to fill it automatically.")
+        logging.warning(
+            f"L2 interface [{self.api_name}] has some inplace tensors: {ref_lst}. "
+            f"But `output_inplace_indexes` is not configured. "
+            f"Try to fill it automatically."
+        )
         inplace_indices = []
         for idx, element in enumerate(self.tensor_view_shapes):
             param_name = op_api_info.tensors[idx]
-            is_nested = isinstance(element, (tuple, list)) and len(element) > 0 and isinstance(element[0], (tuple, list))
+            is_nested = (
+                isinstance(element, (tuple, list)) and len(element) > 0 and isinstance(element[0], (tuple, list))
+            )
             if param_name in ref_lst:
                 if element is None:
                     logging.info(f"Inplace parameter [{param_name}] is None (nullptr), skipping.")
@@ -966,10 +988,15 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self.output_inplace_indexes = tuple(inplace_indices)
 
     # Backward/Grad API 中排除的输入参数名（以 Out/Output 结尾但实际是输入）
-    _BACKWARD_OUTPUT_EXCLUDE = frozenset({
-        'gradOutput', 'gradOut', 'grad_output',
-        'attentionOut', 'dOut',
-    })
+    _BACKWARD_OUTPUT_EXCLUDE = frozenset(
+        {
+            "gradOutput",
+            "gradOut",
+            "grad_output",
+            "attentionOut",
+            "dOut",
+        }
+    )
 
     def _auto_fill_output_tensor_indexes(self):
         """Auto-fill output_tensor_indexes from tensor param naming conventions.
@@ -986,24 +1013,21 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             return
 
         op_api_info: OpApiInfo = OpApiInfoKeeper().info_of(self.api_name)
-        is_backward = 'Backward' in self.api_name or 'Grad' in self.api_name
+        is_backward = "Backward" in self.api_name or "Grad" in self.api_name
         tensor_names = op_api_info.tensors
         output_indices = []
 
         for idx, name in enumerate(tensor_names):
-            if name.endswith('Ref'):
+            if name.endswith("Ref"):
                 output_indices.append(idx)
                 continue
-            is_output_name = (
-                name == 'output'
-                or name.endswith(('Out', 'OutOptional', 'Output', 'OutputOptional'))
-            )
+            is_output_name = name == "output" or name.endswith(("Out", "OutOptional", "Output", "OutputOptional"))
             if not is_output_name:
                 continue
             if is_backward:
                 if name in self._BACKWARD_OUTPUT_EXCLUDE:
                     continue
-                if name == 'output' and idx != len(tensor_names) - 1:
+                if name == "output" and idx != len(tensor_names) - 1:
                     continue
             output_indices.append(idx)
 
@@ -1022,39 +1046,45 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             return
         self._auto_fill_output_tensor_indexes()
         # correct negative indexes to positive ones
-        self.output_tensor_indexes = tuple([idx + len(self.tensor_view_shapes) if idx < 0
-                                            else idx for idx in self.output_tensor_indexes])
-        out_of_ranges = [idx for idx in self.output_tensor_indexes
-                         if idx < 0 or idx >= len(self.tensor_view_shapes)]
+        self.output_tensor_indexes = tuple(
+            [idx + len(self.tensor_view_shapes) if idx < 0 else idx for idx in self.output_tensor_indexes]
+        )
+        out_of_ranges = [idx for idx in self.output_tensor_indexes if idx < 0 or idx >= len(self.tensor_view_shapes)]
         if out_of_ranges:
             self.is_valid = False
             self.fail_reason = "OUTPUT_INDEX_INVALID"
-            logging.error(f"Indexes in `output_tensor_indexes` {self.output_tensor_indexes} "
-                          f"out of range of `tensor_view_shapes`'s indexes: "
-                          f"[0, {len(self.tensor_view_shapes)})")
+            logging.error(
+                f"Indexes in `output_tensor_indexes` {self.output_tensor_indexes} "
+                f"out of range of `tensor_view_shapes`'s indexes: "
+                f"[0, {len(self.tensor_view_shapes)})"
+            )
             return
         if not self.output_inplace_indexes:
             return
         # correct negative indexes to positive ones
-        self.output_inplace_indexes = tuple([idx + len(self.tensor_view_shapes) if idx < 0
-                                             else idx for idx in self.output_inplace_indexes])
-        out_of_ranges = [idx for idx in self.output_inplace_indexes
-                         if idx < 0 or idx >= len(self.tensor_view_shapes)]
+        self.output_inplace_indexes = tuple(
+            [idx + len(self.tensor_view_shapes) if idx < 0 else idx for idx in self.output_inplace_indexes]
+        )
+        out_of_ranges = [idx for idx in self.output_inplace_indexes if idx < 0 or idx >= len(self.tensor_view_shapes)]
         if out_of_ranges:
             self.is_valid = False
             self.fail_reason = "OUTPUT_INPLACE_INDEX_INVALID"
-            logging.error(f"Indexes in `output_inplace_indexes` {self.output_inplace_indexes} "
-                          f"out of range of `tensor_view_shapes`'s indexes: "
-                          f"[0, {len(self.tensor_view_shapes)})")
+            logging.error(
+                f"Indexes in `output_inplace_indexes` {self.output_inplace_indexes} "
+                f"out of range of `tensor_view_shapes`'s indexes: "
+                f"[0, {len(self.tensor_view_shapes)})"
+            )
             return
         for ii in self.output_inplace_indexes:
             if ii in self.output_tensor_indexes:
                 continue
             self.is_valid = False
             self.fail_reason = "OUTPUT_INDEX_MISMATCH"
-            logging.error(f"Indexes in `output_tensor_indexes` and "
-                          f"`output_inplace_indexes` mismatch: "
-                          f"{self.output_tensor_indexes} vs {self.output_inplace_indexes}")
+            logging.error(
+                f"Indexes in `output_tensor_indexes` and "
+                f"`output_inplace_indexes` mismatch: "
+                f"{self.output_tensor_indexes} vs {self.output_inplace_indexes}"
+            )
             return
 
     def _check_params_count(self):
@@ -1070,9 +1100,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if case_param_count != len(op_api_info.params.keys()):
             self.is_valid = False
             self.fail_reason = "PARAM_COUNT_MISMATCH"
-            logging.error(f"OpApi [{self.api_name}] L2 interface has "
-                          f"{len(op_api_info.params.keys())} parameters: "
-                          f"{op_api_info.params.keys()}. "
-                          f"But testcase configured {case_param_count}: "
-                          f"Tensor: {tensor_count}, Scalar: {scalar_count}, "
-                          f"Attribute: {attr_count}")
+            logging.error(
+                f"OpApi [{self.api_name}] L2 interface has "
+                f"{len(op_api_info.params.keys())} parameters: "
+                f"{op_api_info.params.keys()}. "
+                f"But testcase configured {case_param_count}: "
+                f"Tensor: {tensor_count}, Scalar: {scalar_count}, "
+                f"Attribute: {attr_count}"
+            )
