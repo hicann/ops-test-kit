@@ -14,9 +14,85 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
+import numpy as np
+
+from .comparison import compare
 from ...utilities.container_utils import apply_as_list, deep_flatten
 
-__all__ = ["CompareContext", "apply_pre_compare", "try_custom_compare"]
+__all__ = ["CompareContext", "apply_pre_compare", "try_custom_compare",
+           "compare_with_hooks"]
+
+
+def _copy_goldens(goldens):
+    """比对钩子可能就地改写 golden，先复制以免污染后续使用（如 dump）。"""
+    copied = []
+    for golden in goldens:
+        if isinstance(golden, np.ndarray):
+            copied.append(golden.copy())
+        elif hasattr(golden, "clone"):
+            copied.append(golden.clone())
+        else:
+            copied.append(golden)
+    return copied
+
+
+def _reshape_outputs_for_hooks(outputs, goldens):
+    """按 golden 的形状还原输出：比对内部按 flatten 处理，钩子里算子作者按真实形状写。
+
+    实现与 kernel 通路原版逐字一致（上提复用不改语义）。
+    """
+    reshaped = list(outputs)
+    for index, (output, golden) in enumerate(zip(reshaped, goldens)):
+        if not isinstance(output, np.ndarray) or not hasattr(golden, "shape"):
+            continue
+        golden_shape = tuple(golden.shape)
+        if output.size == int(np.prod(golden_shape, dtype=np.int64)):
+            reshaped[index] = output.reshape(golden_shape)
+    return reshaped
+
+
+def compare_with_hooks(testcase, outputs, goldens, output_dtypes,
+                       standards, third_parties, pre_compare, custom_compare):
+    """带 TestSpec 钩子（pre_compare / compare）的比对入口，供各测试通路共用。
+
+    【为何要做】
+    算子自实现 compare 是某些算子的刚需，而非锦上添花。例如 NonZeroWithValue 的三个
+    输出都是静态 max-size buffer，有效长度由 count 给出，尾部预留区在 NPU 上未定义；
+    默认整块比对会把这段未定义内存算进判定，通过率恰好退化成输入的非零密度，与内核
+    对错无关。它必须靠 Spec.compare 只比有效前缀 [0:N]。
+    这套钩子逻辑原先只写在 kernel 通路（npu/op/comparison.py::_compare_mode）里，
+    aclnn/e2e 也各自接了，唯独 GEIR 通路没接——同一个算子换条通路验证，自实现 compare
+    就静默失效，判定结果不可信。此处上提为公共函数，供各通路共用，避免继续复制。
+
+    【实现逻辑】
+    1) 没有钩子、或输出尚未落地成真实数组（占位字符串/None）→ 直接走默认 compare，
+       保持原行为；
+    2) 有钩子 → 先把输出还原成 golden 的形状（钩子里按真实形状书写），复制一份 golden
+       防止钩子就地改写污染后续使用，跑 pre_compare；
+    3) 再试 custom compare：返回非 None 即采信其判定，跳过标准判据；返回 None 表示
+       算子不接管这次比对，回落到默认 compare。
+
+    【实现效果】
+    GEIR 通路获得与 kernel/aclnn/e2e 一致的钩子能力；未声明钩子的算子走的仍是原来那条
+    默认路径，行为逐位不变。
+    """
+    hooks_enabled = testcase is not None and (pre_compare is not None or custom_compare is not None)
+    has_runtime_output = outputs and not any(
+        isinstance(output, (str, type(None))) for output in outputs
+    )
+    if not hooks_enabled or not has_runtime_output:
+        return compare(outputs, goldens, output_dtypes,
+                       standards=standards, third_parties=third_parties)
+
+    mode_outputs = _reshape_outputs_for_hooks(outputs, goldens)
+    mode_goldens = _copy_goldens(goldens)
+    apply_pre_compare(testcase, mode_outputs, mode_goldens, pre_compare)
+    custom_result = try_custom_compare(testcase, mode_outputs, mode_goldens, custom_compare)
+    if custom_result is not None:
+        precision, logging_data, passed = custom_result
+        return precision, logging_data, passed, {}
+    return compare(mode_outputs, mode_goldens, output_dtypes,
+                   standards=standards, third_parties=third_parties)
 
 
 @dataclass(frozen=True)

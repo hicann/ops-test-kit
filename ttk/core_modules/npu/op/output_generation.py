@@ -448,7 +448,21 @@ def __collect_dynamic_golden_kwargs(context: TestcaseOp):
         'input_ori_formats': context.input_ori_formats,
         'output_ori_formats': context.output_ori_formats,
         'input_dtypes': context.input_dtypes,
-        'output_dtypes': context.output_dtypes
+        'output_dtypes': context.output_dtypes,
+        # 【为何要做】golden 收到的输入精度是框架定的：三方(cross_check)场景会走
+        # golden_mode=Promote，按 DTYPE_PROMOTE_MAP 把各输入抬一档(fp16/bf16→fp32、
+        # fp32→fp64)，好让标杆比被测更准；非该场景则用算子声明的原精度。但这个决定
+        # 此前不下发，golden 无从知道自己拿到的是"已抬过的"还是"原生的"——两种情形下
+        # 收到 fp32 完全无法区分，作者只能猜，猜错就会写出把框架抬上去的精度又砍回来
+        # 的代码(如硬编码 astype(float32))，或反过来在原生场景下算出算子不会产出的
+        # 中间量。
+        # 【实现逻辑】mode 在 __invoke_golden 里已解析好(逐用例 override 优先于全局
+        # --golden-mode)，这里原样透出，不新增任何判定。
+        # 【实现效果】golden 可按 kwargs['golden_mode'] 明确分支：Promote 下透传不做
+        # 任何 cast，其余情形自行处理低精度类型。未使用该键的存量 golden 不受影响——
+        # kwargs 按 golden 签名裁剪，带 **kwargs 的自动收到、没带的自动丢弃。
+        'golden_mode': (getattr(context, "golden_mode_override", None)
+                        or switches.golden_mode),
     })
     return kwargs
 

@@ -601,6 +601,47 @@ def _device_time(evt, device) -> float:
     return getattr(evt, f"self_{device}_time_total", 0.0)  # candidate2: <2.7 (self_<lib>)
 
 
+def _is_device_kernel(evt) -> bool:
+    """只保留真实 设备 内核条目，供 device_us 求和使用。
+
+    key_averages() 是把 profiler 的**事件树拍平**后的列表。树上同一段 设备 时间会以
+    三种不同身份各出现一次，若不加区分地全部相加，等于把它重复计入：
+
+        key_averages()
+        │
+        ├─ ProfilerStep*        容器 span（schedule() 每轮自动插入，覆盖整轮）
+        │                       含义：这一轮的【时间跨度】——从首个内核开始到末个内核结束，
+        │                             其间 设备 等待 CPU 下发下一个 kernel 的空闲也计入
+        │                       剔除：① 量纲不同，它是"经过了多久"而非"设备忙了多久"；
+        │                             ② 它在层级上已经包住下面两类，留下即整轮再加一遍。
+        │                             对 launch-bound 负载（算子多、单个数据量小，设备 大
+        │                             部分时间在等下发），跨度远大于忙碌时间，会使结果
+        │                             整体虚高一个数量级
+        │
+        ├─ aten::xxx            CPU 侧算子（算子调用的主机端记录）
+        │                       含义：其 self device time 挂的是【该算子所启动内核的耗时】
+        │                       剔除：与下面的内核条目是同一段时间的两种视角（主机端视角
+        │                             vs 设备端视角），两者数值成对相同，同留即翻倍
+        │
+        └─ void ...kernel<>     真实 设备 内核（设备上实际执行的那段时间）
+                                含义：设备真正忙碌的时间
+                                保留：彼此互不重叠，相加即为本轮 设备 忙碌总时间
+
+    过滤条件两条缺一不可：ProfilerStep* 自身的 device_type 也被标为设备类型，只看
+    device_type 滤不掉它；而 aten:: 条目是 CPU 类型，只按 key 前缀又滤不干净。
+    """
+    if str(getattr(evt, "key", "")).startswith("ProfilerStep"):
+        return False
+    dev_t = getattr(evt, "device_type", None)
+    if dev_t is None:            # 无该字段的 torch 版本：不过滤，退回旧行为
+        return True
+    try:
+        from torch.autograd import DeviceType
+    except ImportError:
+        return True
+    return dev_t != DeviceType.CPU
+
+
 def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
               profile=None, runtime=3):
     """PERF timing via profiler (torch: Self device time; TF: xplane.pb device plane).
@@ -675,7 +716,9 @@ def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
     """torch.profiler Self device time. Returns (outputs, device_us).
 
     device_us = per-iteration average (sum of self_device_time_total over the
-    active window / runtime). torch 2.7+ renamed self_cuda_time_total ->
+    active window / runtime), 仅累加真实 设备 内核条目——ProfilerStep* 容器 span 与
+    CPU 侧 aten:: 条目会让同一段时间被重复计入，详见 _is_device_kernel。
+    torch 2.7+ renamed self_cuda_time_total ->
     self_device_time_total; the 2-candidate _device_time helper covers both.
 
     Error policy: an OP execution failure PROPAGATES (-> execute_request FAIL) —
@@ -727,7 +770,8 @@ def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
             logging.exception("torch.profiler stop failed")
     # Profiler machinery — readout. Failure -> NA + log; outputs preserved.
     try:
-        total = sum(_device_time(e, device) for e in prof.key_averages())
+        total = sum(_device_time(e, device) for e in prof.key_averages()
+                    if _is_device_kernel(e))
         if runtime > 0:
             total /= runtime
         device_us = total

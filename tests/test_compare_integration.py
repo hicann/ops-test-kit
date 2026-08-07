@@ -92,12 +92,12 @@ def test_metrics_flow_to_api_structure():
 
 # —— CR3 补齐：P2 NotImplementedError / None-dtype guard / cosine+requant metrics ——
 
-def test_p2_tokens_raise_not_implemented():
-    """cross_check/quant 被 validator 接受但 runtime 报 NotImplementedError。"""
-    for token in ("quant",):    # cross_check 已注册成真比对类（本 step），不再 raise
-        with pytest.raises(NotImplementedError):
-            compare([np.array([1.0])], [np.array([1.0])], ("float32",),
-                    standards=[ResolvedStandard(token)])
+def test_quant_token_now_implemented():
+    """quant 曾是 P2 未实现 token（validator 接受但 runtime raise），现已注册成真比对类，不再 raise。"""
+    precision, _log, is_pass, _metrics = compare(
+        [np.array([1.0])], [np.array([1.0])], ("float32",),
+        standards=[ResolvedStandard("quant")])
+    assert is_pass is True
 
 
 def test_none_dtype_routes_to_placeholder():

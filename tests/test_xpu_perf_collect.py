@@ -151,6 +151,7 @@ def test_profile_process_gate_uses_xpu_mode(monkeypatch):
         flat_precision_tolerances=(),
         flat_absolute_precision=(),
         flat_output_dtypes=(),
+        flat_input_dtypes=(),
     )
 
     def _fake_process_ctx():

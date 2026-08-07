@@ -28,7 +28,7 @@ def _mock_outputs_to_numpy():
 
 
 def _call_comparing(mock_compare_side_effect):
-    with patch('ttk.core_modules.npu.op.comparison.compare') as mock_compare:
+    with patch('ttk.core_modules.comparison.custom.compare') as mock_compare:
         mock_compare.side_effect = mock_compare_side_effect
         result = comparing(
             "dyn_k", "cst_k", "bin_k",
@@ -98,7 +98,7 @@ class TestComparingPass:
         bin_out = np.array([1.0])
         golden = np.array([1.0])
 
-        with patch('ttk.core_modules.npu.op.comparison.compare', side_effect=track_compare):
+        with patch('ttk.core_modules.comparison.custom.compare', side_effect=track_compare):
             comparing("dyn_k", "cst_k", "bin_k",
                       (dyn_out,), (cst_out,), (bin_out,), (golden,),
                       ("float32",), standards=[MagicMock()])
@@ -110,7 +110,7 @@ class TestComparingPass:
         ]
 
     def test_exception_returns_compare_failure(self):
-        with patch('ttk.core_modules.npu.op.comparison.compare', side_effect=RuntimeError("boom")):
+        with patch('ttk.core_modules.comparison.custom.compare', side_effect=RuntimeError("boom")):
             result = comparing(
                 "dyn_k", "cst_k", "bin_k",
                 (np.array([1.0]),),
@@ -169,7 +169,7 @@ class TestKernelCustomComparing:
             assert compare_context.csv_fields["remark"] == "kernel context"
             return {"pass": True, "precision": 98.5}
 
-        with patch("ttk.core_modules.npu.op.comparison.compare") as builtin:
+        with patch("ttk.core_modules.comparison.custom.compare") as builtin:
             result = _custom_comparing(
                 case,
                 [np.array([1.0])],
@@ -200,7 +200,7 @@ class TestKernelCustomComparing:
             custom_calls.append(float(output[0]))
             return {"pass": True, "precision": 100.0}
 
-        with patch("ttk.core_modules.npu.op.comparison.compare") as builtin:
+        with patch("ttk.core_modules.comparison.custom.compare") as builtin:
             builtin.return_value = ("DYN_OFF", "", True, {"standard": "sentinel"})
             result = _custom_comparing(
                 case,
@@ -230,7 +230,7 @@ class TestKernelCustomComparing:
             seen.append((float(outputs[0][0]), float(goldens[0][0])))
             return "100.0%", "", True, {0: {"standard": "builtin"}}
 
-        with patch("ttk.core_modules.npu.op.comparison.compare", side_effect=builtin):
+        with patch("ttk.core_modules.comparison.custom.compare", side_effect=builtin):
             result = _custom_comparing(
                 case,
                 [np.array([1.0])],

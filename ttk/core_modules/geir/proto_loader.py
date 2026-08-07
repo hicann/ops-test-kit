@@ -35,8 +35,9 @@ class ProtoLoader(metaclass=Singleton):
         r"\.OP_END_FACTORY_REG\(\1\)",
         re.DOTALL,
     )
-    _INPUT_PATTERN = re.compile(r"\.INPUT\(\s*(\w+),")
-    _OPTIONAL_INPUT_PATTERN = re.compile(r"\.OPTIONAL_INPUT\(\s*(\w+),")
+    # 按声明位置取输入序：少数算子(如 DropOutV3)的 OPTIONAL_INPUT 夹在必选中间，
+    # 分两次 findall 拼接会假定"可选总在末尾"，导致输入错位。
+    _ANY_INPUT_PATTERN = re.compile(r"\.(?:OPTIONAL_INPUT|INPUT)\(\s*(\w+),")
     _DYNAMIC_INPUT_PATTERN = re.compile(r"\.DYNAMIC_INPUT\(\s*(\w+),")
     _OUTPUT_PATTERN = re.compile(r"\.OUTPUT\(\s*(\w+),")
 
@@ -128,8 +129,7 @@ class ProtoLoader(metaclass=Singleton):
         if name_m and name_m.group(1).lower() == op_name.lower():
             canonical = name_m.group(1)
 
-        inputs = self._INPUT_PATTERN.findall(body)
-        inputs += self._OPTIONAL_INPUT_PATTERN.findall(body)
+        inputs = self._ANY_INPUT_PATTERN.findall(body)
         dynamic_inputs = self._DYNAMIC_INPUT_PATTERN.findall(body)
         outputs = self._OUTPUT_PATTERN.findall(body)
 

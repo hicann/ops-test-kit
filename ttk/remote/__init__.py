@@ -7,6 +7,7 @@ Public API:
     dispatch_to_remote() — 发送输入到远端 xpu_server，返回输出
 """
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -25,8 +26,13 @@ def has_perf(mode: int) -> bool:
     return bool(mode & PERF)
 
 
-# 实例级 tenant_id，fork 前生成，子进程继承同一值
-_TENANT_ID: str = uuid.uuid4().hex[:12]
+# 实例级 tenant_id：必须跨进程一致。原注释假设 fork（子进程继承父进程本模块的 _TENANT_ID），
+# 但 TTK 用 forkserver——forkserver 独立重新 import 本模块、另生成一个 uuid，其 worker 继承的是
+# forkserver 的 id 而非主进程的，导致【心跳(主进程)的租户 ≠ 干活/同步 golden 的 worker 租户】，
+# 干活租户拿不到心跳 → 600s 超时被 server 清掉 golden → missing-golden。改为经环境变量透传：
+# 首个 import 本模块的进程生成并写入 env，forkserver/worker 继承 env 得到同一 id。
+_TENANT_ID: str = os.environ.get("TTK_TENANT_ID") or uuid.uuid4().hex[:12]
+os.environ["TTK_TENANT_ID"] = _TENANT_ID
 
 
 def get_tenant_id() -> str:

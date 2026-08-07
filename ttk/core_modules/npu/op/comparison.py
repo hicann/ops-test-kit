@@ -18,8 +18,7 @@ import numpy
 
 # Third-party Packages
 from ....utilities import get, resolve_custom_numpy_dtypes, unpack_4bits
-from ...comparison import compare
-from ...comparison.custom import apply_pre_compare, try_custom_compare
+from ...comparison.custom import compare_with_hooks
 from .profiling_structure import ComparisonResult
 
 
@@ -67,49 +66,11 @@ def comparing(dyn_kernel_name: str, cst_kernel_name: str, bin_kernel_name: str,
 
 def _compare_mode(testcase, outputs, goldens, output_dtypes, standards,
                   third_parties, pre_compare, custom_compare):
-    hooks_enabled = testcase is not None and (pre_compare is not None or custom_compare is not None)
-    has_runtime_output = outputs and not any(
-        isinstance(output, (str, type(None))) for output in outputs
-    )
-    if not hooks_enabled or not has_runtime_output:
-        return compare(
-            outputs, goldens, output_dtypes,
-            standards=standards, third_parties=third_parties)
-
-    mode_outputs = _reshape_outputs_for_hooks(outputs, goldens)
-    mode_goldens = _copy_goldens(goldens)
-    apply_pre_compare(testcase, mode_outputs, mode_goldens, pre_compare)
-    custom_result = try_custom_compare(
-        testcase, mode_outputs, mode_goldens, custom_compare)
-    if custom_result is not None:
-        precision, logging_data, passed = custom_result
-        return precision, logging_data, passed, {}
-    return compare(
-        mode_outputs, mode_goldens, output_dtypes,
-        standards=standards, third_parties=third_parties)
-
-
-def _copy_goldens(goldens):
-    copied = []
-    for golden in goldens:
-        if isinstance(golden, numpy.ndarray):
-            copied.append(golden.copy())
-        elif hasattr(golden, "clone"):
-            copied.append(golden.clone())
-        else:
-            copied.append(golden)
-    return copied
-
-
-def _reshape_outputs_for_hooks(outputs, goldens):
-    reshaped = list(outputs)
-    for index, (output, golden) in enumerate(zip(reshaped, goldens)):
-        if not isinstance(output, numpy.ndarray) or not hasattr(golden, "shape"):
-            continue
-        golden_shape = tuple(golden.shape)
-        if output.size == int(numpy.prod(golden_shape, dtype=numpy.int64)):
-            reshaped[index] = output.reshape(golden_shape)
-    return reshaped
+    # 钩子比对逻辑已上提到 comparison/custom.py::compare_with_hooks 供各通路共用
+    # （GEIR 原先没有这套逻辑，自实现 compare 在该通路静默失效）。此处保留同名薄封装，
+    # kernel 通路调用点与行为均不变。
+    return compare_with_hooks(testcase, outputs, goldens, output_dtypes,
+                              standards, third_parties, pre_compare, custom_compare)
 
 
 def __outputs_to_numpy_arrays(outputs, output_dtypes):

@@ -15,7 +15,8 @@ import threading
 
 import numpy as np
 
-from ttk.core_modules.comparison.comparison import compare
+from ttk.core_modules.comparison.custom import compare_with_hooks
+
 from ttk.core_modules.npu.op.input_generation import __gen_input
 from ttk.core_modules.npu.op.output_generation import __gen_output
 from ttk.core_modules.tbe_logging import default_logging_config
@@ -24,6 +25,16 @@ from ttk.utilities import dump_to_file, get_global_storage, resolve_custom_numpy
 
 from .compiler import GeirCompiler
 from .graph_builder import GeirGraphBuilder
+
+
+def _spec_attr_of(testcase, switches, attr):
+    """按算子名取 TestSpec 属性；无 plugin / 无 spec / 未声明该属性 → None。"""
+    try:
+        from ttk.test_spec import get_spec_attr
+
+        return get_spec_attr(testcase.op_name, attr, getattr(switches, "plugin_path", None))
+    except Exception:
+        return None
 
 
 def _geir_profiling_end_print(result):
@@ -154,6 +165,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         testcase.flat_absolute_precision,
         testcase.flat_output_dtypes,
         switches.compare_method,
+        input_dtypes=testcase.flat_input_dtypes,
     )
     need_3party_outputs = any(s.token == "cross_check" for s in standards)
     if need_3party_outputs:
@@ -351,12 +363,25 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     process_ctx.notify_status("OnGeirCompare")
     flat_out_dtypes = tuple(resolve_custom_numpy_dtypes(testcase.flat_output_dtypes))
 
-    precision, log_str, passed, _metrics = compare(
+    # 走带 TestSpec 钩子的公共比对入口（与 kernel/aclnn/e2e 对齐）。
+    # 【为何要做】GEIR 原先直接调 compare()，Spec.compare / Spec.pre_compare 在本通路
+    # 完全不生效——而对某些算子自实现 compare 是刚需，不是可选优化：NonZeroWithValue 的
+    # 三个输出都是静态 max-size buffer，有效长度由 count 给出，尾部预留区在 NPU 上未定义，
+    # 默认整块比对会把这段未定义内存算进判定，通过率退化成输入的非零密度。同一算子在
+    # kernel 通路判定正常、换到 GEIR 就大面积假红，且无任何提示。
+    # 【实现效果】声明了钩子的算子在 GEIR 上与其它通路判定一致；未声明钩子的算子，
+    # compare_with_hooks 内部直接回落到原来的 compare()，行为逐位不变。
+    _pre_compare = _spec_attr_of(testcase, switches, "pre_compare")
+    _custom_compare = _spec_attr_of(testcase, switches, "compare")
+    precision, log_str, passed, _metrics = compare_with_hooks(
+        testcase,
         tuple(output_arrays),
         tuple(golden_arrays),
         flat_out_dtypes,
-        standards=standards,
-        third_parties=third_parties,
+        standards,
+        third_parties,
+        _pre_compare,
+        _custom_compare,
     )
 
     _std_tokens = sorted({str(s.token) for s in standards}) if standards else []

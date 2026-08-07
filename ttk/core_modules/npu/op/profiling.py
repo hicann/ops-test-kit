@@ -288,6 +288,7 @@ def profile_process(
             context.flat_absolute_precision,
             context.flat_output_dtypes,
             get_global_storage().compare_method,
+            input_dtypes=context.flat_input_dtypes,
         )
         need_3party_outputs = any(s.token == "cross_check" for s in standards)
         if need_3party_outputs:

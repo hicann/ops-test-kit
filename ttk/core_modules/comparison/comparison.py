@@ -21,8 +21,6 @@ from ...utilities import get
 
 __all__ = ["compare"]
 
-_P2_TOKENS = {"quant"}
-
 
 def compare(outputs: Union[Tuple[np.ndarray], List[np.ndarray]],
             goldens: Union[Tuple[np.ndarray], List[np.ndarray]],
@@ -36,6 +34,7 @@ def compare(outputs: Union[Tuple[np.ndarray], List[np.ndarray]],
     from .binary_equal import BinaryComparison  # noqa: F401
     from .cosine_similarity import CosineSimilarityComparison  # noqa: F401
     from .is_close import CloseComparison  # noqa: F401
+    from .quant import QuantComparison  # noqa: F401
     from .re_quantize import ReQuantizeComparison  # noqa: F401
     from .stat_rel_err import StatRelErrComparison  # noqa: F401
     from .cross_check import CrossCheckComparison  # noqa: F401
@@ -72,9 +71,6 @@ def compare(outputs: Union[Tuple[np.ndarray], List[np.ndarray]],
         token = standards[idx].token
         comparison = ComparisonRegister.registry.get(token.lower())
         if comparison is None:
-            if token in _P2_TOKENS:
-                raise NotImplementedError(f"Comparison standard [{token}] is accepted in Spec.tolerance "
-                                          f"but not yet implemented.")
             raise ValueError(f"Comparison standard [{token}] is not recognized.")
         c = comparison(output, golden, idx, get(output_dtypes, idx),
                        standards[idx].params,

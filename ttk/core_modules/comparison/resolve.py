@@ -57,6 +57,49 @@ def _is_complex(s: str) -> bool:
     return "complex" in s
 
 
+# 量化输出的目标 dtype：标准限定 int4 / int8。
+# 不含 int32/int64——那些通常承载索引、计数、掩码等精确整数语义，差 1 就是错。
+_QUANT_OUT_DTYPES = {"int4", "int8"}
+
+# --compare 中对【整型输出】有意义的取值：可覆盖 Spec 的 quant 声明。
+# 其余取值均为浮点判据，对量化整型无意义，不参与覆盖。
+_INT_APPLICABLE_TOKENS = {"bin", "binary", "binary_equal", "requant", "quant"}
+
+
+def _is_float_dtype(s: str) -> bool:
+    return ("float" in s) or (s in ("half", "double", "bf16", "bfloat16"))
+
+
+def _spec_standard(tolerance, dtype_str):
+    """取 Spec.tolerance 为该 dtype 显式声明的标准名；未声明返回 None。"""
+    if not tolerance or dtype_str not in tolerance:
+        return None
+    std = (tolerance[dtype_str] or {}).get("standard")
+    return std.lower() if isinstance(std, str) else None
+
+
+def _check_quant_applicable(dtype_str, input_dtypes):
+    """声明 quant 时校验前提，不匹配直接报错——**不静默纠正**。
+
+    【为何要校验】quant 的判据是绝对误差 <= 1，只对"浮点输入 + int4/int8 输出"的
+    量化场景成立。若用在索引/计数类输出上，±1 的容忍会放过真缺陷，而且悄无声息。
+    【为何报错而非降级】误用是配置错误，应当让作者当场看见并改正；静默换成别的判据
+    会让 Spec 声明与实际判定不一致，是更隐蔽的坑。
+    【为何要求输入全为浮点】标准的前提是"浮点型输入"。此处从严：只要有一个输入不是
+    浮点就不认（如整型索引参与的算子，语义可能不是量化）。
+    """
+    if dtype_str not in _QUANT_OUT_DTYPES:
+        raise ValueError(
+            f"Spec.tolerance 为 [{dtype_str}] 声明了 standard='quant'，但 quant 仅适用于 "
+            f"{sorted(_QUANT_OUT_DTYPES)} 输出（绝对误差<=1 是量化语义；索引/计数类输出差 1 即错）。")
+    if input_dtypes is not None:
+        ins = [_dtype_str(d) for d in input_dtypes if d is not None]
+        if ins and not all(_is_float_dtype(i) for i in ins):
+            raise ValueError(
+                f"Spec.tolerance 为 [{dtype_str}] 声明了 standard='quant'，但输入 dtype {ins} "
+                f"并非全为浮点。quant 的前提是【浮点型输入 + int4/int8 输出】的量化场景。")
+
+
 def _float_choice(tolerance: Optional[dict], dtype_str: str,
                   compare_method: Optional[str]) -> str:
     """普通浮点族的三级优先级：CLI > Spec.tolerance > stat_rel_err。"""
@@ -105,12 +148,28 @@ def _resolve_params(standard, tolerance, dtype_str) -> dict:
 
 
 def resolve_tolerance(tolerance, precision_tolerances, absolute_precision,
-                      output_dtypes, compare_method):
+                      output_dtypes, compare_method, input_dtypes=None):
+    """input_dtypes 可选：仅供 quant 的护栏校验"输入是否全为浮点"，不参与判据选择。
+    不传时跳过该校验，Spec 声明的 quant 依然生效——判据由算子作者的声明决定，
+    拿不到输入 dtype 只是少了一道校验，不应反过来否定声明。
+    未声明 quant 的存量算子不受影响（整数仍走 binary_equal）。"""
     standards = []
     for idx, dtype in enumerate(output_dtypes):
         s = _dtype_str(dtype)
+        spec_std = _spec_standard(tolerance, s)
         if dtype is None:
             token = "binary_equal"
+        elif spec_std == "quant":
+            # Spec 显式声明 quant：算子自己知道输出是量化值，判据为绝对误差 <= 1。
+            # 该分支排在整数短路之前——原先整数短路排在读 tolerance 之前，等于"算子说了不算"。
+            # 不做 dtype 自动推断：dtype 组合只是必要条件，真正知道语义的是算子作者；
+            # 推断错会把该严的判松（漏报真缺陷且无人察觉），代价远大于漏声明导致的误报。
+            _check_quant_applicable(s, input_dtypes)
+            # 优先级仍守 CLI > Spec.tolerance > 默认，但只认【整数适用】的 CLI 取值：
+            # --compare 的其余取值（close/cosine/stat_rel_err/cross_check）是浮点判据，
+            # 对量化整型输出无意义，不应连带覆盖掉算子的 quant 声明。
+            cli = (compare_method or "").lower()
+            token = cli if cli in _INT_APPLICABLE_TOKENS else "quant"
         elif _is_int_or_bool(s):
             token = "binary_equal"
         elif _is_complex(s):
