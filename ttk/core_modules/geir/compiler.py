@@ -4,25 +4,8 @@
 
 import logging
 import os
-import re
 import subprocess
 from typing import Optional
-
-
-def _resolve_header_mtime(header_name, include_dirs):
-    """Locate *header_name* in include_dirs and return its mtime (float seconds).
-
-    Returns None when the header cannot be found (CANN built-in merged headers
-    like ops_proto_nn.h live under opp/built-in/op_graph/inc and are resolvable).
-    """
-    for d in include_dirs:
-        p = os.path.join(d, header_name)
-        if os.path.isfile(p):
-            try:
-                return os.path.getmtime(p)
-            except OSError:
-                return None
-    return None
 
 
 class GeirCompiler:
@@ -35,127 +18,10 @@ class GeirCompiler:
     def build_dir(self):
         return self._build_dir
 
-    _PCH_TEMPLATE = (
-        '#include "graph.h"\n'
-        '#include "graph/operator.h"\n'
-        '#include "graph/operator_reg.h"\n'
-        '#include "types.h"\n'
-        '#include "tensor.h"\n'
-        '#include "ge_error_codes.h"\n'
-        '#include "ge_api.h"\n'
-        '#include "ge_prof.h"\n'
-        '#include "{proto_file}"\n'
-        "#include <vector>\n"
-        "#include <cstdlib>\n"
-        "#include <cstdio>\n"
-        "#include <cstdint>\n"
-        "#include <cstring>\n"
-        "#include <map>\n"
-        "#include <new>\n"
-        "#include <string>\n"
-        "#include <fstream>\n"
-    )
+    _CXX_FLAGS = ["g++", "-std=c++17", "-O0", "-D_GLIBCXX_USE_CXX11_ABI=0"]
 
-    def _ensure_pch(self, proto_file, include_dirs):
-        """Build (once, process-safe) and return (header_name, pch_dir) or None."""
-        if not proto_file:
-            return None
-        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", os.path.basename(proto_file))
-        if not safe:
-            return None
-
-        pch_dir = os.path.join(getattr(self._switches, "root_path", os.getcwd()), "geir", ".pch")
-        os.makedirs(pch_dir, exist_ok=True)
-        pch_header = "ttk_pch_" + safe
-        pch_src = os.path.join(pch_dir, pch_header)
-        pch_gch = pch_src + ".gch"
-
-        if not os.path.isfile(pch_src):
-            tmp = pch_src + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(self._PCH_TEMPLATE.format(proto_file=proto_file))
-            os.replace(tmp, pch_src)
-
-        proto_mtime = _resolve_header_mtime(proto_file, include_dirs)
-
-        import fcntl
-
-        lock_path = os.path.join(pch_dir, pch_header + ".lock")
-        with open(lock_path, "w") as lf:
-            fcntl.flock(lf, fcntl.LOCK_EX)
-            stamp_path = pch_src + ".stamp"
-            if os.path.isfile(pch_gch) and os.path.isfile(stamp_path):
-                try:
-                    cached_mtime = float(open(stamp_path).read().strip())
-                except (ValueError, OSError):
-                    cached_mtime = -1.0
-                if proto_mtime is not None and cached_mtime == proto_mtime:
-                    return (pch_header, pch_dir)
-                logging.info(
-                    "PCH source changed (proto mtime %s != stamp %.3f), rebuilding",
-                    proto_mtime if proto_mtime is not None else "unknown",
-                    cached_mtime,
-                )
-                try:
-                    os.remove(pch_gch)
-                except OSError:
-                    pass
-            self._cleanup_stale_pch(pch_dir, pch_header, include_dirs)
-            cmd = ["g++", "-std=c++17", "-O0", "-x", "c++-header", "-o", pch_gch, pch_src]
-            for d in include_dirs:
-                if os.path.isdir(d):
-                    cmd.extend(["-I", d])
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=pch_dir)
-                if result.returncode != 0:
-                    try:
-                        os.remove(pch_gch)
-                    except OSError:
-                        pass
-                    logging.warning(
-                        "PCH build failed for %s, fallback to no-PCH:\n%s", proto_file, result.stderr[-500:]
-                    )
-                    return None
-            except subprocess.TimeoutExpired:
-                logging.warning("PCH build timed out for %s, fallback to no-PCH", proto_file)
-                return None
-            if proto_mtime is not None:
-                try:
-                    with open(stamp_path, "w") as sf:
-                        sf.write(str(proto_mtime))
-                except OSError:
-                    pass
-        return (pch_header, pch_dir)
-
-    @staticmethod
-    def _cleanup_stale_pch(pch_dir, current_header, include_dirs):
-        """Remove PCH artifacts whose proto header no longer exists in include_dirs."""
-        try:
-            stale_bases = set()
-            for entry in os.listdir(pch_dir):
-                if not entry.startswith("ttk_pch_"):
-                    continue
-                base = entry
-                for suffix in (".gch", ".stamp", ".lock"):
-                    if base.endswith(suffix):
-                        base = base[: -len(suffix)]
-                        break
-                if base != current_header:
-                    stale_bases.add(base)
-            for base in stale_bases:
-                proto_name = base[len("ttk_pch_") :]
-                if proto_name and _resolve_header_mtime(proto_name, include_dirs) is None:
-                    for suffix in ("", ".gch", ".stamp", ".lock"):
-                        try:
-                            os.remove(os.path.join(pch_dir, base + suffix))
-                        except OSError:
-                            pass
-        except OSError:
-            pass
-
-    def compile(
-        self, source_path: str, binary_name: str = "ttk_geir_test", proto_file: Optional[str] = None
-    ) -> Optional[str]:
+    def _resolve_ascend_env(self):
+        """Resolve Ascend include dirs, lib dirs, and libs. Returns (include_dirs, lib_dirs, libs)."""
         from ttk._env import _find_ascend_root
 
         asc_path = _find_ascend_root()
@@ -176,7 +42,6 @@ class GeirCompiler:
             os.path.join(asc_path, "opp", "built-in", "op_graph", "inc"),
         ]
 
-        # Add custom and vendor op_proto/inc directories (for *_proto.h headers)
         from ttk.utilities.platform import get_opp_paths
 
         for copp in get_opp_paths("custom"):
@@ -193,12 +58,10 @@ class GeirCompiler:
             os.path.join(asc_path, arch_dir, "lib64", "stub"),
         ]
         libs = ["graph", "ge_runner", "graph_base", "ge_compiler", "msprofiler"]
-        binary_path = os.path.join(self._build_dir, binary_name)
+        return include_dirs, lib_dirs, libs
 
-        pch = self._ensure_pch(proto_file, include_dirs)
-        cmd = ["g++", "-std=c++17", "-O0", "-o", binary_path, source_path]
-        if pch:
-            cmd.extend(["-include", pch[0], "-I", pch[1]])
+    def _build_compile_cmd(self, source_path, binary_path, include_dirs, lib_dirs, libs):
+        cmd = self._CXX_FLAGS + ["-o", binary_path, source_path]
         for d in include_dirs:
             if os.path.isdir(d):
                 cmd.extend(["-I", d])
@@ -207,6 +70,15 @@ class GeirCompiler:
                 cmd.extend(["-L", d])
         for lib in libs:
             cmd.append(f"-l{lib}")
+        return cmd
+
+    def compile(
+        self, source_path: str, binary_name: str = "ttk_geir_test"
+    ) -> Optional[str]:
+        include_dirs, lib_dirs, libs = self._resolve_ascend_env()
+
+        binary_path = os.path.join(self._build_dir, binary_name)
+        cmd = self._build_compile_cmd(source_path, binary_path, include_dirs, lib_dirs, libs)
 
         logging.info(f"GEIR compile: {' '.join(cmd)}")
         try:
@@ -221,7 +93,70 @@ class GeirCompiler:
         self._binary_path = binary_path
         return binary_path
 
-    def cleanup(self, input_prefix=None, source_path=None):
+    def _compute_cache_key(self, source_path, include_dirs, lib_dirs, libs):
+        """Compute a cache key covering source mtime, compile flags, and Ascend SDK path."""
+        import hashlib
+
+        parts = [str(os.path.getmtime(source_path)), " ".join(self._CXX_FLAGS)]
+        from ttk._env import _find_ascend_root
+
+        asc_path = _find_ascend_root() or ""
+        parts.append(asc_path)
+        h = hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
+        return f"{os.path.getmtime(source_path)}:{h}"
+
+    def compile_op(
+        self,
+        source_path: str,
+        op_name: str,
+        op_dir: str,
+    ) -> Optional[str]:
+        """Compile op-level binary with caching (flock + stamp keyed on source mtime + SDK)."""
+        os.makedirs(op_dir, exist_ok=True)
+        binary_path = os.path.join(op_dir, op_name)
+        stamp_path = os.path.join(op_dir, op_name + ".stamp")
+        lock_path = os.path.join(op_dir, op_name + ".lock")
+
+        include_dirs, lib_dirs, libs = self._resolve_ascend_env()
+        cache_key = self._compute_cache_key(source_path, include_dirs, lib_dirs, libs)
+
+        import fcntl
+
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            if os.path.isfile(binary_path) and os.path.isfile(stamp_path):
+                try:
+                    cached_key = open(stamp_path).read().strip()
+                except OSError:
+                    cached_key = ""
+                if cached_key == cache_key:
+                    logging.info("GEIR op binary cached: %s", binary_path)
+                    self._binary_path = binary_path
+                    return binary_path
+                logging.info("GEIR op cache miss (key changed), recompiling %s", op_name)
+
+            cmd = self._build_compile_cmd(source_path, binary_path, include_dirs, lib_dirs, libs)
+
+            logging.info(f"GEIR op compile: {' '.join(cmd)}")
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=op_dir)
+                if result.returncode != 0:
+                    logging.error(f"GEIR op compile failed:\n{result.stderr}")
+                    return None
+            except subprocess.TimeoutExpired:
+                logging.error("GEIR op compile timed out (300s)")
+                return None
+
+            try:
+                with open(stamp_path, "w") as sf:
+                    sf.write(cache_key)
+            except OSError:
+                pass
+
+        self._binary_path = binary_path
+        return binary_path
+
+    def cleanup(self, input_prefix=None):
         if input_prefix:
             import glob
 

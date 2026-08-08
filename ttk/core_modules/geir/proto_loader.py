@@ -11,7 +11,7 @@ from ttk.utilities import Singleton
 
 
 class OpProtoInfo:
-    __slots__ = ("op_class", "proto_file", "inputs", "outputs", "dynamic_inputs")
+    __slots__ = ("op_class", "proto_file", "inputs", "outputs", "dynamic_inputs", "attrs")
 
     def __init__(
         self,
@@ -20,12 +20,14 @@ class OpProtoInfo:
         inputs: List[str],
         outputs: List[str],
         dynamic_inputs: Optional[List[str]] = None,
+        attrs: Optional[List[tuple]] = None,
     ):
         self.op_class = op_class
         self.proto_file = proto_file
         self.inputs = inputs
         self.outputs = outputs
         self.dynamic_inputs = dynamic_inputs or []
+        self.attrs = attrs or []
 
 
 class ProtoLoader(metaclass=Singleton):
@@ -40,6 +42,8 @@ class ProtoLoader(metaclass=Singleton):
     _ANY_INPUT_PATTERN = re.compile(r"\.(?:OPTIONAL_INPUT|INPUT)\(\s*(\w+),")
     _DYNAMIC_INPUT_PATTERN = re.compile(r"\.DYNAMIC_INPUT\(\s*(\w+),")
     _OUTPUT_PATTERN = re.compile(r"\.OUTPUT\(\s*(\w+),")
+    _ATTR_PATTERN = re.compile(r"\.ATTR\(\s*(\w+)\s*,\s*(\w+)")
+    _REQUIRED_ATTR_PATTERN = re.compile(r"\.REQUIRED_ATTR\(\s*(\w+)\s*,\s*(\w+)")
 
     def __init__(self, ascend_path=None):
         from ttk._env import _find_ascend_root
@@ -132,5 +136,7 @@ class ProtoLoader(metaclass=Singleton):
         inputs = self._ANY_INPUT_PATTERN.findall(body)
         dynamic_inputs = self._DYNAMIC_INPUT_PATTERN.findall(body)
         outputs = self._OUTPUT_PATTERN.findall(body)
+        attrs = self._ATTR_PATTERN.findall(body)
+        attrs += self._REQUIRED_ATTR_PATTERN.findall(body)
 
-        return OpProtoInfo(canonical, proto_file, inputs, outputs, dynamic_inputs)
+        return OpProtoInfo(canonical, proto_file, inputs, outputs, dynamic_inputs, attrs)

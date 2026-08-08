@@ -210,15 +210,21 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             need_data=need_3party_outputs,
         )
 
-    # Build C++ source and compile
+    # Build op-level source (cached) + per-case config + compile (cached)
     process_ctx.notify_status("OnGeirCompile")
     builder = GeirGraphBuilder(switches)
-    source_path = builder.generate(testcase, mode=mode)
+    source_path = builder.generate_op_source(testcase.op_name, mode=mode)
     if source_path is None:
-        raise RuntimeError("GEIR source generation failed")
+        raise RuntimeError("GEIR op source generation failed")
+
+    config_path = builder.write_case_config(testcase, mode=mode)
+    if config_path is None:
+        raise RuntimeError("GEIR case config generation failed")
 
     compiler = GeirCompiler(switches, build_dir=builder.work_dir)
-    binary = compiler.compile(source_path, testcase.testcase_name, proto_file=builder.last_proto_file)
+    binary = compiler.compile_op(
+        source_path, testcase.op_name, op_dir=builder.op_dir
+    )
     if binary is None:
         raise RuntimeError("GEIR compilation failed")
 
@@ -278,7 +284,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         try:
             try:
                 proc = subprocess.Popen(
-                    [binary, str(dev_id), input_prefix, str(data_w), prof_path],
+                    [binary, str(dev_id), input_prefix, str(data_w), prof_path, config_path],
                     pass_fds=(data_w,),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -298,14 +304,14 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             proc.wait()
             reader.join(timeout=5)
             os.close(data_r)
-            compiler.cleanup(input_prefix, source_path)
+            compiler.cleanup(input_prefix)
             raise RuntimeError("GEIR execution timed out")
         reader.join(timeout=30)
         os.close(data_r)
 
         if proc.returncode != 0:
             stderr = stderr_bytes.decode("utf-8", errors="replace")[:2000]
-            compiler.cleanup(input_prefix, source_path)
+            compiler.cleanup(input_prefix)
             raise RuntimeError(f"GEIR execution failed (rc={proc.returncode}): {stderr}")
 
         # Capture plog to TTK logging. stdout holds plog echo (when
@@ -410,7 +416,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             if isinstance(arr, np.ndarray):
                 dump_to_file(arr, dump_path, f"{testcase.testcase_name}_geir_fail_golden_{i}", dump_cfg.file_format)
 
-    compiler.cleanup(input_prefix, source_path)
+    compiler.cleanup(input_prefix)
 
     from .geir_struct import GeirReturnStructure
 
