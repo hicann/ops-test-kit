@@ -118,7 +118,7 @@ class InputGenerator:
         flat_shapes = self._ctx.flat_tensor_view_shapes
 
         ranges = self._ctx.flat_input_data_ranges or ()
-        base_seed = getattr(self._switche, 'random_seed', None)
+        base_seed = getattr(self._switch, 'random_seed', None)
         batch_seed = getattr(self._ctx, 'batch_seed', None)
         for idx, vs in enumerate(flat_shapes):
             if vs is None:
