@@ -160,8 +160,7 @@ def __override_inputs_from_attributes(context: TestcaseOp):
 
 
 def __transform_to_original_format(context: TestcaseOp):
-    switches = get_global_storage()
-    if switches.golden_mode == "Disable" or context.manual_golden_binaries:
+    if context.manual_golden_binaries:
         return
 
     from ....utilities.container_utils import shape_like_flatten
@@ -281,6 +280,7 @@ def __gen_input(context: TestcaseOp, stored_inputs=None):
                 raise RuntimeError(
                     f"Input plugin returned {len(flat)} arrays, expected {len(context.flat_input_shapes)}")
             context.input_arrays = tuple(input_apply_as_list(flat, context.input_distribution))
+            __transform_to_original_format(context)
 
 
 def __collect_dynamic_kwargs(context: TestcaseOp):
