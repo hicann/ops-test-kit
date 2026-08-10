@@ -127,15 +127,30 @@ def _torch_resolve(name):
     }
     if name in torch_funcs:
         return torch_funcs[name]
-    sources = [torch, torch.ops.aten]
-    result = None
+    # 候选源含 torch.nn.functional:服务端是【按参数名绑参】的,而 torch.<name> 多为 C 内置
+    # (inspect.signature 抛 "no signature found for builtin")、torch.ops.aten.<name> 是
+    # OpOverloadPacket(签名只有泛型 *args/**kwargs),两者都无法按名绑参,且底层重载常只收
+    # 枚举 int(如 reduction 传 "mean" 报 failed to match any schema)。故按【能否绑命名参数】
+    # 择优,而不是按算子名逐个开特例。都不可绑参时维持原有的 torch -> aten 兜底次序不变。
+    sources = [torch, torch.nn.functional, torch.ops.aten]
+    candidates = []
     for source in sources:
         try:
-            result = getattr(source, name, None)
+            found = getattr(source, name, None)
         except RuntimeError:
-            pass
-        if result is not None:
-            return result
+            found = None
+        if found is not None:
+            candidates.append(found)
+    for cand in candidates:
+        try:
+            params = inspect.signature(cand).parameters.values()
+        except (ValueError, TypeError):
+            continue
+        if any(p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) for p in params):
+            return cand
+    if candidates:
+        return candidates[0]
+    result = None
     # suffix stripping — faithful to backup (serial-if, NOT elif). The bare `if`
     # chain does last-match-wins: each matching suffix UNCONDITIONALLY reassigns
     # `result`, so a later matching suffix overwrites an earlier one. In practice

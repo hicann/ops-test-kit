@@ -232,10 +232,18 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     input_prefix = os.path.join(compiler.build_dir, f"{testcase.testcase_name}_input")
     data_idx = 0
     for i, arr in enumerate(testcase.input_arrays):
-        if arr is not None:
-            path = f"{input_prefix}_{data_idx}.bin"
-            arr.tofile(path)
-            data_idx += 1
+        if arr is None:
+            continue
+        if isinstance(arr, (list, tuple)):
+            # DYNAMIC_INPUT(TensorList):逐元素写 bin,索引与 graph_builder 的 elements 对齐
+            for sub in arr:
+                if sub is not None:
+                    sub.tofile(f"{input_prefix}_{data_idx}.bin")
+                    data_idx += 1
+            continue
+        path = f"{input_prefix}_{data_idx}.bin"
+        arr.tofile(path)
+        data_idx += 1
     testcase.original_input_arrays = None
 
     # Execute C++ program
@@ -262,10 +270,17 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         if run_idx > 0:
             data_idx = 0
             for i, arr in enumerate(testcase.input_arrays):
-                if arr is not None:
-                    path = f"{input_prefix}_{data_idx}.bin"
-                    arr.tofile(path)
-                    data_idx += 1
+                if arr is None:
+                    continue
+                if isinstance(arr, (list, tuple)):
+                    for sub in arr:
+                        if sub is not None:
+                            sub.tofile(f"{input_prefix}_{data_idx}.bin")
+                            data_idx += 1
+                    continue
+                path = f"{input_prefix}_{data_idx}.bin"
+                arr.tofile(path)
+                data_idx += 1
 
         data_r, data_w = os.pipe()
         data_holder = []

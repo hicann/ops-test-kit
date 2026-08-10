@@ -39,7 +39,7 @@ class ProtoLoader(metaclass=Singleton):
     )
     # 按声明位置取输入序：少数算子(如 DropOutV3)的 OPTIONAL_INPUT 夹在必选中间，
     # 分两次 findall 拼接会假定"可选总在末尾"，导致输入错位。
-    _ANY_INPUT_PATTERN = re.compile(r"\.(?:OPTIONAL_INPUT|INPUT)\(\s*(\w+),")
+    _ANY_INPUT_PATTERN = re.compile(r"\.(?:OPTIONAL_INPUT|DYNAMIC_INPUT|INPUT)\(\s*(\w+),")
     _DYNAMIC_INPUT_PATTERN = re.compile(r"\.DYNAMIC_INPUT\(\s*(\w+),")
     _OUTPUT_PATTERN = re.compile(r"\.OUTPUT\(\s*(\w+),")
     _ATTR_PATTERN = re.compile(r"\.ATTR\(\s*(\w+)\s*,\s*(\w+)")

@@ -25,6 +25,8 @@ _DTYPE_TO_GE_ENUM = {
     "int16": "DT_INT16",
     "int8": "DT_INT8",
     "uint8": "DT_UINT8",
+    "uint16": "DT_UINT16",
+    "uint32": "DT_UINT32",
     "int64": "DT_INT64",
     "uint64": "DT_UINT64",
     "float64": "DT_DOUBLE",
@@ -46,6 +48,7 @@ _FORMAT_TO_GE_ENUM = {
     "C1HWNCoC0": "FORMAT_C1HWNCoC0",
     "NDHWC": "FORMAT_NDHWC",
     "NCDHW": "FORMAT_NCDHW",
+    "NDC1HWC0": "FORMAT_NDC1HWC0",
 }
 
 _PROTO_ATTR_TYPE_TO_CPP = {
@@ -167,6 +170,7 @@ class GeirGraphBuilder:
             op_class=proto_info.op_class,
             input_names=proto_info.inputs[:],
             output_names=proto_info.outputs[:],
+            dynamic_input_names=(proto_info.dynamic_inputs or []),
             attr_entries=attr_entries,
             dtype_map=[(v, v) for v in _DTYPE_TO_GE_ENUM.values()],
             format_map=[(v, v) for v in _FORMAT_TO_GE_ENUM.values()],
@@ -199,6 +203,8 @@ class GeirGraphBuilder:
         input_dtypes = testcase.input_dtypes
         input_formats = getattr(testcase, "input_formats", None) or ()
         input_ori_formats = getattr(testcase, "input_ori_formats", None) or ()
+        input_ori_shapes = getattr(testcase, "input_ori_shapes", None) or ()
+        output_ori_shapes = getattr(testcase, "output_ori_shapes", None) or ()
         output_shapes = testcase.output_shapes
         output_dtypes = testcase.output_dtypes
         output_formats = getattr(testcase, "output_formats", None) or ()
@@ -219,6 +225,7 @@ class GeirGraphBuilder:
         attr_keys = set(attrs.keys())
 
         # ---- inputs ----
+        dynamic_input_names = set(getattr(proto_info, "dynamic_inputs", None) or [])
         inputs_json: List[Optional[Dict[str, Any]]] = []
         data_idx = 0
         for i, name in enumerate(input_names):
@@ -247,6 +254,30 @@ class GeirGraphBuilder:
                 if input_ori_formats
                 else "ND"
             )
+            # DYNAMIC_INPUT(TensorList)端口:input_shapes[i] 是嵌套的 shape 列表,
+            # 逐元素展开为 elements,模板按变参口(create_dynamic_input_X)接线。
+            if name in dynamic_input_names and isinstance(input_shapes[i], (list, tuple)) and input_shapes[i] and isinstance(input_shapes[i][0], (list, tuple)):
+                elems = []
+                elt_dtypes = input_dtypes[i] if (isinstance(input_dtypes, (list, tuple)) and i < len(input_dtypes) and isinstance(input_dtypes[i], (list, tuple))) else [dtype_str] * len(input_shapes[i])
+                for j, eshape in enumerate(input_shapes[i]):
+                    edt = elt_dtypes[j] if j < len(elt_dtypes) else elt_dtypes[-1]
+                    elems.append({
+                        "data_idx": data_idx + j,
+                        "data_shape": list(eshape),
+                        "desc_shape": list(eshape),
+                        "dtype": _resolve_dtype(edt),
+                        "format": _resolve_format(fmt_str),
+                        "ori_format": _resolve_format(ori_fmt_str),
+                    })
+                inputs_json.append({
+                    "name": name,
+                    "is_const": False,
+                    "dynamic": True,
+                    "count": len(elems),
+                    "elements": elems,
+                })
+                data_idx += len(elems)
+                continue
             data_shape = list(input_shapes[i])
             if is_dynamic and dyn_input_shapes and i < len(dyn_input_shapes) and dyn_input_shapes[i] is not None:
                 desc_shape = list(dyn_input_shapes[i])
@@ -256,13 +287,17 @@ class GeirGraphBuilder:
                 desc_shape = data_shape
             inputs_json.append({
                 "name": name,
-                "is_const": name in attr_keys,
+                "is_const": (name in attr_keys) or bool(os.environ.get("GEIR_CONST_FEED")),
                 "data_idx": data_idx,
                 "data_shape": data_shape,
                 "desc_shape": desc_shape,
                 "dtype": _resolve_dtype(dtype_str),
                 "format": _resolve_format(fmt_str),
                 "ori_format": _resolve_format(ori_fmt_str),
+                "ori_shape": (list(input_ori_shapes[i])
+                              if isinstance(input_ori_shapes, (list, tuple)) and i < len(input_ori_shapes)
+                                 and input_ori_shapes[i] is not None
+                              else list(input_shapes[i])),
             })
             data_idx += 1
 
@@ -303,6 +338,10 @@ class GeirGraphBuilder:
                 "dtype": _resolve_dtype(dtype_str),
                 "format": _resolve_format(fmt_str),
                 "ori_format": _resolve_format(ori_fmt_str),
+                "ori_shape": (list(output_ori_shapes[i])
+                              if isinstance(output_ori_shapes, (list, tuple)) and i < len(output_ori_shapes)
+                                 and output_ori_shapes[i] is not None
+                              else list(output_shapes[i])),
             })
 
         # ---- attrs (exclude input names and special prefixes) ----

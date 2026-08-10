@@ -227,6 +227,8 @@ static uint32_t GetDataTypeSize(DataType dt) {
         case DT_INT16:       return 2;
         case DT_INT8:        return 1;
         case DT_UINT8:       return 1;
+        case DT_UINT16:      return 2;
+        case DT_UINT32:      return 4;
         case DT_INT64:       return 8;
         case DT_UINT64:      return 8;
         case DT_DOUBLE:      return 8;
@@ -418,6 +420,41 @@ int main(int argc, char* argv[]) {
 {% for inp_name in input_names %}
     {
         int idx = {{ loop.index0 }};
+{% if inp_name in dynamic_input_names %}
+        if (idx < (int)inputs_cfg.size() && !inputs_cfg.at(idx).isNull()) {
+            // DYNAMIC_INPUT(TensorList)变参口:create_dynamic_input_byindex_X(n, ir_index) + 逐槽 set_dynamic_input_X(i, data)
+            // 必须用 byindex 版:create_dynamic_input_X(n) 默认 isPushBack=true,会把动态端口【追加到静态输入之后】,
+            // 节点实际端口序与 IR 声明序不一致(实测 x1,x2,gamma 变成 x2,gamma,x1) →
+            // 算子 infershape/tiling 无论用展平下标还是 IR 索引都会取错张量。
+            const JsonValue& inp = inputs_cfg.at(idx);
+            int dyn_n = (int)inp.at("count").getInt();
+            op_inst.create_dynamic_input_byindex_{{ inp_name }}(dyn_n, {{ loop.index0 }});
+            for (int ei = 0; ei < dyn_n; ++ei) {
+                const JsonValue& el = inp.at("elements").at(ei);
+                int data_idx = (int)el.at("data_idx").getInt();
+                vector<int64_t> data_shape = JsonToIntArray(el.at("data_shape"));
+                vector<int64_t> desc_shape = JsonToIntArray(el.at("desc_shape"));
+                DataType dt  = StringToDataType(el.at("dtype").getString());
+                Format   fmt = StringToFormat(el.at("format").getString());
+                Format   ori_fmt = StringToFormat(el.at("ori_format").getString());
+                TensorDesc desc(Shape(desc_shape), fmt, dt);
+                desc.SetOriginFormat(ori_fmt);
+                Tensor tensor;
+                string path = string(input_prefix) + "_" + to_string(data_idx) + ".bin";
+                if (LoadInputFromFile(path, dt, data_shape, tensor) != SUCCESS) {
+                    finalize_all();
+                    return FAILED;
+                }
+                auto data = op::Data("placeholder_dyn" + to_string(idx) + "_" + to_string(ei)).set_attr_index(0);
+                data.update_input_desc_x(desc);
+                data.update_output_desc_y(desc);
+                graph.AddOp(data);
+                data_ops.push_back(data);
+                input_tensors.push_back(tensor);
+                op_inst.set_dynamic_input_{{ inp_name }}(ei, data_ops.back());
+            }
+        }
+{% else %}
         if (idx < (int)inputs_cfg.size() && !inputs_cfg.at(idx).isNull()) {
             const JsonValue& inp = inputs_cfg.at(idx);
 
@@ -431,6 +468,9 @@ int main(int argc, char* argv[]) {
 
             TensorDesc desc(Shape(desc_shape), fmt, dt);
             desc.SetOriginFormat(ori_fmt);
+            if (inp.at("ori_shape").type == JsonValue::Array) {
+                desc.SetOriginShape(Shape(JsonToIntArray(inp.at("ori_shape"))));
+            }
 
             Tensor tensor;
             if (input_prefix) {
@@ -464,6 +504,7 @@ int main(int argc, char* argv[]) {
             op_inst.update_input_desc_{{ inp_name }}(desc);
             op_inst.set_input_{{ inp_name }}(data_ops.back());
         }
+{% endif %}
     }
 {% endfor %}
 
@@ -481,6 +522,9 @@ int main(int argc, char* argv[]) {
 
             TensorDesc desc(Shape(desc_shape), fmt, dt);
             desc.SetOriginFormat(ori_fmt);
+            if (out.at("ori_shape").type == JsonValue::Array) {
+                desc.SetOriginShape(Shape(JsonToIntArray(out.at("ori_shape"))));
+            }
             op_inst.update_output_desc_{{ out_name }}(desc);
         }
     }
