@@ -17,7 +17,7 @@ __all__ = ["ApiProfileObject"]
 
 # Standard Packages
 from multiprocessing.context import BaseContext
-from typing import Iterable, Any
+from typing import Iterable, Any, Optional
 
 # Third-Party Packages
 from .profiling_structure import ApiProfilingReturnStructure
@@ -25,14 +25,35 @@ from .profiling import profile_process
 from ...testcase_manager import TestcaseBase, TestcaseAclnn
 from ...tbe_multiprocessing import SimpleCommandProcess
 from ...infra import TaskA, TaskType, TaskKeeper, ProfileObject
+from ...comparison.compare_log import (
+    compare_log_size,
+    read_compare_log_failures,
+    print_compare_log_failures,
+)
 
 
 class ApiProfileObject(ProfileObject):
     def __init__(self, task_keeper: TaskKeeper, mp_context: BaseContext):
         super().__init__(task_keeper, mp_context)
+        self._compare_log_read_size: int = 0
 
     def setup(self):
-        pass
+        # Record offset of ttk-compare.log before any worker writes, so the
+        # main process only reads mismatches produced by this run.
+        self._compare_log_read_size = compare_log_size()
+
+    def _print_new_compare_failures(self, testcase_name: Optional[str] = None):
+        # Read mismatches appended since the last check and print them, so
+        # failures surface as each case completes instead of only at the end.
+        diff_lines, end_size = read_compare_log_failures(self._compare_log_read_size)
+        if end_size > self._compare_log_read_size:
+            self._compare_log_read_size = end_size
+        print_compare_log_failures(diff_lines, testcase_name)
+
+    def pre_exit(self):
+        # Flush any residual mismatch lines not yet printed (e.g. from cases
+        # that errored before returning a normal result).
+        self._print_new_compare_failures()
 
     def possible_result_titles(self) -> tuple:
         """ return all possible result titles """
@@ -42,12 +63,13 @@ class ApiProfileObject(ProfileObject):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
         for t in testcases:
-            self.task_keeper.append(TaskA(t, profile_process,
-                                          (t, grant_events, granted_indices),
-                                          TaskType.PROFILE))
+            self.task_keeper.append(TaskA(t, profile_process, 
+                                         (t, grant_events, granted_indices), 
+                                         TaskType.PROFILE))
 
     def apply_profile_success_result(self, testcase: TestcaseAclnn, result: Any) -> tuple:
         if not isinstance(result, ApiProfilingReturnStructure):
             raise RuntimeError(f"Only ApiProfilingReturnStructure is valid. "
                                f"But got {type(result)}")
+        self._print_new_compare_failures(testcase.testcase_name)
         return result.pick_data(self.case_result_title), False

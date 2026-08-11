@@ -31,14 +31,21 @@ from ...tbe_multiprocessing import SimpleCommandProcess
 from ...infra import TaskA, TaskType, TaskKeeper, ProfileObject
 from ....utilities import append_ld_library_path, construct_crash_compilation_result
 from ....utilities import BaseCompilationResult, compilation_result
+from ...comparison.compare_log import (
+    compare_log_size,
+    read_compare_log_failures,
+    print_compare_log_failures,
+)
 
 
 class OpProfileObject(ProfileObject):
     def __init__(self, task_keeper: TaskKeeper, mp_context: BaseContext):
         super().__init__(task_keeper, mp_context)
         self.kb: Optional[SimpleCommandProcess] = None
+        self._compare_log_read_size: int = 0
 
     def setup(self):
+        self._compare_log_read_size = compare_log_size()
         self._launch_knowledge_server(self.mp_context)
 
     def possible_result_titles(self) -> tuple:
@@ -76,6 +83,9 @@ class OpProfileObject(ProfileObject):
                     self.task_keeper.append(compile_tasks)
 
     def pre_exit(self):
+        # Flush any residual mismatch lines not yet printed (e.g. from cases
+        # that errored before returning a normal result).
+        self._print_new_compare_failures()
         if self.kb:
             self.kb.data["switch"] = False
             while self.kb.status == self.kb.status.RUNNING:
@@ -100,8 +110,17 @@ class OpProfileObject(ProfileObject):
         if not isinstance(result, ProfilingReturnStructure):
             raise RuntimeError(f"Only ProfilingReturnStructure is valid. "
                                f"But got {type(result)}")
+        self._print_new_compare_failures(testcase.testcase_name)
         # if profiling fail, check to restart process to clear ErrorMessage
         return result.pick_data(self.case_result_title), result.kernel_execute_failed()
+
+    def _print_new_compare_failures(self, testcase_name: Optional[str] = None):
+        # Read mismatches appended since the last check and print them, so
+        # failures surface as each case completes instead of only at the end.
+        diff_lines, end_size = read_compare_log_failures(self._compare_log_read_size)
+        if end_size > self._compare_log_read_size:
+            self._compare_log_read_size = end_size
+        print_compare_log_failures(diff_lines, testcase_name)
 
     def compile_done(self, testcase: TestcaseOp):
         if testcase.ready_for_profile():
