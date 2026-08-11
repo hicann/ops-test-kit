@@ -43,7 +43,7 @@ from .golden_generation import generate_golden
 from .graph_execution import _execute_graph
 from .input_generation import generate_inputs
 from .profiler import get_profiler
-from .profiling_utils import prepare_device_args, result_to_numpy
+from .profiling_utils import clone_preserving_stride, prepare_device_args, result_to_numpy
 from .result import FrameworkApiReturnStructure
 
 WARMUP_COUNT = 5
@@ -369,10 +369,10 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     if inplace_input_indexes:
         for idx in inplace_input_indexes:
             if idx < len(args) and args[idx] is not None:
-                inplace_input_backups[idx] = args[idx].clone()
+                inplace_input_backups[idx] = clone_preserving_stride(args[idx])
 
     if is_inplace:
-        inplace_backup = args[0].clone() if args and args[0] is not None else None
+        inplace_backup = clone_preserving_stride(args[0]) if args and args[0] is not None else None
         if is_tensor_method:
             if args[0] is not None:
                 result = call_api(testcase.api_name, plan.overload_index, getattr(args[0], resolved), args[1:], kwargs)
@@ -389,6 +389,10 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
 
     if switches.warmup:
         for _ in range(WARMUP_COUNT):
+            if is_inplace and inplace_backup is not None:
+                args[0][:] = inplace_backup
+            for idx, backup in inplace_input_backups.items():
+                args[idx][:] = backup
             if is_tensor_method:
                 getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
             else:
@@ -397,11 +401,27 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
 
     for idx, backup in inplace_input_backups.items():
         args[idx][:] = backup
+    if is_inplace and inplace_backup is not None:
+        args[0][:] = inplace_backup
+
+    inplace_clones = {}
+    original_tensors = {}
+    for idx in inplace_input_backups:
+        original_tensors[idx] = args[idx]
+        inplace_clones[idx] = [clone_preserving_stride(args[idx]) for _ in range(run_count - 1)]
+    if is_inplace and inplace_backup is not None and 0 not in original_tensors:
+        if args and args[0] is not None:
+            original_tensors[0] = args[0]
+            inplace_clones[0] = [clone_preserving_stride(args[0]) for _ in range(run_count - 1)]
 
     with profiler:
-        for _ in range(run_count):
-            for idx, backup in inplace_input_backups.items():
-                args[idx][:] = backup
+        for i in range(run_count):
+            if i < run_count - 1:
+                for idx in inplace_clones:
+                    args[idx] = inplace_clones[idx][i]
+            else:
+                for idx in original_tensors:
+                    args[idx] = original_tensors[idx]
             if is_tensor_method:
                 r = getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
             else:

@@ -32,6 +32,43 @@ def apply_format_cast(tensors, formats):
     return result
 
 
+def clone_preserving_stride(t):
+    """Clone a tensor preserving its non-contiguous stride.
+
+    Unlike torch.Tensor.clone(), which materializes a non-contiguous view into
+    a contiguous tensor, this allocates storage via empty_strided with the
+    original shape+stride and copies data in, so downstream operators still
+    receive the original (possibly non-contiguous) memory layout.
+    """
+    import torch
+    if t is None:
+        return None
+    if t.is_contiguous():
+        return t.clone()
+    new_t = torch.empty_strided(t.shape, t.stride(), dtype=t.dtype, device=t.device)
+    new_t.copy_(t)
+    return new_t
+
+
+def _to_device_preserving_stride(tensor, backend, dev_id):
+    """Move a (possibly non-contiguous) CPU tensor to device preserving stride.
+
+    Tensor.to(device) / .npu() flatten non-contiguous views into contiguous
+    tensors. To preserve the original stride, this allocates storage on the
+    device via empty_strided with the original shape+stride and copies data in.
+    """
+    import torch
+    if tensor is None:
+        return None
+    if tensor.is_contiguous():
+        return getattr(tensor, backend.torch_lib)(dev_id)
+    dev_t = torch.empty_strided(
+        tensor.shape, tensor.stride(), dtype=tensor.dtype,
+        device=f"{backend.torch_lib}:{dev_id}")
+    dev_t.copy_(tensor)
+    return dev_t
+
+
 def result_to_numpy(result, backend, copy=False):
     """Convert API result to numpy array.
 
@@ -79,8 +116,14 @@ def prepare_device_args(testcase, backend, dev_id, plan, raw_inputs):
         tuple: (args, kwargs) ready for API call
     """
     from ttk.utilities.container_utils import apply_as_list
-    
-    dev_tensors = [backend.to_device(x, dev_id) if x is not None else None for x in raw_inputs]
+
+    use_torch_tensors = getattr(testcase, "tensors", None) is not None and testcase.is_torch_dtype_support()
+    if use_torch_tensors:
+        flat_tensors = testcase.flatten_tensors
+        dev_tensors = [_to_device_preserving_stride(t, backend, dev_id) if t is not None else None
+                       for t in flat_tensors]
+    else:
+        dev_tensors = [backend.to_device(x, dev_id) if x is not None else None for x in raw_inputs]
     if testcase.tensor_formats and backend.is_npu():
         dev_tensors = apply_format_cast(dev_tensors, testcase.flat_tensor_formats)
     dist = testcase.tensor_list_dist

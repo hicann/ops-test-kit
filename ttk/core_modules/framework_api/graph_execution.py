@@ -22,7 +22,7 @@ from ttk.test_spec import get_spec_attr
 
 from .graph_network import GraphNetwork, split_params
 from .profiler import get_profiler
-from .profiling_utils import prepare_device_args, result_to_numpy
+from .profiling_utils import clone_preserving_stride, prepare_device_args, result_to_numpy
 
 WARMUP_COUNT = 5
 
@@ -63,37 +63,78 @@ def _compile_model_aclgraph(model, backend):
 
 def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
                   is_inplace, inplace_backup, api_name,
-                  inplace_backups=None):
+                  inplace_backups=None, inplace_kwargs_keys=None):
     """Run compiled model with warmup + profiling. Returns (result_nps, perf)."""
-    def _restore_inplace_inputs():
-        if inplace_backups:
-            for idx, bak in inplace_backups.items():
-                if idx < len(args) and args[idx] is not None:
-                    args[idx][:] = bak
+    run_count = switches.run_time
+    is_kwargs_mode = inplace_kwargs_keys is not None
 
     result = compiled(*args, **kwargs)
     backend.synchronize(dev_id)
     result_nps = result_to_numpy(result, backend, copy=is_inplace)
 
-    if is_inplace and inplace_backup is not None:
-        args[0][:] = inplace_backup
-
-    run_count = switches.run_time
-
     if switches.warmup:
         for _ in range(WARMUP_COUNT):
-            if is_inplace and inplace_backup is not None:
-                args[0][:] = inplace_backup
-            _restore_inplace_inputs()
+            if is_kwargs_mode:
+                for idx, key in inplace_kwargs_keys.items():
+                    if key in kwargs and kwargs[key] is not None:
+                        kwargs[key][:] = inplace_backups[idx]
+            else:
+                if is_inplace and inplace_backup is not None and args:
+                    args[0][:] = inplace_backup
+                if inplace_backups:
+                    for idx, bak in inplace_backups.items():
+                        if idx < len(args) and args[idx] is not None:
+                            args[idx][:] = bak
             compiled(*args, **kwargs)
         backend.synchronize(dev_id)
 
+    if is_kwargs_mode:
+        for idx, key in inplace_kwargs_keys.items():
+            if key in kwargs and kwargs[key] is not None:
+                kwargs[key][:] = inplace_backups[idx]
+    else:
+        if is_inplace and inplace_backup is not None and args:
+            args[0][:] = inplace_backup
+        if inplace_backups:
+            for idx, bak in inplace_backups.items():
+                if idx < len(args) and args[idx] is not None:
+                    args[idx][:] = bak
+
+    inplace_clones = {}
+    original_tensors = {}
+    if is_kwargs_mode:
+        for idx, key in inplace_kwargs_keys.items():
+            if key in kwargs and kwargs[key] is not None:
+                original_tensors[idx] = (key, kwargs[key])
+                inplace_clones[idx] = (key, [clone_preserving_stride(kwargs[key]) for _ in range(run_count - 1)])
+    else:
+        if inplace_backups:
+            for idx in inplace_backups:
+                if idx < len(args) and args[idx] is not None:
+                    original_tensors[idx] = args[idx]
+                    inplace_clones[idx] = [clone_preserving_stride(args[idx]) for _ in range(run_count - 1)]
+        if is_inplace and inplace_backup is not None and 0 not in original_tensors:
+            if args and args[0] is not None:
+                original_tensors[0] = args[0]
+                inplace_clones[0] = [clone_preserving_stride(args[0]) for _ in range(run_count - 1)]
+
     profiler = get_profiler(api_name, backend)
     with profiler:
-        for _ in range(run_count):
-            if is_inplace and inplace_backup is not None:
-                args[0][:] = inplace_backup
-            _restore_inplace_inputs()
+        for i in range(run_count):
+            if i < run_count - 1:
+                if is_kwargs_mode:
+                    for _idx, (key, clones) in inplace_clones.items():
+                        kwargs[key] = clones[i]
+                else:
+                    for idx, clones in inplace_clones.items():
+                        args[idx] = clones[i]
+            else:
+                if is_kwargs_mode:
+                    for _idx, (key, orig) in original_tensors.items():
+                        kwargs[key] = orig
+                else:
+                    for idx, orig in original_tensors.items():
+                        args[idx] = orig
             r = compiled(*args, **kwargs)
             if not is_inplace:
                 result = r
@@ -102,7 +143,7 @@ def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
     perf = profiler.result(backend, run_count)
 
     if not is_inplace:
-        result_nps = result_to_numpy(result, backend)
+        result_nps = result_to_numpy(result, backend, copy=is_inplace)
 
     return result_nps, perf
 
@@ -147,23 +188,30 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     if inplace_input_indexes:
         for idx in sorted(inplace_input_indexes):
             if idx < len(args) and args[idx] is not None:
-                inplace_backups[idx] = args[idx].clone()
+                inplace_backups[idx] = clone_preserving_stride(args[idx])
 
     custom_cls = get_spec_attr(testcase.api_name, "torch_graph", switches.plugin_path)
 
+    inplace_kwargs_keys = None
     if custom_cls:
         logging.info(f"Using custom graph module: {custom_cls.__name__}")
         init_kwargs, fwd_kwargs = split_params(
             custom_cls, plan.overload_params, args, kwargs)
         model = custom_cls(**init_kwargs)
         run_args, run_kwargs = [], fwd_kwargs
-        if is_inplace and args and args[0] is not None:
-            inplace_backup = args[0].clone()
         run_inplace = is_inplace
+        if inplace_input_indexes:
+            positional_param_names = [p.name for p in plan.overload_params if not p.is_keyword_only]
+            inplace_kwargs_keys = {}
+            for idx in inplace_input_indexes:
+                if idx < len(positional_param_names):
+                    key = positional_param_names[idx]
+                    if key in run_kwargs:
+                        inplace_kwargs_keys[idx] = key
     else:
         logging.info("Using generic GraphNetwork")
         if is_inplace:
-            inplace_backup = args[0].clone() if args and args[0] is not None else None
+            inplace_backup = clone_preserving_stride(args[0]) if args and args[0] is not None else None
 
         if is_tensor_method:
             def api_caller(*args, **kwargs):
@@ -192,7 +240,8 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         result_nps, perf = _run_compiled(
             compiled, run_args, run_kwargs, backend, dev_id, switches,
             run_inplace, inplace_backup if run_inplace else None, testcase.api_name,
-            inplace_backups=inplace_backups if inplace_input_indexes and not custom_cls else None)
+            inplace_backups=inplace_backups if inplace_input_indexes else None,
+            inplace_kwargs_keys=inplace_kwargs_keys)
 
     except Exception as e:
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)
@@ -200,8 +249,8 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         return [], None
 
     if result_nps:
-        if not custom_cls:
-            if inplace_input_indexes:
+        if inplace_input_indexes:
+            if not custom_cls:
                 for idx in sorted(inplace_input_indexes):
                     if idx < len(args) and args[idx] is not None:
                         inplace_np = backend.to_numpy(args[idx].detach().clone())
