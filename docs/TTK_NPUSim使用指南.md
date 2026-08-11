@@ -1,0 +1,178 @@
+# TTK NPUSim 仿真测试使用指南
+
+> 通过 `--backend npusim`，让 TTK 的 **Kernel** 与 **ACLNN** 测试模式在 NPUSim（昇腾 SoC 级仿真器）上执行，代替真实芯片。适用于**无卡 / 芯片资源紧缺**环境下的算子精度验证与性能分析。
+> 关联设计文档：`docs/TTK_NPUSim仿真集成设计.md`
+
+---
+
+## 1. 原理简介
+
+- **仿真执行**：TTK 生成一个 Python wrapper 程序，由 NPUSim `record` 在 camodel（周期精确芯片模型）中拉起执行——与真实芯片**二进制兼容**，同一 kernel 无需改写。
+- **精度比对**：golden 仍在 CPU 端（numpy/torch）生成，与仿真回读的设备输出走 TTK 现有比对链路，结果照常写入结果 CSV 的 `precision_status` 等列。
+- **仿真流水图**：可选 `--sim-report`，调用环境自带 `cannsim report` 从仿真的 `instr.bin` 生成指令流水图（Chrome tracing / Perfetto 可视化）。
+
+```
+CSV 用例 ──► TTK 编译 + CPU golden ──► NPUSim record（wrapper 在 camodel 中执行）
+                                                        │
+                                   仿真输出 ──► 精度比对（precision_status）
+                                   instr.bin ──► report（trace_core*.json 流水图）
+```
+
+---
+
+## 2. 环境准备（一次性）
+
+### 2.1 安装 CANN（需含 Ascend-950-ops 包）
+
+```bash
+./Ascend-cann-toolkit_9.1.0-beta.3_linux-aarch64.run --install --install-path=<install_path>
+./Ascend-cann-950-ops_9.1.0-beta.3_linux-aarch64.run --install --install-path=<install_path>
+```
+
+> 必须安装 **Ascend-950-ops** 包：Ascend950 的 TBE 算子实现（如 `add_apt.py`）与 aclnn 算子库（`libopapi*.so`）由它提供。缺包会导致 kernel 编译报 `OPTILING_FAILURE` / `*_OPERATOR_NOT_FOUND`，aclnn 执行报 `ACLNN_EXECUTE_FAILED`。
+
+### 2.2 使用 CANN 自带 cannsim
+
+TTK 通过命令行调用 NPUSim，直接使用 **CANN 自带的 `cannsim`**（`$ASCEND_TOOLKIT_HOME/bin/cannsim`，与已安装的 camodel 同版本配套），**无需另装 npu-simulator 仓库源码**。安装含 cannsim 的 CANN（如 Ascend-cann-toolkit 9.2.0）后即可使用。
+
+### 2.3 加载环境
+
+每次运行前必须 source 新环境的 set_env（TTK 会继承 `ASCEND_TOOLKIT_HOME` 等变量）：
+
+```bash
+source /home/developer/toolkit/Ascend/cann/set_env.sh
+```
+
+---
+
+## 3. 快速开始
+
+在 **ops-test-kit 仓库根目录**运行（TTK 依赖仓库内相对路径）：
+
+```bash
+# Kernel 模式：编译 + 仿真执行 + 精度比对
+python3 -m ttk kernel --backend npusim -i examples/case_store/kernel/add.csv --sim-cores 0
+
+# ACLNN 模式
+python3 -m ttk aclnn --backend npusim -i examples/case_store/aclnn/aclnn_add.csv --sim-cores 0
+
+# 额外生成仿真流水图
+python3 -m ttk kernel --backend npusim -i examples/case_store/kernel/add.csv --sim-cores 0 --sim-report
+```
+
+CSV 用例格式与真实芯片模式**完全一致**，无需增加任何字段，仅在命令后追加 `--backend npusim`。
+
+---
+
+## 4. 参数说明
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--backend {npu,npusim}` | `npu` | `npusim` 走仿真执行 |
+| `--sim-soc <SoC>` | `Ascend950` | 仿真 SoC（`Ascend950` / `Ascend950DT`） |
+| `--sim-output <dir>` | `<root>/sim_output` | 仿真中间产物根目录 |
+| `--sim-report` | 关闭 | 仿真结束后生成流水图（trace_core*.json + 报告） |
+| `--sim-cores <范围>` | 全核 | 指定仿真核，如 `0-2,12-14` / `all` / `0`。**建议设小范围以加快仿真** |
+| `--sim-obj <kernel.o>` | 无 | 传给 report 的目标文件（含源码/汇编级信息） |
+
+其他 TTK 常用参数（用例筛选、精度等）均可组合使用：
+
+```bash
+# 筛选单个用例、指定核、输出流水图
+python3 -m ttk kernel --backend npusim -i cases.csv -t add_example_01 --sim-cores 0 --sim-report -o result.csv
+
+# 按索引 / 算子筛选
+python3 -m ttk kernel --backend npusim -i cases.csv --ti=1-3 --sim-cores 0
+python3 -m ttk aclnn  --backend npusim -i cases.csv --op add   --sim-cores 0
+```
+
+---
+
+## 5. 输出产物
+
+运行后终端输出每个用例的精度结果与整体通过率；同时产出：
+
+```
+<sim_output>/                          # 默认 sim_output/（--sim-output 可改）
+├── wrappers/                          # 生成的 wrapper 脚本（.py）
+└── <case_name>/                       # 每个用例一个目录
+    ├── dyn|aclnn 的执行参数与输出      # 序列化的执行参数 / 回读输出
+    ├── record_out/
+    │   └── cannsim_<时间戳>_<用例>/
+    │       ├── instr.bin              # 指令流（流水图输入，位于归档根目录）
+    │       └── cannsim.log            # record 日志
+    └── report/                        # 仅 --sim-report 时生成
+        └── trace_core0.json           # ★ 指令流水图（Chrome tracing）
+```
+
+**结果 CSV**：由 `-o` 指定（默认 `<输入名>_result.csv`），含 `precision_status`、`dyn_precision`、`memory_oob_status`、`soc` 等列。仿真模式下 `*_perf_us` 列为 `UNKNOWN`（model 模式无单值周期，性能请查看流水图）。
+
+**查看流水图**：将 `trace_core0.json` 拖入 Chrome `chrome://tracing` 或 [Perfetto](https://ui.perfetto.dev)。
+
+---
+
+## 6. 精度比对
+
+- **golden**：CPU 端 numpy / torch 生成（`--golden-mode` 语义与真实模式一致）。
+- **容差**：沿用 CSV 的 `precision_tolerances` / `absolute_precision` 或 TestSpec 的 `tolerance`。
+- **对比方法**：`--compare close|stat_rel_err|cosine|binary|requant|cross_check`（默认按 Spec.tolerance 路由）。
+- **自定义 golden / 输入**：`--plugin <path>` 加载 TestSpec，与真实模式一致。
+
+---
+
+## 7. 注意事项与故障排查
+
+### 7.1 运行约束
+
+- **必须在仓库根目录执行** `python3 -m ttk ...`。
+- **必须 source 新 CANN 环境**（含 950-ops），否则算子编译/执行失败。
+- **仿真耗时较长**：camodel 初始化约 20–30 秒；大 shape 用例（如 `(2576, 8104)`）可达几十分钟。建议 `--sim-cores 0` + 小 shape 先行验证。
+- 并发进程默认自动设为 1（避免多 camodel 打爆 CPU）。
+
+### 7.2 故障排查
+
+| 现象 | 可能原因 | 排查 |
+|---|---|---|
+| `OPTILING_FAILURE` / `*_OPERATOR_NOT_FOUND` | 缺 950-ops 包或算子 TBE 实现 | 确认已装 `Ascend-cann-950-ops`；看 `ttk-debug.log` |
+| `ACLNN_EXECUTE_FAILED` | aclnn 算子库不支持该 SoC | 同左，确认 950-ops 已装 |
+| `SIM_RESULT_MISSING` / `wrapper_error.json` 有内容 | wrapper 执行异常 | 看 `<sim_output>/<case>/wrapper_error.json` 与 `record_out/cannsim_*/cannsim.log` |
+| `precision_status: FAIL` | golden 与仿真输出偏差 | 检查容差、golden 实现、shape/format 定义 |
+| report 报 `No executed instructions` | 用错 cannsim 版本（格式不匹配） | 确认 `--sim-report` 走环境自带 `$ASCEND_TOOLKIT_HOME/bin/cannsim` |
+| `CANN cannsim not found` | 未安装含 cannsim 的 CANN，或 `cannsim` 不在 PATH | 确认已装 CANN 且 `$ASCEND_TOOLKIT_HOME/bin/cannsim` 存在 |
+| 用例卡死：`OnDynProfiling` 长时间 `RUNNING`，`cannsim.log` 停在 `TASK_BEGIN RTSQ_1` 无 `TASK_DONE` | Ascend950 camodel teardown（`rtCtxDestroy`）对个别用例组合忙自旋 | 已内置规避：wrapper 通过 `skip_teardown=True` 跳过 camodel teardown，无需干预 |
+
+### 7.3 已知限制
+
+- 仅支持 NPUSim 注册的 SoC（`Ascend950` / `Ascend950DT`）。
+- 仿真性能数据为 `UNKNOWN`（无单值周期），性能分析依赖 `--sim-report` 的流水图。
+- 需 numpy / plotly（流水图用）等 Python 依赖。
+- **wrapper 跳过 camodel teardown**：Ascend950PR_9589 camodel 的 `rtCtxDestroy` / `rtDeviceReset` 对个别用例组合存在忙自旋缺陷（执行成功后 teardown 卡死）。TTK 的仿真 wrapper 通过 `skip_teardown=True` 跳过 teardown 调用——wrapper 以 `os._exit` 结束进程，进程退出即回收 camodel 资源，故该跳过对精度结果无影响（已实证输出 bit 级正确）。
+
+---
+
+## 8. 示例：完整跑通 add
+
+```bash
+source /home/developer/toolkit/Ascend/cann/set_env.sh
+cd /mnt/workspace/gitCode/cann/ops-test-kit
+
+# 单用例 + 核0 + 流水图 + 指定结果文件
+python3 -m ttk kernel --backend npusim \
+    -i examples/case_store/kernel/add.csv \
+    -t add_example_01 \
+    --sim-cores 0 --sim-report \
+    -o add_npusim_result.csv
+```
+
+预期输出（节选）：
+
+```
+DYN_GOLD: PASS          PRECISION_STATUS: PASS
+...
+PassRate : 100.00%  (1/1)
+```
+
+产物：
+
+- 结果：`add_npusim_result.csv`
+- 流水图：`sim_output/add_example_01/report/trace_core0.json`

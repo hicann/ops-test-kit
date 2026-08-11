@@ -61,6 +61,9 @@ class NpuInstance(InstanceBase):
             pass
 
     def get_device_platform(self):
+        # NPUSim backend sets dev_plat to the platform ini name (e.g.
+        # Ascend950PR_9589) in sim_args._normalize_sim_switches, so the normal
+        # path below resolves short_soc_version / ccec versions from the ini.
         if self.switches.dev_plat == "AUTO":
             if self.switches.mode.is_model():
                 raise RuntimeError(f"Please specify your platform type with --plat in {self.switches.mode.name} mode")
@@ -95,7 +98,11 @@ class NpuInstance(InstanceBase):
             self.profile_object = OpProfileObject(*params)
         if self.switches.mode.is_model():
             os.environ.setdefault("ASCEND_SLOG_PRINT_TO_STDOUT", "1")
-        if not self.switches.compile_only and getattr(self.switches, "manual_data_mode", None) != "prepare":
+        if (
+            not self.switches.compile_only
+            and getattr(self.switches, "manual_data_mode", None) != "prepare"
+            and getattr(self.switches, "backend", None) != "npusim"
+        ):
             self._compile_help_kernels()
 
     def device_info(self, dev_id: int) -> str:

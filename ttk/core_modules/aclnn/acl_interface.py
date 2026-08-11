@@ -78,7 +78,8 @@ class AclInterface:
     }
 
     def __init__(self, short_soc_version: Optional[str] = None,
-                 camodel: Optional[str] = None):
+                 camodel: Optional[str] = None,
+                 skip_teardown: bool = False):
         # memories need to be clean up when reset.
         self._acl_tensors: Set[int] = set()
         self._acl_tensor_lists: Dict[int, Tuple[ctypes.c_void_p]] = {}
@@ -92,8 +93,12 @@ class AclInterface:
         self._acl_inited: bool = False
         self._owns_acl_runtime: bool = False
         self._device_id = None
+        # skip_teardown also guards AclInterface.reset()/aclrtResetDevice, not
+        # just the RTSInterface teardown (camodel busy-spin, see wrapper).
+        self.skip_teardown = skip_teardown
         self._rts_interface = RTSInterface(camodel=camodel,
-                                           short_soc_version=short_soc_version)
+                                           short_soc_version=short_soc_version,
+                                           skip_teardown=skip_teardown)
         self._acl_dll = ctypes.CDLL(f"libascendcl.so")
         self._opbase_dll = ctypes.CDLL(f"libnnopbase.so")
         atexit.register(self._on_exit)
@@ -160,6 +165,11 @@ class AclInterface:
         self._rts_interface.set_device(device_id, skip_rt_intf=True)
 
     def reset(self) -> None:
+        # skip_teardown: the aclnn wrapper os._exit(0)s and must not issue
+        # aclrtResetDevice either (camodel rtDeviceReset can busy-spin).
+        # getattr: __new__-constructed instances (tests) have no attribute.
+        if getattr(self, "skip_teardown", False):
+            return
         self._release_acl_memory()
         if hasattr(self, "_rts_interface") and self._rts_interface is not None:
             self._rts_interface.reset(skip_rt_intf=True)

@@ -6,6 +6,7 @@ from ttk.cli.bridge import (
 )
 from ttk.cli.common import add_common_args, validate_xpu_perf_precondition
 from ttk.cli.device import add_device_args
+from ttk.cli.sim_args import add_sim_args, apply_sim_args
 
 
 def register_aclnn_command(subparsers):
@@ -13,6 +14,7 @@ def register_aclnn_command(subparsers):
     add_common_args(parser)
     add_device_args(parser)
     _add_aclnn_args(parser)
+    add_sim_args(parser)
     parser.set_defaults(handler=_handle_aclnn)
 
 
@@ -33,6 +35,7 @@ def _handle_aclnn(args):
     sw = args_to_switches(args)
     sw.test_mode = "aclnn"
     apply_aclnn_args(sw, args)
+    apply_sim_args(sw, args)
     configure_manual_data(sw, args, "aclnn")
     validate_xpu_perf_precondition(sw)
     run_with_switches(sw)

@@ -170,6 +170,13 @@ class SWITCHES:
         # GEIR mode
         "geir_binary",
         "deterministic_level",
+        # NPUSim simulator backend
+        "backend",
+        "sim_soc_version",
+        "sim_output_dir",
+        "sim_report",
+        "sim_cores",
+        "sim_object_file",
     ]
 
     def __init__(self):
@@ -245,6 +252,21 @@ class SWITCHES:
         # GEIR mode
         self.geir_binary: bool = False
         self.deterministic_level: int = 0
+        # NPUSim simulator backend
+        self.backend: str = "npu"  # "npu" | "npusim"
+        self.sim_soc_version: str = "Ascend950"
+        self.sim_output_dir: str = ""  # 空 -> root_path/sim_output
+        self.sim_report: bool = False
+        self.sim_cores: str = ""
+        self.sim_object_file: str = ""
+
+    def __getstate__(self):
+        """Pickle 支持：仅导出 __slots__ 中已赋值的属性（跳过 property/私有）。"""
+        return {k: getattr(self, k, None) for k in self.__slots__ if hasattr(self, k)}
+
+    def __setstate__(self, state):
+        for k, v in state.items():
+            setattr(self, k, v)
 
     @property
     def overflow_mode(self) -> int:

@@ -31,6 +31,7 @@ TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库
 - [任务执行](./docs/任务执行.md)
 - [手工数据准备与回放](./docs/手工数据准备与回放.md)
 - [结果分析](./docs/结果分析.md)
+- [NPUSim 仿真测试（--backend npusim）](./docs/TTK_NPUSim使用指南.md)
 
 ## 🧪 各类算子测试详细指南
 

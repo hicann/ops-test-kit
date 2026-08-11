@@ -693,7 +693,12 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
         process_ctx.notify_status("OnProfilingPrint")
         __profiling_print(context, dev_id)
         process_ctx.notify_status("OnProfiling")
-        context.prof_result = do_profiling(context, dev_id)
+        if get_global_storage().backend == "npusim":
+            from ttk.core_modules.simulator import run_aclnn_sim
+
+            context.prof_result = run_aclnn_sim(context, dev_id)
+        else:
+            context.prof_result = do_profiling(context, dev_id)
     standards = None
     need_3party = False
     if context.prof_result.failed():

@@ -272,7 +272,12 @@ def snapshot_manual_values(values: Sequence[Any], label: str) -> List[Any]:
     return snapshots
 
 
-def _case_directory_name(testcase_name: str) -> str:
+def case_directory_name(testcase_name: str) -> str:
+    """Return the on-disk directory name for a prepared testcase.
+
+    Public because the simulator backend's ``case_writer`` reuses the same
+    naming so manual-data replay and simulation share one per-case directory.
+    """
     safe = _SAFE_CASE_NAME.sub("_", testcase_name).strip("._") or "case"
     if safe == testcase_name and len(safe) <= 120:
         return safe
@@ -535,7 +540,7 @@ class ManualDataStore:
             raise ManualDataError("at least one manual data directory is required")
 
     def case_dir(self, testcase_name: str, root_index: int = 0) -> pathlib.Path:
-        return self.roots[root_index] / _case_directory_name(testcase_name)
+        return self.roots[root_index] / case_directory_name(testcase_name)
 
     def invalidate_case(self, testcase_name: str):
         """Remove an older same-name case before a new prepare attempt."""
@@ -712,7 +717,7 @@ class ManualDataStore:
     def _find_case(self, testcase_name: str) -> pathlib.Path:
         checked = []
         for root in self.roots:
-            case_dir = root / _case_directory_name(testcase_name)
+            case_dir = root / case_directory_name(testcase_name)
             checked.append(str(case_dir))
             if case_dir.exists():
                 if case_dir.is_symlink() or not case_dir.is_dir():

@@ -76,10 +76,15 @@ class RTSInterface(RTSInterfaceBase):
     ATOMIC_ADD_BLACKLIST_SOC = ("Ascend910", "Ascend310P", "Ascend610", "Ascend310")
 
     def __init__(self, camodel: Optional[str] = None, rts_custom_path: str = "",
-                 short_soc_version: str = None):
+                 short_soc_version: str = None, skip_teardown: bool = False):
         super().__init__()
         self.context = None
         self.camodel = camodel
+        # Skip destroy_context()/reset() entirely. Used by the NPUSim wrapper:
+        # camodel teardown (rtCtxDestroy/rtDeviceReset) can busy-spin forever on
+        # some cases, and the wrapper always os._exit(0)s anyway (process exit
+        # reclaims camodel resources), so teardown calls are unnecessary there.
+        self.skip_teardown = skip_teardown
         # Data storage
         self.kernel_binary_storage = {}
         self.context_storage = []
@@ -164,6 +169,8 @@ class RTSInterface(RTSInterfaceBase):
         :param c_context: context pointer
         :return:
         """
+        if self.skip_teardown:
+            return
         context = self.context if c_context is None else c_context
         if context not in self.context_storage:
             raise ValueError("Input context does not exist in current interface's context storage")
@@ -456,6 +463,8 @@ class RTSInterface(RTSInterfaceBase):
         """
         Reset device
         """
+        if self.skip_teardown:
+            return
         if self.device_id is None:
             return
         for binary_kernel_pointer in tuple(self.kernel_binary_storage.keys()):

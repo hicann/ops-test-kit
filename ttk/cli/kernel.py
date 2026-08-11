@@ -6,6 +6,7 @@ from ttk.cli.bridge import (
 )
 from ttk.cli.common import add_common_args, validate_xpu_perf_precondition
 from ttk.cli.device import add_device_args
+from ttk.cli.sim_args import add_sim_args, apply_sim_args
 
 
 def register_kernel_command(subparsers):
@@ -13,6 +14,7 @@ def register_kernel_command(subparsers):
     add_common_args(parser)
     add_device_args(parser)
     _add_kernel_args(parser)
+    add_sim_args(parser)
     parser.set_defaults(handler=_handle_kernel)
 
 
@@ -99,6 +101,7 @@ def _handle_kernel(args):
     sw = args_to_switches(args)
     sw.test_mode = "op"
     apply_kernel_args(sw, args)
+    apply_sim_args(sw, args)
     configure_manual_data(sw, args, "kernel")
 
     validate_xpu_perf_precondition(sw)

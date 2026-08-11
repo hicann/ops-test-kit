@@ -381,11 +381,17 @@ def profile_process(
         process_ctx.notify_status("OnProfilingPrint")
         __profiling_print(context)
         process_ctx.notify_status("OnDynProfiling")
-        context.dyn_prof_result = do_profiling(context, "dynamic")
-        process_ctx.notify_status("OnCstProfiling")
-        context.cst_prof_result = do_profiling(context, "const")
-        process_ctx.notify_status("OnBinProfiling")
-        context.bin_prof_result = do_profiling(context, "binary")
+        if get_global_storage().backend == "npusim":
+            from ttk.core_modules.simulator import run_kernel_sim
+
+            (context.dyn_prof_result, context.cst_prof_result,
+             context.bin_prof_result) = run_kernel_sim(context)
+        else:
+            context.dyn_prof_result = do_profiling(context, "dynamic")
+            process_ctx.notify_status("OnCstProfiling")
+            context.cst_prof_result = do_profiling(context, "const")
+            process_ctx.notify_status("OnBinProfiling")
+            context.bin_prof_result = do_profiling(context, "binary")
     process_ctx.notify_status("PostProfiling")
     passed = handle_profiling_result(context)
     process_ctx.notify_status("OnDumpOutputDataIfRequired")
@@ -818,6 +824,12 @@ def handle_profiling_result(context: TestcaseOp):
                 return "PASS"
             cs = result.cycle.split(",")
             if all([s.strip() == "OK" for s in cs]):  # in case  --task-prof=false
+                return "PASS"
+            # NPUSim (ASCEND_CAMODEL) simulation reports no single-valued cycle
+            # ("_process_model_cycles" hardcodes "UNKNOWN"); treat that as "not
+            # measured" rather than a profiling failure. Real devices keep their
+            # original behaviour (is_model() is False there).
+            if get_global_storage().mode.is_model() and result.cycle == "UNKNOWN":
                 return "PASS"
         elif get_global_storage().mode.is_model() and isinstance(result.cycle, (list, tuple)):
             if all([isinstance(s, int) and s > 0 for s in result.cycle]):
