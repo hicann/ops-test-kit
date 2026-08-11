@@ -54,7 +54,7 @@ from ...manual_data import (
 )
 from ...operator import OpInfoKeeper
 from ...runtime import RTSInterface, RTSInterfaceBase
-from ...tbe_logging import default_logging_config
+from ...tbe_logging import build_single_log_dir, default_logging_config
 from ...tbe_multiprocessing import DeviceLock, get_process_context
 from ...testcase_manager import TestcaseOp
 from .comparison import comparing
@@ -215,7 +215,8 @@ def profile_process(
     process_ctx = get_process_context()
     process_ctx.change_name(context.testcase_name)
     if switches.single_testcase_log_mode:
-        default_logging_config(file_handler=switches.logging_to_file, testcase_name=context.testcase_name)
+        _log_dir = build_single_log_dir(switches.test_mode, context.op_name, switches.root_path)
+        default_logging_config(file_handler=switches.logging_to_file, testcase_name=context.testcase_name, log_dir=_log_dir)
     manual_mode = getattr(switches, "manual_data_mode", None)
     manual_case = None
     try:

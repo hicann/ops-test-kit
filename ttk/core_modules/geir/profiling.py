@@ -19,7 +19,7 @@ from ttk.core_modules.comparison.custom import compare_with_hooks
 
 from ttk.core_modules.npu.op.input_generation import __gen_input
 from ttk.core_modules.npu.op.output_generation import __gen_output
-from ttk.core_modules.tbe_logging import default_logging_config
+from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.utilities import dump_to_file, get_global_storage, resolve_custom_numpy_dtypes, waiting_for_memory
 
@@ -63,7 +63,8 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
     process_ctx.change_name(testcase.testcase_name)
 
     if switches.single_testcase_log_mode:
-        default_logging_config(file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name)
+        _log_dir = build_single_log_dir(switches.test_mode, testcase.op_name, switches.root_path)
+        default_logging_config(file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name, log_dir=_log_dir)
 
     if not testcase.is_valid:
         from .geir_struct import GeirReturnStructure
@@ -116,6 +117,8 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
                         result.dyn_perf_us = mode_result.dyn_perf_us
                     if mode_result.xpu_metrics:
                         result.xpu_metrics.update(mode_result.xpu_metrics)
+                    if mode_result.precision_metrics:
+                        result.precision_metrics.update(mode_result.precision_metrics)
                     if mode_result.passed and not result.passed:
                         result.precision = mode_result.precision
                         result.passed = True
@@ -394,7 +397,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     # compare_with_hooks 内部直接回落到原来的 compare()，行为逐位不变。
     _pre_compare = _spec_attr_of(testcase, switches, "pre_compare")
     _custom_compare = _spec_attr_of(testcase, switches, "compare")
-    precision, log_str, passed, _metrics = compare_with_hooks(
+    precision, log_str, passed, metrics = compare_with_hooks(
         testcase,
         tuple(output_arrays),
         tuple(golden_arrays),
@@ -446,8 +449,10 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     result.deterministic_status = det_status
     if mode in ("const", "const_binary"):
         result.cst_perf_us = device_perf_us
+        result.precision_metrics = {"cst": metrics or {}}
     elif mode in ("dynamic", "dynamic_binary"):
         result.dyn_perf_us = device_perf_us
+        result.precision_metrics = {"dyn": metrics or {}}
     return result
 
 

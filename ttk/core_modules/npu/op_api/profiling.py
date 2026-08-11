@@ -50,7 +50,7 @@ from ...manual_data import (
 )
 from ...testcase_manager import TestcaseAclnn
 from ...tbe_multiprocessing import get_process_context, DeviceLock
-from ...tbe_logging import default_logging_config
+from ...tbe_logging import build_single_log_dir, default_logging_config
 from ...aclnn import AclInterface, OpApiInfoKeeper, OpApiInfo
 from ...msprof import MsProfiler, TtkMsProfType
 from ....utilities import get_global_storage, get, waiting_for_memory, frameless_table_print
@@ -598,7 +598,8 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
     process_ctx = get_process_context()
     process_ctx.change_name(context.testcase_name)
     if switches.single_testcase_log_mode:
-        default_logging_config(file_handler=switches.logging_to_file, testcase_name=context.testcase_name)
+        _log_dir = build_single_log_dir(switches.test_mode, context.api_name, switches.root_path)
+        default_logging_config(file_handler=switches.logging_to_file, testcase_name=context.testcase_name, log_dir=_log_dir)
     process_ctx.notify_status("OnParseParameters")
     ####################
     # Check whether there is need to do further test

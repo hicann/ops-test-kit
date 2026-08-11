@@ -2,6 +2,7 @@ from ttk.core_modules.npu.op.profiling_structure import ComparisonResult, Profil
 from ttk.core_modules.npu.op_api.profiling_structure import (
     ApiComparisonResult, ApiProfilingReturnStructure)
 from ttk.core_modules.framework_api.result import FrameworkApiReturnStructure
+from ttk.core_modules.geir.geir_struct import GeirReturnStructure
 
 
 def test_comparison_result_metrics_slot():
@@ -38,3 +39,20 @@ def test_framework_api_structure_precision_metrics_slot():
     s = FrameworkApiReturnStructure()
     assert hasattr(s, "precision_metrics")
     assert "precision_metrics" in FrameworkApiReturnStructure.__slots__
+
+
+def test_geir_structure_precision_metrics_slot():
+    s = GeirReturnStructure()
+    assert hasattr(s, "precision_metrics")
+    assert s.precision_metrics == {}
+    titles = GeirReturnStructure.get_titles()
+    assert "precision_metrics" in titles
+    assert titles.index("precision_metrics") == titles.index("xpu_metrics") + 1
+
+
+def test_geir_structure_pick_data_includes_precision_metrics():
+    s = GeirReturnStructure()
+    s.precision_metrics = {"cst": {0: {"standard": "stat_rel_err"}}}
+    titles = GeirReturnStructure.get_titles()
+    row = s.pick_data(titles)
+    assert row[titles.index("precision_metrics")] == {"cst": {0: {"standard": "stat_rel_err"}}}

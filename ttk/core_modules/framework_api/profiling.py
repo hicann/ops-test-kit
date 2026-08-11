@@ -29,7 +29,7 @@ from ttk.core_modules.manual_data import (
     prepare_manual_data_store,
     snapshot_manual_values,
 )
-from ttk.core_modules.tbe_logging import default_logging_config
+from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
 from ttk.utilities import dump_to_file, waiting_for_memory
@@ -247,7 +247,8 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
     process_ctx.change_name(testcase.testcase_name)
 
     if switches.single_testcase_log_mode:
-        default_logging_config(file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name)
+        _log_dir = build_single_log_dir(switches.test_mode, testcase.api_name, switches.root_path)
+        default_logging_config(file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name, log_dir=_log_dir)
 
     return_struct = FrameworkApiReturnStructure()
 

@@ -12,16 +12,38 @@ Logging module
 """
 
 
-__all__ = ["default_logging_config"]
+__all__ = ["default_logging_config", "build_single_log_dir"]
 
 
 # Standard Packages
+import os
 import sys
 
 # Third-party Packages
 import numpy
 import warnings
 import logging.handlers
+
+
+_MODE_LOG_DIR = {
+    "op": "kernel",
+    "aclnn": "aclnn",
+    "geir": "geir",
+    "framework-api": "e2e",
+}
+
+
+def build_single_log_dir(test_mode, op_or_api_name, root_path):
+    """Construct per-op single-log directory: {root}/log/{mode}/{op_or_api_name}.
+
+    Mirrors msprof path layout so logs are grouped by operator under each mode.
+    Creates the directory if missing. Returns the absolute path.
+    """
+    mode_dir = _MODE_LOG_DIR.get(test_mode, test_mode or "unknown")
+    op_or_api_name = op_or_api_name or "unknown"
+    log_dir = os.path.join(root_path, "log", mode_dir, op_or_api_name)
+    os.makedirs(log_dir, exist_ok=True)
+    return log_dir
 
 
 class MyFilter(object):
@@ -81,7 +103,8 @@ def add_level(name: str, visible_name: str, level: int):
     setattr(logging.getLoggerClass(), name, _logging_method)
 
 
-def default_logging_config(file_handler: bool = False, testcase_name: str = None):
+def default_logging_config(file_handler: bool = False, testcase_name: str = None,
+                           log_dir: str = None):
     add_level("debugc", "COMPARE", logging.DEBUG - 5)
     for handler in logging.getLogger().handlers:
         logging.getLogger().removeHandler(handler)
@@ -96,17 +119,18 @@ def default_logging_config(file_handler: bool = False, testcase_name: str = None
     # Attach logging handler for internal logging levels
     if file_handler:
         suffix = f"-{testcase_name}" if testcase_name else ""
-        attach_handler(logging.FileHandler(f'ttk-debug{suffix}.log'),
+        base = log_dir if log_dir else "."
+        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-debug{suffix}.log')),
                        logging.DEBUG)
-        attach_handler(logging.FileHandler(f'ttk-info{suffix}.log'),
+        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-info{suffix}.log')),
                        logging.INFO, MyFilter(logging.INFO))
-        attach_handler(logging.FileHandler(f'ttk-warning{suffix}.log'),
+        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-warning{suffix}.log')),
                        logging.WARNING, MyFilter(logging.WARNING))
-        attach_handler(logging.FileHandler(f'ttk-critical{suffix}.log'),
+        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-critical{suffix}.log')),
                        logging.CRITICAL, MyFilter(logging.CRITICAL))
-        attach_handler(logging.FileHandler(f'ttk-error{suffix}.log'),
+        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-error{suffix}.log')),
                        logging.ERROR, MyFilter(logging.ERROR))
-        attach_handler(logging.FileHandler(f'ttk-compare{suffix}.log'),
+        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-compare{suffix}.log')),
                        logging.DEBUG - 5, MyFilter(logging.DEBUG - 5))
         attach_handler(logging.StreamHandler(sys.stdout), logging.INFO)
     else:
