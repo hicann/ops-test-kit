@@ -339,12 +339,6 @@ def _dump_on_fail(testcase, raw_inputs, result_nps, golden_nps, switches):
 def _ensure_deterministic_level_e2e(process_ctx, backend, testcase):
     """e2e 模式：设置 NPU 确定性计算级别"""
     det_level = getattr(get_global_storage(), "deterministic_level", 0)
-    if (
-        not getattr(testcase, "batch_axis", None)
-        and not getattr(testcase, "batch_slice_info", None)
-        and not getattr(testcase, "batch_seed", None)
-    ):
-        return
     if process_ctx.storage.get("_deterministic_level_set"):
         return
     if backend.is_npu():
