@@ -41,7 +41,10 @@ def test_framework_api_structure_precision_metrics_slot():
     assert "precision_metrics" in FrameworkApiReturnStructure.__slots__
 
 
-def test_geir_structure_precision_metrics_slot():
+def test_geir_structure_precision_metrics_field():
+    # GeirReturnStructure is a @dataclass (no __slots__); hasattr + get_titles
+    # are the functional equivalent of the __slots__ checks used by the
+    # slots-based structures above.
     s = GeirReturnStructure()
     assert hasattr(s, "precision_metrics")
     assert s.precision_metrics == {}

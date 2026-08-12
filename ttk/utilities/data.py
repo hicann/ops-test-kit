@@ -72,7 +72,7 @@ class RandomData:
                 real = self._random(fp_dtype, self._shape, distribution=distribution)
                 imag = self._random(fp_dtype, self._shape, distribution=distribution,
                                     is_complex_imag=True)
-                np_array = real + imag * 1j
+                np_array = numpy.array(real + imag * 1j)
         else:
             np_array = self._random(self._dtype, self._shape, distribution=distribution)
         return np_array
