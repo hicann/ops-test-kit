@@ -18,6 +18,8 @@ import gc
 import json
 import logging
 import os
+import shutil
+from pathlib import Path
 
 import numpy as np
 
@@ -29,12 +31,12 @@ from ttk.core_modules.manual_data import (
     prepare_manual_data_store,
     snapshot_manual_values,
 )
+from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
 from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
 from ttk.utilities import dump_to_file, waiting_for_memory
 from ttk.utilities.container_utils import apply_as_list, get_global_storage
-from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
 
 from .api_resolver import resolve_api
 from .backends import get_backend
@@ -560,6 +562,42 @@ def _evaluate_graph_precision(
     return_struct.construct(precision_str, status, perf, mode=mode, metrics=metrics)
 
 
+def _collect_sim_report(testcase, switches):
+    """Move the camodel ``instr.bin`` (written to the worker cwd) into the case
+    sim_output dir, and when ``--sim-report`` generate the trace report.
+
+    The E2E npusim backend runs torch_npu directly in the forkserver worker
+    (no cannsim record), so camodel writes ``instr.bin`` to the worker cwd
+    (``switches.root_path``). Collect it per case before the next case
+    overwrites it; report generation is best-effort and never affects
+    precision results.
+    """
+    if getattr(switches, "backend", None) != "npusim":
+        return
+    from ttk.core_modules.simulator.case_writer import case_dir
+
+    src = Path(switches.root_path) / "instr.bin"
+    if not src.is_file() or src.stat().st_size == 0:
+        logging.warning("[%s] no instr.bin in worker cwd; skip sim report",
+                        testcase.testcase_name)
+        return
+    case_path = case_dir(switches, testcase.testcase_name)
+    case_path.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.move(str(src), str(case_path / "instr.bin"))
+    except OSError as e:
+        # Without this warning the move failure is silent: instr.bin stays in the
+        # worker cwd, gets overwritten by the next case, and the user is left
+        # without a sim report and without any hint.
+        logging.warning("[%s] failed to move instr.bin into %s: %s",
+                        testcase.testcase_name, case_path, e)
+        return
+    if getattr(switches, "sim_report", False):
+        from ttk.core_modules.simulator.report import maybe_generate_sim_report
+
+        maybe_generate_sim_report(switches, case_path, case_path)
+
+
 def _do_profile(testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct):
     """Core profiling logic."""
     process_ctx = get_process_context()
@@ -715,6 +753,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                     dynamic=True,
                 )
     gc.collect()
+    _collect_sim_report(testcase, switches)
 
     if manual_case is not None:
         try:
@@ -754,7 +793,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
             switches.compare_method,
         )
         need_3party = any(s.token == "cross_check" for s in standards)
-        from ttk.remote.client import xpu_mode_of, collect_third_party
+        from ttk.remote.client import collect_third_party, xpu_mode_of
 
         xpu_mode = xpu_mode_of(switches, need_3party)
         if xpu_mode:

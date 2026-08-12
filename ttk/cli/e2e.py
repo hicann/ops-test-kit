@@ -6,6 +6,7 @@ from ttk.cli.bridge import (
 )
 from ttk.cli.common import add_common_args, validate_xpu_perf_precondition
 from ttk.cli.device import add_device_args
+from ttk.cli.sim_args import add_sim_args, apply_sim_args
 
 
 def register_e2e_command(subparsers):
@@ -57,6 +58,7 @@ def _add_e2e_args(parser):
         help="Collect 3rd-party (XPU) performance per case. "
         "Requires remote XPU config (ttk.conf.yaml or --config). PERF-only.",
     )
+    add_sim_args(parser)
 
 
 def _handle_e2e(args):
@@ -64,6 +66,8 @@ def _handle_e2e(args):
     sw.test_mode = "framework-api"
     sw.dyn_switches.enabled = False
     apply_e2e_args(sw, args)
+    # Must run before configure_manual_data: rejects --no-prof + --backend npusim.
+    apply_sim_args(sw, args)
     configure_manual_data(sw, args, "e2e")
     validate_xpu_perf_precondition(sw)
     run_with_switches(sw)

@@ -280,7 +280,7 @@ python3 -m ttk aclnn  --backend npusim -i cases.csv                # aclnn
 | 日志 | `npusim.log` | `cannsim.log` |
 | CLI | `--sim-npusim` / `sim_npusim_home` | 已删除 |
 
-**影响文件**：`ttk/core_modules/simulator/npusim_runner.py`（核心）、`ttk/cli/sim_args.py`、`ttk/utilities/classes.py`、`tests/core_modules/test_simulator_backend.py`（+6 测试）、`docs/TTK_NPUSim使用指南.md`。
+**影响文件**：`ttk/core_modules/simulator/npusim_runner.py`（核心）、`ttk/cli/sim_args.py`、`ttk/utilities/classes.py`、`tests/core_modules/test_simulator_backend.py`（+6 测试）、`docs/NPUSim/TTK_NPUSim使用指南.md`。
 
 **验证（2026-08-10，CANN 9.1.0-beta.3 + Ascend-cann-950-ops）**：
 - 单测 25 过；pytest 全量 **1992 passed**；ruff 通过

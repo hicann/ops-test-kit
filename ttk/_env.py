@@ -54,11 +54,36 @@ def _find_ascend_root():
     return None
 
 
+def _sim_ld_paths():
+    """LD_LIBRARY_PATH segments pointing into a camodel/simulator install.
+
+    The NPUSim camodel runtime is injected via ``LD_LIBRARY_PATH`` (by cannsim
+    record or the E2E npusim backend). CANN ``setenv.bash`` rebuilds
+    ``LD_LIBRARY_PATH`` and would drop those segments, so they are recorded
+    before sourcing and restored afterwards.
+    """
+    return [
+        p for p in (os.environ.get("LD_LIBRARY_PATH", "") or "").split(":")
+        if p and ("camodel" in p or "/simulator/" in p)
+    ]
+
+
+def _restore_ld_paths(segments):
+    """Prepend ``segments`` to LD_LIBRARY_PATH unless already present."""
+    if not segments:
+        return
+    existing = (os.environ.get("LD_LIBRARY_PATH", "") or "").split(":")
+    missing = [p for p in segments if p not in existing]
+    if missing:
+        os.environ["LD_LIBRARY_PATH"] = ":".join(missing + existing)
+
+
 def _source_setenv_bash(ascend_root):
     setenv = os.path.join(ascend_root, "bin", "setenv.bash")
     if not os.path.isfile(setenv):
         return
 
+    sim_paths = _sim_ld_paths()
     try:
         result = subprocess.run(
             ["bash", "-c", f'source "{setenv}" && env -0'],
@@ -72,6 +97,8 @@ def _source_setenv_bash(ascend_root):
                 key, _, val = entry.partition('=')
                 if key and "\n" not in key:
                     os.environ[key] = val
+        # setenv.bash rebuilds LD_LIBRARY_PATH; keep the camodel runtime visible.
+        _restore_ld_paths(sim_paths)
     except (subprocess.TimeoutExpired, OSError):
         pass
 

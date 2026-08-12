@@ -6,7 +6,7 @@
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 """NPUSim simulator backend for the kernel/aclnn test modes.
 
-See ``docs/TTK_NPUSim仿真集成设计.md`` for the design.
+See ``docs/NPUSim/TTK_NPUSim仿真集成设计.md`` for the design.
 """
 from .sim_profiling import run_aclnn_sim, run_kernel_sim
 

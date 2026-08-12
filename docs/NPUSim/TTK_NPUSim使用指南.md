@@ -1,7 +1,7 @@
 # TTK NPUSim 仿真测试使用指南
 
-> 通过 `--backend npusim`，让 TTK 的 **Kernel** 与 **ACLNN** 测试模式在 NPUSim（昇腾 SoC 级仿真器）上执行，代替真实芯片。适用于**无卡 / 芯片资源紧缺**环境下的算子精度验证与性能分析。
-> 关联设计文档：`docs/TTK_NPUSim仿真集成设计.md`
+> 通过 `--backend npusim`，让 TTK 的 **Kernel**、**ACLNN** 与 **E2E** 测试模式在 NPUSim（昇腾 SoC 级仿真器）上执行，代替真实芯片。适用于**无卡 / 芯片资源紧缺**环境下的算子精度验证与性能分析。
+> 关联设计文档：`docs/NPUSim/TTK_NPUSim仿真集成设计.md`
 
 ---
 
@@ -56,7 +56,13 @@ python3 -m ttk kernel --backend npusim -i examples/case_store/kernel/add.csv --s
 # ACLNN 模式
 python3 -m ttk aclnn --backend npusim -i examples/case_store/aclnn/aclnn_add.csv --sim-cores 0
 
-# 额外生成仿真流水图
+# E2E 模式（torch_npu，eager 执行）
+python3 -m ttk e2e --backend npusim -i examples/case_store/e2e/torch_add.csv -t add_f32_01
+
+# E2E 模式 + 额外生成仿真流水图
+python3 -m ttk e2e --backend npusim -i examples/case_store/e2e/torch_add.csv -t add_f32_01 --sim-report
+
+# 额外生成仿真流水图（Kernel / ACLNN）
 python3 -m ttk kernel --backend npusim -i examples/case_store/kernel/add.csv --sim-cores 0 --sim-report
 ```
 
@@ -136,6 +142,7 @@ python3 -m ttk aclnn  --backend npusim -i cases.csv --op add   --sim-cores 0
 | `OPTILING_FAILURE` / `*_OPERATOR_NOT_FOUND` | 缺 950-ops 包或算子 TBE 实现 | 确认已装 `Ascend-cann-950-ops`；看 `ttk-debug.log` |
 | `ACLNN_EXECUTE_FAILED` | aclnn 算子库不支持该 SoC | 同左，确认 950-ops 已装 |
 | `SIM_RESULT_MISSING` / `wrapper_error.json` 有内容 | wrapper 执行异常 | 看 `<sim_output>/<case>/wrapper_error.json` 与 `record_out/cannsim_*/cannsim.log` |
+| `RuntimeError: Current device only support aclnn operator` / `ERR00007 PTA feature not supported` | 用例调用了非 aclnn 的 legacy 自定义算子（如 `torch_npu.npu_conv2d`），camodel 仅支持 aclnn 算子 | 换用有 aclnn 实现的算子，或该算子改用真机 `--backend npu` 验证 |
 | `precision_status: FAIL` | golden 与仿真输出偏差 | 检查容差、golden 实现、shape/format 定义 |
 | report 报 `No executed instructions` | 用错 cannsim 版本（格式不匹配） | 确认 `--sim-report` 走环境自带 `$ASCEND_TOOLKIT_HOME/bin/cannsim` |
 | `CANN cannsim not found` | 未安装含 cannsim 的 CANN，或 `cannsim` 不在 PATH | 确认已装 CANN 且 `$ASCEND_TOOLKIT_HOME/bin/cannsim` 存在 |
@@ -147,6 +154,12 @@ python3 -m ttk aclnn  --backend npusim -i cases.csv --op add   --sim-cores 0
 - 仿真性能数据为 `UNKNOWN`（无单值周期），性能分析依赖 `--sim-report` 的流水图。
 - 需 numpy / plotly（流水图用）等 Python 依赖。
 - **wrapper 跳过 camodel teardown**：Ascend950PR_9589 camodel 的 `rtCtxDestroy` / `rtDeviceReset` 对个别用例组合存在忙自旋缺陷（执行成功后 teardown 卡死）。TTK 的仿真 wrapper 通过 `skip_teardown=True` 跳过 teardown 调用——wrapper 以 `os._exit` 结束进程，进程退出即回收 camodel 资源，故该跳过对精度结果无影响（已实证输出 bit 级正确）。
+- **E2E 模式（`--backend npusim`）**：
+  - 聚焦 **eager** 执行；graph 模式（cst/dyn/aclgraph）依赖 `torchair` 且可能走 GE 图编译（camodel 缺 pcie bar 能力），仿真下保持禁用。
+  - **算子支持受 camodel / Ascend950 ops 集限制**：已实证 `torch.add`（含 f16/f32/广播）可跑通；部分算子（如 `torch.abs`、`torch.Tensor.relu_` inplace）在 camodel 下会**挂起**（`OnEagerProfiling` 长时间 RUNNING）。**camodel 仅支持 aclnn 算子**：非 aclnn 的 legacy 自定义算子（如 `torch_npu.npu_conv2d`）执行时被 torch_npu 直接拒绝，报 `RuntimeError: Current device only support aclnn operator, but current operator xxx do not have aclnn implementation`（`ERR00007 PTA feature not supported`）。跑仿真前请先用小 shape 单用例确认算子受支持。
+  - eager `*_device_perf_us` 为 `----`（camodel 无单值周期），精度比对不受影响。
+  - **支持 `--sim-report`**：camodel 把指令轨迹写为 `instr.bin`（落在 worker 工作目录），TTK 每用例执行后收集到 `<sim_output>/<case>/instr.bin` 并生成 `<sim_output>/<case>/report/trace_core*.json`（Chrome Tracing 流水图，可加载到 `chrome://tracing` / Perfetto 查看）。
+  - 环境注入：TTK 在 FrameworkApiInstance 启动时自动把 camodel 目录前置到 `LD_LIBRARY_PATH`（profiling worker 经 forkserver 继承），无需手工设置。
 
 ---
 
