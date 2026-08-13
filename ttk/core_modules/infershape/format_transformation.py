@@ -356,6 +356,49 @@ def to_fractal_z_3d(data: numpy.ndarray, ori_format: str, target_shape: Union[li
     return weight_group
 
 
+def from_fractal_z_3d(data: numpy.ndarray, target_shape: Union[list, tuple] = None,
+                      target_format: str = "NCDHW", groups=None):
+    if groups is None:
+        groups = 1
+    n = target_shape[target_format.index("N")]
+    c_in = target_shape[target_format.index("C")]
+    d = target_shape[target_format.index("D")]
+    h = target_shape[target_format.index("H")]
+    w = target_shape[target_format.index("W")]
+    c0 = data.shape[-1]
+    n0 = BLOCK_SIZE
+    cin_ori = c_in
+    cout_ori = n // groups
+
+    group_dict = _calculate_group(c_in * groups, n, groups, c0)
+    real_g = group_dict["real_g"]
+    cin1_g = group_dict["cin1_g"]
+    mag_factor = group_dict["mag_factor"]
+    cout1_g = group_dict["cout1_g"]
+
+    data = numpy.ascontiguousarray(data)
+    data_reshaped = data.reshape((real_g, d, cin1_g, h, w, cout1_g, n0, c0))
+
+    result = numpy.zeros((n, c_in, d, h, w), dtype=data.dtype)
+    for g in range(groups):
+        for ci in range(cin_ori):
+            for co in range(cout_ori):
+                e = g % mag_factor
+                dst_cin = e * cin_ori + ci
+                dst_cout = e * cout_ori + co
+                src_cout = g * cout_ori + co
+                result[src_cout, ci, :, :, :] = data_reshaped[
+                    g // mag_factor, :, dst_cin // c0, :, :,
+                    dst_cout // n0, dst_cout % n0, dst_cin % c0
+                ]
+
+    if target_format == "NDHWC":
+        return result.transpose(0, 2, 3, 4, 1)
+    elif target_format == "DHWCN":
+        return result.transpose(2, 3, 4, 1, 0)
+    return result
+
+
 def to_NC1HWC0(data: numpy.ndarray, ori_format: str,
                target_shape: Union[list, tuple] = None):
     ori_shape = data.shape
@@ -495,6 +538,11 @@ format_transformation_map = {
     },
     "FRACTAL_NZ": {
         "ND": nz2nd,
+    },
+    "FRACTAL_Z_3D": {
+        "NCDHW": from_fractal_z_3d,
+        "NDHWC": from_fractal_z_3d,
+        "DHWCN": from_fractal_z_3d,
     },
 }
 
