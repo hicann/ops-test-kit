@@ -18,13 +18,16 @@ and converts to framework tensors (torch).
 import numpy as np
 
 from ttk.core_modules.plugin_loader import get_plugin_function
+from ttk.core_modules.pre_npu import add_context_if_declared, refresh_ttk_context
 from ttk.utilities import get
 from ttk.utilities.container_utils import apply_as_list
 from ttk.utilities.data import RandomData, resolve_custom_numpy_dtypes
 from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
 
-def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
+def generate_inputs(
+    testcase, switches, backend, plan, stored_inputs=None, ttk_context=None
+):
     """Generate numpy input arrays. Default generation first, then optional custom plugin.
 
     Custom input plugin interface (signature matches API definition, same as golden plugin):
@@ -36,12 +39,14 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
     Called with same ParamPlan arg order as profiling execution and golden generation.
     """
     # Custom input runs before API resolution in worker processes. Register the
-    # installed torch.ops package before a callback calls a companion metadata op.
+    # installed torch.ops package before a callback calls a companion device operation.
     TorchOpsPackageLoader.ensure_registered(testcase.api_name)
     if stored_inputs is not None:
         testcase.np_storages = list(stored_inputs)
         raw_inputs = build_views_from_storages(testcase)
         _set_runtime_tensors(testcase, raw_inputs)
+        if ttk_context is not None:
+            refresh_ttk_context(ttk_context, testcase)
         return raw_inputs
 
     raw_inputs = default_generate_inputs(testcase, switches)
@@ -62,6 +67,10 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
             nested_for_plugin = apply_as_list(plugin_inputs, dist)
         else:
             nested_for_plugin = plugin_inputs
+        if ttk_context is not None:
+            refresh_ttk_context(
+                ttk_context, testcase, input_tensors=nested_for_plugin
+            )
         args, kwargs, extra_attrs = plan.build_args(nested_for_plugin)
         extra = {
             'backend': backend.alias(),
@@ -87,9 +96,13 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
             kwargs.update(extra)
         else:
             kwargs.update({k: v for k, v in extra.items() if k in sig.parameters})
+        if ttk_context is not None:
+            add_context_if_declared(input_func, kwargs, ttk_context)
         input_func(*args, **kwargs)
 
     _set_runtime_tensors(testcase, raw_inputs)
+    if ttk_context is not None:
+        refresh_ttk_context(ttk_context, testcase)
     return raw_inputs
 
 

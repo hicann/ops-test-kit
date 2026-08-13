@@ -899,11 +899,16 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                     if sl is None:
                         continue
                     start, stop, step = sl[0], sl[1], sl[2]
-                    if step <= 0 or start < 0 or stop < 0:
+                    try:
+                        length = (
+                            len(range(start, stop, step))
+                            if step > 0 and start >= 0 and stop >= 0 else 0
+                        )
+                    except (TypeError, ValueError):
                         length = 0
-                    else:
-                        length = stop - start if stop > start else 0
-                    slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
+                    # A relation may reside at a different logical B/S offset in
+                    # another testcase. Offset is not part of its group identity.
+                    slice_id = f"{seed_value}_{axis_idx}_{length}_{step}"
                     if length == 0:
                         logging.warning(
                             f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid"

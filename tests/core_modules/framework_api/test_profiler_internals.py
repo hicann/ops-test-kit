@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """TorchProfiler internal data-driven activities + result _device_time fallback.
 
 Task 8: TorchProfiler.__init__ reads activities from backend.profile['profiler']
@@ -8,9 +6,17 @@ _device_acts (non-CPU activities) + _device_time 3-candidate pure-self fallback
 covering torch 2.7+ (self_device_time_total) and legacy
 (self_{device}_time_total, e.g. self_cuda_time_total / self_mlu_time_total).
 """
+
+from __future__ import annotations
+
 import pytest
 
-from ttk.core_modules.framework_api.profiler import TorchProfiler, get_profiler
+from ttk.core_modules.framework_api.profiler import (
+    DisabledProfiler,
+    NpuProfiler,
+    TorchProfiler,
+    get_profiler,
+)
 
 
 class _Evt:
@@ -240,6 +246,24 @@ def test_get_profiler_npu_api_on_non_npu_includes_backend_alias():
     backend = _FakeBackend({"torch_lib": "cuda"})
     with pytest.raises(RuntimeError, match=r"current is 'fake'"):
         get_profiler("torch_npu.something", backend)
+
+
+def test_disabled_profiler_does_not_inspect_backend():
+    profiler = get_profiler("torch_npu.something", object(), enabled=False)
+
+    assert isinstance(profiler, DisabledProfiler)
+    assert profiler.result(None, 1).elapsed_us == 0.0
+
+
+def test_npu_profiler_preserves_explicit_result_directory(tmp_path):
+    result_path = tmp_path / "msprof" / "framework_api" / "case" / "eager"
+    profiler = NpuProfiler(object(), result_path=result_path)
+    marker = result_path / "raw.profile"
+    marker.write_text("profile")
+
+    profiler._cleanup_tmpdir()
+
+    assert marker.is_file()
 
 
 def test_get_profiler_torch_with_npu_builtin_returns_npu_profiler():

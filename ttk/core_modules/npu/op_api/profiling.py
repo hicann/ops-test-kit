@@ -45,8 +45,16 @@ from .profiling_structure import ApiComparisonResult, ApiProfilingReturnStructur
 from .comparison import Comparator
 from ...manual_data import (
     load_manual_data_case,
+    manual_data_prepare_roles,
     prepare_manual_data_store,
     snapshot_manual_values,
+)
+from ...pre_npu import (
+    build_pre_npu_profile_runner,
+    build_ttk_context,
+    execute_pre_npu,
+    refresh_ttk_context,
+    resolve_pre_npu,
 )
 from ...testcase_manager import TestcaseAclnn
 from ...tbe_multiprocessing import get_process_context, DeviceLock
@@ -54,9 +62,11 @@ from ...tbe_logging import build_single_log_dir, default_logging_config
 from ...aclnn import AclInterface, OpApiInfoKeeper, OpApiInfo
 from ...msprof import MsProfiler, TtkMsProfType
 from ....utilities import get_global_storage, get, waiting_for_memory, frameless_table_print
+from ....utilities.string_utils import stable_path_component
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file, extract_plog_errors
 from ....test_spec import get_spec_attr
 from ..op.profiling_structure import _format_xpu_metrics
+from .pre_npu import PreNpuAclnnRunner
 
 
 def __profiling_end_print(context: TestcaseAclnn, compare_result: ApiComparisonResult):
@@ -290,11 +300,16 @@ class AclOpExecutor:
     def __init__(self, context: TestcaseAclnn, device: AclInterface):
         self._switches = get_global_storage()
         self._phase1_param_builder = Phase1ParamBuilder(context, device)
-        self._run_time = self._switches.run_time
+        profiling_enabled = bool(self._switches.TASK_PROFILING)
+        deterministic = int(getattr(self._switches, "deterministic_level", 0) or 0) > 0
+        self._run_time = self._switches.run_time if profiling_enabled or deterministic else 1
         self._ctx = context
         self._dvc = device
         self._prof_type = TtkMsProfType.API if self._switches.TASK_PROFILING else TtkMsProfType.NONE
-        self._prof_result_path = os.path.join(self._switches.root_path, "msprof", "op_api", self._ctx.testcase_name)
+        case_dir = stable_path_component(self._ctx.testcase_name, "testcase")
+        self._prof_result_path = os.path.join(
+            self._switches.root_path, "msprof", "op_api", case_dir
+        )
 
     @contextlib.contextmanager
     def rts_context(self):
@@ -321,8 +336,8 @@ class AclOpExecutor:
 
     def do(self):
         with self.rts_context():
-            # Model warmup
-            self._dvc.warmup(self._switches)
+            if self._switches.TASK_PROFILING:
+                self._dvc.warmup(self._switches)
             with self.rts_stream() as stm:
                 output_byte_arrays, output_view_shapes, success, det_status = self._acl_sequence(stm)
             # Cycle Analysis
@@ -331,8 +346,12 @@ class AclOpExecutor:
                 logging.info("TODOOOOOOOOOOOOOOOOOOOOOO")
                 api_prof = "UNKNOWN"
                 op_prof = "TOTAL_CYCLE_TODO"
-            else:
+            elif self._switches.TASK_PROFILING:
                 api_prof, op_prof = self._process_total_cycles()
+            else:
+                # A disabled run must not report CSVs retained by an earlier
+                # profiled invocation of the same testcase.
+                api_prof, op_prof = "UNKNOWN", "UNKNOWN"
             return ApiProfilingResult(
                 success, api_prof, op_prof, output_byte_arrays, output_view_shapes, deterministic_status=det_status
             )
@@ -453,8 +472,8 @@ class AclOpExecutor:
                 shutil.copy(item, prof_result_path.joinpath(item.name))
         for item in prof_result_path.iterdir():
             if item.is_dir():
-                shutil.rmtree(item)
-            elif item.name.startswith("api_statistic_"):
+                continue
+            if item.name.startswith("api_statistic_"):
                 api_prof = self._extract_csv_cell(
                     item,
                     ("API Name", "Time(us)", "Count", "Avg(us)", "Min(us)", "Max(us)"),
@@ -614,6 +633,7 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
     logging.debug(f"Expecting {context.tensor_bytes} bytes memory usage")
 
     manual_mode = getattr(switches, "manual_data_mode", None)
+    _, prepare_goldens = manual_data_prepare_roles(switches)
     manual_case = None
     try:
         prepare_store = prepare_manual_data_store(context, "aclnn", switches)
@@ -627,6 +647,7 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
                 "aclnn",
                 switches,
                 before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
+                require_goldens=False,
             )
             if manual_case is not None:
                 manual_mode = "replay"
@@ -634,10 +655,13 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
             logging.exception("Manual data loading failure")
             return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
 
+    ttk_context = build_ttk_context(
+        context, switches, "aclnn", manual_case=manual_case
+    )
     process_ctx.notify_status("OnGenInput")
     # noinspection PyBroadException
     try:
-        input_generator = InputGenerator(context)
+        input_generator = InputGenerator(context, ttk_context)
         if manual_case is not None:
             input_generator.gen(
                 stored_inputs=manual_case.inputs,
@@ -659,16 +683,18 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
         try:
             prepared_inputs = snapshot_manual_values(context.np_storages, "input")
             prepared_scalars = snapshot_manual_values(context.flatten_scalars or (), "scalar")
-            process_ctx.notify_status("OnGenGolden")
-            GoldenGenerator(context).gen()
+            if prepare_goldens:
+                process_ctx.notify_status("OnGenGolden")
+                GoldenGenerator(context, ttk_context).gen()
             process_ctx.notify_status("OnWriteManualData")
             case_dir = prepare_store.write_case(
                 context,
                 "aclnn",
                 prepared_inputs,
-                context.golden_tensors,
+                context.golden_tensors if prepare_goldens else (),
                 scalars=prepared_scalars,
                 file_format=switches.dump_config.file_format,
+                write_goldens=prepare_goldens,
             )
         except Exception as exc:
             logging.exception("Manual data preparation failure")
@@ -690,6 +716,43 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
         grant_event=device_grant_events.get(dev_id),
         granted_idx=device_granted_indices.get(dev_id),
     ):
+        pre_npu_func = resolve_pre_npu(context, switches)
+        if pre_npu_func is not None:
+            process_ctx.notify_status("OnPreNpu")
+            refresh_ttk_context(ttk_context, context)
+            try:
+                device = __get_aclnn_device(dev_id)
+                stage_executor = AclOpExecutor(context, device)
+                with stage_executor.rts_context():
+                    with stage_executor.rts_stream() as stream:
+                        pre_npu_result = execute_pre_npu(
+                            context,
+                            switches,
+                            ttk_context,
+                            aclnn_runner=PreNpuAclnnRunner(device, stream),
+                            profile_runner=build_pre_npu_profile_runner(
+                                context,
+                                switches,
+                                "aclnn",
+                                device_id=device.device_id,
+                            ),
+                            pre_npu_func=pre_npu_func,
+                        )
+            except Exception as exc:
+                logging.exception(f"[{context.testcase_name}] pre-NPU stage failure")
+                return prof_end(context, f"PRE_NPU_FAILURE: {exc}")
+            if pre_npu_result.stop:
+                detail = (
+                    f": {pre_npu_result.reason}" if pre_npu_result.reason else ""
+                )
+                compare_result = ApiComparisonResult(None).set(
+                    f"PRE_NPU_STOPPED{detail}", "PASS"
+                )
+                return_structure = ApiProfilingReturnStructure()
+                return_structure.construct(context, compare_result)
+                __profiling_end_print(context, compare_result)
+                return return_structure
+
         process_ctx.notify_status("OnProfilingPrint")
         __profiling_print(context, dev_id)
         process_ctx.notify_status("OnProfiling")
@@ -720,7 +783,7 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
         if need_3party:
             context.golden_mode_override = "Promote"
         try:
-            if manual_case is not None:
+            if manual_case is not None and manual_case.has_goldens:
                 try:
                     process_ctx.notify_status("OnLoadManualGolden")
                     context.golden_tensors = manual_case.load_goldens(
@@ -735,7 +798,7 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
                 process_ctx.notify_status("OnGenGolden")
                 # noinspection PyBroadException
                 try:
-                    GoldenGenerator(context).gen()
+                    GoldenGenerator(context, ttk_context).gen()
                     process_ctx.notify_status("OnDumpGoldenDataIfRequired")
                     __dump_golden(context)
                 except:
@@ -771,7 +834,9 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
                 )
     context.xpu_metrics = _format_xpu_metrics(xpu_results) if xpu_results else {}
     process_ctx.notify_status("OnComparison")
-    compare_result = Comparator(context, standards, third_parties).compare()
+    compare_result = Comparator(
+        context, standards, third_parties, ttk_context=ttk_context
+    ).compare()
     if compare_result.passed != "PASS" and switches.dump_config.dump_on_fail:
         __dump_on_fail(context)
     process_ctx.notify_status("OnReturning")

@@ -1,12 +1,13 @@
 # Manual-Data Prepare and Replay
 
-Two-stage execution separates input and CPU-golden generation from target-device
-execution. It is intended for workflows where preparation and device execution run
-on different hosts.
+Two-stage execution separates input generation, optional CPU Golden generation,
+and target-device execution. It supports different prepare/device hosts and an
+input-only preparation stage.
 
 ```text
-prepare: CSV -> generate/customize inputs -> CPU golden -> save
-replay:  CSV -> restore inputs/goldens -> NPU API or kernel -> compare
+prepare input:  CSV -> generate/customize input -> save input only
+prepare complete: CSV -> generate/customize input -> CPU Golden -> save both
+replay:         CSV -> restore input -> NPU API -> restore or generate Golden -> compare
 ```
 
 The feature supports `ttk e2e`, `ttk aclnn`, and `ttk kernel`. Both stages require
@@ -18,17 +19,22 @@ the data directory.
 | Mode | Options | Input | Golden | Device execution | Compare |
 | --- | --- | --- | --- | --- | --- |
 | Direct | No two-stage options | Generate | Generate | Run | Run |
-| Prepare | `--no-prof --dump in,golden` | Generate and save | Generate and save | Skip | Skip |
-| Replay | `--manual-data-dirs DIR...` | Restore | Restore | Run | Run |
+| Prepare input | `--no-prof --dump in` | Generate and save | Do not run | Skip | Skip |
+| Prepare in,golden | `--no-prof --dump in,golden` | Generate and save | Generate and save | Skip | Skip |
+| Replay | `--manual-data-dirs DIR...` | Restore | Restore when present; generate after device execution when absent | Run | Run |
 
-Prepare currently saves input and golden together. Input-only and golden-only stages
-are not supported. `--dump-format` accepts `bin`, `npy`, or `pt` and defaults to `bin`.
+E2E and ACLNN support input-only and complete prepare. Input-only replaces the whole
+same-name case, so stale Goldens cannot be paired with new inputs. `--dump-format`
+accepts `bin`, `npy`, or `pt` and defaults to `bin`.
 
 ### Kernel `--no-prof` And `--co`
 
 Standalone Kernel `--no-prof` keeps its original dry-run behavior: TTK generates
 input, golden, and workspace data but disables dynamic, const, and binary execution.
-Only the exact `--no-prof --dump in,golden` pair selects manual-data prepare.
+Only the exact `--no-prof --dump in,golden` pair selects manual-data prepare. Kernel
+does not accept input-only prepare because output allocation can depend on Golden or
+dynamic-output information before device execution; it cannot preserve the
+E2E/ACLNN "device first, missing Golden second" ordering.
 
 `--co/--compile-only` returns after compilation or tiling and before input/golden
 generation, so it cannot produce or consume a two-stage dataset. Kernel prepare still
@@ -56,6 +62,14 @@ python3 -m ttk e2e \
   --plugin /path/to/assets \
   --manual-data-dirs /data/manual \
   -o /path/to/replay_result.csv
+```
+
+The same directory can instead hold an input-only dataset:
+
+```bash
+python3 -m ttk e2e -i /path/to/cases.csv --plugin /path/to/assets \
+  --no-prof --dump in --dump-format bin --manual-data-dirs /data/manual \
+  -o /path/to/input_result.csv
 ```
 
 E2E prepare may use `--cpu` to force the CPU backend. Replay is the device stage and
@@ -146,13 +160,14 @@ of the complete name's SHA-256. Prepare and replay map the same complete name to
 same directory; this is not fuzzy matching and the original long name cannot be
 recovered from the directory alone.
 
-Re-preparing a case invalidates its old directory first. New files are written and
-verified in a hidden temporary directory and published only after the whole dataset
-passes validation.
+Re-preparing input invalidates the old case first, so stale Golden data cannot survive
+new input. New files are written and verified in a hidden temporary directory and
+published only after the selected dataset passes validation.
 
 ## 4. File Protocol
 
-A case directory may contain:
+A complete case may contain the following files. An input-only case omits all
+`golden_*` files:
 
 ```text
 <manual-data-dir>/<case-directory>/
@@ -206,19 +221,48 @@ replay selects one whole dataset by `bin > npy > pt`; it never mixes input from 
 format with golden from another. A present but incomplete or corrupt high-priority copy
 fails instead of falling back.
 
-JSON, logs, checksums, subdirectories, symlinks, and other sidecars are rejected. Each
-non-None file is immediately read back and checked for dtype, shape, and complete bytes.
-
 ## 5. Replay Behavior
 
-After a dataset matches, replay skips random input generation, attribute data fills,
-the input plugin, and CPU golden generation. It still performs CSV/ParamPlan parsing,
-API or kernel resolution, required compilation/tiling, wrappers, device execution,
-comparison, and result output. Continue to pass the required plugin and `PYTHONPATH`.
+Replay requires a complete input/scalar dataset and always skips random input
+generation, attribute data fills, and the input plugin. Golden files are optional.
+When present, they are loaded and validated after device output shapes are known. If
+all Golden files are absent, TTK executes the device first, generates CPU Golden from
+the restored input, and then compares. Partial, non-contiguous, or incompatible
+Golden data still fails instead of being treated as absent.
+
+Replay still performs CSV/ParamPlan parsing, API or kernel resolution, required
+compilation/tiling, wrappers, device execution, comparison, and result output.
+Continue to pass the required plugin and `PYTHONPATH`.
 
 Prepare snapshots final tensor backing storage and ACLNN scalars before calling the
 golden callback. An in-place golden callback therefore cannot alter the input later
 consumed by replay.
+
+### Optional Operator Pre-NPU Stage
+
+An ACLNN/E2E TestSpec may declare `pre_npu` for work that must happen after final
+input generation/restoration and before the main device API. Prepare never executes
+this stage. Direct execution and replay execute it once under the device lock.
+
+The hook keeps its ordinary API-style `kwargs`, including non-API CSV attributes. It
+may additionally declare an explicit `context: TtkContext` parameter to receive restored
+tensors/scalars, read-only attributes and CSV fields, manual-data roots, the selected
+case directory, and process-local state. Returning `PreNpuResult(stop=True)` ends the
+case before the main API, Golden, and compare. In ACLNN mode,
+`context.run_aclnn(...)` exposes a framework-owned auxiliary ACLNN runtime for
+the duration of the hook. In ACLNN and E2E, `context.run_profiled(...)` profiles an
+operator-owned action according to `--task-prof`, `--warmup`, and `--run`. It uses the
+fixed `msprof/pre_npu/<case>/<stage>/` path, so a later same-case/stage run may replace
+earlier contents and make an old `RuntimeProfile.result_path` stale. These runners exist
+only during the pre-NPU hook.
+
+`context.manual_case_dir` exposes the testcase data directory when one directory is
+uniquely addressable. It is a generic path, not an operator-state API: TTK does not define
+plugin filenames, extensions, schemas, or lifecycles. In ACLNN/E2E, input, Golden, and compare callbacks may independently
+receive the same context only when they explicitly declare a `context` parameter typed
+as `TtkContext`. Untyped business parameters named `context` and hooks that only declare
+`**kwargs` remain compatible; Kernel/GEIR do not currently inject this context. See
+`ttk/test_spec/README.md` for the complete hook contract.
 
 ### Comparison
 
@@ -256,9 +300,10 @@ and do not automatically register this provider or join the two-stage protocol.
 - `-i/--input` and `-o/--output` each accept one CSV.
 - `--plugin` may contain comma-separated search paths in one argument.
 - `--manual-data-dirs` accepts at most one prepare root and multiple replay roots.
-- Prepare rejects output/full dump, `print`, `--dump-on-fail`,
-  `--golden-mode Disable`, and `--validate`; E2E also rejects graph options, and
-  Kernel rejects `--compile-only`.
+- Prepare rejects output/full dump, `print`, `--dump-on-fail`, and `--validate`.
+  A prepare that includes Golden rejects `--golden-mode Disable`; input-only accepts
+  it. E2E also rejects graph options. Kernel accepts only `--dump in,golden` and
+  rejects `--compile-only`.
 - Replay rejects `--no-prof`, `--validate`, `--golden-mode Disable`, E2E `--cpu`, and
   Kernel `--compile-only`.
 - `--seed` affects prepare-time random input only. Replay reads files and does not use
@@ -273,6 +318,8 @@ At minimum, verify:
 | --- | --- |
 | Direct baseline | Same CSV, plugin, and compare configuration can run directly |
 | Three formats | Separate `bin`, `npy`, and `pt` prepare/replay runs |
+| Two prepare forms | E2E/ACLNN input-only and complete prepare never execute the device |
+| Missing Golden | Replay input-only data, then generate Golden after device execution and compare |
 | Directory move | Replay after copying the whole root to another absolute path |
 | Shape | A same-numel wrong device shape is rejected by new bin, npy, and pt data |
 | Compare | Custom compare and CSV close tolerances remain active during replay |
@@ -285,13 +332,22 @@ result.
 
 ## 9. Known Limits
 
-Without a manifest or sidecar, TTK cannot automatically validate:
+The strict framework-data protocol has no manifest. TTK validates its own data files but
+does not inspect operator-owned entries, so it cannot automatically validate:
 
 - whether a same-name case still uses the same API, attributes, wrapper, or plugin;
 - an input-bin shape change that preserves dtype and total element count;
 - same-size replacement or bit corruption, because there is no checksum;
 - accidental sharing of a compatible same-name directory across E2E/ACLNN/Kernel;
 - seed, generation environment, or protocol-version history.
+
+Phased execution normally requires Golden to be a pure function of restored input. If an
+asset Golden depends on process-global state written by `customize_inputs`, a later
+missing-Golden replay cannot reconstruct that private state.
+TTK deliberately does not re-run the input plugin because the saved input must remain
+the only device input. Such assets must use complete `--dump in,golden`, be refactored
+so Golden depends only on explicit tensors and attributes, or explicitly serialize the
+minimum required state in an operator-owned auxiliary file below `manual_case_dir`.
 
 Re-run prepare after changing API, attributes, input shape/view, wrapper, or assets.
 Use different manual-data roots for different commands and data versions, and do not
@@ -306,4 +362,4 @@ Common errors:
 | `filename dtype ... != CSV storage dtype` | Tensor/scalar dtype in both stages |
 | `saved shape ... != device output shape` | Device output regression or stale CSV/assets |
 | `byte size ... != expected` | Truncated files or changed dtype/shape |
-| `unexpected file in manual-data case` | Remove logs, JSON, subdirectories, and sidecars |
+| `manual-data framework entry is not a regular file` | A complete framework-data filename must refer to a regular file, not a directory or symlink |

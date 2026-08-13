@@ -36,3 +36,8 @@ def test_cli_rejects_alias_not_in_choices():       # 别名 bitwise 不在 choic
 
 def test_cli_accepts_cross_check():                # cross_check 过 choices（看护）
     assert _parse(["--compare", "cross_check"]).compare == "cross_check"
+
+
+def test_cli_task_prof_false_is_a_boolean_not_a_truthy_string():
+    assert _parse(["--task-prof", "false"]).task_prof is False
+    assert _parse(["--task-prof=false"]).task_prof is False

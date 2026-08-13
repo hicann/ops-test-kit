@@ -51,7 +51,11 @@ python3 -m ttk e2e -i cases.csv --plugin /path/to/assets \
   --no-prof --dump in,golden --dump-format bin \
   --manual-data-dirs /data/manual
 
-# Restore prepared data, execute the target API, and compare.
+# E2E/ACLNN may also prepare only input.
+python3 -m ttk e2e -i cases.csv --plugin /path/to/assets \
+  --no-prof --dump in --dump-format bin --manual-data-dirs /data/manual
+
+# Restore input, execute the target API, restore or generate Golden, and compare.
 python3 -m ttk e2e -i cases.csv --plugin /path/to/assets \
   --manual-data-dirs /data/manual
 ```
@@ -156,8 +160,10 @@ with either manual-data stage.
 
 # Two-Stage Selector
 
-`--no-prof --dump in,golden` prepares input/CPU-golden data without calling the
-target API or Kernel. See the two-stage guide above for required combinations.
+E2E/ACLNN prepare accepts `--no-prof --dump in` or
+`--no-prof --dump in,golden`; golden-only prepare (`--no-prof --dump golden`) is
+rejected. Ordinary device execution may still use `--dump golden`. Kernel prepare
+accepts only the complete pair. See the two-stage guide above for behavior.
 
 # General Parameters
 
@@ -169,8 +175,12 @@ target API or Kernel. See the two-stage guide above for required combinations.
 | `--print` | | Print summary info | On |
 | `--no-memory-check` | | Skip host memory check | Off |
 | `--proc-no-reuse` | | New process per case | Off |
-| `--task-prof` | | Task-level profiling switch | On |
+| `--task-prof` | | Task performance control | On |
 | `--po` / `--progress-output` | | Progress output path | None |
 | `--run` | | Execution count | 3 (onboard) / 1 (model) |
 | `--warmup` | | Warmup before profiling | On |
 | `--npu-timeout` | | NPU execution timeout (ms) | Unlimited |
+
+When task profiling is enabled, E2E artifacts are retained under
+`msprof/framework_api/<case>/` by default, and ACLNN artifacts under
+`msprof/op_api/<case>/`.

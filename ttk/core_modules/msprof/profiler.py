@@ -42,8 +42,6 @@ class MsProfiler:
                  is_model: bool = False):
         self._dvc_id: int = device_id
         self._result_path: str = result_path
-        if os.path.exists(result_path):
-            shutil.rmtree(result_path)
         self._start_step = start_step
         self._current_step = 0
         self._is_model: bool = is_model
@@ -54,6 +52,8 @@ class MsProfiler:
         if self._is_model or (ttk_prof_type == TtkMsProfType.NONE and not extra_acl_prof_type):
             self._msprof_dll = None
         else:
+            if os.path.exists(result_path):
+                shutil.rmtree(result_path)
             self._msprof_dll = ctypes.CDLL(f"libmsprofiler.so")
         self._prof_api_dll = None  # initialize when needed
 

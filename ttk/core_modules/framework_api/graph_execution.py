@@ -15,8 +15,11 @@ Wraps API in GraphNetwork + torch.compile for GE graph mode testing.
 """
 import functools
 import logging
+import os
 
 import torch
+
+from ttk.utilities.string_utils import stable_path_component
 
 from ttk.test_spec import get_spec_attr
 
@@ -63,16 +66,19 @@ def _compile_model_aclgraph(model, backend):
 
 def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
                   is_inplace, inplace_backup, api_name,
-                  inplace_backups=None, inplace_kwargs_keys=None):
+                  inplace_backups=None, inplace_kwargs_keys=None,
+                  profile_result_path=None):
     """Run compiled model with warmup + profiling. Returns (result_nps, perf)."""
-    run_count = switches.run_time
+    profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
+    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
+    run_count = switches.run_time if profiling_enabled or deterministic else 0
     is_kwargs_mode = inplace_kwargs_keys is not None
 
     result = compiled(*args, **kwargs)
     backend.synchronize(dev_id)
     result_nps = result_to_numpy(result, backend, copy=is_inplace)
 
-    if switches.warmup:
+    if switches.warmup and profiling_enabled:
         for _ in range(WARMUP_COUNT):
             if is_kwargs_mode:
                 for idx, key in inplace_kwargs_keys.items():
@@ -106,19 +112,36 @@ def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
         for idx, key in inplace_kwargs_keys.items():
             if key in kwargs and kwargs[key] is not None:
                 original_tensors[idx] = (key, kwargs[key])
-                inplace_clones[idx] = (key, [clone_preserving_stride(kwargs[key]) for _ in range(run_count - 1)])
+                inplace_clones[idx] = (
+                    key,
+                    [
+                        clone_preserving_stride(kwargs[key])
+                        for _ in range(max(run_count - 1, 0))
+                    ],
+                )
     else:
         if inplace_backups:
             for idx in inplace_backups:
                 if idx < len(args) and args[idx] is not None:
                     original_tensors[idx] = args[idx]
-                    inplace_clones[idx] = [clone_preserving_stride(args[idx]) for _ in range(run_count - 1)]
+                inplace_clones[idx] = [
+                    clone_preserving_stride(args[idx])
+                    for _ in range(max(run_count - 1, 0))
+                ]
         if is_inplace and inplace_backup is not None and 0 not in original_tensors:
             if args and args[0] is not None:
                 original_tensors[0] = args[0]
-                inplace_clones[0] = [clone_preserving_stride(args[0]) for _ in range(run_count - 1)]
+                inplace_clones[0] = [
+                    clone_preserving_stride(args[0])
+                    for _ in range(max(run_count - 1, 0))
+                ]
 
-    profiler = get_profiler(api_name, backend)
+    profiler = get_profiler(
+        api_name,
+        backend,
+        enabled=profiling_enabled,
+        result_path=profile_result_path if profiling_enabled else None,
+    )
     with profiler:
         for i in range(run_count):
             if i < run_count - 1:
@@ -140,7 +163,7 @@ def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
                 result = r
         backend.synchronize(dev_id)
 
-    perf = profiler.result(backend, run_count)
+    perf = profiler.result(backend, max(run_count, 1))
 
     if not is_inplace:
         result_nps = result_to_numpy(result, backend, copy=is_inplace)
@@ -178,6 +201,10 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     else:
         mode_str = "static"
     logging.info(f"Executing graph mode: {mode_str}")
+    safe_name = stable_path_component(testcase.testcase_name, "testcase")
+    profile_result_path = os.path.join(
+        switches.root_path, "msprof", "framework_api", safe_name, mode_str
+    )
 
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
@@ -241,7 +268,8 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
             compiled, run_args, run_kwargs, backend, dev_id, switches,
             run_inplace, inplace_backup if run_inplace else None, testcase.api_name,
             inplace_backups=inplace_backups if inplace_input_indexes else None,
-            inplace_kwargs_keys=inplace_kwargs_keys)
+            inplace_kwargs_keys=inplace_kwargs_keys,
+            profile_result_path=profile_result_path)
 
     except Exception as e:
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)

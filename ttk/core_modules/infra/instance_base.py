@@ -320,13 +320,30 @@ class InstanceBase(metaclass=ABCMeta):
 
         results = compare_batch_consistency(self.collected_results)
         if not results:
-            logging.info("No batch consistency groups found (testcases lack batch_seed)")
+            logging.info(
+                "No comparable level-3 batch groups found; cases either lack "
+                "complete batch metadata or share no relation signature"
+            )
             return
-        total = len(results)
-        passed = sum(1 for r in results if r["pass"])
-        logging.info(f"Batch consistency: {passed}/{total} groups passed")
+        supported_results = [result for result in results if result["supported"]]
+        unsupported_count = len(results) - len(supported_results)
+        passed = sum(1 for result in supported_results if result["pass"])
+        if supported_results:
+            logging.info(
+                "Batch consistency: %s/%s comparable groups passed; %s unsupported",
+                passed,
+                len(supported_results),
+                unsupported_count,
+            )
+        else:
+            logging.warning(
+                "No comparable level-3 batch groups: %s group(s) lack sliceable output",
+                unsupported_count,
+            )
         for r in results:
-            status = "PASS" if r["pass"] else "FAIL"
+            status = "PASS" if r["pass"] else (
+                "UNSUPPORTED" if not r["supported"] else "FAIL"
+            )
             names = [m["testcase"] for m in r["members"]]
             logging.info(f"  [{status}] group={r['batch_consistency_id'][:32]}... "
                          f"members={names}")

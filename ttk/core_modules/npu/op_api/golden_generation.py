@@ -31,6 +31,7 @@ except ImportError:
 
 # Third-party Packages
 from ...plugin_loader import get_plugin_function
+from ...pre_npu import add_context_if_declared
 from ...testcase_manager import TestcaseAclnn
 from ...aclnn import OpApiInfoKeeper, OpApiInfo
 from ....utilities import get_global_storage
@@ -60,9 +61,10 @@ ACLNN_GOLDEN: dict = {
 
 
 class GoldenGenerator:
-    def __init__(self, context: TestcaseAclnn):
+    def __init__(self, context: TestcaseAclnn, ttk_context=None):
         self._ctx = context
         self._switch = get_global_storage()
+        self._ttk_context = ttk_context
 
     def gen(self):
         if self._switch.golden_mode == "Disable":
@@ -105,6 +107,8 @@ class GoldenGenerator:
         if hasattr(self._ctx, "batch_seed") and self._ctx.batch_seed is not None:
             kwargs["batch_seed"] = self._ctx.batch_seed
         kwargs.update(extra_attrs)
+        if self._ttk_context is not None:
+            add_context_if_declared(gf, kwargs, self._ttk_context)
         results = gf(*args, **kwargs)
         return results
 

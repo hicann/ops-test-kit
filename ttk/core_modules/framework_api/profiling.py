@@ -28,13 +28,22 @@ from ttk.core_modules.comparison.custom import apply_pre_compare, try_custom_com
 from ttk.core_modules.comparison.resolve import resolve_tolerance
 from ttk.core_modules.manual_data import (
     load_manual_data_case,
+    manual_data_prepare_roles,
     prepare_manual_data_store,
     snapshot_manual_values,
 )
 from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
+from ttk.core_modules.pre_npu import (
+    build_pre_npu_profile_runner,
+    build_ttk_context,
+    execute_pre_npu,
+    refresh_ttk_context,
+    resolve_pre_npu,
+)
 from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
+from ttk.utilities.string_utils import stable_path_component
 from ttk.utilities import dump_to_file, waiting_for_memory
 from ttk.utilities.container_utils import apply_as_list, get_global_storage
 
@@ -358,8 +367,22 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf) or raises."""
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
-    run_count = switches.run_time
-    profiler = get_profiler(testcase.api_name, backend)
+    profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
+    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
+    if profiling_enabled or deterministic:
+        run_count = switches.run_time
+    else:
+        run_count = 0 if is_inplace else 1
+    safe_name = stable_path_component(testcase.testcase_name, "testcase")
+    profile_path = os.path.join(
+        switches.root_path, "msprof", "framework_api", safe_name, "eager"
+    )
+    profiler = get_profiler(
+        testcase.api_name,
+        backend,
+        enabled=profiling_enabled,
+        result_path=profile_path if profiling_enabled else None,
+    )
 
     inplace_input_indexes = getattr(testcase, "inplace_input_indexes", None) or ()
     inplace_input_backups = {}
@@ -384,7 +407,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     else:
         result = None
 
-    if switches.warmup:
+    if switches.warmup and profiling_enabled:
         for _ in range(WARMUP_COUNT):
             if is_inplace and inplace_backup is not None:
                 args[0][:] = inplace_backup
@@ -427,7 +450,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
                 result = r
         backend.synchronize(dev_id)
 
-    perf = profiler.result(backend, run_count)
+    perf = profiler.result(backend, max(run_count, 1))
 
     if not is_inplace:
         result_nps = result_to_numpy(result, backend)
@@ -442,7 +465,9 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     return result_nps, perf
 
 
-def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
+def _generate_golden_data(
+    testcase, raw_inputs, switches, backend, dump=True, ttk_context=None
+):
     """Generate golden outputs and dump them. Returns golden_nps list."""
     process_ctx = get_process_context()
     process_ctx.notify_status("OnGenGolden")
@@ -450,7 +475,14 @@ def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
         golden_nps = ["SUPPRESSED"]
     else:
         try:
-            golden_nps = generate_golden(testcase, raw_inputs, switches.plugin_path, switches, backend.alias())
+            golden_nps = generate_golden(
+                testcase,
+                raw_inputs,
+                switches.plugin_path,
+                switches,
+                backend.alias(),
+                ttk_context=ttk_context,
+            )
         except Exception:
             logging.exception(f"[{testcase.testcase_name}] Golden generation failure")
             golden_nps = ["GOLDEN_FAILURE"]
@@ -460,21 +492,26 @@ def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
     return golden_nps
 
 
-def _apply_pre_compare(testcase, result_nps, golden_nps, switches):
+def _apply_pre_compare(testcase, result_nps, golden_nps, switches, ttk_context=None):
     """加载并调用 pre_compare, 变换 result_nps 和 golden_nps。
     无 spec / golden 无效时什么都不做。异常向上抛。"""
     func = get_spec_attr(testcase.api_name, "pre_compare", switches.plugin_path)
-    apply_pre_compare(testcase, result_nps, golden_nps, func)
+    apply_pre_compare(
+        testcase, result_nps, golden_nps, func, ttk_context=ttk_context
+    )
 
 
-def _try_custom_compare(testcase, result_nps, golden_nps, switches):
+def _try_custom_compare(testcase, result_nps, golden_nps, switches, ttk_context=None):
     """尝试定制 compare。返回 (precision_str, log_str, is_pass) 或 None。"""
     func = get_spec_attr(testcase.api_name, "compare", switches.plugin_path)
-    return try_custom_compare(testcase, result_nps, golden_nps, func)
+    return try_custom_compare(
+        testcase, result_nps, golden_nps, func, ttk_context=ttk_context
+    )
 
 
 def _evaluate_eager_precision(
-    testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct, third_parties=None
+    testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct,
+    third_parties=None, ttk_context=None,
 ):
     """Compare eager mode results against golden, set return_struct. Returns True if pass."""
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in result_nps)
@@ -487,7 +524,9 @@ def _evaluate_eager_precision(
         switches.compare_method,
     )
     try:
-        custom_result = _try_custom_compare(testcase, result_nps, golden_nps, switches)
+        custom_result = _try_custom_compare(
+            testcase, result_nps, golden_nps, switches, ttk_context=ttk_context
+        )
         if custom_result is not None:
             precision_str, log_str, is_pass = custom_result
             metrics = {}
@@ -511,7 +550,8 @@ def _evaluate_eager_precision(
 
 
 def _evaluate_graph_precision(
-    testcase, raw_inputs, graph_nps, golden_nps, switches, return_struct, mode, perf=None, third_parties=None
+    testcase, raw_inputs, graph_nps, golden_nps, switches, return_struct, mode,
+    perf=None, third_parties=None, ttk_context=None,
 ):
     """Compare graph mode results against golden.
 
@@ -523,7 +563,9 @@ def _evaluate_graph_precision(
         return_struct.construct("GRAPH_EXEC_FAILURE", "FAIL", None, mode=mode)
         return
 
-    _apply_pre_compare(testcase, graph_nps, golden_nps, switches)
+    _apply_pre_compare(
+        testcase, graph_nps, golden_nps, switches, ttk_context=ttk_context
+    )
 
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in graph_nps)
     tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
@@ -536,7 +578,9 @@ def _evaluate_graph_precision(
     )
     log_str, metrics = "", {}  # try 前初始化（防 except 路径 NameError）
     try:
-        custom_result = _try_custom_compare(testcase, graph_nps, golden_nps, switches)
+        custom_result = _try_custom_compare(
+            testcase, graph_nps, golden_nps, switches, ttk_context=ttk_context
+        )
         if custom_result is not None:
             precision_str, log_str, is_pass = custom_result  # metrics 保持 {}
         else:
@@ -604,6 +648,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
         return
 
     manual_mode = getattr(switches, "manual_data_mode", None)
+    _, prepare_goldens = manual_data_prepare_roles(switches)
     manual_case = None
     try:
         prepare_store = prepare_manual_data_store(testcase, "e2e", switches)
@@ -619,6 +664,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 "e2e",
                 switches,
                 before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
+                require_goldens=False,
             )
             if manual_case is not None:
                 manual_mode = "replay"
@@ -628,12 +674,28 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
             return_struct.precision_status = "FAIL"
             return
 
+    ttk_context = build_ttk_context(
+        testcase, switches, "e2e", manual_case=manual_case
+    )
     process_ctx.notify_status("OnGenInput")
     try:
         if manual_case is not None:
-            raw_inputs = generate_inputs(testcase, switches, backend, plan, stored_inputs=manual_case.inputs)
+            raw_inputs = generate_inputs(
+                testcase,
+                switches,
+                backend,
+                plan,
+                stored_inputs=manual_case.inputs,
+                ttk_context=ttk_context,
+            )
         else:
-            raw_inputs = generate_inputs(testcase, switches, backend, plan)
+            raw_inputs = generate_inputs(
+                testcase,
+                switches,
+                backend,
+                plan,
+                ttk_context=ttk_context,
+            )
     except Exception as exc:
         logging.exception(f"[{testcase.testcase_name}] Input generation failure")
         prefix = "MANUAL_DATA_READ_FAILURE" if manual_case is not None else "INPUT_GEN_FAILURE"
@@ -646,19 +708,29 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
         _dump_inputs(testcase, raw_inputs, switches)
 
     if manual_mode == "prepare":
+        golden_nps = None
         try:
             prepared_inputs = snapshot_manual_values(
                 testcase.np_storages if testcase.np_storages is not None else raw_inputs,
                 "input",
             )
-            golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
+            if prepare_goldens:
+                golden_nps = _generate_golden_data(
+                    testcase,
+                    raw_inputs,
+                    switches,
+                    backend,
+                    dump=False,
+                    ttk_context=ttk_context,
+                )
             process_ctx.notify_status("OnWriteManualData")
             case_dir = prepare_store.write_case(
                 testcase,
                 "e2e",
                 prepared_inputs,
-                golden_nps,
+                golden_nps if golden_nps is not None else (),
                 file_format=switches.dump_config.file_format,
+                write_goldens=prepare_goldens,
             )
         except Exception as exc:
             logging.exception(f"[{testcase.testcase_name}] Manual data preparation failure")
@@ -667,7 +739,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
             return
         logging.info(f"[{testcase.testcase_name}] manual data prepared: {case_dir}")
         return_struct.construct("MANUAL_DATA_PREPARED", "PASS", None)
-        _profiling_end_print(testcase, return_struct, golden_nps, switches)
+        _profiling_end_print(testcase, return_struct, golden_nps or (), switches)
         return
 
     resolved, is_tensor_method = resolve_api(testcase.api_name)
@@ -694,6 +766,36 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
         grant_event=device_grant_events.get(dev_id),
         granted_idx=device_granted_indices.get(dev_id),
     ):
+        pre_npu_func = resolve_pre_npu(testcase, switches)
+        if pre_npu_func is not None:
+            process_ctx.notify_status("OnPreNpu")
+            refresh_ttk_context(ttk_context, testcase)
+            try:
+                pre_npu_result = execute_pre_npu(
+                    testcase,
+                    switches,
+                    ttk_context,
+                    profile_runner=build_pre_npu_profile_runner(
+                        testcase,
+                        switches,
+                        "e2e",
+                        synchronize=lambda: backend.synchronize(dev_id),
+                    ),
+                    pre_npu_func=pre_npu_func,
+                )
+            except Exception as exc:
+                logging.exception(f"[{testcase.testcase_name}] pre-NPU stage failure")
+                return_struct.construct(f"PRE_NPU_FAILURE: {exc}", "FAIL", None)
+                _profiling_end_print(testcase, return_struct, switches=switches)
+                return
+            if pre_npu_result.stop:
+                detail = (
+                    f": {pre_npu_result.reason}" if pre_npu_result.reason else ""
+                )
+                return_struct.construct(f"PRE_NPU_STOPPED{detail}", "PASS", None)
+                _profiling_end_print(testcase, return_struct, switches=switches)
+                return
+
         process_ctx.notify_status("OnProfilingPrint")
         _profiling_print(testcase, backend, dev_id, switches)
 
@@ -749,7 +851,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
     gc.collect()
     _collect_sim_report(testcase, switches)
 
-    if manual_case is not None:
+    if manual_case is not None and manual_case.has_goldens:
         try:
             process_ctx.notify_status("OnLoadManualGolden")
             reference_outputs = result_nps
@@ -767,7 +869,13 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
             _profiling_end_print(testcase, return_struct, switches=switches)
             return
     else:
-        golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend)
+        golden_nps = _generate_golden_data(
+            testcase,
+            raw_inputs,
+            switches,
+            backend,
+            ttk_context=ttk_context,
+        )
 
     # E2E does NOT set golden_mode_override (unlike kernel/aclnn): E2E golden
     # runs the same torch API on CPU, where bfloat16 is computed natively and
@@ -819,10 +927,13 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
         process_ctx.notify_status("OnDumpOutput")
         _dump_outputs(testcase, result_nps, switches)
 
-        _apply_pre_compare(testcase, result_nps, golden_nps, switches)
+        _apply_pre_compare(
+            testcase, result_nps, golden_nps, switches, ttk_context=ttk_context
+        )
         process_ctx.notify_status("OnEagerComparison")
         _evaluate_eager_precision(
-            testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct, third_parties
+            testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct,
+            third_parties, ttk_context=ttk_context
         )
 
     if graph_enabled:
@@ -844,6 +955,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 "aclgraph",
                 graph_aclgraph_perf,
                 third_parties,
+                ttk_context,
             )
         if switches.cst_switches.enabled:
             _evaluate_graph_precision(
@@ -856,6 +968,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 "static",
                 graph_cst_perf,
                 third_parties,
+                ttk_context,
             )
         if switches.dyn_switches.enabled:
             _evaluate_graph_precision(
@@ -868,6 +981,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 "dynamic",
                 graph_dyn_perf,
                 third_parties,
+                ttk_context,
             )
 
     _profiling_end_print(testcase, return_struct, golden_nps, switches)

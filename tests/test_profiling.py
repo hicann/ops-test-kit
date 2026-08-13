@@ -470,7 +470,9 @@ class TestPreCompareEndToEnd:
         captured = {}
 
         def fake_evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps,
-                                     switches, perf, return_struct, third_parties=None):
+                                     switches, perf, return_struct, third_parties=None,
+                                     ttk_context=None):
+            assert ttk_context is not None
             captured["result"] = list(result_nps)
             captured["golden"] = list(golden_nps)
 

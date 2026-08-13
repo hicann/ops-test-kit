@@ -396,17 +396,22 @@ class TestcaseE2e(TensorApiTestcaseBase):
                     start = sl[0]
                     stop = sl[1]
                     step = sl[2]
-                    if step <= 0 or start < 0 or stop < 0:
+                    try:
+                        length = (
+                            len(range(start, stop, step))
+                            if step > 0 and start >= 0 and stop >= 0 else 0
+                        )
+                    except (TypeError, ValueError):
                         length = 0
-                    else:
-                        length = stop -start if stop > start else 0
-                    slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
+                    # A relation may reside at a different logical B/S offset in
+                    # another testcase. Offset is not part of its group identity.
+                    slice_id = f"{seed_value}_{axis_idx}_{length}_{step}"
                     if length == 0:
                         logging.warning(f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid")
                     slice_lens.append(slice_id)
                 slice_axes.append(tuple(slice_lens))
             slice_key.append(tuple(slice_axes))
-        self.batch_consistency_id = tuple(slice_key)
+        self.batch_consistency_id = tuple(slice_key) if slice_key else None
  	 
 
     def _check_tensor_configuration(self):

@@ -19,7 +19,7 @@ TestSpec — 统一的算子测试规范
             "float32": {"standard": "binary_equal"},
         }
 
-        # compare / pre_compare / customize_inputs 未定义 → 框架用默认
+        # compare / pre_compare / customize_inputs / pre_npu 未定义 → 框架用默认
 
     # __spec__ dict 注册（可选，命名约定兜底）；值为类名字符串（非类对象）——
     # loader AST 扫描不 exec、spec 隔离 + 惰性 load；可写文件顶部
@@ -33,7 +33,20 @@ TestSpec — 统一的算子测试规范
 命中的那一个文件；__spec__ 因 AST 扫描而可写文件顶部。完整约定见 README.md。
 """
 
-__all__ = ["SpecNotFoundError", "InvalidSpecError", "validate", "get_spec_attr", "get_spec_class_meta"]
+__all__ = [
+    "SpecNotFoundError",
+    "InvalidSpecError",
+    "TtkContext",
+    "RuntimeKernelProfile",
+    "RuntimeProfile",
+    "PreNpuResult",
+    "validate",
+    "get_spec_attr",
+    "get_spec_class_meta",
+]
+
+from .pre_npu import PreNpuResult
+from .runtime_context import RuntimeKernelProfile, RuntimeProfile, TtkContext
 
 
 class SpecNotFoundError(Exception):

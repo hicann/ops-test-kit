@@ -15,13 +15,17 @@ _CHECK_RULES: Dict[str, tuple] = {
     "compare": (),
     "pre_compare": (),
     "customize_inputs": (),
+    "pre_npu": (),
     "tolerance": (dict,),
     "torch_graph": (type,),
     "describe": (),
 }
 
 # These attributes additionally accept callable
-_CALLABLE_OK = {"golden", "third_party", "compare", "pre_compare", "customize_inputs", "describe"}
+_CALLABLE_OK = {
+    "golden", "third_party", "compare", "pre_compare", "customize_inputs",
+    "pre_npu", "describe",
+}
 
 # callable 属性里允许 class 的(golden/third_party 文档有 class 形式);
 # 其余 callable 属性(compare/pre_compare/customize_inputs/describe)只接受 function。

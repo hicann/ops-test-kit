@@ -11,8 +11,22 @@
 String Related Utilities
 """
 # Standard Packages
+import hashlib
 import logging
+import re
 from typing import Any, List
+
+_SAFE_PATH_COMPONENT = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def stable_path_component(value: Any, fallback: str = "item") -> str:
+    """Return one collision-resistant, portable directory-name component."""
+    original = str(value)
+    safe = _SAFE_PATH_COMPONENT.sub("_", original).strip("._") or fallback
+    if safe == original and len(safe) <= 120:
+        return safe
+    digest = hashlib.sha256(original.encode("utf-8")).hexdigest()[:12]
+    return f"{safe[:96]}-{digest}"
 
 
 def tostr(value: Any) -> str:

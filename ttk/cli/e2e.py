@@ -19,7 +19,7 @@ def register_e2e_command(subparsers):
 
 def _add_e2e_args(parser):
     parser.add_argument(
-        "--no-prof", action="store_true", help="Prepare input and CPU golden data without running the main API"
+        "--no-prof", action="store_true", help="Prepare input and optional CPU golden data without running the main API"
     )
     parser.add_argument("--cpu", action="store_true", default=False, help="Force CPU backend")
     parser.add_argument(

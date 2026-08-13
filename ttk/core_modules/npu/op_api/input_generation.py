@@ -27,16 +27,20 @@ from ...aclnn import OpApiInfoKeeper, OpApiInfo
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, numpy_to_torch_tensor, tuple_flatten
 from ....utilities import get, get_global_storage, RandomData
 from ...plugin_loader import get_plugin_function
+from ...pre_npu import add_context_if_declared, refresh_ttk_context
 
 class InputGenerator:
-    def __init__(self, context: TestcaseAclnn):
+    def __init__(self, context: TestcaseAclnn, ttk_context=None):
         self._ctx = context
         self._switch = get_global_storage()
+        self._ttk_context = ttk_context
 
     def gen(self, stored_inputs=None, stored_scalars=None):
         """generate tensor & scalar."""
         if stored_inputs is not None:
             self._restore(stored_inputs, stored_scalars or ())
+            if self._ttk_context is not None:
+                refresh_ttk_context(self._ttk_context, self._ctx)
             return
         # Manual inputs
         if self._ctx.manual_tensor_binaries:
@@ -61,6 +65,8 @@ class InputGenerator:
                 "input", "aclnn", self._switch.plugin_path)
             if input_func:
                 self._call_custom_input(input_func)
+        if self._ttk_context is not None:
+            refresh_ttk_context(self._ttk_context, self._ctx)
 
     def _restore(self, stored_inputs, stored_scalars):
         """Restore final generated state without rerunning random/input plugins."""
@@ -105,6 +111,8 @@ class InputGenerator:
         if hasattr(self._ctx, 'batch_seed') and self._ctx.batch_seed is not None:
             kwargs['batch_seed'] = self._ctx.batch_seed
         kwargs.update(extra_attrs)
+        if self._ttk_context is not None:
+            add_context_if_declared(input_func, kwargs, self._ttk_context)
         input_func(*args, **kwargs)
 
     def _use_manual_input(self):

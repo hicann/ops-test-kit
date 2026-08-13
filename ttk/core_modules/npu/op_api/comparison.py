@@ -31,10 +31,12 @@ from .profiling_structure import ApiComparisonResult
 
 
 class Comparator:
-    def __init__(self, context: TestcaseAclnn, standards=None, third_parties=None):
+    def __init__(self, context: TestcaseAclnn, standards=None, third_parties=None,
+                 ttk_context=None):
         self._ctx = context
         self._standards = standards
         self._third_parties = third_parties
+        self._ttk_context = ttk_context
         plugin_path = getattr(get_global_storage(), "plugin_path", None)
         self._tolerance = get_spec_attr(context.api_name, "tolerance", plugin_path)
         self._pre_compare = get_spec_attr(context.api_name, "pre_compare", plugin_path)
@@ -59,8 +61,14 @@ class Comparator:
             logging_data += f"Comparing {self._ctx.testcase_name} with golden\n"
             outputs = self._ctx.prof_result.output_bytes
             goldens = self._ctx.golden_tensors
-            apply_pre_compare(self._ctx, outputs, goldens, self._pre_compare)
-            custom_result = try_custom_compare(self._ctx, outputs, goldens, self._custom_compare)
+            apply_pre_compare(
+                self._ctx, outputs, goldens, self._pre_compare,
+                ttk_context=self._ttk_context,
+            )
+            custom_result = try_custom_compare(
+                self._ctx, outputs, goldens, self._custom_compare,
+                ttk_context=self._ttk_context,
+            )
             if custom_result is not None:
                 precision, _logging_data, passed = custom_result
                 metrics = {}

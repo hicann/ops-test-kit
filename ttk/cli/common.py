@@ -54,7 +54,7 @@ def add_common_args(parser):
         "--manual-data-dirs",
         dest="manual_data_dirs",
         nargs="+",
-        help="Prepared input/golden data directories. Without --no-prof, "
+        help="Prepared input data, with optional Golden data. Without --no-prof, "
         "load matching testcase data and run device comparison",
     )
     parser.add_argument("--plugin", help="External plugin path for customized golden/inputs")
@@ -87,7 +87,8 @@ def add_common_args(parser):
         dest="task_prof",
         default=True,
         type=lambda x: x.lower() != "false",
-        help="Profile E2E duration (default: true)",
+        help="Collect performance profiling and repeated timing runs (default: true); "
+        "false runs ordinary precision once",
     )
     parser.add_argument("--po", "--progress-output", dest="progress_output", help="Progress output file")
     parser.add_argument(

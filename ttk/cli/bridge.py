@@ -210,14 +210,19 @@ def configure_manual_data(sw, args, command):
     )
 
     no_prof = getattr(args, "no_prof", False) is True
-    expected_dump = DumpLevel.INPUT.value | DumpLevel.GOLDEN.value
-    is_prepare_dump = no_prof and sw.dump_config.mode == expected_dump
+    input_dump = DumpLevel.INPUT.value
+    complete_dump = DumpLevel.INPUT.value | DumpLevel.GOLDEN.value
+    accepted_prepare_dumps = (input_dump, complete_dump)
+    is_prepare_dump = no_prof and sw.dump_config.mode in accepted_prepare_dumps
     if not no_prof and not directories:
         return
 
     if not no_prof:
         if sw.golden_mode != "Enable":
-            raise ValueError("--manual-data-dirs replay loads an existing golden; use --golden-mode Enable")
+            raise ValueError(
+                "--manual-data-dirs replay compares against a saved or regenerated "
+                "golden; use --golden-mode Enable"
+            )
         if sw.validate_only:
             raise ValueError("--validate cannot be combined with --manual-data-dirs replay")
         if command == "kernel" and sw.compile_only:
@@ -234,17 +239,20 @@ def configure_manual_data(sw, args, command):
             raise ValueError("Kernel manual-data preparation requires exactly --no-prof --dump in,golden")
         return
 
-    if sw.dump_config.mode != expected_dump:
+    if sw.dump_config.mode not in accepted_prepare_dumps:
         raise ValueError(
-            "--no-prof requires exactly --dump in,golden; output/full dump cannot be produced before device execution"
+            "--no-prof requires --dump in or --dump in,golden; "
+            "output/full dump cannot be produced before device execution"
         )
+    if command == "kernel" and sw.dump_config.mode != complete_dump:
+        raise ValueError("Kernel manual-data preparation requires exactly --no-prof --dump in,golden")
     if sw.dump_config.file_format not in ("bin", "pt", "npy"):
         raise ValueError(
             f"--dump-format {sw.dump_config.file_format!r} is not restorable with --no-prof; use bin, pt, or npy"
         )
     if sw.dump_config.dump_on_fail:
         raise ValueError("--dump-on-fail requires comparison and cannot be used with --no-prof")
-    if sw.golden_mode == "Disable":
+    if sw.golden_mode == "Disable" and sw.dump_config.mode == complete_dump:
         raise ValueError("--no-prof requires CPU golden generation; --golden-mode Disable is invalid")
     if sw.validate_only:
         raise ValueError("--validate cannot be combined with --no-prof data preparation")

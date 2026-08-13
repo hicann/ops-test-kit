@@ -22,6 +22,7 @@ import logging
 
 from ttk.core_modules.testcase_manager.param_plan import build_positional_args
 from ttk.core_modules.plugin_loader import get_plugin_function
+from ttk.core_modules.pre_npu import add_context_if_declared
 from ttk.utilities.container_utils import apply_as_list, flatten_nested_sequence
 
 from .api_resolver import resolve_api
@@ -31,7 +32,10 @@ from .framework_api_info_keeper import FrameworkApiInfoKeeper
 _cpu_backend = CpuBackend()
 
 
-def generate_golden(testcase, raw_inputs, plugin_path=None, switches=None, backend='cpu'):
+def generate_golden(
+    testcase, raw_inputs, plugin_path=None, switches=None, backend='cpu',
+    ttk_context=None,
+):
     """
     Generate golden data using three-level fallback.
 
@@ -69,7 +73,9 @@ def generate_golden(testcase, raw_inputs, plugin_path=None, switches=None, backe
     # --- Priority 2: Custom plugin via plugin_loader ---
     func = get_plugin_function(api_name, "golden", "e2e", plugin_path)
     if func is not None:
-        return _call_plugin_with_plan(testcase, func, switches, backend)
+        return _call_plugin_with_plan(
+            testcase, func, switches, backend, ttk_context
+        )
 
     # --- Priority 3: Same API on CPU ---
     if not testcase.is_torch_dtype_support():
@@ -114,7 +120,9 @@ def _run_api_on_cpu(api_name, raw_inputs, testcase, dist, api_info=None):
     return _exec_and_convert(api_name, args, kwargs, oidx)
 
 
-def _call_plugin_with_plan(testcase, func, switches=None, backend='cpu'):
+def _call_plugin_with_plan(
+    testcase, func, switches=None, backend='cpu', ttk_context=None
+):
     """Call golden plugin using testcase's param plan — same arg order as profiling.
     Interface is identical to input plugin, except golden returns values.
     Uses testcase.tensors (CPU nested tensors) directly, like aclnn.
@@ -148,6 +156,8 @@ def _call_plugin_with_plan(testcase, func, switches=None, backend='cpu'):
         kwargs.update(extra)
     else:
         kwargs.update({k: v for k, v in extra.items() if k in sig.parameters})
+    if ttk_context is not None:
+        add_context_if_declared(func, kwargs, ttk_context)
     result = func(*args, **kwargs)
     return _to_numpy_result(result)
 

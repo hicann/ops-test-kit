@@ -19,6 +19,7 @@ from ttk.core_modules.npu.op_api.profiling_structure import (
 )
 from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
 from ttk.core_modules.testcase_manager.testcase_e2e import TestcaseE2e
+from ttk.test_spec import TtkContext
 from ttk.utilities.classes import SWITCHES
 
 
@@ -90,14 +91,20 @@ def test_e2e_prepare_stops_before_api_resolution_and_device_execution(monkeypatc
     golden = [np.array([3.0, 4.0], np.float32)]
     resolve_api = MagicMock(side_effect=AssertionError("main API must not be resolved"))
     execute = MagicMock(side_effect=AssertionError("main API must not execute"))
+    stage_data = object()
+    runtime_contexts = []
 
-    def generate(testcase, *_):
+    def generate(testcase, *_, ttk_context=None, **__):
         testcase.np_storages = inputs
+        ttk_context.state["pytest_data"] = stage_data
+        runtime_contexts.append(ttk_context)
         return inputs
 
     monkeypatch.setattr(e2e_profiling, "get_process_context", _process_context)
     monkeypatch.setattr(e2e_profiling, "generate_inputs", generate)
-    def generate_golden(*_args, **_kwargs):
+    def generate_golden(*_args, ttk_context=None, **_kwargs):
+        assert ttk_context is runtime_contexts[0]
+        assert ttk_context.state["pytest_data"] is stage_data
         inputs[0][:] = -1
         return golden
 
@@ -115,6 +122,7 @@ def test_e2e_prepare_stops_before_api_resolution_and_device_execution(monkeypatc
     assert result.eager_precision == "MANUAL_DATA_PREPARED"
     assert not resolve_api.called
     assert not execute.called
+    assert len(runtime_contexts) == 1
     store = ManualDataStore(tmp_path)
     assert (store.case_dir(case.testcase_name) / "input_0_float32.bin").is_file()
     assert not (store.case_dir(case.testcase_name) / "manifest.json").exists()
@@ -122,6 +130,42 @@ def test_e2e_prepare_stops_before_api_resolution_and_device_execution(monkeypatc
         store.load_case(case, "e2e").inputs[0],
         np.array([1.0, 2.0], np.float32),
     )
+
+
+def test_e2e_input_only_prepare_skips_golden_and_pre_npu(monkeypatch, tmp_path):
+    case = _e2e_case("e2e_prepare_input_only")
+    switches = _switches(tmp_path, "prepare")
+    switches.dump_config.mode = 4
+    inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
+
+    def generate(testcase, *_args, **_kwargs):
+        testcase.np_storages = inputs
+        return inputs
+
+    monkeypatch.setattr(e2e_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(e2e_profiling, "generate_inputs", generate)
+    monkeypatch.setattr(
+        e2e_profiling,
+        "_generate_golden_data",
+        MagicMock(side_effect=AssertionError("input-only prepare must skip Golden")),
+    )
+    monkeypatch.setattr(
+        e2e_profiling,
+        "resolve_pre_npu",
+        MagicMock(side_effect=AssertionError("prepare must stop before pre-NPU")),
+    )
+    monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
+    result = FrameworkApiReturnStructure()
+
+    e2e_profiling._do_profile(
+        case, SimpleNamespace(alias=lambda: "npu"), {}, {}, 0, switches, result
+    )
+
+    loaded = ManualDataStore(tmp_path).load_case(
+        case, "e2e", require_goldens=False
+    )
+    assert result.precision_status == "PASS"
+    assert not loaded.has_goldens
 
 
 def test_e2e_failed_reprepare_invalidates_previous_case(monkeypatch, tmp_path):
@@ -153,7 +197,7 @@ def test_e2e_replay_skips_input_and_golden_generation(monkeypatch, tmp_path):
     generated = MagicMock()
     evaluated = MagicMock()
 
-    def restore(testcase, _switches, _backend, _plan, stored_inputs=None):
+    def restore(testcase, _switches, _backend, _plan, stored_inputs=None, **_kwargs):
         assert stored_inputs is not None
         testcase.np_storages = stored_inputs
         return stored_inputs
@@ -170,7 +214,7 @@ def test_e2e_replay_skips_input_and_golden_generation(monkeypatch, tmp_path):
     monkeypatch.setattr(e2e_profiling, "_dump_inputs", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_dump_goldens", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_dump_outputs", lambda *_: None)
-    monkeypatch.setattr(e2e_profiling, "_apply_pre_compare", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_apply_pre_compare", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(e2e_profiling, "_evaluate_eager_precision", evaluated)
     monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
     backend = SimpleNamespace(alias=lambda: "npu", use_device=lambda: False)
@@ -180,6 +224,45 @@ def test_e2e_replay_skips_input_and_golden_generation(monkeypatch, tmp_path):
     )
 
     assert generated.call_count == 1
+    np.testing.assert_array_equal(evaluated.call_args.args[3][0], golden[0])
+
+
+def test_e2e_input_only_replay_generates_current_golden(monkeypatch, tmp_path):
+    case = _e2e_case("e2e_replay_input_only")
+    inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
+    golden = [np.array([3.0, 4.0], np.float32)]
+    ManualDataStore(tmp_path).write_case(
+        case, "e2e", inputs, (), write_goldens=False
+    )
+    switches = _switches(tmp_path, "replay")
+    generated_golden = MagicMock(return_value=golden)
+    evaluated = MagicMock()
+
+    def restore(testcase, _switches, _backend, _plan, stored_inputs=None, **_kwargs):
+        testcase.np_storages = list(stored_inputs)
+        testcase.tensors = tuple(stored_inputs)
+        return list(stored_inputs)
+
+    monkeypatch.setattr(e2e_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(e2e_profiling, "generate_inputs", restore)
+    monkeypatch.setattr(e2e_profiling, "_generate_golden_data", generated_golden)
+    monkeypatch.setattr(e2e_profiling, "resolve_api", lambda *_: (lambda *_: None, False))
+    monkeypatch.setattr(e2e_profiling, "_execute_eager", lambda *_: (golden, None))
+    monkeypatch.setattr(e2e_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(e2e_profiling, "_profiling_print", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_dump_inputs", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_dump_goldens", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_dump_outputs", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_apply_pre_compare", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(e2e_profiling, "_evaluate_eager_precision", evaluated)
+    monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
+    backend = SimpleNamespace(alias=lambda: "npu", use_device=lambda: False)
+
+    e2e_profiling._do_profile(
+        case, backend, {}, {}, 0, switches, FrameworkApiReturnStructure()
+    )
+
+    assert generated_golden.call_count == 1
     np.testing.assert_array_equal(evaluated.call_args.args[3][0], golden[0])
 
 
@@ -194,7 +277,7 @@ def test_e2e_replay_custom_compare_receives_restored_inputs(monkeypatch, tmp_pat
     switches.plugin_path = (str(tmp_path),)
     captured = {}
 
-    def restore(testcase, _switches, _backend, _plan, stored_inputs=None):
+    def restore(testcase, _switches, _backend, _plan, stored_inputs=None, **_kwargs):
         testcase.np_storages = list(stored_inputs)
         testcase.tensors = tuple(stored_inputs)
         return list(stored_inputs)
@@ -254,7 +337,7 @@ def test_e2e_provider_automatically_selects_replay(monkeypatch, tmp_path):
     switches.manual_data_dirs = ()
     restored = MagicMock()
 
-    def restore(testcase, _switches, _backend, _plan, stored_inputs=None):
+    def restore(testcase, _switches, _backend, _plan, stored_inputs=None, **_kwargs):
         restored(stored_inputs)
         testcase.np_storages = stored_inputs
         return stored_inputs
@@ -276,8 +359,12 @@ def test_e2e_provider_automatically_selects_replay(monkeypatch, tmp_path):
     monkeypatch.setattr(e2e_profiling, "_dump_inputs", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_dump_goldens", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_dump_outputs", lambda *_: None)
-    monkeypatch.setattr(e2e_profiling, "_apply_pre_compare", lambda *_: None)
-    monkeypatch.setattr(e2e_profiling, "_evaluate_eager_precision", lambda *_: None)
+    monkeypatch.setattr(e2e_profiling, "_apply_pre_compare", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        e2e_profiling,
+        "_evaluate_eager_precision",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
     backend = SimpleNamespace(alias=lambda: "npu", use_device=lambda: False)
 
@@ -302,7 +389,7 @@ def test_aclnn_prepare_stops_before_device_execution(monkeypatch, tmp_path):
     compare = MagicMock(side_effect=AssertionError("ACLNN must not compare"))
 
     class Inputs:
-        def __init__(self, context):
+        def __init__(self, context, *_args):
             self.context = context
 
         def gen(self):
@@ -311,7 +398,7 @@ def test_aclnn_prepare_stops_before_device_execution(monkeypatch, tmp_path):
             self.context.scalars = (scalar,)
 
     class Golden:
-        def __init__(self, context):
+        def __init__(self, context, *_args):
             self.context = context
 
         def gen(self):
@@ -343,6 +430,50 @@ def test_aclnn_prepare_stops_before_device_execution(monkeypatch, tmp_path):
     assert loaded.scalars[0] == np.array(0.5, np.float32)
 
 
+def test_aclnn_input_only_prepare_skips_golden_and_pre_npu(monkeypatch, tmp_path):
+    case = _aclnn_case("aclnn_prepare_input_only")
+    switches = _switches(tmp_path, "prepare")
+    switches.dump_config.mode = 4
+    inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
+
+    class Inputs:
+        def __init__(self, context, *_args):
+            self.context = context
+
+        def gen(self):
+            self.context.np_storages = inputs
+            self.context.tensors = inputs
+            self.context.scalars = (np.array(0.5, np.float32),)
+
+    monkeypatch.setattr(aclnn_profiling, "get_global_storage", lambda: switches)
+    monkeypatch.setattr(aclnn_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "OpApiInfoKeeper",
+        lambda: SimpleNamespace(has_api=lambda *_: True),
+    )
+    monkeypatch.setattr(aclnn_profiling, "InputGenerator", Inputs)
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "GoldenGenerator",
+        MagicMock(side_effect=AssertionError("input-only prepare must skip Golden")),
+    )
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "resolve_pre_npu",
+        MagicMock(side_effect=AssertionError("prepare must stop before pre-NPU")),
+    )
+    monkeypatch.setattr(aclnn_profiling, "__profiling_end_print", lambda *_: None)
+
+    result = aclnn_profiling.profile_process(case, {}, {}, 0)
+
+    loaded = ManualDataStore(tmp_path).load_case(
+        case, "aclnn", require_goldens=False
+    )
+    assert result.precision_status == "PASS"
+    assert not loaded.has_goldens
+
+
 def test_aclnn_failed_reprepare_invalidates_previous_case(monkeypatch, tmp_path):
     case = _aclnn_case("aclnn_failed_reprepare")
     inputs = [np.ones(2, np.float32), np.zeros(2, np.float32)]
@@ -354,7 +485,7 @@ def test_aclnn_failed_reprepare_invalidates_previous_case(monkeypatch, tmp_path)
     switches = _switches(tmp_path, "prepare")
 
     class Inputs:
-        def __init__(self, _context):
+        def __init__(self, _context, *_args):
             pass
 
         def gen(self):
@@ -386,7 +517,7 @@ def test_aclnn_replay_skips_input_and_golden_plugins(monkeypatch, tmp_path):
     restore = MagicMock()
 
     class Inputs:
-        def __init__(self, context):
+        def __init__(self, context, *_args):
             self.context = context
 
         def gen(self, stored_inputs=None, stored_scalars=None):
@@ -396,7 +527,7 @@ def test_aclnn_replay_skips_input_and_golden_plugins(monkeypatch, tmp_path):
             self.context.scalars = stored_scalars
 
     class Comparator:
-        def __init__(self, context, standards=None, third_parties=None):
+        def __init__(self, context, standards=None, third_parties=None, ttk_context=None):
             self.context = context
 
         def compare(self):
@@ -432,6 +563,74 @@ def test_aclnn_replay_skips_input_and_golden_plugins(monkeypatch, tmp_path):
     assert restore.call_count == 1
 
 
+def test_aclnn_input_only_replay_generates_current_golden(monkeypatch, tmp_path):
+    case = _aclnn_case("aclnn_replay_input_only")
+    inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
+    scalar = [np.array(0.5, np.float32)]
+    golden = [np.array([3.0, 4.0], np.float32)]
+    ManualDataStore(tmp_path).write_case(
+        case, "aclnn", inputs, (), scalars=scalar, write_goldens=False
+    )
+    switches = _switches(tmp_path, "replay")
+    golden_calls = []
+
+    class Inputs:
+        def __init__(self, context, *_args):
+            self.context = context
+
+        def gen(self, stored_inputs=None, stored_scalars=None):
+            self.context.np_storages = stored_inputs
+            self.context.tensors = stored_inputs
+            self.context.scalars = stored_scalars
+
+    class Golden:
+        def __init__(self, context, *_args):
+            self.context = context
+
+        def gen(self):
+            golden_calls.append("golden")
+            self.context.golden_tensors = golden
+
+    class Comparator:
+        def __init__(self, context, standards=None, third_parties=None, ttk_context=None):
+            self.context = context
+
+        def compare(self):
+            np.testing.assert_array_equal(self.context.golden_tensors[0], golden[0])
+            return ApiComparisonResult(None).set("100%", "PASS")
+
+    monkeypatch.setattr(aclnn_profiling, "get_global_storage", lambda: switches)
+    monkeypatch.setattr(aclnn_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "OpApiInfoKeeper",
+        lambda: SimpleNamespace(has_api=lambda *_: True),
+    )
+    monkeypatch.setattr(aclnn_profiling, "InputGenerator", Inputs)
+    monkeypatch.setattr(aclnn_profiling, "GoldenGenerator", Golden)
+    monkeypatch.setattr(aclnn_profiling, "Comparator", Comparator)
+    monkeypatch.setattr(aclnn_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(aclnn_profiling, "__profiling_print", lambda *_: None)
+    monkeypatch.setattr(aclnn_profiling, "__profiling_end_print", lambda *_: None)
+    monkeypatch.setattr(aclnn_profiling, "__dump_input", lambda *_: None)
+    monkeypatch.setattr(aclnn_profiling, "__dump_golden", lambda *_: None)
+    monkeypatch.setattr(aclnn_profiling, "__dump_output", lambda *_: None)
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "do_profiling",
+        lambda *_: ApiProfilingResult(
+            True,
+            output_bytes=[np.zeros(2, np.float32).tobytes()],
+            output_view_shapes=[(2,)],
+        ),
+    )
+
+    result = aclnn_profiling.profile_process(case, {}, {}, 0)
+
+    assert result.precision_status == "PASS"
+    assert golden_calls == ["golden"]
+
+
 def test_aclnn_replay_runs_current_custom_compare(monkeypatch, tmp_path):
     case = _aclnn_case("aclnn_replay_custom_compare")
     inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
@@ -452,7 +651,7 @@ def test_aclnn_replay_runs_current_custom_compare(monkeypatch, tmp_path):
         }
 
     class Inputs:
-        def __init__(self, context):
+        def __init__(self, context, *_args):
             self.context = context
 
         def gen(self, stored_inputs=None, stored_scalars=None):
@@ -550,3 +749,129 @@ def test_loaded_golden_still_uses_current_csv_close_tolerance(monkeypatch):
 
     assert result.precision_status == "PASS"
     assert result.eager_precision == "50.0%"
+
+
+def test_e2e_pre_npu_stop_skips_main_api_and_golden(monkeypatch):
+    case = _e2e_case("e2e_pre_npu_stop")
+    inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
+    switches = SWITCHES()
+    switches.cst_switches.enabled = False
+    switches.dyn_switches.enabled = False
+    events = []
+
+    def generate(testcase, *_args, ttk_context=None, **_kwargs):
+        testcase.np_storages = inputs
+        testcase.tensors = inputs
+        assert ttk_context is not None
+        return inputs
+
+    def stop(*, context: TtkContext):
+        events.append("pre_npu")
+        assert context.input_tensors is inputs
+        from ttk.test_spec import PreNpuResult
+
+        return PreNpuResult(stop=True, reason="custom-stage-only")
+
+    monkeypatch.setattr(e2e_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(e2e_profiling, "generate_inputs", generate)
+    monkeypatch.setattr(e2e_profiling, "resolve_pre_npu", lambda *_args: stop)
+    monkeypatch.setattr(e2e_profiling, "resolve_api", lambda *_args: (lambda *_: None, False))
+    monkeypatch.setattr(e2e_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(e2e_profiling, "_dump_inputs", lambda *_args: None)
+    monkeypatch.setattr(
+        e2e_profiling,
+        "_execute_eager",
+        MagicMock(side_effect=AssertionError("main API must not execute")),
+    )
+    monkeypatch.setattr(
+        e2e_profiling,
+        "_generate_golden_data",
+        MagicMock(side_effect=AssertionError("Golden must not execute")),
+    )
+    monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
+    result = FrameworkApiReturnStructure()
+
+    e2e_profiling._do_profile(
+        case,
+        SimpleNamespace(alias=lambda: "npu", use_device=lambda: False),
+        {},
+        {},
+        0,
+        switches,
+        result,
+    )
+
+    assert events == ["pre_npu"]
+    assert result.precision_status == "PASS"
+    assert result.eager_precision == "PRE_NPU_STOPPED: custom-stage-only"
+
+
+def test_aclnn_pre_npu_stop_skips_main_api_and_golden(monkeypatch):
+    case = _aclnn_case("aclnn_pre_npu_stop")
+    switches = SWITCHES()
+    switches.no_memory_check = True
+    events = []
+
+    class Inputs:
+        def __init__(self, context, ttk_context=None):
+            self.context = context
+            self.ttk_context = ttk_context
+
+        def gen(self):
+            self.context.np_storages = [
+                np.array([1.0, 2.0], np.float32),
+                np.zeros(2, np.float32),
+            ]
+            self.context.tensors = self.context.np_storages
+            self.context.scalars = (np.array(0.5, np.float32),)
+
+    class StageExecutor:
+        def __init__(self, *_args):
+            pass
+
+        def rts_context(self):
+            return nullcontext()
+
+        def rts_stream(self):
+            return nullcontext("stream")
+
+    def stop(*, context: TtkContext):
+        events.append("pre_npu")
+        assert len(context.input_tensors) == 2
+        from ttk.test_spec import PreNpuResult
+
+        return PreNpuResult(stop=True, reason="custom-stage-only")
+
+    monkeypatch.setattr(aclnn_profiling, "get_global_storage", lambda: switches)
+    monkeypatch.setattr(aclnn_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "OpApiInfoKeeper",
+        lambda: SimpleNamespace(has_api=lambda *_args: True),
+    )
+    monkeypatch.setattr(aclnn_profiling, "InputGenerator", Inputs)
+    monkeypatch.setattr(aclnn_profiling, "resolve_pre_npu", lambda *_args: stop)
+    monkeypatch.setattr(aclnn_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "__get_aclnn_device",
+        lambda *_args: SimpleNamespace(device_id=0),
+    )
+    monkeypatch.setattr(aclnn_profiling, "AclOpExecutor", StageExecutor)
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "do_profiling",
+        MagicMock(side_effect=AssertionError("main ACLNN API must not execute")),
+    )
+    monkeypatch.setattr(
+        aclnn_profiling,
+        "GoldenGenerator",
+        MagicMock(side_effect=AssertionError("Golden must not execute")),
+    )
+    monkeypatch.setattr(aclnn_profiling, "__profiling_end_print", lambda *_args: None)
+
+    result = aclnn_profiling.profile_process(case, {}, {}, 0)
+
+    assert events == ["pre_npu"]
+    assert result.precision_status == "PASS"
+    assert result.precision == "PRE_NPU_STOPPED: custom-stage-only"

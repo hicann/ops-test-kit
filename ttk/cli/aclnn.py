@@ -20,7 +20,7 @@ def register_aclnn_command(subparsers):
 
 def _add_aclnn_args(parser):
     parser.add_argument(
-        "--no-prof", action="store_true", help="Prepare input and CPU golden data without running ACLNN"
+        "--no-prof", action="store_true", help="Prepare input and optional CPU golden data without running ACLNN"
     )
     parser.add_argument(
         "--xpu-perf",

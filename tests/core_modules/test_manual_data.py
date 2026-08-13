@@ -106,6 +106,46 @@ def test_round_trip_uses_only_typed_data_files(tmp_path, file_format):
     }
 
 
+def test_input_only_dataset_replays_without_requiring_golden(tmp_path):
+    case = _aclnn_case()
+    inputs = [np.arange(2, dtype=np.float32), np.zeros(2, dtype=np.float32)]
+    scalars = [np.array(0.25, dtype=np.float32)]
+    store = ManualDataStore(tmp_path)
+
+    case_dir = store.write_case(
+        case,
+        "aclnn",
+        inputs,
+        (),
+        scalars=scalars,
+        write_goldens=False,
+    )
+    loaded = store.load_case(case, "aclnn", require_goldens=False)
+
+    assert not loaded.has_goldens
+    assert not any(path.name.startswith("golden_") for path in case_dir.iterdir())
+    np.testing.assert_array_equal(loaded.inputs[0], inputs[0])
+    with pytest.raises(ManualDataError, match="golden slot count"):
+        store.load_case(case, "aclnn")
+
+
+def test_optional_golden_loading_still_rejects_partial_dataset(tmp_path):
+    case = _aclnn_case()
+    case.output_tensor_indexes = (0, 1)
+    store = ManualDataStore(tmp_path)
+    case_dir = store.write_case(
+        case,
+        "aclnn",
+        [np.arange(2, dtype=np.float32), np.zeros(2, dtype=np.float32)],
+        [np.ones(2, dtype=np.float32), np.ones(2, dtype=np.float32)],
+        scalars=[np.array(0.25, dtype=np.float32)],
+    )
+    next(case_dir.glob("golden_1_*"), None).unlink()
+
+    with pytest.raises(ManualDataError, match="golden slot count 1 != CSV 2"):
+        store.load_case(case, "aclnn", require_goldens=False)
+
+
 @pytest.mark.parametrize("file_format", ["bin", "npy", "pt"])
 def test_complete_dataset_remains_loadable_after_directory_move(tmp_path, file_format):
     case = _aclnn_case()
@@ -517,17 +557,114 @@ def test_zero_element_tensor_is_not_confused_with_none(tmp_path, file_format):
     assert (case_dir / f"input_0_float32.{file_format}").is_file()
 
 
-def test_unknown_sidecar_is_rejected(tmp_path):
-    case = _e2e_case("no_sidecars")
+@pytest.mark.parametrize(
+    "file_name", ["plugin-state.pt", "operator-state.json", "input_shadow.bin"]
+)
+def test_regular_auxiliary_file_is_preserved_and_ignored_by_replay(tmp_path, file_name):
+    case = _e2e_case("auxiliary_file")
     store = ManualDataStore(tmp_path)
+    target = store.case_dir(case.testcase_name)
+    target.mkdir(parents=True)
+    auxiliary = target / file_name
+    auxiliary.write_bytes(b"operator-owned payload")
+    auxiliary_inode = auxiliary.stat().st_ino
+
     case_dir = store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [np.zeros((2, 2), np.float32)],
     )
-    (case_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    loaded = store.load_case(case, "e2e")
 
-    with pytest.raises(ManualDataError, match="unexpected file"):
+    assert case_dir == target
+    assert auxiliary.read_bytes() == b"operator-owned payload"
+    assert auxiliary.stat().st_ino == auxiliary_inode
+    assert len(loaded.inputs) == 2
+
+
+def test_framework_like_typo_is_reported_at_debug_level(tmp_path, caplog):
+    case = _e2e_case("framework_typo")
+    store = ManualDataStore(tmp_path)
+    case_dir = store.write_case(
+        case,
+        "e2e",
+        [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
+        [np.zeros((2, 2), np.float32)],
+    )
+    typo = case_dir / "input_0_float32.binn"
+    typo.write_bytes(b"mistyped framework data")
+
+    with caplog.at_level(logging.DEBUG):
+        loaded = store.load_case(case, "e2e")
+
+    assert len(loaded.inputs) == 2
+    assert any(str(typo) in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize("entry_kind", ["directory", "symlink"])
+def test_non_framework_entry_is_preserved_and_ignored_by_replay(tmp_path, entry_kind):
+    case = _e2e_case("non_framework_entry")
+    store = ManualDataStore(tmp_path)
+    case_dir = store.write_case(
+        case,
+        "e2e",
+        [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
+        [np.zeros((2, 2), np.float32)],
+    )
+    auxiliary = case_dir / "operator-state"
+    if entry_kind == "directory":
+        auxiliary.mkdir()
+    else:
+        target = tmp_path / "external-state"
+        target.write_bytes(b"external")
+        auxiliary.symlink_to(target)
+    auxiliary_inode = auxiliary.lstat().st_ino
+
+    loaded = store.load_case(case, "e2e")
+    store.write_case(
+        case,
+        "e2e",
+        [np.ones((3, 3), np.float32), np.ones((2, 2), np.float32)],
+        [np.ones((2, 2), np.float32)],
+    )
+
+    assert len(loaded.inputs) == 2
+    assert auxiliary.lstat().st_ino == auxiliary_inode
+
+
+@pytest.mark.parametrize("entry_kind", ["directory", "symlink"])
+def test_non_regular_framework_entry_is_rejected(tmp_path, entry_kind):
+    case = _e2e_case("invalid_framework_entry")
+    store = ManualDataStore(tmp_path)
+    case_dir = store.write_case(
+        case,
+        "e2e",
+        [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
+        [np.zeros((2, 2), np.float32)],
+    )
+    framework_entry = case_dir / "input_0_float32.bin"
+    framework_entry.unlink()
+    if entry_kind == "directory":
+        framework_entry.mkdir()
+    else:
+        target = tmp_path / "external-input"
+        target.write_bytes(b"external")
+        framework_entry.symlink_to(target)
+
+    with pytest.raises(ManualDataError, match="framework entry is not a regular file"):
+        store.load_case(case, "e2e")
+
+
+def test_directory_with_only_non_framework_entries_cannot_replay(tmp_path):
+    case = _e2e_case("plugin_entries_only")
+    store = ManualDataStore(tmp_path)
+    case_dir = store.case_dir(case.testcase_name)
+    case_dir.mkdir(parents=True)
+    (case_dir / "operator-state.json").write_text("{}", encoding="utf-8")
+    (case_dir / "operator-logs").mkdir()
+
+    with pytest.raises(ManualDataError, match="has no input/scalar/golden data"):
         store.load_case(case, "e2e")
 
 
@@ -816,6 +953,10 @@ def test_prepare_and_replay_helpers_share_store_policy(tmp_path):
     prepare_switches = SimpleNamespace(
         manual_data_mode="prepare", manual_data_dirs=(str(tmp_path),)
     )
+
+    old_case_dir = ManualDataStore(tmp_path).case_dir(prepare_case.testcase_name)
+    old_case_dir.mkdir(parents=True)
+    (old_case_dir / "operator-state.json").write_text("old", encoding="utf-8")
 
     prepare_store = prepare_manual_data_store(prepare_case, "e2e", prepare_switches)
 

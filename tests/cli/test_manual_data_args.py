@@ -110,8 +110,8 @@ def test_prepare_accepts_explicit_output_directory(tmp_path):
 @pytest.mark.parametrize(
     "mutate, message",
     [
-        (lambda sw: setattr(sw.dump_config, "mode", 0), "exactly --dump in,golden"),
-        (lambda sw: sw.dump_config.enable_output(), "exactly --dump in,golden"),
+        (lambda sw: setattr(sw.dump_config, "mode", 0), "--dump in or --dump in,golden"),
+        (lambda sw: sw.dump_config.enable_output(), "--dump in or --dump in,golden"),
         (lambda sw: setattr(sw.dump_config, "file_format", "print"), "not restorable"),
         (lambda sw: setattr(sw.dump_config, "dump_on_fail", True), "--dump-on-fail"),
         (lambda sw: setattr(sw, "golden_mode", "Disable"), "CPU golden"),
@@ -124,6 +124,48 @@ def test_prepare_rejects_incompatible_combinations(mutate, message):
 
     with pytest.raises(ValueError, match=message):
         configure_manual_data(switches, _args(no_prof=True), "e2e")
+
+
+@pytest.mark.parametrize("command", ["e2e", "aclnn"])
+def test_prepare_accepts_input_only_without_cpu_golden(command, tmp_path):
+    switches = _prepare_switches()
+    switches.dump_config.mode = 0
+    switches.dump_config.enable_input()
+    switches.golden_mode = "Disable"
+
+    configure_manual_data(
+        switches,
+        _args(no_prof=True, manual_data_dirs=[str(tmp_path)]),
+        command,
+    )
+
+    assert switches.manual_data_mode == "prepare"
+    assert switches.dump_config.is_input_enabled()
+    assert not switches.dump_config.is_golden_enabled()
+
+
+def test_prepare_rejects_standalone_golden(tmp_path):
+    switches = SWITCHES()
+    switches.dump_config.enable_golden()
+
+    with pytest.raises(ValueError, match="--dump in or --dump in,golden"):
+        configure_manual_data(
+            switches,
+            _args(no_prof=True, manual_data_dirs=[str(tmp_path)]),
+            "e2e",
+        )
+
+
+def test_kernel_rejects_input_only_prepare(tmp_path):
+    switches = SWITCHES()
+    switches.dump_config.enable_input()
+
+    with pytest.raises(ValueError, match="exactly --no-prof --dump in,golden"):
+        configure_manual_data(
+            switches,
+            _args(no_prof=True, manual_data_dirs=[str(tmp_path)]),
+            "kernel",
+        )
 
 
 def test_replay_uses_ordered_search_directories(tmp_path):

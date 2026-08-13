@@ -14,7 +14,6 @@ unregister it in ``finally`` (or an equivalent teardown) so it cannot affect an
 unrelated case in the same process.
 """
 
-import hashlib
 import inspect
 import logging
 import math
@@ -31,9 +30,9 @@ import numpy
 
 from ttk.utilities import dump_to_file, load_numpy_data, resolve_custom_numpy_dtypes
 from ttk.utilities.dtypes import torch_to_numpy_tensor
+from ttk.utilities.string_utils import stable_path_component
 
 SUPPORTED_MANUAL_DATA_FORMATS = ("bin", "npy", "pt")
-_SAFE_CASE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
 _DATA_FILE_NAME = re.compile(
     r"^(input|scalar|golden)_(0|[1-9][0-9]*)_([A-Za-z0-9][A-Za-z0-9_.-]*?)"
     r"(?:__shape_(scalar|[0-9]+(?:x[0-9]+)*))?\.(bin|pt|npy)$"
@@ -69,6 +68,10 @@ class ManualDataCase:
     case_dir: pathlib.Path
     file_format: str
     _golden_files: Tuple[_ManualDataFile, ...]
+
+    @property
+    def has_goldens(self) -> bool:
+        return bool(self._golden_files)
 
     def load_goldens(self, references=None, shapes=None, dtypes=None) -> List[Any]:
         """Load saved goldens after device output shapes are available.
@@ -249,7 +252,8 @@ def prepare_manual_data_store(testcase, case_type: str, switches) -> Optional["M
 
 
 def load_manual_data_case(testcase, case_type: str, switches,
-                          before_load: Optional[Callable[[], None]] = None) -> Optional[ManualDataCase]:
+                          before_load: Optional[Callable[[], None]] = None,
+                          require_goldens: bool = True) -> Optional[ManualDataCase]:
     """Load a replay case through the shared provider and CLI directory policy."""
     if getattr(switches, "manual_data_mode", None) == "prepare":
         return None
@@ -258,7 +262,21 @@ def load_manual_data_case(testcase, case_type: str, switches,
         return None
     if before_load is not None:
         before_load()
-    return store.load_case(testcase, case_type)
+    return store.load_case(testcase, case_type, require_goldens=require_goldens)
+
+
+def manual_data_prepare_roles(switches) -> Tuple[bool, bool]:
+    """Return whether prepare mode writes inputs and Goldens.
+
+    Input preparation is mandatory. The only supported roles are ``in`` and
+    ``in,golden``; standalone Golden preparation intentionally has no contract.
+    """
+    if getattr(switches, "manual_data_mode", None) != "prepare":
+        return False, False
+    dump_config = getattr(switches, "dump_config", None)
+    if dump_config is None:
+        return True, True
+    return True, bool(dump_config.is_golden_enabled())
 
 
 def snapshot_manual_values(values: Sequence[Any], label: str) -> List[Any]:
@@ -278,11 +296,7 @@ def case_directory_name(testcase_name: str) -> str:
     Public because the simulator backend's ``case_writer`` reuses the same
     naming so manual-data replay and simulation share one per-case directory.
     """
-    safe = _SAFE_CASE_NAME.sub("_", testcase_name).strip("._") or "case"
-    if safe == testcase_name and len(safe) <= 120:
-        return safe
-    digest = hashlib.sha256(testcase_name.encode("utf-8")).hexdigest()[:12]
-    return f"{safe[:96]}-{digest}"
+    return stable_path_component(testcase_name, fallback="case")
 
 
 def _encode_shape(shape: Sequence[int]) -> str:
@@ -549,7 +563,7 @@ class ManualDataStore:
         self._remove_existing(self.case_dir(testcase_name))
 
     def write_case(self, testcase, case_type: str, inputs, goldens, scalars=(),
-                   file_format: str = "bin") -> pathlib.Path:
+                   file_format: str = "bin", write_goldens: bool = True) -> pathlib.Path:
         self._validate_case_type(case_type)
         if file_format not in SUPPORTED_MANUAL_DATA_FORMATS:
             raise ManualDataError(
@@ -561,34 +575,38 @@ class ManualDataStore:
 
         input_values = list(inputs or ())
         scalar_values = list(scalars or ())
-        golden_values = list(goldens or ())
+        golden_values = list(goldens or ()) if write_goldens else []
         input_specs = _input_specs(testcase, case_type)
         scalar_specs = _scalar_specs(testcase, case_type)
         self._validate_value_count("input", input_values, len(input_specs))
         self._validate_value_count("scalar", scalar_values, len(scalar_specs))
-        expected_goldens = _expected_golden_count(testcase, case_type)
-        if expected_goldens is not None:
-            self._validate_value_count("golden", golden_values, expected_goldens)
+        if write_goldens:
+            expected_goldens = _expected_golden_count(testcase, case_type)
+            if expected_goldens is not None:
+                self._validate_value_count("golden", golden_values, expected_goldens)
 
         root = self.roots[0]
         root.mkdir(parents=True, exist_ok=True)
         target = self.case_dir(testcase.testcase_name)
-        self._remove_existing(target)
         temporary = pathlib.Path(tempfile.mkdtemp(prefix=f".{target.name}.", dir=str(root)))
         try:
             self._write_values(temporary, input_values, "input", file_format, input_specs)
             self._write_values(temporary, scalar_values, "scalar", file_format, scalar_specs)
-            self._write_values(temporary, golden_values, "golden", file_format)
+            if write_goldens:
+                self._write_values(temporary, golden_values, "golden", file_format)
             self._scan_case(temporary)
-            os.replace(str(temporary), str(target))
+            self._publish_framework_files(temporary, target)
         except Exception:
             shutil.rmtree(str(temporary), ignore_errors=True)
+            self._remove_framework_files(target)
             raise
-        logging.info("[%s] prepared restorable input/golden data at %s",
-                     testcase.testcase_name, target)
+        roles = "input/golden" if write_goldens else "input"
+        logging.info("[%s] prepared restorable %s data at %s",
+                     testcase.testcase_name, roles, target)
         return target
 
-    def load_case(self, testcase, case_type: str) -> ManualDataCase:
+    def load_case(self, testcase, case_type: str,
+                  require_goldens: bool = True) -> ManualDataCase:
         self._validate_case_type(case_type)
         case_dir = self._find_case(testcase.testcase_name)
         entries, file_format = self._scan_case(case_dir)
@@ -598,7 +616,11 @@ class ManualDataStore:
         scalar_files = self._ordered_files(entries, "scalar", len(scalar_specs))
 
         golden_count = _expected_golden_count(testcase, case_type)
-        golden_files = self._ordered_files(entries, "golden", golden_count)
+        golden_files = self._ordered_files(
+            entries, "golden", golden_count, required=require_goldens
+        )
+        if require_goldens and not golden_files and golden_count is not None:
+            raise ManualDataError(f"golden slot count 0 != CSV {golden_count}")
         inputs = self._load_expected_values(input_files, input_specs, "input")
         scalars = self._load_expected_values(scalar_files, scalar_specs, "scalar")
         logging.info("[%s] loaded prepared input/scalar data from %s",
@@ -624,6 +646,54 @@ class ManualDataStore:
             path.unlink()
         elif path.is_dir():
             shutil.rmtree(str(path))
+
+    @staticmethod
+    def _publish_framework_files(source: pathlib.Path, target: pathlib.Path):
+        """Publish TTK-owned files without touching plugin-owned directory entries."""
+        if target.is_symlink() or (target.exists() and not target.is_dir()):
+            raise ManualDataError(
+                f"manual-data testcase path is not a regular directory: {target}"
+            )
+        target.mkdir(parents=True, exist_ok=True)
+
+        generated_names = {path.name for path in source.iterdir()}
+        previous_framework_files = []
+        for path in target.iterdir():
+            if _DATA_FILE_NAME.fullmatch(path.name) is None:
+                continue
+            if path.is_symlink() or not path.is_file():
+                raise ManualDataError(
+                    f"manual-data framework entry is not a regular file: {path}"
+                )
+            previous_framework_files.append(path)
+
+        for path in sorted(source.iterdir(), key=lambda item: item.name):
+            os.replace(str(path), str(target / path.name))
+        source.rmdir()
+
+        for path in previous_framework_files:
+            if path.name not in generated_names:
+                path.unlink()
+
+    @staticmethod
+    def _remove_framework_files(target: pathlib.Path):
+        """Invalidate stale TTK data after a failed write without touching plugin entries."""
+        if target.is_symlink():
+            target.unlink()
+            return
+        if not target.is_dir():
+            return
+        for path in target.iterdir():
+            if _DATA_FILE_NAME.fullmatch(path.name) is None:
+                continue
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(str(path))
+        try:
+            target.rmdir()
+        except OSError:
+            pass
 
     def _write_values(self, case_dir: pathlib.Path, values: Sequence[Any], role: str,
                       file_format: str,
@@ -740,11 +810,21 @@ class ManualDataStore:
             raise ManualDataError(f"prepared testcase directory is empty: {case_dir}")
 
         for path in paths:
-            if path.is_symlink() or not path.is_file():
-                raise ManualDataError(f"manual-data case contains a non-regular file: {path}")
             match = _DATA_FILE_NAME.fullmatch(path.name)
             if match is None:
-                raise ManualDataError(f"unexpected file in manual-data case: {path.name}")
+                if (
+                    path.suffix.lower() in {".bin", ".npy", ".pt"}
+                    or path.name.startswith(("input_", "scalar_", "golden_"))
+                ):
+                    logging.debug(
+                        "Ignoring non-framework manual-data entry that resembles a data file: %s",
+                        path,
+                    )
+                continue
+            if path.is_symlink() or not path.is_file():
+                raise ManualDataError(
+                    f"manual-data framework entry is not a regular file: {path}"
+                )
             role, index_text, dtype_name, shape_token, current_format = match.groups()
             if (role == "golden" and current_format == "bin" and
                     dtype_name != _NONE_DTYPE and shape_token is None):
@@ -777,6 +857,10 @@ class ManualDataStore:
             file_format for file_format in SUPPORTED_MANUAL_DATA_FORMATS
             if entries_by_format[file_format]
         ]
+        if not available_formats:
+            raise ManualDataError(
+                f"prepared testcase directory has no input/scalar/golden data: {case_dir}"
+            )
         selected_format = available_formats[0]
         if len(available_formats) > 1:
             logging.info(
@@ -788,7 +872,8 @@ class ManualDataStore:
         return entries_by_format[selected_format], selected_format
 
     @staticmethod
-    def _ordered_files(entries, role: str, expected_count: Optional[int]):
+    def _ordered_files(entries, role: str, expected_count: Optional[int],
+                       required: bool = True):
         files = sorted(
             (entry for (entry_role, _), entry in entries.items() if entry_role == role),
             key=lambda entry: entry.index,
@@ -796,7 +881,7 @@ class ManualDataStore:
         indexes = [entry.index for entry in files]
         if indexes != list(range(len(files))):
             raise ManualDataError(f"{role} file indexes must be contiguous from zero, got {indexes}")
-        if expected_count is not None and len(files) != expected_count:
+        if expected_count is not None and len(files) != expected_count and (required or files):
             raise ManualDataError(f"{role} slot count {len(files)} != CSV {expected_count}")
         return files
 

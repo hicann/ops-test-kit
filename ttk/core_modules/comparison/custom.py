@@ -16,6 +16,8 @@ from typing import Any, Mapping, Optional
 
 import numpy as np
 
+from ttk.core_modules.pre_npu import add_context_if_declared
+
 from .comparison import compare
 from ...utilities.container_utils import apply_as_list, deep_flatten
 
@@ -52,7 +54,8 @@ def _reshape_outputs_for_hooks(outputs, goldens):
 
 
 def compare_with_hooks(testcase, outputs, goldens, output_dtypes,
-                       standards, third_parties, pre_compare, custom_compare):
+                       standards, third_parties, pre_compare, custom_compare,
+                       ttk_context=None):
     """带 TestSpec 钩子（pre_compare / compare）的比对入口，供各测试通路共用。
 
     【为何要做】
@@ -86,8 +89,12 @@ def compare_with_hooks(testcase, outputs, goldens, output_dtypes,
 
     mode_outputs = _reshape_outputs_for_hooks(outputs, goldens)
     mode_goldens = _copy_goldens(goldens)
-    apply_pre_compare(testcase, mode_outputs, mode_goldens, pre_compare)
-    custom_result = try_custom_compare(testcase, mode_outputs, mode_goldens, custom_compare)
+    apply_pre_compare(
+        testcase, mode_outputs, mode_goldens, pre_compare, ttk_context=ttk_context
+    )
+    custom_result = try_custom_compare(
+        testcase, mode_outputs, mode_goldens, custom_compare, ttk_context=ttk_context
+    )
     if custom_result is not None:
         precision, logging_data, passed = custom_result
         return precision, logging_data, passed, {}
@@ -122,13 +129,16 @@ def _fold_outputs(testcase, outputs, goldens):
     return list(outputs), list(goldens)
 
 
-def apply_pre_compare(testcase, outputs, goldens, func):
+def apply_pre_compare(testcase, outputs, goldens, func, ttk_context=None):
     """Apply a TestSpec pre_compare function to flat output and golden lists."""
     if func is None or not _can_customize(outputs, goldens):
         return
 
     nested_outputs, nested_goldens = _fold_outputs(testcase, outputs, goldens)
-    transformed = func(*nested_outputs, *nested_goldens)
+    kwargs = {}
+    if ttk_context is not None:
+        add_context_if_declared(func, kwargs, ttk_context)
+    transformed = func(*nested_outputs, *nested_goldens, **kwargs)
     if transformed is None:
         return
 
@@ -188,7 +198,7 @@ def _compare_context(testcase):
     )
 
 
-def try_custom_compare(testcase, outputs, goldens, func):
+def try_custom_compare(testcase, outputs, goldens, func, ttk_context=None):
     """Run a TestSpec compare function and normalize its public result contract."""
     if func is None or not _can_customize(outputs, goldens):
         return None
@@ -211,6 +221,9 @@ def try_custom_compare(testcase, outputs, goldens, func):
         if context_param.kind == inspect.Parameter.POSITIONAL_ONLY:
             raise TypeError("compare_context must be a keyword or keyword-only parameter")
         kwargs["compare_context"] = _compare_context(testcase)
+
+    if ttk_context is not None:
+        add_context_if_declared(func, kwargs, ttk_context)
 
     result = func(*nested_outputs, *nested_goldens, **kwargs)
 
