@@ -42,7 +42,8 @@ def _per_spec_mode(spec, priority, xpu_mode):
 
 def collect_xpu_results(specs, *, inputs, input_names, mode,
                         tenant_id, op_name="", op_type=None, attrs=None,
-                        spec_search_roots=None, tmp_root=None, runtime: int = 3):
+                        spec_search_roots=None, tmp_root=None, runtime: int = 3,
+                        param_order=None):
     """Dispatch specs to xpu-server, return aggregated results.
 
     Args:
@@ -94,6 +95,7 @@ def collect_xpu_results(specs, *, inputs, input_names, mode,
                 spec_search_roots=spec_search_roots,
                 tmp_root=tmp_root,
                 runtime=runtime,
+                param_order=param_order,
             )
             # Success: server-resolved API (r.api) wins over the client-side guess.
             resolved_api = (r.api if r else None) or api_label

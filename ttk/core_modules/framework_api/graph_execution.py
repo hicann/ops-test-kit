@@ -171,6 +171,9 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         logging.warning("Graph mode only supports NPU backend, skipping")
         return [], None
 
+    import torch_npu
+    torch_npu.npu.set_device(dev_id)
+
     if is_aclgraph:
         mode_str = "aclgraph"
     elif dynamic:

@@ -46,24 +46,31 @@ def bind_by_name(func, pool: dict) -> Tuple[list, dict]:
 
     - Parameters before ``*`` (POSITIONAL_OR_KEYWORD) → positional args.
     - Parameters after ``*`` (KEYWORD_ONLY) → keyword kwargs.
-    - ``**kwargs`` absorbs leftover pool entries (no warning).
+    - ``*args`` collects unconsumed pool entries (in insertion order) as
+      positional args — use this to receive inputs whose names clash with
+      Python reserved slots (e.g. an ACLNN param named ``self``).
+    - ``**kwargs`` absorbs leftover pool entries (excluding ``self``).
     - A parameter name present in the signature but missing from pool
-      (and not self/**kwargs) → ``UnknownParamError``.
+      (and not self/*args/**kwargs) → ``UnknownParamError``.
 
     ``self`` is skipped by name; callers should pass a bound method
     (``inst.__call__``) so ``self`` is auto-stripped by Python.
+    A pool entry named ``self`` is never injected into ``**kwargs`` to avoid
+    ``multiple values for argument 'self'``; it is reachable via ``*args``.
     """
     sig = inspect.signature(func)
     args: list = []
     kwargs: dict = {}
     seen_star = False
     has_var_kw = False
+    has_var_pos = False
     consumed = set()
     for name, p in sig.parameters.items():
         if name == "self":
             continue
         if p.kind is inspect.Parameter.VAR_POSITIONAL:
             seen_star = True
+            has_var_pos = True
             continue
         if p.kind is inspect.Parameter.VAR_KEYWORD:
             has_var_kw = True
@@ -76,12 +83,25 @@ def bind_by_name(func, pool: dict) -> Tuple[list, dict]:
                 kwargs[name] = pool[name]
             else:
                 args.append(pool[name])
-        else:
-            raise UnknownParamError(
-                f"parameter '{name}' of {getattr(func, '__qualname__', func)} "
-                f"is not a known input or attribute name")
+        elif p.default is inspect.Parameter.empty:
+            for k, v in pool.items():
+                if k not in consumed:
+                    consumed.add(k)
+                    if seen_star:
+                        kwargs[name] = v
+                    else:
+                        args.append(v)
+                    break
+            else:
+                raise UnknownParamError(
+                    f"parameter '{name}' of {getattr(func, '__qualname__', func)} "
+                    f"is not a known input or attribute name")
+        # has a default: leave it to Python (skip, use the default)
+    leftover = [(k, v) for k, v in pool.items() if k not in consumed]
+    if has_var_pos:
+        args.extend(v for _, v in leftover)
     if has_var_kw:
-        kwargs.update({k: v for k, v in pool.items() if k not in consumed})
+        kwargs.update({k: v for k, v in leftover if k != "self"})
     return args, kwargs
 
 

@@ -470,6 +470,13 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
             attrs = json.loads(attrs_raw)
         except json.JSONDecodeError:
             attrs = {}
+        param_order_raw = self._get_header("X-Param-Order", "")
+        param_order = None
+        if param_order_raw:
+            try:
+                param_order = json.loads(param_order_raw)
+            except json.JSONDecodeError:
+                param_order = None
 
         # Gate (max_concurrent backpressure) applies to ALL /v1/run, including
         # dry-run — dry-run must walk the real path (gate → req_dir →
@@ -521,7 +528,7 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
                             tmp_in_path=tmp_in, input_count=input_count,
                             device_id=opts["device_id"],
                             use_device=self.use_device, output_dir=req_dir,
-                            runtime=runtime)
+                            runtime=runtime, param_order=param_order)
                         if "env" in opts:                  # sandbox=none 分支才设 env
                             kwargs["env"] = opts["env"]
                         if self.sandbox == "docker":       # cpu+docker 保现状走容器（仅 --cap-drop）

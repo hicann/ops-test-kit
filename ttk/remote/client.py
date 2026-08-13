@@ -114,6 +114,7 @@ def dispatch_xpu(
     testcase_name: str,
     switches,
     need_data: bool,
+    param_order: Optional[list] = None,
 ):
     """Run XPU dispatch，返回 (xpu_results, priority_provider)。
 
@@ -168,6 +169,7 @@ def dispatch_xpu(
         attrs=attributes or {},
         tmp_root=_tmp_root,
         runtime=getattr(switches, "run_time", 3),
+        param_order=param_order,
     )
     return xpu_results, (specs[0].provider if specs else None)
 
@@ -182,6 +184,7 @@ def collect_third_party(
     testcase_name: str,
     switches,
     need_data: bool = True,
+    param_order: Optional[list] = None,
 ) -> Tuple[Optional[str], Optional[list], Optional[dict]]:
     """门面：采集第三方输出，返回 (priority_provider, flat_third_parties, xpu_results)。
 
@@ -208,6 +211,7 @@ def collect_third_party(
         testcase_name=testcase_name,
         switches=switches,
         need_data=need_data,
+        param_order=param_order,
     )
 
     if need_data:

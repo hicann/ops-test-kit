@@ -356,6 +356,9 @@ def _ensure_deterministic_level_e2e(process_ctx, backend, testcase):
 
 def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf) or raises."""
+    if backend.is_npu():
+        import torch_npu
+        torch_npu.npu.set_device(dev_id)
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
     run_count = switches.run_time
@@ -433,6 +436,8 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         result_nps = result_to_numpy(result, backend)
 
     if inplace_input_indexes:
+        if result_nps is None:
+            result_nps = []
         for idx in sorted(inplace_input_indexes):
             if idx < len(args) and args[idx] is not None:
                 inplace_np = backend.to_numpy(args[idx].detach().clone())

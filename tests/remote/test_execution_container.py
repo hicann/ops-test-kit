@@ -202,6 +202,55 @@ class TestBindParams:
         assert args == [1]
         assert not any("not consumed" in rec.message for rec in caplog.records)
 
+    # --- *args collects unconsumed entries ---
+
+    def test_var_positional_collects_leftover(self):
+        class Impl:
+            def __call__(self, *args, **kwargs):
+                pass
+        args, kwargs = bind_params(Impl.__call__, {"x": 1, "y": 2, "alpha": 0.5})
+        assert args == [1, 2, 0.5]
+        assert kwargs == {"x": 1, "y": 2, "alpha": 0.5}
+
+    def test_var_positional_with_named_params(self):
+        class Impl:
+            def __call__(self, x, *args, **kwargs):
+                pass
+        args, kwargs = bind_params(Impl.__call__, {"x": 1, "y": 2, "alpha": 0.5})
+        assert args == [1, 2, 0.5]
+        assert kwargs == {"y": 2, "alpha": 0.5}
+
+    def test_var_positional_no_warn(self, caplog):
+        import logging as _logging
+        class Impl:
+            def __call__(self, *args):
+                pass
+        with caplog.at_level(_logging.WARNING, logger="root"):
+            args, kwargs = bind_params(Impl.__call__, {"x": 1, "y": 2})
+        assert args == [1, 2]
+        assert not any("not consumed" in rec.message for rec in caplog.records)
+
+    # --- self pool entry handling ---
+
+    def test_self_pool_entry_to_var_args(self):
+        """ACLNN param named 'self' reachable via *args, not via **kwargs."""
+        class Impl:
+            def __call__(self, *args, **kwargs):
+                pass
+        args, kwargs = bind_params(Impl.__call__, {"self": 10, "other": 20})
+        assert args == [10, 20]
+        assert "self" not in kwargs
+
+    def test_self_excluded_from_var_keyword(self):
+        """Pool entry 'self' never injected into **kwargs."""
+        class Impl:
+            def __call__(self, x, **kwargs):
+                pass
+        args, kwargs = bind_params(Impl.__call__, {"self": 10, "x": 1, "alpha": 0.5})
+        assert args == [1]
+        assert "self" not in kwargs
+        assert kwargs == {"alpha": 0.5}
+
 
 class _FakeTensor:
     def __init__(self, v):

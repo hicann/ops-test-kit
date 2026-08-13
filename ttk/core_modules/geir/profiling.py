@@ -139,6 +139,16 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
     return result
 
 
+def _geir_param_order(testcase) -> list:
+    """def.cpp param order (inputs then attrs) for server-side pool merge."""
+    from ttk.core_modules.operator.op_info_keeper import OpInfoKeeper
+    op_info = OpInfoKeeper().info_of(testcase.op_name)
+    if not op_info:
+        return []
+    return ([inp["name"] for inp in op_info["inputs"]] +
+            [attr["name"] for attr in op_info["attr"]])
+
+
 def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     if getattr(switches, "deterministic_level", 0) == 3:
         logging.warning(
@@ -211,6 +221,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             testcase_name=testcase.testcase_name,
             switches=switches,
             need_data=need_3party_outputs,
+            param_order=_geir_param_order(testcase),
         )
 
     # Build op-level source (cached) + per-case config + compile (cached)

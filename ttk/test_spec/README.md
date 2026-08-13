@@ -100,9 +100,10 @@ class TorchAbsTestSpec:
 
 > `golden` / `third_party` 用类形式时适用。框架按参数名从算子输入/属性池中按名匹配，分别传给 `__init__` 和 `__call__`。
 
-- **参数名必须匹配算子定义**：`__init__` 与 `__call__` 的参数（除 `self`、`**kwargs`）并集须为算子输入/属性的子集，不匹配则抛 `UnknownParamError`。
+- **参数名优先按名匹配，改名参数按位置兜底**：`__init__` 与 `__call__` 的参数（除 `self`、`*args`、`**kwargs`）先按名从算子输入/属性池匹配；按名未命中且无默认值的参数，按池插入顺序（即算子定义参数顺序）取下一个未消费的条目。**约束：改名参数的出现顺序须与所消费的池条目顺序一致**（如算子定义 `a,b,c,d` 可用 `x,b,y,d` 捕获，`x←a, y←c`；但不可用 `x,d,y,b`，`y` 会错取 `b`）。
 - **按方法声明分发**：每个输入/属性只传给声明了该参数名的方法；若 `__init__` 和 `__call__` 同时声明同名参数，则两者都收到。
 - **带默认值的参数可不传**：算子定义中未出现的参数，若声明了默认值则取默认值（如 `def __call__(self, x, axis=-1)` 中 `axis` 未传时取 -1）。
+- **`*args` 收集未消费条目**：当算子有与 Python 保留名冲突的参数（如 ACLNN 接口入参名 `self`），可用 `*args` 按算子定义顺序接收所有未被具名消费的输入/属性，无需逐个声明参数名。`self` 条目不会注入 `**kwargs`（避免 `multiple values for argument 'self'`），只能通过 `*args` 或具名参数（非 `self`）获取。
 - **`device` 为框架保留参数**：有输入 tensor 时设备信息取自 `tensor.device`，无需声明；无输入 tensor 的算子（如 `range`/`eye`）可声明 `device` 参数，由框架注入目标设备。
 
 ```python
@@ -118,6 +119,13 @@ class EyeImpl:
     def __call__(self):
         import torch
         return [torch.eye(self.n, device=self.device)]
+
+# ACLNN 入参名含 self 时，用 *args 按位置接收
+class AclnnSelfOpImpl:
+    def __call__(self, *args, **kwargs):
+        # args[0] 对应 aclnn 接口的 self 张量, args[1] 为 other, ...
+        import torch
+        return [torch.add(args[0], args[1])]
 ```
 
 `compare` / `pre_compare` 消费规则：

@@ -43,10 +43,52 @@ def test_bind_by_name_kwargs_absorb():
 
 
 def test_bind_by_name_object_init():
-    # object.__init__(self, /, *args, **kwargs) —— bind_by_name 不应崩,*args/**kwargs 吸收 pool
-    # (调用方 __invoke_class 会先用 cls.__init__ is object.__init__ 守卫跳过;此测试验证 bind 本身鲁棒)
+    # object.__init__(self, /, *args, **kwargs) —— bind_by_name 不应崩
+    # *args 收集未消费 pool 条目, **kwargs 也吸收 (不含 self)
     args, kwargs = bind_by_name(object.__init__, {"x": 1, "axis": 9})
-    assert args == [] and kwargs == {"x": 1, "axis": 9}
+    assert args == [1, 9] and kwargs == {"x": 1, "axis": 9}
+
+
+def test_bind_by_name_var_args_collects_leftover():
+    class G:
+        def __call__(self, *args, **kwargs):
+            return [list(args), kwargs]
+    pool = {"x": 1, "y": 2, "alpha": 0.5}
+    ca, ck = bind_by_name(G().__call__, pool)
+    assert ca == [1, 2, 0.5]
+    assert ck == {"x": 1, "y": 2, "alpha": 0.5}
+
+
+def test_bind_by_name_var_args_with_named_params():
+    class G:
+        def __call__(self, x, *args, **kwargs):
+            return [x, list(args), kwargs]
+    pool = {"x": 1, "y": 2, "alpha": 0.5}
+    ca, ck = bind_by_name(G().__call__, pool)
+    assert ca == [1, 2, 0.5]
+    assert ck == {"y": 2, "alpha": 0.5}
+
+
+def test_bind_by_name_self_pool_entry_to_var_args():
+    class G:
+        def __call__(self, *args, **kwargs):
+            return [list(args), kwargs]
+    pool = {"self": 10, "other": 20}
+    ca, ck = bind_by_name(G().__call__, pool)
+    assert ca == [10, 20]
+    assert "self" not in ck
+    assert ck == {"other": 20}
+
+
+def test_bind_by_name_self_excluded_from_kwargs():
+    class G:
+        def __call__(self, x, **kwargs):
+            return [x, kwargs]
+    pool = {"self": 10, "x": 1, "alpha": 0.5}
+    ca, ck = bind_by_name(G().__call__, pool)
+    assert ca == [1]
+    assert "self" not in ck
+    assert ck == {"alpha": 0.5}
 
 
 def test_bind_by_name_unknown_raises():

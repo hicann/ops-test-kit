@@ -546,6 +546,18 @@ def _aclnn_xpu_input_names(context: TestcaseAclnn) -> list:
     return [n for i, n in enumerate(op_api_info.tensors) if i not in context.pure_output_indexes]
 
 
+def _aclnn_param_order(context: TestcaseAclnn) -> list:
+    """C header param order (excluding pure outputs) for server-side pool merge."""
+    op_api_info = OpApiInfoKeeper().info_of(context.api_name)
+    if op_api_info is None:
+        return []
+    pure_output_names = {op_api_info.tensors[i]
+                         for i in context.pure_output_indexes
+                         if i < len(op_api_info.tensors)}
+    return [name for name in op_api_info.params
+            if name not in pure_output_names and name not in ("workspaceSize", "executor")]
+
+
 def __dump_to_file(data, file_name: str, dtype: Optional[str] = None):
     switches = get_global_storage()
     file_path = os.getenv("NPU_DUMP_PATH") or switches.root_path
@@ -758,10 +770,11 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
                 inputs=_aclnn_xpu_inputs(context),
                 input_names=_aclnn_xpu_input_names(context),
                 op_type=None,
-                attributes=context.pure_attrs,
+                attributes=context.xpu_attrs,
                 testcase_name=context.testcase_name,
                 switches=switches,
                 need_data=need_3party,
+                param_order=_aclnn_param_order(context),
             )
             if need_3party and third_parties is None:
                 logging.warning(

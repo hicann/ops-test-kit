@@ -407,14 +407,24 @@ def _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module,
     return f, f"{provider}.{name}"       # 推导 api_label = provider.命中name
 
 
-def _bind(func, named, attrs, device, warn_leftover=True):
+def _bind(func, named, attrs, device, warn_leftover=True, param_order=None):
     merged = dict(attrs or {})
     merged.update(named)
+    if param_order:
+        from collections import OrderedDict
+        ordered = OrderedDict()
+        for name in param_order:
+            if name in merged:
+                ordered[name] = merged[name]
+        for k, v in merged.items():
+            if k not in ordered:
+                ordered[k] = v
+        merged = ordered
     return bind_params(func, merged, device=device, warn_leftover=warn_leftover)
 
 
 def _invoke(callable_fn, named, attrs, provider, device_id, use_device,
-            profile=None):
+            profile=None, param_order=None):
     """Run the callable once, return RAW outputs (no numpy cast)."""
     if inspect.isclass(callable_fn):
         cls = callable_fn
@@ -426,40 +436,56 @@ def _invoke(callable_fn, named, attrs, provider, device_id, use_device,
         if cls.__init__ is object.__init__:          # 无自定义 __init__: 直接实例化
             inst = cls()
         else:
-            ia, ik = _bind(cls.__init__, named, attrs, dev, warn_leftover=False)
+            ia, ik = _bind(cls.__init__, named, attrs, dev, warn_leftover=False,
+                           param_order=param_order)
             inst = cls(*ia, **ik)
-        ca, ck = _bind(inst.__call__, named, attrs, dev, warn_leftover=False)
+        ca, ck = _bind(inst.__call__, named, attrs, dev, warn_leftover=False,
+                       param_order=param_order)
         return inst(*ca, **ck)
     # Three-phase invoke:
     # 1. kwargs as-is (when input names match API param names)
     # 2. positional (torch uses input/other which don't match schema names)
     # 3. inspect signature, zip positional values to real param names (TF raw_ops)
-    # TODO: a TypeError RAISED BY THE OP ITSELF (not a binding mismatch) is
-    # indistinguishable from a binding error here and gets retried through all 3
-    # phases — phase 3 may then fail with the count-mismatch branch and mask the
-    # op's real TypeError. Future: inspect the traceback (frame origin) to tell a
-    # binding TypeError (raised inside the call dispatch) from an op TypeError
-    # (raised inside the op body) and avoid the wasted retries / masking.
+    # param_order (when available) provides C-header order so 'self' and other
+    # params are zipped correctly without exclusion-based hacks.
+    merged = dict(attrs or {})
+    merged.update(named)
     try:
-        return callable_fn(**dict(named, **(attrs or {})))
+        call_kwargs = {k: v for k, v in merged.items() if k != "self"}
+        return callable_fn(**call_kwargs)
     except TypeError:
         try:
-            return callable_fn(*list(named.values()), **(attrs or {}))
+            pos_vals = [v for k, v in merged.items() if k != "self"]
+            pos_kwargs = {k: v for k, v in (attrs or {}).items() if k != "self"}
+            return callable_fn(*pos_vals, **pos_kwargs)
         except TypeError:
             sig = inspect.signature(callable_fn)
+            if param_order:
+                ordered_vals = [merged[k] for k in param_order if k in merged and k != "self"]
+                param_names = [
+                    p for p, v in sig.parameters.items()
+                    if v.kind not in (inspect.Parameter.VAR_KEYWORD,
+                                      inspect.Parameter.VAR_POSITIONAL)
+                    and p != 'self'
+                ]
+                if len(ordered_vals) <= len(param_names):
+                    zip_kwargs = {k: v for k, v in (attrs or {}).items() if k != "self"}
+                    return callable_fn(**dict(zip(param_names, ordered_vals), **zip_kwargs))
+            # No param_order or count mismatch: fall back to original logic
             param_names = [
                 p for p, v in sig.parameters.items()
                 if v.kind not in (inspect.Parameter.VAR_KEYWORD,
                                   inspect.Parameter.VAR_POSITIONAL)
                 and p != 'self'
             ]
-            vals = list(named.values())
+            vals = [v for k, v in merged.items() if k != "self"]
             if len(vals) > len(param_names):
                 raise TypeError(
                     f"{getattr(callable_fn, '__name__', callable_fn)} expects "
                     f"{len(param_names)} params {param_names}, "
-                    f"got {len(vals)} inputs {list(named.keys())}")
-            return callable_fn(**dict(zip(param_names, vals), **(attrs or {})))
+                    f"got {len(vals)} inputs {list(merged.keys())}")
+            zip_kwargs = {k: v for k, v in (attrs or {}).items() if k != "self"}
+            return callable_fn(**dict(zip(param_names, vals), **zip_kwargs))
 
 
 def _to_numpy_pair(v, provider):
@@ -658,7 +684,7 @@ def _is_device_kernel(evt) -> bool:
 
 
 def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
-              profile=None, runtime=3):
+              profile=None, runtime=3, param_order=None):
     """PERF timing via profiler (torch: Self device time; TF: xplane.pb device plane).
 
     Two passes: (1) profiler pass for device_us (no empty_cache); (2) peak pass
@@ -683,15 +709,15 @@ def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
     if torch_dev:
         outputs, device_us = _torch_profiler_pass(
             callable_fn, named, attrs, provider, device_id, use_device,
-            profile, runtime)
+            profile, runtime, param_order=param_order)
     elif tf_dev:
         outputs, device_us = _tf_profiler_pass(
             callable_fn, named, attrs, provider, device_id, use_device,
-            profile, runtime)
+            profile, runtime, param_order=param_order)
     else:
         # CPU or no device: single invoke for outputs only
         outputs = _invoke(callable_fn, named, attrs, provider, device_id,
-                          use_device, profile=profile)
+                          use_device, profile=profile, param_order=param_order)
 
     if device_us > 0:
         perf["device_us"] = float(f"{device_us:.3g}")
@@ -705,7 +731,7 @@ def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
             lib = _TORCH_DEV_MODULE
             lib.reset_peak_memory_stats(device_id)
             _invoke(callable_fn, named, attrs, provider, device_id, use_device,
-                    profile=profile)
+                    profile=profile, param_order=param_order)
             lib.synchronize()
             perf["peak_memory_mb"] = (
                 lib.max_memory_allocated(device_id) / 1e6)
@@ -717,7 +743,7 @@ def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
             tf_device = f"{profile['tf_device_type']}:{device_id}"
             tf.config.experimental.reset_memory_stats(tf_device)
             _invoke(callable_fn, named, attrs, provider, device_id, use_device,
-                    profile=profile)
+                    profile=profile, param_order=param_order)
             info = tf.config.experimental.get_memory_info(tf_device)
             perf["peak_memory_mb"] = info.get("peak", 0) / 1e6
         except Exception:
@@ -727,7 +753,7 @@ def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
 
 
 def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
-                         use_device, profile, runtime):
+                         use_device, profile, runtime, param_order=None):
     """torch.profiler Self device time. Returns (outputs, device_us).
 
     device_us = per-iteration average (sum of self_device_time_total over the
@@ -776,7 +802,8 @@ def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
     try:
         for _ in range(runtime + 2):
             outputs = _invoke(callable_fn, named, attrs, provider,
-                              device_id, use_device, profile=profile)
+                              device_id, use_device, profile=profile,
+                              param_order=param_order)
             prof.step()
     finally:
         try:
@@ -796,7 +823,7 @@ def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
 
 
 def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
-                      use_device, profile, runtime):
+                      use_device, profile, runtime, param_order=None):
     """tf.profiler.experimental + xplane.pb. Returns (outputs, device_us).
 
     device_us = per-iteration average (sum of ev.duration_ps/1e6 over the device
@@ -824,7 +851,7 @@ def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
         # OP warmup — errors propagate (-> FAIL).
         for _ in range(2):    # warmup (dropped)
             _invoke(callable_fn, named, attrs, provider, device_id, use_device,
-                    profile=profile)
+                    profile=profile, param_order=param_order)
         # Profiler machinery — start. Failure -> NA + log.
         try:
             tf.profiler.experimental.start(logdir)
@@ -835,7 +862,7 @@ def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
         try:
             for _ in range(runtime):
                 outputs = _invoke(callable_fn, named, attrs, provider, device_id,
-                                  use_device, profile=profile)
+                                  use_device, profile=profile, param_order=param_order)
         finally:
             try:
                 tf.profiler.experimental.stop()
@@ -885,7 +912,7 @@ def execute_request(*, tenant_sync_dir, exec_type, provider, api, spec_module,
                     spec_class, mode, input_schema, attrs, tmp_in_path,
                     input_count, device_id, use_device, output_dir,
                     profile=None, op_name=None, op_type=None, runtime=3,
-                    **_extra):
+                    param_order=None, **_extra):
     """Run one request. Returns an envelope dict (never raises for 4xx/5xx)."""
     try:
         if tenant_sync_dir and tenant_sync_dir not in sys.path:
@@ -934,11 +961,12 @@ def execute_request(*, tenant_sync_dir, exec_type, provider, api, spec_module,
         if has_perf(mode):
             raw_outputs, perf = _run_perf(callable_fn, named, attrs or {},
                                           provider, device_id, use_device,
-                                          profile=profile, runtime=runtime)
+                                          profile=profile, runtime=runtime,
+                                          param_order=param_order)
         else:
             raw_outputs = _invoke(callable_fn, named, attrs or {},
                                   provider, device_id, use_device,
-                                  profile=profile)
+                                  profile=profile, param_order=param_order)
             perf = None
         schema, outs = _outputs_to_numpy(raw_outputs, provider)
 

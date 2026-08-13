@@ -2,6 +2,8 @@
 
 ACLNN 流程在 torch API 层运行，`golden` / `customize_inputs` 用 **torch.Tensor**。参数名和顺序与 `aclnnXxxGetWorkspaceSize` 函数签名一致（不含 workspaceSize 和 executor）。
 
+> 当 ACLNN 接口入参名与 Python 保留名冲突（如 `self`）时，类形式有两种写法：(1) 用 `*args` 按位置接收所有未具名消费的输入/属性，`args[0]` 对应 C header 第一个参数，以此类推；(2) 展开写但改名（如 `selfT`），改名参数按位置兜底——**约束：改名参数的出现顺序须与所消费的池条目顺序一致**（如 C header `self,other,alpha` 可用 `(selfT, other, alpha)` 捕获）。函数形式无此限制（参数名可任意，按位置绑定）。
+
 ## golden 示例
 
 ### 简单算子

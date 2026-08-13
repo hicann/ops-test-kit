@@ -109,23 +109,42 @@ class GoldenGenerator:
         return results
 
     def _named_values(self):
-        """Build a name→value pool (input tensors + scalars + attrs) for class-form bind_by_name."""
+        """Build a name→value pool (input tensors + scalars + attrs) for class-form bind_by_name.
+
+        Pool is built in C header parameter order (from op_api_info.params OrderedDict),
+        preserving tensor/scalar interleaving — critical for *args / positional fallback.
+        """
         pool = {}
         op_api_info = OpApiInfoKeeper().info_of(self._ctx.api_name)
         tensors = self._package_golden_tensors()  # input tensors only (pure outputs skipped)
         if op_api_info is not None:
-            # op_api_info.tensors includes input+output names; skip pure_output_indexes to align with tensors.
-            # NOTE: TensorList (one param → multiple flat tensors) may break this 1:1 alignment.
-            names = [n for i, n in enumerate(op_api_info.tensors) if i not in self._ctx.pure_output_indexes]
-            assert len(names) == len(tensors), (
-                f"_named_values alignment mismatch: {len(names)} names vs {len(tensors)} tensors "
-                f"(possible TensorList nesting — name count != flat tensor count)"
+            tensor_names = op_api_info.tensors
+            pure_output_names = {tensor_names[i] for i in self._ctx.pure_output_indexes
+                                 if i < len(tensor_names)}
+            tensor_queue = list(tensors)
+            scalar_queue = list(self._ctx.flatten_scalars or ())
+            for name, info in op_api_info.params.items():
+                if name in pure_output_names:
+                    continue
+                ptype = info["type"]
+                if ptype in ("aclTensor*", "aclTensorList*"):
+                    if tensor_queue:
+                        pool[name] = tensor_queue.pop(0)
+                elif ptype in ("aclScalar*", "aclScalarList*"):
+                    if scalar_queue:
+                        pool[name] = scalar_queue.pop(0)
+                else:
+                    attrs = self._ctx.attributes or {}
+                    if name in attrs:
+                        pool[name] = attrs[name]
+            assert not tensor_queue, (
+                f"_named_values: {len(tensor_queue)} tensors not consumed by params "
+                f"(possible TensorList nesting or pure_output_indexes mismatch)"
             )
-            for name, t in zip(names, tensors):
-                pool[name] = t
-            for idx, s in enumerate(self._ctx.flatten_scalars or ()):
-                if idx < len(op_api_info.scalars):
-                    pool[op_api_info.scalars[idx]] = s
+            assert not scalar_queue, (
+                f"_named_values: {len(scalar_queue)} scalars not consumed by params "
+                f"(possible ScalarList nesting or scalar count mismatch)"
+            )
         pool.update(self._ctx.attributes or {})
         return pool
 

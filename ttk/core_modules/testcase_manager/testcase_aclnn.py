@@ -418,6 +418,22 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         return self._pure_attrs
 
     @property
+    def xpu_attrs(self) -> dict:
+        """Return attrs for XPU dispatch: pure_attrs + scalars (scalars are not in
+        X-Input-Schema, which only transports tensors, so they must go via attrs)."""
+        from ...utilities.container_utils import deep_flatten
+        attrs = dict(self.pure_attrs)
+        op_api_info = OpApiInfoKeeper().info_of(self.api_name)
+        if op_api_info and self.scalars is not None:
+            flat_scalars = deep_flatten(self.scalars)
+            for idx, name in enumerate(op_api_info.scalars):
+                if idx < len(flat_scalars):
+                    s = flat_scalars[idx]
+                    if s is not None:
+                        attrs[name] = s.item() if hasattr(s, 'item') else s
+        return attrs
+
+    @property
     def pure_output_indexes(self):
         """Return flat indexes of output tensors that are NOT inplace.
 

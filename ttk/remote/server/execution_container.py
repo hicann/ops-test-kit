@@ -44,15 +44,18 @@ def bind_params(func, name_to_value: dict, device: Optional[str] = None,
       * framework-reserved name (``device``) -> inject ``device`` (when not None);
       * has a default -> use the default (skip, no error);
       * otherwise -> :class:`UnknownParamError` (neither input/attr nor defaulted).
-    ``**kwargs`` absorbs leftover entries; otherwise ``warn_leftover`` controls
-    whether unconsumed entries log a warning (default True). ``*`` only decides
-    calling style, not binding — binding is purely by name.
+    ``*args`` collects unconsumed entries (in insertion order) as positional args.
+    ``**kwargs`` absorbs leftover entries (excluding ``self``); otherwise
+    ``warn_leftover`` controls whether unconsumed entries log a warning (default True).
+    A pool entry named ``self`` is never injected into ``**kwargs``; use ``*args``
+    to receive it positionally.
     """
     sig = inspect.signature(func)
     args: list = []
     kwargs: dict = {}
     seen_star = False
     has_var_keyword = False
+    has_var_positional = False
     consumed = set()
     for name, param in sig.parameters.items():
         if name == "self":
@@ -62,8 +65,8 @@ def bind_params(func, name_to_value: dict, device: Optional[str] = None,
             has_var_keyword = True
             continue
         if kind is inspect.Parameter.VAR_POSITIONAL:
-            # bare ``*`` separator: everything after is keyword-only.
             seen_star = True
+            has_var_positional = True
             continue
         if kind is inspect.Parameter.KEYWORD_ONLY:
             seen_star = True
@@ -80,14 +83,25 @@ def bind_params(func, name_to_value: dict, device: Optional[str] = None,
             else:
                 args.append(value)
         elif param.default is inspect.Parameter.empty:
-            qual = getattr(func, "__qualname__", getattr(func, "__name__", func))
-            raise UnknownParamError(
-                f"parameter '{name}' of {qual} is not a known input or attribute name")
+            for k, v in name_to_value.items():
+                if k not in consumed:
+                    consumed.add(k)
+                    if seen_star:
+                        kwargs[name] = v
+                    else:
+                        args.append(v)
+                    break
+            else:
+                qual = getattr(func, "__qualname__", getattr(func, "__name__", func))
+                raise UnknownParamError(
+                    f"parameter '{name}' of {qual} is not a known input or attribute name")
         # has a default: leave it to Python (skip, use the default)
     leftover = {k: v for k, v in name_to_value.items() if k not in consumed}
+    if has_var_positional:
+        args.extend(leftover.values())
     if has_var_keyword:
-        kwargs.update(leftover)
-    elif leftover and warn_leftover:
+        kwargs.update({k: v for k, v in leftover.items() if k != "self"})
+    elif not has_var_positional and leftover and warn_leftover:
         logging.warning("dispatch: inputs/attrs not consumed by signature: %s",
                         sorted(leftover))
     return args, kwargs

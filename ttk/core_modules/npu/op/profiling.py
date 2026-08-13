@@ -196,9 +196,18 @@ def _do_xpu_profiling(context, xpu_mode):
         testcase_name=getattr(context, "testcase_name", context.op_name),
         switches=sw,
         need_data=need_data,
+        param_order=_kernel_param_order(op_info),
     )
     context.xpu_results = xpu_results
     return priority
+
+
+def _kernel_param_order(op_info) -> list:
+    """def.cpp param order (inputs then attrs) for server-side pool merge."""
+    if not op_info:
+        return []
+    return ([inp["name"] for inp in op_info["inputs"]] +
+            [attr["name"] for attr in op_info["attr"]])
 
 
 def profile_process(

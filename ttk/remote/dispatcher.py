@@ -404,6 +404,7 @@ def dispatch_to_remote(
     return_result: bool = False,
     tmp_root: Optional[str] = None,
     runtime: int = 3,
+    param_order: Optional[list] = None,
 ):
     """Send inputs to remote xpu_server, return numpy outputs.
 
@@ -437,6 +438,8 @@ def dispatch_to_remote(
         "X-Tenant-ID": tenant_id,
         "Content-Type": "application/octet-stream",
     }
+    if param_order:
+        headers["X-Param-Order"] = json.dumps(param_order)
     if execution_type == "api":
         if api:
             headers["X-API"] = api
