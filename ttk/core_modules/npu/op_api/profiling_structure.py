@@ -22,6 +22,32 @@ from ...testcase_manager import TestcaseAclnn
 from ....utilities import get_global_storage
 
 
+def _pick_api_avg_us(api_prof, api_name):
+    """Single aclnn call host-side avg time (us), excludes runtime APIs."""
+    if not isinstance(api_prof, list):
+        return None
+    for item in api_prof:
+        if item.get("API Name") == api_name:
+            try:
+                return round(float(item.get("Avg(us)", 0)), 3)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _sum_op_avg_us(op_prof):
+    """Sum of all NPU op kernel avg time (us) per call."""
+    if not isinstance(op_prof, list):
+        return None
+    total = 0.0
+    for item in op_prof:
+        try:
+            total += float(item.get("Avg Time(us)", 0))
+        except (TypeError, ValueError):
+            return None
+    return round(total, 3)
+
+
 class ApiProfilingResult:
     """
     RTS Profiling output
@@ -90,6 +116,9 @@ class ApiProfilingReturnStructure:
         "batch_consistency_id",
         "deterministic_status",
         "soc",
+        "api_perf_us",
+        "op_perf_us",
+        "perf_status",
         "xpu_metrics",
     )
 
@@ -102,6 +131,10 @@ class ApiProfilingReturnStructure:
         self.batch_consistency_id = default_value
         self.deterministic_status = default_value
         self.soc = get_global_storage().dev_plat
+        # Performance
+        self.api_perf_us = default_value
+        self.op_perf_us = default_value
+        self.perf_status = default_value
         self.xpu_metrics = {}
 
     # noinspection DuplicatedCode
@@ -113,6 +146,13 @@ class ApiProfilingReturnStructure:
         self.precision_metrics = compare_result.metrics or {}
         self.batch_consistency_id = getattr(context, "batch_consistency_id", None)
         self.xpu_metrics = getattr(context, "xpu_metrics", {})
+        # Performance data from msprof (already collected in ApiProfilingResult)
+        prof_result = getattr(context, "prof_result", None)
+        api_prof = getattr(prof_result, "api_prof", None) if prof_result else None
+        op_prof = getattr(prof_result, "op_prof", None) if prof_result else None
+        self.api_perf_us = _pick_api_avg_us(api_prof, getattr(context, "api_name", None))
+        self.op_perf_us = _sum_op_avg_us(op_prof)
+        self.perf_status = "PASS" if self.op_perf_us is not None else "UNKNOWN"
 
     @staticmethod
     def get_titles() -> tuple:
