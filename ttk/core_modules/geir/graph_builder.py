@@ -30,6 +30,7 @@ _DTYPE_TO_GE_ENUM = {
     "int64": "DT_INT64",
     "uint64": "DT_UINT64",
     "float64": "DT_DOUBLE",
+    "double": "DT_DOUBLE",
     "bool": "DT_BOOL",
     "float8_e4m3fn": "DT_FLOAT8_E4M3FN",
     "float8_e5m2": "DT_FLOAT8_E5M2",
