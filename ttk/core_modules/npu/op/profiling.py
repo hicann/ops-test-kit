@@ -14,6 +14,7 @@ Profiling method for Universal testcases
 # Standard Packages
 import logging
 import os
+from types import SimpleNamespace
 from typing import NoReturn, Optional, Tuple, Union
 
 from ttk.remote import DATA
@@ -209,16 +210,10 @@ def _kernel_param_order(op_info) -> list:
     return [inp["name"] for inp in op_info["inputs"]] + [attr["name"] for attr in op_info["attr"]]
 
 
-def profile_process(
-    context: TestcaseOp, device_grant_events: dict, device_granted_indices: dict, dev_id: int
-) -> ProfilingReturnStructure:
-    """
-    Universal Testcase Profiling Entrance
-    """
+def _setup_profiling_env(context: TestcaseOp):
     from ..error_cleaner import clear_error_manager
 
     clear_error_manager()
-
     switches = get_global_storage()
     process_ctx = get_process_context()
     process_ctx.change_name(context.testcase_name)
@@ -227,46 +222,55 @@ def profile_process(
         default_logging_config(
             file_handler=switches.logging_to_file, testcase_name=context.testcase_name, log_dir=_log_dir
         )
-    manual_mode = getattr(switches, "manual_data_mode", None)
-    manual_case = None
+    return switches, process_ctx
+
+
+def _prepare_manual_store(context: TestcaseOp):
+    switches = get_global_storage()
     try:
-        prepare_store = prepare_manual_data_store(context, "kernel", switches)
+        return prepare_manual_data_store(context, "kernel", switches), None
     except Exception as exc:
         logging.exception("Manual Kernel data preparation failure")
-        return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
+        return None, prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
+
+
+def _check_preconditions(context: TestcaseOp, switches, process_ctx):
     process_ctx.notify_status("OnParseParameters")
     __parse_manual_params(context)
     if context.is_valid:
         __parse_dynamic_tiling_data(context)
         __parse_binary_tiling_data(context)
-    ####################
-    # Check whether there is need to do further test
-    ####################
     if not context.is_valid:
         return prof_end(context, context.fail_reason)
     if switches.compile_only:
         return prof_compile_only_end(context)
     if context.compile_failed():
         return prof_compile_fail_end(context)
-    if manual_mode != "prepare":
-        try:
-            manual_case = load_manual_data_case(
-                context,
-                "kernel",
-                switches,
-                before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
-            )
-            if manual_case is not None:
-                manual_mode = "replay"
-        except Exception as exc:
-            logging.exception("Manual Kernel data loading failure")
-            return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+    return None
+
+
+def _load_manual_case(context: TestcaseOp, switches, process_ctx, manual_mode):
+    if manual_mode == "prepare":
+        return None, manual_mode, None
+    try:
+        manual_case = load_manual_data_case(
+            context, "kernel", switches,
+            before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
+        )
+        if manual_case is not None:
+            manual_mode = "replay"
+        return manual_case, manual_mode, None
+    except Exception as exc:
+        logging.exception("Manual Kernel data loading failure")
+        return None, manual_mode, prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+
+
+def _generate_input(context: TestcaseOp, switches, process_ctx, manual_case, manual_mode):
     if not switches.no_memory_check:
         process_ctx.notify_status("OnWaitingForMemory")
         waiting_for_memory()
     logging.debug(f"Expecting {context.input_bytes + context.output_bytes} bytes memory usage")
     process_ctx.notify_status("OnGenInput")
-    # noinspection PyBroadException
     try:
         if manual_case is None:
             __gen_input(context)
@@ -275,52 +279,57 @@ def profile_process(
     except Exception as exc:
         logging.exception("Input data generation failure:")
         if manual_case is not None:
-            return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
-        return prof_end(context, "INPUT_GEN_FAILURE")
+            return None, prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+        return None, prof_end(context, "INPUT_GEN_FAILURE")
     prepared_inputs = None
     if manual_mode == "prepare":
         try:
             prepared_inputs = snapshot_manual_values(tuple(deep_flatten(context.input_arrays or ())), "input")
         except Exception as exc:
             logging.exception("Manual Kernel input snapshot failure")
-            return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
-    process_ctx.notify_status("OnGenGolden")
-    # resolve 提前到 __gen_output 之前（唯一目的：设 golden_mode_override 让 golden 走 Promote）
-    # 3 点相对 import：profiling.py 在 npu/op/，core_modules/comparison 在上 2 级（同 npu/op/comparison.py:20）
+            return None, prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
+    return prepared_inputs, None
+
+
+def _resolve_tolerance(context: TestcaseOp):
     from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
 
+    switches = get_global_storage()
     try:
-        tolerance = get_spec_attr(context.op_name, "tolerance", getattr(get_global_storage(), "plugin_path", None))
-        pre_compare = get_spec_attr(context.op_name, "pre_compare", getattr(get_global_storage(), "plugin_path", None))
-        custom_compare = get_spec_attr(context.op_name, "compare", getattr(get_global_storage(), "plugin_path", None))
+        tolerance = get_spec_attr(context.op_name, "tolerance", getattr(switches, "plugin_path", None))
+        pre_compare = get_spec_attr(context.op_name, "pre_compare", getattr(switches, "plugin_path", None))
+        custom_compare = get_spec_attr(context.op_name, "compare", getattr(switches, "plugin_path", None))
         standards = _resolve_tolerance(
-            tolerance,
-            context.flat_precision_tolerances,
-            context.flat_absolute_precision,
-            context.flat_output_dtypes,
-            get_global_storage().compare_method,
-            input_dtypes=context.flat_input_dtypes,
+            tolerance, context.flat_precision_tolerances, context.flat_absolute_precision,
+            context.flat_output_dtypes, switches.compare_method, input_dtypes=context.flat_input_dtypes,
         )
-        need_3party_outputs = any(s.token == "cross_check" for s in standards)
-        if need_3party_outputs:
+        need_3party = any(s.token == "cross_check" for s in standards)
+        if need_3party:
             context.golden_mode_override = "Promote"
+        return SimpleNamespace(
+            tolerance=tolerance, pre_compare=pre_compare, custom_compare=custom_compare,
+            standards=standards, need_3party=need_3party,
+        ), None
     except ValueError as e:
         logging.error("[%s] tolerance invalid: %s", context.op_name, e)
-        return prof_end(context, "TOLERANCE_INVALID")
+        return None, prof_end(context, "TOLERANCE_INVALID")
 
+
+def _generate_golden(context: TestcaseOp, manual_case, tol_state):
+    from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
+
+    switches = get_global_storage()
+    process_ctx = get_process_context()
     stored_goldens = None
     if manual_case is not None:
         try:
             process_ctx.notify_status("OnLoadManualGolden")
             stored_goldens = manual_case.load_goldens(
-                shapes=context.flat_output_shapes,
-                dtypes=context.flat_output_dtypes,
+                shapes=context.flat_output_shapes, dtypes=context.flat_output_dtypes,
             )
         except Exception as exc:
             logging.exception("Manual Kernel golden loading failure")
             return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
-
-    # golden gen with override cleanup
     try:
         if manual_case is None:
             __gen_output(context)
@@ -334,56 +343,67 @@ def profile_process(
     finally:
         if hasattr(context, "golden_mode_override"):
             del context.golden_mode_override
+    if getattr(context, "output_shape_unknown_indexes", None):
+        tol_state.standards = _resolve_tolerance(
+            tol_state.tolerance, context.flat_precision_tolerances,
+            context.flat_absolute_precision, context.flat_output_dtypes,
+            switches.compare_method, input_dtypes=context.flat_input_dtypes,
+        )
+    return None
 
-    if manual_mode == "prepare":
-        try:
-            process_ctx.notify_status("OnWriteManualData")
-            case_dir = prepare_store.write_case(
-                context,
-                "kernel",
-                prepared_inputs,
-                context.golden_arrays,
-                file_format=switches.dump_config.file_format,
-            )
-        except Exception as exc:
-            logging.exception("Manual Kernel data preparation failure")
-            return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
-        logging.info("[%s] manual Kernel data prepared: %s", context.testcase_name, case_dir)
-        return _manual_data_prepared_end(context)
 
+def _write_manual_prepare(context: TestcaseOp, prepare_store, prepared_inputs):
+    switches = get_global_storage()
+    process_ctx = get_process_context()
+    try:
+        process_ctx.notify_status("OnWriteManualData")
+        case_dir = prepare_store.write_case(
+            context, "kernel", prepared_inputs, context.golden_arrays,
+            file_format=switches.dump_config.file_format,
+        )
+    except Exception as exc:
+        logging.exception("Manual Kernel data preparation failure")
+        return prof_end(context, f"MANUAL_DATA_PREPARE_FAILURE: {exc}")
+    logging.info("[%s] manual Kernel data prepared: %s", context.testcase_name, case_dir)
+    return _manual_data_prepared_end(context)
+
+
+def _run_xpu_and_workspace(context: TestcaseOp, need_3party):
+    switches = get_global_storage()
+    process_ctx = get_process_context()
     process_ctx.notify_status("OnXpuProfiling")
-    xpu_mode = _xpu_mode(get_global_storage(), need_3party_outputs)
+    xpu_mode = _xpu_mode(switches, need_3party)
     xpu_priority = _do_xpu_profiling(context, xpu_mode) if xpu_mode else None
     third_parties_nested = _extract_third_party(getattr(context, "xpu_results", None), xpu_priority)
-    if need_3party_outputs and third_parties_nested is None:
+    if need_3party and third_parties_nested is None:
         logging.warning(
-            "[%s] cross_check configured but no third_party output (no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE",
+            "[%s] cross_check configured but no third_party output (no XPU / endpoint down); "
+            "cross_check outputs will GOLDEN_FAILURE",
             context.op_name,
         )
     third_parties = list(deep_flatten(third_parties_nested)) if third_parties_nested is not None else None
-
     process_ctx.notify_status("OnGenWorkspace")
     context.dyn_workspace_arrays = __gen_workspaces(
-        context.dyn_compile_result.workspaces, context.dyn_compile_result.debug_buf_size
-    )
+        context.dyn_compile_result.workspaces, context.dyn_compile_result.debug_buf_size)
     context.cst_workspace_arrays = __gen_workspaces(
-        context.cst_compile_result.workspaces, context.cst_compile_result.debug_buf_size
-    )
+        context.cst_compile_result.workspaces, context.cst_compile_result.debug_buf_size)
     context.bin_workspace_arrays = __gen_workspaces(
-        context.bin_compile_result.workspaces, context.bin_compile_result.debug_buf_size
-    )
+        context.bin_compile_result.workspaces, context.bin_compile_result.debug_buf_size)
     process_ctx.notify_status("OnDumpInputDataIfRequired")
     __dump_input(context)
     process_ctx.notify_status("OnDumpGoldenDataIfRequired")
     __dump_golden(context)
-    # Following actions need to acquire global lock
+    return third_parties
+
+
+def _device_profiling(context: TestcaseOp, dev_id, device_grant_events, device_granted_indices):
+    switches = get_global_storage()
+    process_ctx = get_process_context()
     process_ctx.notify_status("OnAcquireLock")
     device_id = [dev_id]
     use_device = switches.mode.has_device()
     with DeviceLock(
-        process_ctx,
-        dev_id,
-        use_device=use_device,
+        process_ctx, dev_id, use_device=use_device,
         grant_event=device_grant_events.get(dev_id),
         granted_idx=device_granted_indices.get(dev_id),
     ):
@@ -391,7 +411,7 @@ def profile_process(
         process_ctx.notify_status("OnProfilingPrint")
         __profiling_print(context)
         process_ctx.notify_status("OnDynProfiling")
-        if get_global_storage().backend == "npusim":
+        if switches.backend == "npusim":
             from ttk.core_modules.simulator import run_kernel_sim
 
             (context.dyn_prof_result, context.cst_prof_result, context.bin_prof_result) = run_kernel_sim(context)
@@ -401,6 +421,11 @@ def profile_process(
             context.cst_prof_result = do_profiling(context, "const")
             process_ctx.notify_status("OnBinProfiling")
             context.bin_prof_result = do_profiling(context, "binary")
+
+
+def _compare_and_finalize(context: TestcaseOp, standards, third_parties, pre_compare, custom_compare):
+    switches = get_global_storage()
+    process_ctx = get_process_context()
     process_ctx.notify_status("PostProfiling")
     passed = handle_profiling_result(context)
     process_ctx.notify_status("OnDumpOutputDataIfRequired")
@@ -429,6 +454,50 @@ def profile_process(
     return_structure.construct(context, compare_result, passed)
     __profiling_end_print(context, compare_result, passed)
     return return_structure
+
+
+def profile_process(
+    context: TestcaseOp, device_grant_events: dict, device_granted_indices: dict, dev_id: int
+) -> ProfilingReturnStructure:
+    """
+    Universal Testcase Profiling Entrance
+    """
+    switches, process_ctx = _setup_profiling_env(context)
+    manual_mode = getattr(switches, "manual_data_mode", None)
+
+    prepare_store, early = _prepare_manual_store(context)
+    if early is not None:
+        return early
+
+    early = _check_preconditions(context, switches, process_ctx)
+    if early is not None:
+        return early
+
+    manual_case, manual_mode, early = _load_manual_case(context, switches, process_ctx, manual_mode)
+    if early is not None:
+        return early
+
+    prepared_inputs, early = _generate_input(context, switches, process_ctx, manual_case, manual_mode)
+    if early is not None:
+        return early
+
+    process_ctx.notify_status("OnGenGolden")
+    tol_state, early = _resolve_tolerance(context)
+    if early is not None:
+        return early
+
+    early = _generate_golden(context, manual_case, tol_state)
+    if early is not None:
+        return early
+
+    if manual_mode == "prepare":
+        return _write_manual_prepare(context, prepare_store, prepared_inputs)
+
+    third_parties = _run_xpu_and_workspace(context, tol_state.need_3party)
+    _device_profiling(context, dev_id, device_grant_events, device_granted_indices)
+    return _compare_and_finalize(
+        context, tol_state.standards, third_parties, tol_state.pre_compare, tol_state.custom_compare
+    )
 
 
 def __profiling_end_print(context: TestcaseOp, compare_result: ComparisonResult, passed: str):
