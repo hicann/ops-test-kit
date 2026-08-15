@@ -41,11 +41,9 @@ from ttk.utilities.container_utils import apply_as_list, get_global_storage
 from .api_resolver import resolve_api
 from .backends import get_backend
 from .eager_execution import call_api
-from .golden_generation import generate_golden
-from .graph_execution import _execute_graph
 from .input_generation import generate_inputs
 from .profiler import get_profiler
-from .profiling_utils import clone_preserving_stride, prepare_device_args, result_to_numpy
+from .profiling_utils import prepare_device_args
 from .result import FrameworkApiReturnStructure
 
 WARMUP_COUNT = 5
@@ -69,7 +67,7 @@ def _profiling_print(testcase, backend, dev_id, switches):
         f"\n{separator}\n"
         f"API Name: {testcase.api_name}\n"
         f"Golden API: {testcase.golden_api}\n"
-        f"Backend: {backend.alias()}\n"
+        f"Backend: {backend.device_type()}\n"
         f"////////////// Tensors //////////////\n"
         f"Input View Shapes: {testcase.tensor_view_shapes}\n"
         f"Input Dtypes: {testcase.tensor_dtypes}\n"
@@ -250,7 +248,9 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
 
     if switches.single_testcase_log_mode:
         _log_dir = build_single_log_dir(switches.test_mode, testcase.api_name, switches.root_path)
-        default_logging_config(file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name, log_dir=_log_dir)
+        default_logging_config(
+            file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name, log_dir=_log_dir
+        )
 
     return_struct = FrameworkApiReturnStructure()
 
@@ -282,7 +282,8 @@ def _get_or_create_backend(switches):
     cached = process_ctx.storage.get("framework_api_backend")
     if cached is not None:
         return cached
-    backend = get_backend(switches.force_cpu)
+    framework = getattr(switches, "framework", "torch")
+    backend = get_backend(switches.force_cpu, framework=framework)
     process_ctx.storage["framework_api_backend"] = backend
     return backend
 
@@ -343,12 +344,8 @@ def _ensure_deterministic_level_e2e(process_ctx, backend, testcase):
         return
     if backend.is_npu():
         try:
-            import torch_npu
-
-            torch_npu.npu.set_deterministic_level(det_level)
-            logging.info(
-                f"NPU deterministic level set to {det_level} (e2e batch consistency for {testcase.testcase_name})"
-            )
+            backend.set_deterministic_level(det_level)
+            logging.info(f"NPU deterministic level set (e2e batch consistency for {testcase.testcase_name})")
         except Exception as e:
             logging.warning(f"Failed to set deterministic level: {e}")
     process_ctx.storage["_deterministic_level_set"] = True
@@ -358,61 +355,69 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf) or raises."""
     if backend.is_npu():
         import torch_npu
+
         torch_npu.npu.set_device(dev_id)
+    resolved = backend.wrap_eager_callable(resolved)
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
     run_count = switches.run_time
-    profiler = get_profiler(testcase.api_name, backend)
+    profiler = get_profiler(
+        testcase.api_name, backend, testcase_name=testcase.testcase_name, root_path=switches.root_path
+    )
 
     inplace_input_indexes = getattr(testcase, "inplace_input_indexes", None) or ()
     inplace_input_backups = {}
     if inplace_input_indexes:
         for idx in inplace_input_indexes:
             if idx < len(args) and args[idx] is not None:
-                inplace_input_backups[idx] = clone_preserving_stride(args[idx])
+                inplace_input_backups[idx] = backend.clone(args[idx])
 
     if is_inplace:
-        inplace_backup = clone_preserving_stride(args[0]) if args and args[0] is not None else None
-        if is_tensor_method:
-            if args[0] is not None:
-                result = call_api(testcase.api_name, plan.overload_index, getattr(args[0], resolved), args[1:], kwargs)
+        inplace_backup = backend.clone(args[0]) if args and args[0] is not None else None
+        with backend.device_scope(dev_id):
+            if is_tensor_method:
+                if args[0] is not None:
+                    result = call_api(
+                        testcase.api_name, plan.overload_index, getattr(args[0], resolved), args[1:], kwargs
+                    )
+                else:
+                    result = None
             else:
-                result = None
-        else:
-            result = call_api(testcase.api_name, plan.overload_index, resolved, args, kwargs)
+                result = call_api(testcase.api_name, plan.overload_index, resolved, args, kwargs)
         backend.synchronize(dev_id)
-        result_nps = result_to_numpy(result, backend, copy=True)
+        result_nps = backend.result_to_numpy(result, copy=True)
         if inplace_backup is not None:
-            args[0][:] = inplace_backup
+            backend.restore_inplace(args[0], inplace_backup)
     else:
         result = None
 
     if switches.warmup:
         for _ in range(WARMUP_COUNT):
             if is_inplace and inplace_backup is not None:
-                args[0][:] = inplace_backup
+                backend.restore_inplace(args[0], inplace_backup)
             for idx, backup in inplace_input_backups.items():
-                args[idx][:] = backup
-            if is_tensor_method:
-                getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
-            else:
-                resolved(*args, **kwargs)
+                backend.restore_inplace(args[idx], backup)
+            with backend.device_scope(dev_id):
+                if is_tensor_method:
+                    getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
+                else:
+                    resolved(*args, **kwargs)
         backend.synchronize(dev_id)
 
     for idx, backup in inplace_input_backups.items():
-        args[idx][:] = backup
+        backend.restore_inplace(args[idx], backup)
     if is_inplace and inplace_backup is not None:
-        args[0][:] = inplace_backup
+        backend.restore_inplace(args[0], inplace_backup)
 
     inplace_clones = {}
     original_tensors = {}
     for idx in inplace_input_backups:
         original_tensors[idx] = args[idx]
-        inplace_clones[idx] = [clone_preserving_stride(args[idx]) for _ in range(run_count - 1)]
+        inplace_clones[idx] = [backend.clone(args[idx]) for _ in range(run_count - 1)]
     if is_inplace and inplace_backup is not None and 0 not in original_tensors:
         if args and args[0] is not None:
             original_tensors[0] = args[0]
-            inplace_clones[0] = [clone_preserving_stride(args[0]) for _ in range(run_count - 1)]
+            inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
 
     with profiler:
         for i in range(run_count):
@@ -422,10 +427,11 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
             else:
                 for idx in original_tensors:
                     args[idx] = original_tensors[idx]
-            if is_tensor_method:
-                r = getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
-            else:
-                r = resolved(*args, **kwargs)
+            with backend.device_scope(dev_id):
+                if is_tensor_method:
+                    r = getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
+                else:
+                    r = resolved(*args, **kwargs)
             if not is_inplace:
                 result = r
         backend.synchronize(dev_id)
@@ -433,14 +439,14 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     perf = profiler.result(backend, run_count)
 
     if not is_inplace:
-        result_nps = result_to_numpy(result, backend)
+        result_nps = backend.result_to_numpy(result)
 
     if inplace_input_indexes:
         if result_nps is None:
             result_nps = []
         for idx in sorted(inplace_input_indexes):
             if idx < len(args) and args[idx] is not None:
-                inplace_np = backend.to_numpy(args[idx].detach().clone())
+                inplace_np = backend.to_numpy(args[idx], safe=True)
                 result_nps.append(inplace_np)
 
     del args, kwargs
@@ -455,7 +461,9 @@ def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
         golden_nps = ["SUPPRESSED"]
     else:
         try:
-            golden_nps = generate_golden(testcase, raw_inputs, switches.plugin_path, switches, backend.alias())
+            from .golden_generation import generate_golden
+
+            golden_nps = generate_golden(testcase, raw_inputs, switches.plugin_path, switches, backend.device_type())
         except Exception:
             logging.exception(f"[{testcase.testcase_name}] Golden generation failure")
             golden_nps = ["GOLDEN_FAILURE"]
@@ -577,8 +585,7 @@ def _collect_sim_report(testcase, switches):
 
     src = Path(switches.root_path) / "instr.bin"
     if not src.is_file() or src.stat().st_size == 0:
-        logging.warning("[%s] no instr.bin in worker cwd; skip sim report",
-                        testcase.testcase_name)
+        logging.warning("[%s] no instr.bin in worker cwd; skip sim report", testcase.testcase_name)
         return
     case_path = case_dir(switches, testcase.testcase_name)
     case_path.mkdir(parents=True, exist_ok=True)
@@ -588,8 +595,7 @@ def _collect_sim_report(testcase, switches):
         # Without this warning the move failure is silent: instr.bin stays in the
         # worker cwd, gets overwritten by the next case, and the user is left
         # without a sim report and without any hint.
-        logging.warning("[%s] failed to move instr.bin into %s: %s",
-                        testcase.testcase_name, case_path, e)
+        logging.warning("[%s] failed to move instr.bin into %s: %s", testcase.testcase_name, case_path, e)
         return
     if getattr(switches, "sim_report", False):
         from ttk.core_modules.simulator.report import maybe_generate_sim_report
@@ -681,9 +687,12 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
     graph_enabled = (
         switches.cst_switches.enabled or switches.dyn_switches.enabled or getattr(switches, "aclgraph_enabled", False)
     )
+    if graph_enabled and not backend.supports_graph_mode():
+        logging.warning(f"Graph mode not supported by backend {backend.device_type()}, skipping graph execution")
+        graph_enabled = False
 
     process_ctx.notify_status("OnAcquireLock")
-    use_device = backend.use_device()
+    use_device = backend.has_device()
     result_nps = None
     perf = None
     graph_cst_nps = None
@@ -708,9 +717,19 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs
             )
         if graph_enabled:
+            from .framework_detector import detect_framework
+
+            if detect_framework(testcase.api_name) == "tf":
+                from .tf_graph_execution import _execute_tf_graph
+
+                graph_fn = _execute_tf_graph
+            else:
+                from .graph_execution import _execute_graph
+
+                graph_fn = _execute_graph
             if getattr(switches, "aclgraph_enabled", False):
                 process_ctx.notify_status("OnGraphAclgraph")
-                graph_aclgraph_nps, graph_aclgraph_perf = _execute_graph(
+                graph_aclgraph_nps, graph_aclgraph_perf = graph_fn(
                     testcase,
                     backend,
                     dev_id,
@@ -725,7 +744,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 )
             if switches.cst_switches.enabled:
                 process_ctx.notify_status("OnGraphCst")
-                graph_cst_nps, graph_cst_perf = _execute_graph(
+                graph_cst_nps, graph_cst_perf = graph_fn(
                     testcase,
                     backend,
                     dev_id,
@@ -739,7 +758,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 )
             if switches.dyn_switches.enabled:
                 process_ctx.notify_status("OnGraphDyn")
-                graph_dyn_nps, graph_dyn_perf = _execute_graph(
+                graph_dyn_nps, graph_dyn_perf = graph_fn(
                     testcase,
                     backend,
                     dev_id,

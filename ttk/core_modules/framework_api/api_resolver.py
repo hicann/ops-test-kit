@@ -12,6 +12,7 @@
 """
 Resolve api_name string to callable object.
 Handles both module functions (torch.add) and Tensor methods (torch.Tensor.relu_).
+Also supports TF APIs (tf.raw_ops.Add, tf.nn.relu, etc.).
 """
 
 from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
@@ -29,11 +30,19 @@ def resolve_api(api_name: str):
         'torch_npu.npu_conv2d'      -> (torch_npu.npu_conv2d, False)
         'torch.Tensor.relu_'        -> ('relu_', True)
         'torch.Tensor.npu_scatter_' -> ('npu_scatter_', True)
+        'tf.raw_ops.Add'            -> (tf.raw_ops.Add, False)
+        'tf.nn.relu'                -> (tf.nn.relu, False)
     """
     parts = api_name.split(".")
 
     if len(parts) < 2:
         raise ValueError(f"Invalid api_name: {api_name}, expected format: module.func")
+
+    # TF: use resolve_callable_str (lazy import tensorflow)
+    if api_name.startswith(("tf.", "tensorflow.")):
+        from ttk.utilities.func_dispatch import resolve_callable_str
+
+        return resolve_callable_str(api_name), False
 
     TorchOpsPackageLoader.ensure_registered(api_name)
 

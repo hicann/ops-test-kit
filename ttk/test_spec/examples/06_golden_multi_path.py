@@ -28,7 +28,7 @@ class AbsKernelSpec:
 class AclnnAbsSpec:
     """ACLNN 流程 — golden / third_party 均收到 torch.Tensor（已在设备上）"""
 
-    def golden(x, **kwargs):
+    def golden(x, out, **kwargs):
         return [torch.abs(x)]
 
     third_party = {"torch": "torch.abs"}

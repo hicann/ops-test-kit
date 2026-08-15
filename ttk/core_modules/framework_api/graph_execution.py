@@ -13,6 +13,7 @@
 Graph mode execution for framework_api.
 Wraps API in GraphNetwork + torch.compile for GE graph mode testing.
 """
+
 import functools
 import logging
 
@@ -22,7 +23,7 @@ from ttk.test_spec import get_spec_attr
 
 from .graph_network import GraphNetwork, split_params
 from .profiler import get_profiler
-from .profiling_utils import clone_preserving_stride, prepare_device_args, result_to_numpy
+from .profiling_utils import prepare_device_args
 
 WARMUP_COUNT = 5
 
@@ -32,14 +33,17 @@ def _get_npu_backend():
     import torch_npu
     import torchair
     from torchair.configs.compiler_config import CompilerConfig
+
     config = CompilerConfig()
     return torchair.get_npu_backend(compiler_config=config)
+
 
 @functools.lru_cache(maxsize=1)
 def _get_npu_backend_aclgraph():
     """获取 aclgraph 模式的 NPU backend。"""
     npu_backend = "npugraph_ex"
     return npu_backend
+
 
 def _compile_model(model, backend, dynamic, fullgraph):
     """Compile model with torch.compile. Returns compiled callable or raises."""
@@ -51,6 +55,7 @@ def _compile_model(model, backend, dynamic, fullgraph):
     )
     return compiled
 
+
 def _compile_model_aclgraph(model, backend):
     """以 aclgraph 模式编译模型"""
     compiled = torch.compile(
@@ -61,16 +66,27 @@ def _compile_model_aclgraph(model, backend):
     )
     return compiled
 
-def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
-                  is_inplace, inplace_backup, api_name,
-                  inplace_backups=None, inplace_kwargs_keys=None):
-    """Run compiled model with warmup + profiling. Returns (result_nps, perf)."""
+
+def _run_compiled(
+    compiled,
+    args,
+    kwargs,
+    backend,
+    dev_id,
+    switches,
+    is_inplace,
+    inplace_backup,
+    api_name,
+    testcase_name="",
+    inplace_backups=None,
+    inplace_kwargs_keys=None,
+):
     run_count = switches.run_time
     is_kwargs_mode = inplace_kwargs_keys is not None
 
     result = compiled(*args, **kwargs)
     backend.synchronize(dev_id)
-    result_nps = result_to_numpy(result, backend, copy=is_inplace)
+    result_nps = backend.result_to_numpy(result, copy=is_inplace)
 
     if switches.warmup:
         for _ in range(WARMUP_COUNT):
@@ -106,19 +122,19 @@ def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
         for idx, key in inplace_kwargs_keys.items():
             if key in kwargs and kwargs[key] is not None:
                 original_tensors[idx] = (key, kwargs[key])
-                inplace_clones[idx] = (key, [clone_preserving_stride(kwargs[key]) for _ in range(run_count - 1)])
+                inplace_clones[idx] = (key, [backend.clone(kwargs[key]) for _ in range(run_count - 1)])
     else:
         if inplace_backups:
             for idx in inplace_backups:
                 if idx < len(args) and args[idx] is not None:
                     original_tensors[idx] = args[idx]
-                    inplace_clones[idx] = [clone_preserving_stride(args[idx]) for _ in range(run_count - 1)]
+                    inplace_clones[idx] = [backend.clone(args[idx]) for _ in range(run_count - 1)]
         if is_inplace and inplace_backup is not None and 0 not in original_tensors:
             if args and args[0] is not None:
                 original_tensors[0] = args[0]
-                inplace_clones[0] = [clone_preserving_stride(args[0]) for _ in range(run_count - 1)]
+                inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
 
-    profiler = get_profiler(api_name, backend)
+    profiler = get_profiler(api_name, backend, testcase_name=testcase_name, root_path=switches.root_path)
     with profiler:
         for i in range(run_count):
             if i < run_count - 1:
@@ -143,12 +159,24 @@ def _run_compiled(compiled, args, kwargs, backend, dev_id, switches,
     perf = profiler.result(backend, run_count)
 
     if not is_inplace:
-        result_nps = result_to_numpy(result, backend, copy=is_inplace)
+        result_nps = backend.result_to_numpy(result, copy=is_inplace)
 
     return result_nps, perf
 
 
-def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs, dynamic, is_aclgraph=False):
+def _execute_graph(
+    testcase,
+    backend,
+    dev_id,
+    switches,
+    plan,
+    resolved,
+    is_tensor_method,
+    is_inplace,
+    raw_inputs,
+    dynamic,
+    is_aclgraph=False,
+):
     """
     Execute API in GE graph mode via torch.compile with profiling.
 
@@ -172,6 +200,7 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         return [], None
 
     import torch_npu
+
     torch_npu.npu.set_device(dev_id)
 
     if is_aclgraph:
@@ -186,20 +215,19 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
 
     inplace_backup = None
 
-    inplace_input_indexes = getattr(testcase, 'inplace_input_indexes', None) or ()
+    inplace_input_indexes = getattr(testcase, "inplace_input_indexes", None) or ()
     inplace_backups = {}
     if inplace_input_indexes:
         for idx in sorted(inplace_input_indexes):
             if idx < len(args) and args[idx] is not None:
-                inplace_backups[idx] = clone_preserving_stride(args[idx])
+                inplace_backups[idx] = backend.clone(args[idx])
 
     custom_cls = get_spec_attr(testcase.api_name, "torch_graph", switches.plugin_path)
 
     inplace_kwargs_keys = None
     if custom_cls:
         logging.info(f"Using custom graph module: {custom_cls.__name__}")
-        init_kwargs, fwd_kwargs = split_params(
-            custom_cls, plan.overload_params, args, kwargs)
+        init_kwargs, fwd_kwargs = split_params(custom_cls, plan.overload_params, args, kwargs)
         model = custom_cls(**init_kwargs)
         run_args, run_kwargs = [], fwd_kwargs
         run_inplace = is_inplace
@@ -214,9 +242,10 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     else:
         logging.info("Using generic GraphNetwork")
         if is_inplace:
-            inplace_backup = clone_preserving_stride(args[0]) if args and args[0] is not None else None
+            inplace_backup = backend.clone(args[0]) if args and args[0] is not None else None
 
         if is_tensor_method:
+
             def api_caller(*args, **kwargs):
                 return getattr(args[0], resolved)(*args[1:], **kwargs)
         else:
@@ -241,10 +270,19 @@ def _execute_graph(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         else:
             compiled = _compile_model(model, npu_backend, dynamic, use_fullgraph)
         result_nps, perf = _run_compiled(
-            compiled, run_args, run_kwargs, backend, dev_id, switches,
-            run_inplace, inplace_backup if run_inplace else None, testcase.api_name,
+            compiled,
+            run_args,
+            run_kwargs,
+            backend,
+            dev_id,
+            switches,
+            run_inplace,
+            inplace_backup if run_inplace else None,
+            testcase.api_name,
+            testcase_name=testcase.testcase_name,
             inplace_backups=inplace_backups if inplace_input_indexes else None,
-            inplace_kwargs_keys=inplace_kwargs_keys)
+            inplace_kwargs_keys=inplace_kwargs_keys,
+        )
 
     except Exception as e:
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)

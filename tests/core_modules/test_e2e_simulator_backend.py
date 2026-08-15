@@ -10,6 +10,7 @@ These tests never run cannsim / camodel — they mock ``ASCEND_TOOLKIT_HOME`` an
 the camodel directory resolution, mirroring the existing simulator backend
 tests (``test_simulator_backend.py``).
 """
+
 import os
 from types import SimpleNamespace
 
@@ -64,10 +65,10 @@ class _FakeBackend:
     def __init__(self):
         self._dev = True
 
-    def use_device(self):
+    def has_device(self):
         return self._dev
 
-    def alias(self):
+    def device_type(self):
         return "npu"
 
 
@@ -91,7 +92,7 @@ class TestFrameworkApiInstanceNpusim:
         )
         monkeypatch.setattr(
             "ttk.core_modules.framework_api.instance.get_backend",
-            lambda force_cpu: _FakeBackend(),
+            lambda force_cpu, framework="torch": _FakeBackend(),
         )
         monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
         sw = self._switches(tmp_path)
@@ -171,9 +172,9 @@ class TestCollectSimReport:
         e2e_profiling._collect_sim_report(self._testcase(), sw)
 
         case_path = case_dir(sw, "add_f32_01")
-        assert (case_path / "instr.bin").is_file()          # moved into case dir
-        assert not (tmp_path / "instr.bin").exists()        # removed from worker cwd
-        assert reported == [case_path]                      # report triggered
+        assert (case_path / "instr.bin").is_file()  # moved into case dir
+        assert not (tmp_path / "instr.bin").exists()  # removed from worker cwd
+        assert reported == [case_path]  # report triggered
 
     def test_collect_without_report(self, tmp_path, monkeypatch):
         from ttk.core_modules.framework_api import profiling as e2e_profiling
@@ -191,8 +192,8 @@ class TestCollectSimReport:
         e2e_profiling._collect_sim_report(self._testcase(), sw)
 
         case_path = case_dir(sw, "add_f32_01")
-        assert (case_path / "instr.bin").is_file()          # still collected
-        assert not reported                                 # but no report
+        assert (case_path / "instr.bin").is_file()  # still collected
+        assert not reported  # but no report
 
     def test_skip_non_npusim(self, tmp_path, monkeypatch):
         from ttk.core_modules.framework_api import profiling as e2e_profiling
@@ -208,7 +209,7 @@ class TestCollectSimReport:
 
         e2e_profiling._collect_sim_report(self._testcase(), sw)
 
-        assert (tmp_path / "instr.bin").exists()            # untouched
+        assert (tmp_path / "instr.bin").exists()  # untouched
         assert not reported
 
     def test_skip_missing_or_empty_instr(self, tmp_path, monkeypatch):
@@ -227,4 +228,4 @@ class TestCollectSimReport:
         e2e_profiling._collect_sim_report(self._testcase(), sw)
 
         assert not reported
-        assert (tmp_path / "instr.bin").exists()            # empty file left in place
+        assert (tmp_path / "instr.bin").exists()  # empty file left in place

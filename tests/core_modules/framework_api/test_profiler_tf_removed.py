@@ -21,7 +21,7 @@ class _FakeBackend:
     def device_name(self, dev_id=0):
         return "AscendGPU-Model-Name"
 
-    def alias(self):
+    def device_type(self):
         return "xpu"
 
     def is_npu(self):

@@ -283,6 +283,58 @@ def _log_manual_data_configuration(sw):
         )
 
 
+def _detect_framework_from_csv(input_files):
+    """Peek at the first CSV to detect framework from api_name column.
+
+    Reads the CSV header to find the api_name column, then checks the first
+    data row's api_name value. Returns 'tf' if it starts with 'tf.' or
+    'tensorflow.', otherwise 'torch'.
+
+    One CSV must contain only one framework's APIs: torch_npu and npu_device
+    each initialize the NPU runtime exclusively, so mixing frameworks in a
+    single run causes runtime conflicts. This function detects the framework
+    from the first data row and validates that all subsequent rows are
+    consistent.
+    """
+    if not input_files:
+        return "torch"
+    import csv
+    from ttk.core_modules.framework_api.framework_detector import detect_framework
+
+    try:
+        with open(input_files[0], "r", newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if not header:
+                return "torch"
+            try:
+                api_idx = header.index("api_name")
+            except ValueError:
+                return "torch"
+            row = next(reader, None)
+            if not row or api_idx >= len(row):
+                return "torch"
+            first_api = row[api_idx].strip()
+            first_framework = detect_framework(first_api)
+            for row in reader:
+                if api_idx < len(row):
+                    row_api = row[api_idx].strip()
+                    row_framework = detect_framework(row_api)
+                    if row_framework != first_framework:
+                        raise ValueError(
+                            f"Mixed frameworks in one CSV is not supported: "
+                            f"first row is {first_framework} (api_name='{first_api}'), "
+                            f"but found {row_framework} (api_name='{row_api}') in a later row. "
+                            f"Please split into separate CSV files per framework."
+                        )
+            return first_framework
+    except ValueError:
+        raise
+    except Exception as e:
+        logging.warning(f"Failed to detect framework from CSV, defaulting to torch: {e}")
+    return "torch"
+
+
 def run_with_switches(sw):
     from ttk.core_modules.tbe_logging import default_logging_config
     from ttk.utilities import set_global_storage
@@ -301,6 +353,7 @@ def run_with_switches(sw):
     if sw.test_mode == "framework-api":
         from ttk.core_modules.framework_api.instance import FrameworkApiInstance
 
+        sw.framework = _detect_framework_from_csv(sw.input_files)
         ins = FrameworkApiInstance()
     elif sw.test_mode == "geir":
         from ttk.core_modules.geir.instance import GeirInstance

@@ -11,7 +11,6 @@
 Input generation method for Universal testcases
 """
 
-
 __all__ = ["InputGenerator"]
 
 
@@ -27,6 +26,7 @@ from ...aclnn import OpApiInfoKeeper, OpApiInfo
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, numpy_to_torch_tensor, tuple_flatten
 from ....utilities import get, get_global_storage, RandomData
 from ...plugin_loader import get_plugin_function
+
 
 class InputGenerator:
     def __init__(self, context: TestcaseAclnn):
@@ -57,53 +57,47 @@ class InputGenerator:
                 self._package_scalars_numpy()
 
             # Check special input operators
-            input_func = get_plugin_function(self._ctx.api_name,
-                "input", "aclnn", self._switch.plugin_path)
+            input_func = get_plugin_function(self._ctx.api_name, "input", "aclnn", self._switch.plugin_path)
             if input_func:
                 self._call_custom_input(input_func)
 
     def _restore(self, stored_inputs, stored_scalars):
         """Restore final generated state without rerunning random/input plugins."""
         self._ctx.np_storages = list(stored_inputs)
-        use_torch = self._ctx.is_torch_dtype_support()
-        if use_torch:
-            self._convert_np_to_torch_tensor()
-        else:
+        use_numpy = not self._ctx.is_torch_dtype_support()
+        if use_numpy:
             self._convert_np_to_numpy_view()
+        else:
+            self._convert_np_to_torch_tensor()
 
         scalar_values = []
         flat_scalar_dtypes = self._ctx.flat_scalar_dtypes or ()
         for index, value in enumerate(stored_scalars):
-            if value is None or not use_torch:
+            if value is None or use_numpy:
                 scalar_values.append(value)
                 continue
             dtype = get(flat_scalar_dtypes, index)
-            scalar_values.append(
-                numpy_to_torch_tensor(value, is_complex32="complex32" in str(dtype)).squeeze()
-            )
-        self._ctx.scalars = tuple(apply_as_list(
-            scalar_values, self._ctx.scalar_list_dist
-        ))
+            scalar_values.append(numpy_to_torch_tensor(value, is_complex32="complex32" in str(dtype)).squeeze())
+        self._ctx.scalars = tuple(apply_as_list(scalar_values, self._ctx.scalar_list_dist))
 
     def _call_custom_input(self, input_func):
         plan = self._ctx.get_param_plan()
-        args, extra_attrs = plan.build_args(self._ctx.tensors, self._ctx.scalars,
-                               self._ctx.attributes)
+        args, extra_attrs = plan.build_args(self._ctx.tensors, self._ctx.scalars, self._ctx.attributes)
         kwargs = {
-            'short_soc_version': self._switch.short_soc_version,
-            'testcase_name': self._ctx.testcase_name,
-            'tensor_dtypes': self._ctx.tensor_dtypes,
-            'tensor_formats': self._ctx.tensor_formats,
-            'scalar_dtypes': self._ctx.scalar_dtypes,
-            'input_ranges': self._ctx.input_data_ranges,
-            'use_torch': self._ctx.is_torch_dtype_support(),
+            "short_soc_version": self._switch.short_soc_version,
+            "testcase_name": self._ctx.testcase_name,
+            "tensor_dtypes": self._ctx.tensor_dtypes,
+            "tensor_formats": self._ctx.tensor_formats,
+            "scalar_dtypes": self._ctx.scalar_dtypes,
+            "input_ranges": self._ctx.input_data_ranges,
+            "use_numpy": not self._ctx.is_torch_dtype_support(),
         }
-        if hasattr(self._ctx, 'batch_axis') and self._ctx.batch_axis is not None:
-            kwargs['batch_axis'] = self._ctx.batch_axis
-        if hasattr(self._ctx, 'batch_slice_info') and self._ctx.batch_slice_info is not None:
-            kwargs['batch_slice_info'] = self._ctx.batch_slice_info
-        if hasattr(self._ctx, 'batch_seed') and self._ctx.batch_seed is not None:
-            kwargs['batch_seed'] = self._ctx.batch_seed
+        if hasattr(self._ctx, "batch_axis") and self._ctx.batch_axis is not None:
+            kwargs["batch_axis"] = self._ctx.batch_axis
+        if hasattr(self._ctx, "batch_slice_info") and self._ctx.batch_slice_info is not None:
+            kwargs["batch_slice_info"] = self._ctx.batch_slice_info
+        if hasattr(self._ctx, "batch_seed") and self._ctx.batch_seed is not None:
+            kwargs["batch_seed"] = self._ctx.batch_seed
         kwargs.update(extra_attrs)
         input_func(*args, **kwargs)
 
@@ -118,8 +112,8 @@ class InputGenerator:
         flat_shapes = self._ctx.flat_tensor_view_shapes
 
         ranges = self._ctx.flat_input_data_ranges or ()
-        base_seed = getattr(self._switch, 'random_seed', None)
-        batch_seed = getattr(self._ctx, 'batch_seed', None)
+        base_seed = getattr(self._switch, "random_seed", None)
+        batch_seed = getattr(self._ctx, "batch_seed", None)
         for idx, vs in enumerate(flat_shapes):
             if vs is None:
                 arrays.append(None)
@@ -132,13 +126,14 @@ class InputGenerator:
                 # pure input & inplace output
                 if base_seed and batch_seed is not None:
                     # batch consistency compare different case support same shape tensor has same value
-                    numpy.random.seed(base_seed + idx)  
+                    numpy.random.seed(base_seed + idx)
                 rd = RandomData(dtype, ss, data_range)
                 arrays.append(rd.generate(self._switch.input_distribution))
                 actual_data_ranges.append(tuple(rd.data_range))
             else:
                 # pure output. initial it as dtype(1)
                 from ttk.utilities.data import fixed_np_array
+
                 init_val = 0 if self._ctx.api_name in ("aclnnInplaceOne",) else 1
                 arrays.append(fixed_np_array(dtype, ss, init_value=init_val))
                 actual_data_ranges.append(data_range)
@@ -160,11 +155,11 @@ class InputGenerator:
             np_arr = rd.generate(self._switch.input_distribution)
             t_scalar = numpy_to_torch_tensor(np_arr, is_complex32="complex32" in str(dtype))
             scalars.append(t_scalar.squeeze())
-        self._ctx.scalars = apply_as_list(scalars,
-                                          self._ctx.scalar_list_dist)
+        self._ctx.scalars = apply_as_list(scalars, self._ctx.scalar_list_dist)
 
     def _convert_np_to_torch_tensor(self):
         import torch
+
         torch_tensors = []
         flat_shapes = self._ctx.flat_tensor_view_shapes
         for idx, np_arr in enumerate(self._ctx.np_storages):
@@ -182,12 +177,13 @@ class InputGenerator:
                     else:
                         t_view = torch.as_strided(t_storage, v_shape, v_stride, v_offset)
                 except RuntimeError:
-                    logging.error(f"torch.as_strided failed. storage_shape={t_storage.shape} "
-                                  f"view_shape={v_shape}, view_stride={v_shape}, view_offset={v_offset}")
+                    logging.error(
+                        f"torch.as_strided failed. storage_shape={t_storage.shape} "
+                        f"view_shape={v_shape}, view_stride={v_shape}, view_offset={v_offset}"
+                    )
                     raise
                 torch_tensors.append(t_view)
-        self._ctx.tensors = apply_as_list(torch_tensors,
-                                          self._ctx.tensor_list_dist)
+        self._ctx.tensors = apply_as_list(torch_tensors, self._ctx.tensor_list_dist)
 
     def _package_scalars(self):
         """
@@ -198,7 +194,7 @@ class InputGenerator:
 
         op_api_info: OpApiInfo = OpApiInfoKeeper().info_of(self._ctx.api_name)
         scalars = self._ctx.scalars
-        scalars = scalars[:len(op_api_info.scalars)]
+        scalars = scalars[: len(op_api_info.scalars)]
         for idx, s_name in enumerate(op_api_info.scalars):
             if idx >= len(scalars):
                 raise RuntimeError(f"Some Scalar/ScalarList is not configured: {op_api_info.scalars[idx:]}")
@@ -206,12 +202,13 @@ class InputGenerator:
                 val = self._ctx.attributes[s_name]
                 if isinstance(val, (list, tuple)):
                     if not isinstance(scalars[idx], list):
-                        raise RuntimeError(f"[{s_name}] is a list/tuple configured in attributes. "
-                                           f"But got a scalar rather than ScalarList [{scalars[idx]}]. "
-                                           f"Check scalar_dtypes nesting.")
+                        raise RuntimeError(
+                            f"[{s_name}] is a list/tuple configured in attributes. "
+                            f"But got a scalar rather than ScalarList [{scalars[idx]}]. "
+                            f"Check scalar_dtypes nesting."
+                        )
                     if len(val) != len(scalars[idx]):
-                        raise RuntimeError(f"Value count of [{s_name}] mismatch: "
-                                           f"expected [{len(scalars[idx])}].")
+                        raise RuntimeError(f"Value count of [{s_name}] mismatch: expected [{len(scalars[idx])}].")
                     for j in range(len(scalars[idx])):
                         scalars[idx][j] = torch.tensor(val[j], dtype=scalars[idx][j].dtype)
                 else:
@@ -221,6 +218,7 @@ class InputGenerator:
     def _convert_np_to_numpy_view(self):
         """非 torch 原生 dtype 时，使用 numpy as_strided 创建 view（替代 torch.as_strided）"""
         from ttk.utilities.dtypes import np_as_strided_safe
+
         np_views = []
         flat_shapes = self._ctx.flat_tensor_view_shapes
         for idx, np_arr in enumerate(self._ctx.np_storages):
@@ -244,17 +242,18 @@ class InputGenerator:
                         view = np_as_strided_safe(base, shape=v_shape, strides=byte_strides)
                         np_views.append(view)
                 except Exception:
-                    logging.error(f"numpy.as_strided failed. storage_shape={np_arr.shape} "
-                                  f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}")
+                    logging.error(
+                        f"numpy.as_strided failed. storage_shape={np_arr.shape} "
+                        f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}"
+                    )
                     raise
-        self._ctx.tensors = apply_as_list(np_views,
-                                          self._ctx.tensor_list_dist)
+        self._ctx.tensors = apply_as_list(np_views, self._ctx.tensor_list_dist)
 
     def _package_scalars_numpy(self):
         """非 torch 原生 dtype 时，scalar 保持为 numpy scalar/ndarray"""
         scalars = self._ctx.scalars
         op_api_info: OpApiInfo = OpApiInfoKeeper().info_of(self._ctx.api_name)
-        scalars = scalars[:len(op_api_info.scalars)]
+        scalars = scalars[: len(op_api_info.scalars)]
         for idx, s_name in enumerate(op_api_info.scalars):
             if idx >= len(scalars):
                 raise RuntimeError(f"Some Scalar/ScalarList is not configured: {op_api_info.scalars[idx:]}")
@@ -262,12 +261,13 @@ class InputGenerator:
                 val = self._ctx.attributes[s_name]
                 if isinstance(val, (list, tuple)):
                     if not isinstance(scalars[idx], list):
-                        raise RuntimeError(f"[{s_name}] is a list/tuple configured in attributes. "
-                                           f"But got a scalar rather than ScalarList [{scalars[idx]}]. "
-                                           f"Check scalar_dtypes nesting.")
+                        raise RuntimeError(
+                            f"[{s_name}] is a list/tuple configured in attributes. "
+                            f"But got a scalar rather than ScalarList [{scalars[idx]}]. "
+                            f"Check scalar_dtypes nesting."
+                        )
                     if len(val) != len(scalars[idx]):
-                        raise RuntimeError(f"Value count of [{s_name}] mismatch: "
-                                           f"expected [{len(scalars[idx])}].")
+                        raise RuntimeError(f"Value count of [{s_name}] mismatch: expected [{len(scalars[idx])}].")
                     for j in range(len(scalars[idx])):
                         scalars[idx][j] = numpy.array(val[j], dtype=scalars[idx][j].dtype)
                 else:

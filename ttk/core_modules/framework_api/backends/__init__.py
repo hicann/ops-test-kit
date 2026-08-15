@@ -13,12 +13,7 @@ import importlib
 import logging
 from typing import Optional
 
-import torch
-
 from .base import Backend
-from .npu_backend import NpuTorchBackend
-from .xpu_backend import XpuTorchBackend
-from .cpu_backend import CpuTorchBackend
 from ....config.loader import get_hardware_config
 
 _log = logging.getLogger(__name__)
@@ -50,9 +45,7 @@ def _validate_profile(name: str, profile: dict) -> None:
         raise ValueError(f"profile '{name}' missing torch_lib")
     prof = profile.get("profiler")
     if prof != "builtin" and not (isinstance(prof, dict) and "activities" in prof):
-        raise ValueError(
-            f"profile '{name}' profiler must be 'builtin' or dict with activities"
-        )
+        raise ValueError(f"profile '{name}' profiler must be 'builtin' or dict with activities")
 
 
 def _build(framework: str, name: str, profile: dict) -> Backend:
@@ -69,10 +62,16 @@ def _build(framework: str, name: str, profile: dict) -> Backend:
     _validate_profile(name, profile)
     torch_lib = profile["torch_lib"]
     if torch_lib == "npu":
+        from .npu_torch_backend import NpuTorchBackend
+
         cls = NpuTorchBackend
     elif torch_lib == "cpu":
+        from .cpu_torch_backend import CpuTorchBackend
+
         cls = CpuTorchBackend
     else:  # mlu / musa / other -> generic accelerator
+        from .xpu_torch_backend import XpuTorchBackend
+
         cls = XpuTorchBackend
     b = cls()
     b.torch_lib = torch_lib
@@ -98,6 +97,8 @@ def _probe(profile: dict) -> bool:
         _log.warning("hardware probe skipped: profile missing torch_lib (%s)", profile)
         return False
     try:
+        import torch
+
         if lib != "cuda":
             importlib.import_module(f"torch_{lib}")
         mod = getattr(torch, lib, None)
@@ -105,34 +106,56 @@ def _probe(profile: dict) -> bool:
     except Exception as e:
         _log.warning(
             "hardware probe failed for torch_lib=%s: %s",
-            lib, e,
+            lib,
+            e,
         )
         return False
 
 
-def get_backend(force_cpu: bool = False) -> Backend:
+def get_backend(force_cpu: bool = False, framework: str = "torch") -> Backend:
     """Resolve a hardware Backend.
 
     Resolution order (first match wins):
 
-    - ``force_cpu`` -> CpuTorchBackend.
-    - else auto-detect: iterate ``_hw_profiles("torch")`` in declared order,
-      skip profiles whose ``torch_lib`` is 'cpu' (CPU is the fallback below),
-      ``_probe`` each; first hit is ``_build``.
-    - nothing detected -> CpuTorchBackend fallback.
+    - ``force_cpu`` -> CpuTorchBackend (torch) or CpuTfBackend (tf).
+    - else auto-detect: torch reads config profiles; tf checks npu_device.
+    - nothing detected -> CPU backend fallback.
 
     Instances are not cached: each call builds fresh.
     """
     if force_cpu:
+        if framework == "tf":
+            from .cpu_tf_backend import CpuTfBackend
+
+            return CpuTfBackend()
+        from .cpu_torch_backend import CpuTorchBackend
+
         return CpuTorchBackend()
+
+    if framework == "tf":
+        try:
+            import importlib.util
+
+            has_npu_device = importlib.util.find_spec("npu_device") is not None
+        except Exception:
+            has_npu_device = False
+        if has_npu_device:
+            _log.info("Active hardware: npu (tf via npu_device)")
+            from .npu_tf_backend import NpuTfBackend
+
+            return NpuTfBackend()
+        _log.warning("npu_device not installed, falling back to CPU. TF NPU testing requires 'pip install npu_device'.")
+        from .cpu_tf_backend import CpuTfBackend
+
+        return CpuTfBackend()
 
     for name, profile in _hw_profiles("torch").items():
         # Skip CPU profiles during auto-detect (CPU is the fallback below).
         if profile.get("torch_lib") == "cpu":
             continue
         if _probe(profile):
-            _log.info(
-                "Active hardware: %s (torch_lib=%s)", name, profile["torch_lib"]
-            )
+            _log.info("Active hardware: %s (torch_lib=%s)", name, profile["torch_lib"])
             return _build("torch", name, profile)
+    from .cpu_torch_backend import CpuTorchBackend
+
     return CpuTorchBackend()

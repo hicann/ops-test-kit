@@ -15,6 +15,7 @@ Input data generation for framework_api tests.
 Generates numpy arrays from testcase metadata, applies custom plugin overrides,
 and converts to framework tensors (torch).
 """
+
 import numpy as np
 
 from ttk.core_modules.plugin_loader import get_plugin_function
@@ -41,47 +42,43 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
     if stored_inputs is not None:
         testcase.np_storages = list(stored_inputs)
         raw_inputs = build_views_from_storages(testcase)
-        _set_runtime_tensors(testcase, raw_inputs)
+        _set_runtime_tensors(testcase, raw_inputs, backend)
         return raw_inputs
 
     raw_inputs = default_generate_inputs(testcase, switches)
     override_tensors_from_attributes(testcase, raw_inputs)
 
     plugin_path = switches.plugin_path
-    input_func = get_plugin_function(
-        testcase.api_name, "input", "e2e", plugin_path
-    )
+    input_func = get_plugin_function(testcase.api_name, "input", "e2e", plugin_path)
     if input_func is not None:
-        use_torch = testcase.is_torch_dtype_support()
+        plugin_inputs = backend.inputs_from_numpy(testcase, raw_inputs)
+        use_numpy = backend.needs_numpy_fallback(testcase)
         dist = testcase.tensor_list_dist
-        if use_torch:
-            plugin_inputs = np_to_torch_inputs(testcase, raw_inputs)
-        else:
-            plugin_inputs = raw_inputs
         if dist:
             nested_for_plugin = apply_as_list(plugin_inputs, dist)
         else:
             nested_for_plugin = plugin_inputs
         args, kwargs, extra_attrs = plan.build_args(nested_for_plugin)
         extra = {
-            'backend': backend.alias(),
-            'tensor_formats': testcase.tensor_formats,
-            'tensor_dtypes': testcase.tensor_dtypes,
-            'use_torch': use_torch,
-            'short_soc_version': switches.short_soc_version,
-            'testcase_name': testcase.testcase_name,
-            'input_ranges': testcase.input_data_ranges,
+            "backend": backend.device_type(),
+            "tensor_formats": testcase.tensor_formats,
+            "tensor_dtypes": testcase.tensor_dtypes,
+            "use_numpy": use_numpy,
+            "short_soc_version": switches.short_soc_version,
+            "testcase_name": testcase.testcase_name,
+            "input_ranges": testcase.input_data_ranges,
         }
         extra.update(extra_attrs)
 
-        if hasattr(testcase, 'batch_axis') and testcase.batch_axis is not None:
-            extra['batch_axis'] = testcase.batch_axis
-        if hasattr(testcase, 'batch_slice_info') and testcase.batch_slice_info is not None:
-            extra['batch_slice_info'] = testcase.batch_slice_info
-        if hasattr(testcase, 'batch_seed') and testcase.batch_seed is not None:
-            extra['batch_seed'] = testcase.batch_seed
+        if hasattr(testcase, "batch_axis") and testcase.batch_axis is not None:
+            extra["batch_axis"] = testcase.batch_axis
+        if hasattr(testcase, "batch_slice_info") and testcase.batch_slice_info is not None:
+            extra["batch_slice_info"] = testcase.batch_slice_info
+        if hasattr(testcase, "batch_seed") and testcase.batch_seed is not None:
+            extra["batch_seed"] = testcase.batch_seed
 
         import inspect
+
         sig = inspect.signature(input_func)
         if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
             kwargs.update(extra)
@@ -89,17 +86,13 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
             kwargs.update({k: v for k, v in extra.items() if k in sig.parameters})
         input_func(*args, **kwargs)
 
-    _set_runtime_tensors(testcase, raw_inputs)
+    _set_runtime_tensors(testcase, raw_inputs, backend)
     return raw_inputs
 
 
-def _set_runtime_tensors(testcase, raw_inputs):
+def _set_runtime_tensors(testcase, raw_inputs, backend):
     """Rebuild framework tensors and TensorList nesting from backing storages."""
-    use_torch = testcase.is_torch_dtype_support()
-    if use_torch:
-        flat_tensors = np_to_torch_inputs(testcase, raw_inputs)
-    else:
-        flat_tensors = list(raw_inputs)
+    flat_tensors = backend.inputs_from_numpy(testcase, raw_inputs)
     dist = testcase.tensor_list_dist
     if dist:
         testcase.tensors = apply_as_list(flat_tensors, dist)
@@ -116,10 +109,10 @@ def np_to_torch_inputs(testcase, raw_inputs):
     """
     import torch
     from ttk.utilities.dtypes import numpy_to_torch_tensor
-    np_storages = getattr(testcase, 'np_storages', None)
+
+    np_storages = getattr(testcase, "np_storages", None)
     if np_storages is None:
-        return [torch.from_numpy(np.ascontiguousarray(arr)) if arr is not None else None
-                for arr in raw_inputs]
+        return [torch.from_numpy(np.ascontiguousarray(arr)) if arr is not None else None for arr in raw_inputs]
     flat_shapes = testcase.flat_tensor_view_shapes
     flat_dtypes = testcase.flat_tensor_dtypes
     result = []
@@ -137,6 +130,31 @@ def np_to_torch_inputs(testcase, raw_inputs):
             result.append(t)
         else:
             result.append(torch.as_strided(t, v_shape, v_stride, v_offset))
+    return result
+
+
+def np_to_tf_inputs(testcase, raw_inputs):
+    """Convert numpy arrays to tf.Tensor.
+
+    TF tensors are immutable, so non-contiguous views cannot use as_strided.
+    Instead, we generate contiguous tensors from the raw numpy views.
+    Tensors sourced from attributes use tf.constant for graph-mode const folding.
+    """
+    import tensorflow as tf
+    from ttk.utilities.dtypes import normalize_to_tf_dtype
+
+    const_indexes = getattr(testcase, "const_input_indexes", None) or set()
+    result = []
+    for idx, arr in enumerate(raw_inputs):
+        if arr is None:
+            result.append(None)
+            continue
+        contiguous = np.ascontiguousarray(arr)
+        contiguous = normalize_to_tf_dtype(contiguous)
+        if idx in const_indexes:
+            result.append(tf.constant(contiguous))
+        else:
+            result.append(tf.convert_to_tensor(contiguous))
     return result
 
 
@@ -161,6 +179,9 @@ def override_tensors_from_attributes(testcase, raw_inputs):
     For TensorList, two modes:
       1. Scalar broadcast: val is a single number or [scalar] -> all sub-tensors get same value
       2. Per-tensor: val is a list, len must match sub-tensor count -> applied one-by-one
+
+    Records tensor indexes sourced from attributes in testcase.const_input_indexes
+    so backends can create const tensors (tf.constant / torch.tensor) for them.
     """
     info = testcase.get_api_info()
     if not info or not testcase.attributes:
@@ -179,12 +200,14 @@ def override_tensors_from_attributes(testcase, raw_inputs):
         if param.name not in testcase.attributes:
             continue
         val = testcase.attributes[param.name]
-        if param.is_tensor_like and val in (None, 'None', ''):
+        if param.is_tensor_like and val in (None, "None", ""):
             raise ValueError(
                 f"[{testcase.testcase_name}] Invalid testcase: param '{param.name}' "
                 f"has a tensor in view_shapes but attributes specifies "
                 f"{repr(val)}.  Tensor params should be provided via "
-                f"view_shapes or with a concrete value in attributes, not None.")
+                f"view_shapes or with a concrete value in attributes, not None."
+            )
+        testcase.const_input_indexes.add(idx)
         if param.is_tensor_list:
             sub_tensors = nested_np[idx]
             num_sub = len(sub_tensors)
@@ -196,11 +219,11 @@ def override_tensors_from_attributes(testcase, raw_inputs):
                 if len(val) != num_sub:
                     raise ValueError(
                         f"Specify TensorList [{param.name}] for case [{testcase.testcase_name}] "
-                        f"from `attributes` length mismatch: got {len(val)}, expected {num_sub}.")
+                        f"from `attributes` length mismatch: got {len(val)}, expected {num_sub}."
+                    )
                 per_tensor_val = list(val)
             for j in range(num_sub):
-                assign_tensor_value(sub_tensors[j], per_tensor_val[j],
-                                    f"{param.name}[{j}]")
+                assign_tensor_value(sub_tensors[j], per_tensor_val[j], f"{param.name}[{j}]")
         else:
             assign_tensor_value(nested_np[idx], val, param.name)
 
@@ -228,8 +251,8 @@ def generate_np_storages(testcase, switches):
     flat_shapes = testcase.flat_tensor_view_shapes
     flat_dtypes = resolve_custom_numpy_dtypes(testcase.flat_tensor_dtypes)
     ranges = testcase.flat_input_data_ranges or ()
-    base_seed = getattr(switches, 'random_seed', None)
-    batch_seed = getattr(testcase, 'batch_seed', None)
+    base_seed = getattr(switches, "random_seed", None)
+    batch_seed = getattr(testcase, "batch_seed", None)
     for idx, view_shape in enumerate(flat_shapes):
         if view_shape is None:
             np_storages.append(None)
@@ -242,12 +265,13 @@ def generate_np_storages(testcase, switches):
         if idx not in pure_output_indexes:
             if base_seed and batch_seed is not None:
                 # batch consistency compare different case support same shape tensor has same value
-                np.random.seed(base_seed + idx)            
+                np.random.seed(base_seed + idx)
             rd = RandomData(dtype, s_shape, data_range)
             np_storages.append(rd.generate(distribution))
         else:
             from ttk.utilities.data import fixed_np_array
-            init_val = 0 if testcase.api_name in ("torch.ones",) else 1
+
+            init_val = 0 if testcase.api_name in ("torch.ones", "tf.ones") else 1
             np_storages.append(fixed_np_array(dtype, s_shape, init_value=init_val))
 
     testcase.np_storages = np_storages
@@ -275,6 +299,7 @@ def build_views_from_storages(testcase):
 def to_non_contiguous_view(storage, view_shape, view_stride, view_offset):
     """Create non-contiguous view from contiguous storage using numpy as_strided."""
     from ttk.utilities.dtypes import np_as_strided_safe
+
     dtype = storage.dtype
     byte_strides = tuple(s * dtype.itemsize for s in view_stride)
     if view_offset and view_offset > 0:

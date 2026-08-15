@@ -34,7 +34,7 @@ class CpuTorchBackend(TorchBackend):
     _segment_name = "cpu"
 
     def device_name(self, dev_id: int = 0) -> str:
-        return self.alias()  # CPU has no torch.cpu.get_device_name
+        return self.device_type()  # CPU has no torch.cpu.get_device_name
 
     def is_available(self) -> bool:
         return True
@@ -42,7 +42,9 @@ class CpuTorchBackend(TorchBackend):
     def device_count(self) -> int:
         return 1
 
-    def to_device(self, tensor, dev_id=0):
+    def to_device(self, tensor, dev_id=0, preserve_stride=False):
+        if preserve_stride:
+            return self._to_device_preserving_stride(tensor, dev_id)
         return self.from_numpy(tensor)
 
     def synchronize(self, dev_id=0):
@@ -51,8 +53,5 @@ class CpuTorchBackend(TorchBackend):
     def from_numpy(self, arr):
         return numpy_to_torch_tensor(arr)
 
-    def to_numpy(self, tensor):
-        return torch_to_numpy_tensor(tensor.detach().contiguous())
-
-    def use_device(self) -> bool:
+    def has_device(self) -> bool:
         return False

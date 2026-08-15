@@ -14,11 +14,10 @@ Performance profiling using framework-specific profilers.
 Context manager pattern: profiler only collects data within `with` block.
 Warmup and repeat logic is controlled by the caller.
 """
+
 import csv
 import logging
 import os
-import shutil
-import tempfile
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -71,14 +70,11 @@ class NpuProfiler(FrameworkProfiler):
     kernel_details.csv / operator_details.csv for device-side timing.
     """
 
-    def __init__(self, backend):
-        self._tmpdir = tempfile.mkdtemp(prefix="ttk_npu_prof_")
+    def __init__(self, backend, testcase_name="", root_path="."):
+        self._testcase_name = testcase_name or "unknown"
+        self._outdir = os.path.join(root_path, "msprof", "e2e", self._testcase_name)
+        os.makedirs(self._outdir, exist_ok=True)
         self._prof = None
-
-    def _cleanup_tmpdir(self):
-        if self._tmpdir and os.path.isdir(self._tmpdir):
-            shutil.rmtree(self._tmpdir, ignore_errors=True)
-            self._tmpdir = None
 
     def __enter__(self):
         from torch_npu.profiler import (
@@ -102,10 +98,9 @@ class NpuProfiler(FrameworkProfiler):
             record_shapes=True,
             experimental_config=experimental_config,
             schedule=schedule(wait=0, warmup=1, active=1, repeat=1),
-            on_trace_ready=tensorboard_trace_handler(self._tmpdir),
+            on_trace_ready=tensorboard_trace_handler(self._outdir),
         )
         self._prof.start()
-        # Advance past warmup phase so the active phase starts on __exit__'s step()
         self._prof.step()
         return self
 
@@ -113,9 +108,6 @@ class NpuProfiler(FrameworkProfiler):
         if self._prof:
             self._prof.step()
             self._prof.stop()
-
-    def __del__(self):
-        self._cleanup_tmpdir()
 
     def result(self, backend, repeat_count) -> ProfileResult:
         kernel_csv = self._find_csv("kernel_details.csv")
@@ -130,8 +122,6 @@ class NpuProfiler(FrameworkProfiler):
         if operator_csv:
             total_cpu_us = self._parse_operator_cpu_time(operator_csv)
 
-        self._cleanup_tmpdir()
-
         return ProfileResult(
             elapsed_us=total_device_us / max(repeat_count, 1),
             kernel_details=KernelDetails(
@@ -143,7 +133,7 @@ class NpuProfiler(FrameworkProfiler):
 
     def _find_csv(self, filename):
         """Find a CSV file in the profiler output directory tree."""
-        for root, _, files in os.walk(self._tmpdir):
+        for root, _, files in os.walk(self._outdir):
             if filename in files:
                 return os.path.join(root, filename)
         return None
@@ -171,8 +161,12 @@ class NpuProfiler(FrameworkProfiler):
                             kernels_map[name]["max_us"] = max(kernels_map[name]["max_us"], duration)
                             kernels_map[name]["min_us"] = min(kernels_map[name]["min_us"], duration)
                         else:
-                            kernels_map[name] = {"total_us": duration, "calls": 1,
-                                                  "max_us": duration, "min_us": duration}
+                            kernels_map[name] = {
+                                "total_us": duration,
+                                "calls": 1,
+                                "max_us": duration,
+                                "min_us": duration,
+                            }
         except Exception as e:
             logging.warning(f"Failed to parse {csv_path}: {e}")
 
@@ -228,9 +222,7 @@ class TorchProfiler(FrameworkProfiler):
                 activities.append(getattr(ProfilerActivity, a))
             except AttributeError:
                 valid = [n for n in dir(ProfilerActivity) if not n.startswith("_")]
-                raise ValueError(
-                    f"unknown ProfilerActivity '{a}'; valid: {valid}"
-                ) from None
+                raise ValueError(f"unknown ProfilerActivity '{a}'; valid: {valid}") from None
         self._prof = profile(activities=activities, record_shapes=True)
         # Non-CPU activity names (e.g. ["MLU"]); empty for CPU-only profiles.
         self._device_acts = [a for a in cfg["activities"] if a != "CPU"]
@@ -286,12 +278,14 @@ class TorchProfiler(FrameworkProfiler):
             for evt in events:
                 device_us = self._device_time(evt)
                 if device_us > 0:
-                    device_kernels.append(KernelInfo(
-                        name=evt.key,
-                        device_us=device_us,
-                        calls=evt.count,
-                        avg_us=device_us / max(evt.count, 1),
-                    ))
+                    device_kernels.append(
+                        KernelInfo(
+                            name=evt.key,
+                            device_us=device_us,
+                            calls=evt.count,
+                            avg_us=device_us / max(evt.count, 1),
+                        )
+                    )
                     total_device_us += device_us
             return ProfileResult(
                 elapsed_us=total_device_us / max(repeat_count, 1),
@@ -334,22 +328,145 @@ class WallClockProfiler(FrameworkProfiler):
         )
 
 
-def get_profiler(api_name: str, backend) -> FrameworkProfiler:
+_KERNEL_TASK_TYPES = frozenset({"KERNEL_AIVEC", "KERNEL_AICORE"})
+
+
+class TfNpuProfiler(FrameworkProfiler):
+    """Profiler for TF NPU using torch_npu.profiler.
+
+    torch_npu.profiler wraps the CANN profiling subsystem and works for TF ops
+    dispatched to NPU via npu_device, but only graph mode (tf.function) produces
+    per-kernel task_time rows.  Eager mode falls back to wall-clock timing.
+
+    Unlike NpuProfiler (which parses kernel_details.csv from the torch dispatch
+    layer), TF ops do not go through torch's dispatcher so kernel_details.csv is
+    not produced.  Instead we parse task_time.csv which contains the raw CANN
+    task-level records (kernel_name, kernel_type, task_time(us)).
+    """
+
+    def __init__(self, backend, testcase_name="", root_path="."):
+        self._testcase_name = testcase_name or "unknown"
+        self._outdir = os.path.join(root_path, "msprof", "e2e", self._testcase_name)
+        os.makedirs(self._outdir, exist_ok=True)
+        self._prof = None
+        self._wall = WallClockProfiler(backend)
+
+    def __enter__(self):
+        from torch_npu.profiler import (
+            ProfilerActivity,
+            schedule,
+            tensorboard_trace_handler,
+            profile,
+        )
+
+        self._prof = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.NPU],
+            record_shapes=True,
+            schedule=schedule(wait=0, warmup=1, active=1, repeat=1),
+            on_trace_ready=tensorboard_trace_handler(self._outdir),
+        )
+        self._prof.start()
+        self._prof.step()
+        self._wall.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        self._wall.__exit__(*exc)
+        if self._prof:
+            self._prof.step()
+            self._prof.stop()
+
+    def result(self, backend, repeat_count) -> ProfileResult:
+        task_csv = self._find_csv("task_time.csv")
+        kernels = []
+        total_device_us = 0.0
+        if task_csv:
+            kernels, total_device_us = self._parse_task_time(task_csv)
+
+        if total_device_us > 0:
+            return ProfileResult(
+                elapsed_us=total_device_us / max(repeat_count, 1),
+                kernel_details=KernelDetails(
+                    kernels=kernels,
+                    total_device_us=total_device_us,
+                    total_cpu_us=0.0,
+                ),
+            )
+        return self._wall.result(backend, repeat_count)
+
+    def _find_csv(self, filename):
+        for root, _, files in os.walk(self._outdir):
+            if filename in files:
+                return os.path.join(root, filename)
+        return None
+
+    @staticmethod
+    def _parse_task_time(csv_path):
+        """Parse task_time.csv for per-kernel device timing.
+
+        Only rows with kernel_type in _KERNEL_TASK_TYPES (KERNEL_AIVEC /
+        KERNEL_AICORE) represent actual NPU kernel execution; other rows
+        (MODEL_EXECUTE, NOTIFY_*, PROFILER_TRACE_EX, PLACE_HOLDER_SQE) are
+        overhead and are excluded.
+        """
+        kernels_map = {}
+        total_device_us = 0.0
+        try:
+            with open(csv_path, newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    ktype = (row.get("kernel_type") or "").strip()
+                    if ktype not in _KERNEL_TASK_TYPES:
+                        continue
+                    name = (row.get("kernel_name") or "").strip()
+                    try:
+                        dur = float(row.get("task_time(us)", 0))
+                    except (ValueError, TypeError):
+                        continue
+                    if name and dur > 0:
+                        total_device_us += dur
+                        if name in kernels_map:
+                            kernels_map[name]["total_us"] += dur
+                            kernels_map[name]["calls"] += 1
+                            kernels_map[name]["max_us"] = max(kernels_map[name]["max_us"], dur)
+                            kernels_map[name]["min_us"] = min(kernels_map[name]["min_us"], dur)
+                        else:
+                            kernels_map[name] = {"total_us": dur, "calls": 1, "max_us": dur, "min_us": dur}
+        except Exception as e:
+            logging.warning(f"Failed to parse {csv_path}: {e}")
+
+        kernels = [
+            KernelInfo(
+                name=name,
+                device_us=info["total_us"],
+                calls=info["calls"],
+                avg_us=info["total_us"] / info["calls"],
+                max_us=info["max_us"],
+                min_us=info["min_us"],
+            )
+            for name, info in kernels_map.items()
+        ]
+        return kernels, total_device_us
+
+
+def get_profiler(api_name: str, backend, testcase_name: str = "", root_path: str = ".") -> FrameworkProfiler:
     """Select profiler based on api_name prefix and backend.
 
     Hardware-neutral: routes on is_npu() + profile['profiler'] rather
     than device_name() string compares.
     """
+    if api_name.startswith(("tf.", "tensorflow.")):
+        if backend.is_npu():
+            return TfNpuProfiler(backend, testcase_name, root_path)
+        return WallClockProfiler(backend)
     if api_name.startswith("torch_npu."):
         if not backend.is_npu():
-            raise RuntimeError(
-                f"API '{api_name}' requires NPU backend, "
-                f"but current is '{backend.alias()}'"
-            )
-        return NpuProfiler(backend)
+            raise RuntimeError(f"API '{api_name}' requires NPU backend, but current is '{backend.device_type()}'")
+        return NpuProfiler(backend, testcase_name, root_path)
     if api_name.startswith("torch."):
         # NPU with builtin profiler -> NpuProfiler; otherwise TorchProfiler.
         if backend.is_npu() and backend.profile.get("profiler") == "builtin":
-            return NpuProfiler(backend)
+            return NpuProfiler(backend, testcase_name, root_path)
         return TorchProfiler(backend)
+
     return WallClockProfiler(backend)

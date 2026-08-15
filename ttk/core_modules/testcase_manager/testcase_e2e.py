@@ -9,6 +9,7 @@
 """
 Testcase structure for framework_api tests.
 """
+
 import logging
 
 from ttk.core_modules.testcase_manager.testcase_tensor_api_base import TensorApiTestcaseBase
@@ -123,6 +124,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
             from ttk.core_modules.framework_api.framework_api_info_keeper import (
                 FrameworkApiInfoKeeper,
             )
+
             self._api_info_cache = FrameworkApiInfoKeeper().get(self.api_name)
         except Exception:
             self._api_info_cache = None
@@ -146,17 +148,20 @@ class TestcaseE2e(TensorApiTestcaseBase):
             if self._is_inplace_tensor_method(self.api_name):
                 input_count = top_count
             else:
-                input_count = sum(1 for i in range(top_count)
-                                  if self.tensor_view_shapes[i] is not None and i not in out_indices)
+                input_count = sum(
+                    1 for i in range(top_count) if self.tensor_view_shapes[i] is not None and i not in out_indices
+                )
 
             dist = self.tensor_list_dist
             tensor_distribution = [d > 0 for d in dist] if dist else None
 
             params, oidx = match_overload(
-                self.api_name, input_count,
+                self.api_name,
+                input_count,
                 attributes=self.attributes,
                 tensor_distribution=tensor_distribution,
-                api_info=info)
+                api_info=info,
+            )
             if params is None:
                 return None
 
@@ -165,7 +170,8 @@ class TestcaseE2e(TensorApiTestcaseBase):
                 overload_params=params,
                 overload_index=oidx,
                 output_tensor_indexes=self.output_tensor_indexes,
-                attributes=self.attributes)
+                attributes=self.attributes,
+            )
             self._param_plan_cache = plan
             return plan
         except Exception:
@@ -342,8 +348,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
             self.fail_reason = "tensor_view_shapes is empty"
             return None
         required_min = min(
-            sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like] if not p.is_optional)
-            for ov in info.overloads
+            sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like] if not p.is_optional) for ov in info.overloads
         )
         if required_min == 0:
             return info
@@ -353,11 +358,9 @@ class TestcaseE2e(TensorApiTestcaseBase):
 
     @staticmethod
     def _is_inplace_tensor_method(api_name):
-        if not api_name:
-            return False
-        parts = api_name.split('.')
-        return (len(parts) >= 3 and parts[0] == 'torch' and parts[1] == 'Tensor'
-                and parts[-1].endswith('_'))
+        from ttk.core_modules.framework_api.framework_detector import is_inplace_tensor_method
+
+        return is_inplace_tensor_method(api_name)
 
     def _auto_fill_inplace_tensor_method(self):
         if not self._is_inplace_tensor_method(self.api_name):
@@ -367,24 +370,24 @@ class TestcaseE2e(TensorApiTestcaseBase):
 
     def _generate_batch_consistency_id(self):
         """根据 batch_seed batch和 batch_slice_info 的切片长度生成 batch_consistency_id。
-        
+
         相同 batch_seed 且切片长度相同的用例，生成相同 id,
         标识这些用例的输出切片可以做 batch 一致性比较。
         """
         if self.batch_seed is None:
             self.batch_consistency_id = None
             return
-        
+
         if self.batch_axis is None or self.batch_slice_info is None:
             self.batch_consistency_id = None
             return
-        
+
         slice_key = []
-        for axis_pos, slices, seed in zip(self.batch_axis ,self.batch_slice_info, self.batch_seed):
+        for axis_pos, slices, seed in zip(self.batch_axis, self.batch_slice_info, self.batch_seed):
             if axis_pos is None or slices is None or seed is None:
                 continue
             slice_axes = []
-            for axis_idx , slices_idx, seed_idx in zip(axis_pos, slices, seed):
+            for axis_idx, slices_idx, seed_idx in zip(axis_pos, slices, seed):
                 if axis_idx is None or slices_idx is None or seed_idx is None:
                     slice_id = "None"
                     slice_axes.append(slice_id)
@@ -399,15 +402,16 @@ class TestcaseE2e(TensorApiTestcaseBase):
                     if step <= 0 or start < 0 or stop < 0:
                         length = 0
                     else:
-                        length = stop -start if stop > start else 0
+                        length = stop - start if stop > start else 0
                     slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
                     if length == 0:
-                        logging.warning(f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid")
+                        logging.warning(
+                            f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid"
+                        )
                     slice_lens.append(slice_id)
                 slice_axes.append(tuple(slice_lens))
             slice_key.append(tuple(slice_axes))
         self.batch_consistency_id = tuple(slice_key)
- 	 
 
     def _check_tensor_configuration(self):
         """Validate tensor parameters match API definition in count and type."""
@@ -438,14 +442,12 @@ class TestcaseE2e(TensorApiTestcaseBase):
         # If any overload has a VAR_POSITIONAL tensor param, it can accept
         # any number of tensors — skip the count check entirely.
         has_var_pos = any(
-            any(getattr(p, 'is_var_positional', False)
-                for p in ov.params if p.is_tensor_like and p.name != 'out')
-            for ov in info.overloads)
+            any(getattr(p, "is_var_positional", False) for p in ov.params if p.is_tensor_like and p.name != "out")
+            for ov in info.overloads
+        )
         if has_var_pos:
             return False
-        max_input = max(
-            sum(1 for p in ov.params if p.is_tensor_like and p.name != 'out')
-            for ov in info.overloads)
+        max_input = max(sum(1 for p in ov.params if p.is_tensor_like and p.name != "out") for ov in info.overloads)
         if input_count > max_input:
             self.is_valid = False
             self.fail_reason = "INPUT_COUNT_EXCEEDED"
@@ -453,16 +455,17 @@ class TestcaseE2e(TensorApiTestcaseBase):
                 f"[{self.testcase_name}] API [{self.api_name}] has at most {max_input} input tensor "
                 f"parameters (excluding out), but testcase configured {input_count} "
                 f"input tensor(s) (excluding {len(out_indices)} output tensor(s)). "
-                f"(source: {info.source})")
+                f"(source: {info.source})"
+            )
             return True
         return False
 
     def _is_factory_api(self, info):
         """Return True if API requires no input tensors (factory function like torch.zeros)."""
         required_min = min(
-            sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like and pp.name != 'out']
-                if not p.is_optional)
-            for ov in info.overloads)
+            sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like and pp.name != "out"] if not p.is_optional)
+            for ov in info.overloads
+        )
         return required_min == 0
 
     def _check_all_tensors_output(self, info):
@@ -476,16 +479,17 @@ class TestcaseE2e(TensorApiTestcaseBase):
         if input_count > 0:
             return False
         required_min = min(
-            sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like and pp.name != 'out']
-                if not p.is_optional)
-            for ov in info.overloads)
+            sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like and pp.name != "out"] if not p.is_optional)
+            for ov in info.overloads
+        )
         self.is_valid = False
         self.fail_reason = "ALL_TENSORS_MARKED_OUTPUT"
         logging.error(
             f"[{self.testcase_name}] API [{self.api_name}] requires at least {required_min} input tensor "
             f"parameters (excluding out), but all {top_count} tensor(s) are "
             f"marked as output (output_tensor_indexes={sorted(out_indices)}). "
-            f"(source: {info.source})")
+            f"(source: {info.source})"
+        )
         return True
 
     @staticmethod
@@ -498,8 +502,9 @@ class TestcaseE2e(TensorApiTestcaseBase):
                 nested_flags.append(False)
                 has_none.append(True)
             else:
-                is_nested = (isinstance(element, (tuple, list)) and len(element) > 0
-                             and isinstance(element[0], (tuple, list)))
+                is_nested = (
+                    isinstance(element, (tuple, list)) and len(element) > 0 and isinstance(element[0], (tuple, list))
+                )
                 nested_flags.append(is_nested)
                 has_none.append(False)
         return nested_flags, has_none
@@ -513,7 +518,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
         for ov in info.overloads:
             ov_count = 0
             for p in ov.layout.input_params:
-                if p.name in attr_keys and p.name != 'self':
+                if p.name in attr_keys and p.name != "self":
                     ov_count += 1
             count = max(count, ov_count)
         return count
@@ -524,8 +529,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
         if self._is_inplace_tensor_method(self.api_name):
             input_shapes = list(self.tensor_view_shapes)
         else:
-            input_shapes = [s for i, s in enumerate(self.tensor_view_shapes)
-                            if i not in out_indices]
+            input_shapes = [s for i, s in enumerate(self.tensor_view_shapes) if i not in out_indices]
         input_count = len(input_shapes)
         nested_flags, has_none = self._classify_input_types(input_shapes)
 
@@ -543,9 +547,9 @@ class TestcaseE2e(TensorApiTestcaseBase):
                 return
 
         required_min = min(
-            sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like and pp.name != 'out']
-                if not p.is_optional)
-            for ov in info.overloads)
+            sum(1 for p in [pp for pp in ov.params if pp.is_tensor_like and pp.name != "out"] if not p.is_optional)
+            for ov in info.overloads
+        )
         required_min -= scalar_attr_count
         count_matched = info.match_overload(input_count, None, None)
         if count_matched[0]:
@@ -555,7 +559,8 @@ class TestcaseE2e(TensorApiTestcaseBase):
                 f"API [{self.api_name}] input tensor count matches an overload, "
                 f"but type (Tensor/TensorList) does not. "
                 f"nested={nested_flags}. "
-                f"(source: {info.source})")
+                f"(source: {info.source})"
+            )
         elif input_count > info.tensor_count:
             self.is_valid = False
             self.fail_reason = "TENSOR_COUNT_MISMATCH"
@@ -563,14 +568,16 @@ class TestcaseE2e(TensorApiTestcaseBase):
                 f"API [{self.api_name}] has at most {info.tensor_count} tensor parameters "
                 f"in any overload, but testcase configured {input_count} input tensors "
                 f"(excluding {len(out_indices)} output tensors). "
-                f"(source: {info.source})")
+                f"(source: {info.source})"
+            )
         else:
             self.is_valid = False
             self.fail_reason = "TENSOR_COUNT_MISMATCH"
             logging.error(
                 f"API [{self.api_name}] requires at least {required_min} input tensor "
                 f"parameters (excluding out), but testcase configured {input_count}. "
-                f"(source: {info.source})")
+                f"(source: {info.source})"
+            )
 
     def _check_required_attrs(self, info, oidx):
         """Fail if matched overload has required non-tensor params missing from attributes.
@@ -581,10 +588,11 @@ class TestcaseE2e(TensorApiTestcaseBase):
         ov = info.overloads[oidx]
         attrs = set(self.attributes.keys()) if self.attributes else set()
         missing = [
-            p.name for p in ov.params
+            p.name
+            for p in ov.params
             if not p.is_tensor_like
             and not p.is_keyword_only
-            and p.name != 'out'
+            and p.name != "out"
             and not p.is_optional
             and p.name not in attrs
         ]
@@ -593,23 +601,26 @@ class TestcaseE2e(TensorApiTestcaseBase):
 
         out_indices = set(self.output_tensor_indexes or ())
         top_count = len(self.tensor_view_shapes or ())
-        input_count = (top_count
-                       if self._is_inplace_tensor_method(self.api_name)
-                       else sum(1 for i in range(top_count) if i not in out_indices))
+        input_count = (
+            top_count
+            if self._is_inplace_tensor_method(self.api_name)
+            else sum(1 for i in range(top_count) if i not in out_indices)
+        )
 
         for alt_oidx, alt_ov in enumerate(info.overloads):
             if alt_oidx == oidx:
                 continue
-            alt_tensors = [p for p in alt_ov.params if p.is_tensor_like and p.name != 'out']
+            alt_tensors = [p for p in alt_ov.params if p.is_tensor_like and p.name != "out"]
             alt_req = sum(1 for p in alt_tensors if not p.is_optional)
             alt_total = len(alt_tensors)
             if not (alt_req <= input_count <= alt_total):
                 continue
             alt_missing = [
-                p.name for p in alt_ov.params
+                p.name
+                for p in alt_ov.params
                 if not p.is_tensor_like
                 and not p.is_keyword_only
-                and p.name != 'out'
+                and p.name != "out"
                 and not p.is_optional
                 and p.name not in attrs
             ]
@@ -621,7 +632,8 @@ class TestcaseE2e(TensorApiTestcaseBase):
         logging.error(
             f"[{self.testcase_name}] API [{self.api_name}] overload[{oidx}] requires "
             f"non-tensor attribute(s) {missing} but attributes only have "
-            f"{sorted(attrs)}. (source: {info.source})")
+            f"{sorted(attrs)}. (source: {info.source})"
+        )
 
     def _check_output_configuration(self):
         """Validate output_tensor_indexes against API's out parameter definition.
@@ -636,24 +648,22 @@ class TestcaseE2e(TensorApiTestcaseBase):
         info = self.get_api_info()
         if not self.output_tensor_indexes:
             if info is not None:
-                any_out_required = any(
-                    ov.layout.is_out_required for ov in info.overloads)
+                any_out_required = any(ov.layout.is_out_required for ov in info.overloads)
                 if any_out_required:
                     self.is_valid = False
                     self.fail_reason = "MISSING_REQUIRED_OUTPUT"
                     logging.error(
                         f"[{self.testcase_name}] API [{self.api_name}] has overloads "
                         f"with required 'out' parameter, but testcase provides no "
-                        f"output_tensor_indexes. (source: {info.source})")
+                        f"output_tensor_indexes. (source: {info.source})"
+                    )
             return
         top_count = len(self.tensor_view_shapes)
         out_of_range = [i for i in self.output_tensor_indexes if i < 0 or i >= top_count]
         if out_of_range:
             self.is_valid = False
             self.fail_reason = "OUTPUT_INDEX_INVALID"
-            logging.error(
-                f"output_tensor_indexes {out_of_range} out of range [0, {top_count})"
-            )
+            logging.error(f"output_tensor_indexes {out_of_range} out of range [0, {top_count})")
             return
         if info is None:
             return
@@ -683,26 +693,25 @@ class TestcaseE2e(TensorApiTestcaseBase):
                     continue
                 matching_overloads.append(oidx)
         if not matching_overloads:
-            any_out_required = any(
-                ov.layout.is_out_required for ov in info.overloads)
-            any_tensor_list_out = any(
-                ov.layout.is_out_tensor_list for ov in info.overloads)
+            any_out_required = any(ov.layout.is_out_required for ov in info.overloads)
+            any_tensor_list_out = any(ov.layout.is_out_tensor_list for ov in info.overloads)
             if any_out_required and any_tensor_list_out:
-                expected = set(ov.layout.out_expected_count
-                               for ov in info.overloads if ov.layout.is_out_required)
+                expected = set(ov.layout.out_expected_count for ov in info.overloads if ov.layout.is_out_required)
                 self.is_valid = False
                 self.fail_reason = "OUTPUT_COUNT_MISMATCH"
                 logging.error(
                     f"[{self.testcase_name}] API [{self.api_name}] requires exactly "
                     f"{expected} output tensor(s) for Tensor[] 'out', but testcase "
-                    f"provides {out_count}. (source: {info.source})")
+                    f"provides {out_count}. (source: {info.source})"
+                )
             elif any_out_required:
                 self.is_valid = False
                 self.fail_reason = "OUTPUT_COUNT_MISMATCH"
                 logging.error(
                     f"[{self.testcase_name}] API [{self.api_name}] requires exactly "
                     f"1 output tensor, but testcase provides {out_count}. "
-                    f"(source: {info.source})")
+                    f"(source: {info.source})"
+                )
 
     def _check_top_level_counts(self):
         """Validate that all fields have matching top-level count after normalization."""
@@ -714,18 +723,21 @@ class TestcaseE2e(TensorApiTestcaseBase):
             self.fail_reason = "DTYPES_COUNT_MISMATCH"
             logging.error(
                 f"[{self.testcase_name}] tensor_dtypes top-level count ({len(self.tensor_dtypes)}) "
-                f"!= tensor_view_shapes count ({top_count})")
+                f"!= tensor_view_shapes count ({top_count})"
+            )
             return
         if self.tensor_formats and len(self.tensor_formats) != top_count:
             self.is_valid = False
             self.fail_reason = "FORMATS_COUNT_MISMATCH"
             logging.error(
                 f"[{self.testcase_name}] tensor_formats top-level count ({len(self.tensor_formats)}) "
-                f"!= tensor_view_shapes count ({top_count})")
+                f"!= tensor_view_shapes count ({top_count})"
+            )
             return
         if self.tensor_storage_shapes and len(self.tensor_storage_shapes) != top_count:
             self.is_valid = False
             self.fail_reason = "STORAGE_SHAPES_COUNT_MISMATCH"
             logging.error(
                 f"[{self.testcase_name}] tensor_storage_shapes top-level count ({len(self.tensor_storage_shapes)}) "
-                f"!= tensor_view_shapes count ({top_count})")
+                f"!= tensor_view_shapes count ({top_count})"
+            )

@@ -11,7 +11,7 @@ in order, _probe each non-cpu profile, build first hit; cpu fallback.
 import importlib
 
 from ttk.core_modules.framework_api.backends import get_backend, _probe
-from ttk.core_modules.framework_api.backends.cpu_backend import CpuTorchBackend
+from ttk.core_modules.framework_api.backends.cpu_torch_backend import CpuTorchBackend
 
 
 def test_probe_cuda_skips_import(monkeypatch):
@@ -53,7 +53,5 @@ def test_probe_catches_runtime_error(monkeypatch):
 
 def test_auto_detect_falls_back_to_cpu(monkeypatch):
     """All miss -> cpu fallback."""
-    monkeypatch.setattr(
-        "ttk.core_modules.framework_api.backends._hw_profiles", lambda fw: {}
-    )
+    monkeypatch.setattr("ttk.core_modules.framework_api.backends._hw_profiles", lambda fw: {})
     assert isinstance(get_backend(force_cpu=False), CpuTorchBackend)

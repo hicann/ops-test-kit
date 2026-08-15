@@ -12,6 +12,7 @@
 """
 FrameworkApiInstance — InstanceBase implementation for framework_api tests.
 """
+
 import logging
 import os
 
@@ -30,10 +31,11 @@ class FrameworkApiInstance(InstanceBase):
         switches = get_global_storage()
         if switches.backend == "npusim":
             self._inject_camodel_env(switches)
-        self.backend = get_backend(switches.force_cpu)
-        if not self.backend.use_device():
+        framework = getattr(switches, "framework", "torch")
+        self.backend = get_backend(switches.force_cpu, framework=framework)
+        if not self.backend.has_device():
             switches.proc_no_reuse = True
-        logging.info(f"Framework API mode: backend={self.backend.alias()}")
+        logging.info(f"Framework API mode: backend={self.backend.device_type()}, framework={framework}")
 
     @staticmethod
     def _inject_camodel_env(switches):
@@ -79,9 +81,7 @@ class FrameworkApiInstance(InstanceBase):
         logging.info(f"Device platform: {switches.dev_plat}")
 
     def setup_profile_object(self):
-        self.profile_object = FrameworkApiProfileObject(
-            self.task_keeper, self.mp_context, self.backend
-        )
+        self.profile_object = FrameworkApiProfileObject(self.task_keeper, self.mp_context, self.backend)
 
     def device_info(self, dev_id: int) -> str:
-        return f"{self.backend.alias()}:{dev_id}"
+        return f"{self.backend.device_type()}:{dev_id}"

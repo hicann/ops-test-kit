@@ -96,7 +96,7 @@ class GoldenGenerator:
             "tensor_dtypes": self._ctx.tensor_dtypes,
             "tensor_formats": self._ctx.tensor_formats,
             "scalar_dtypes": self._ctx.scalar_dtypes,
-            "use_torch": self._ctx.is_torch_dtype_support(),
+            "use_numpy": not self._ctx.is_torch_dtype_support(),
         }
         if hasattr(self._ctx, "batch_axis") and self._ctx.batch_axis is not None:
             kwargs["batch_axis"] = self._ctx.batch_axis
@@ -119,8 +119,7 @@ class GoldenGenerator:
         tensors = self._package_golden_tensors()  # input tensors only (pure outputs skipped)
         if op_api_info is not None:
             tensor_names = op_api_info.tensors
-            pure_output_names = {tensor_names[i] for i in self._ctx.pure_output_indexes
-                                 if i < len(tensor_names)}
+            pure_output_names = {tensor_names[i] for i in self._ctx.pure_output_indexes if i < len(tensor_names)}
             tensor_queue = list(tensors)
             scalar_queue = list(self._ctx.flatten_scalars or ())
             for name, info in op_api_info.params.items():

@@ -13,7 +13,8 @@ import numpy as np
 
 from .torch_backend import TorchBackend
 from ....utilities import (
-    is_torch_native_dtype, get_npu_hw_info,
+    is_torch_native_dtype,
+    get_npu_hw_info,
 )
 
 
@@ -34,22 +35,24 @@ class NpuTorchBackend(TorchBackend):
     def is_npu(self) -> bool:
         return True
 
-    def to_device(self, tensor, dev_id=0):
+    def to_device(self, tensor, dev_id=0, preserve_stride=False):
+        if preserve_stride:
+            return self._to_device_preserving_stride(tensor, dev_id)
         import torch_npu  # NPU-only: keep import in method body (lazy)
-        str_dtype = tensor.dtype.name
-        if is_torch_native_dtype(tensor.dtype.name):
+
+        str_dtype = str(tensor.dtype).split(".")[-1]
+        if is_torch_native_dtype(str_dtype):
             torch_tensor = self.from_numpy(tensor)
             return torch_tensor.npu(dev_id)
         else:
-            if str_dtype == 'int4':
+            if str_dtype == "int4":
                 raise RuntimeError(f"Dtype [{str_dtype}] is not supported yet.")
-            elif str_dtype == 'float8_e8m0':
+            elif str_dtype == "float8_e8m0":
                 return self.from_numpy(tensor).npu(dev_id)
             else:
                 np_fp32 = tensor.astype(np.float32)
                 npu_torch_tensor = torch_npu.npu_dtype_cast(
-                    self.from_numpy(np_fp32).npu(dev_id),
-                    dtype=getattr(torch_npu, str_dtype)
+                    self.from_numpy(np_fp32).npu(dev_id), dtype=getattr(torch_npu, str_dtype)
                 )
                 return npu_torch_tensor
 
@@ -59,6 +62,11 @@ class NpuTorchBackend(TorchBackend):
     def soc_series(self):
         try:
             hw_info = get_npu_hw_info(self.device_name())
-            return hw_info['short_soc_version']
+            return hw_info["short_soc_version"]
         except (FileNotFoundError, RuntimeError, KeyError):
             return self.device_name()
+
+    def set_deterministic_level(self, level):
+        import torch_npu
+
+        torch_npu.npu.set_deterministic_level(level)

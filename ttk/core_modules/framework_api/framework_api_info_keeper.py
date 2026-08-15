@@ -3,9 +3,9 @@
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 
 """
-FrameworkApiInfoKeeper — cached API parameter info for torch/torch_npu.
+FrameworkApiInfoKeeper — cached API parameter info for torch/torch_npu/tf.
 
-Uses simple_param_extractor for auto-parsing with manual override support.
+Uses simple_param_extractor for torch/torch_npu and tf_param_extractor for TF.
 Validates testcase parameters against API signatures.
 """
 
@@ -13,14 +13,11 @@ import logging
 from typing import Optional, Dict
 
 from ttk.utilities import Singleton
-from ttk.utilities.simple_param_extractor import (
-    APIParamInfo, get_api_params, register_api_params, ParamInfo
-)
+from ttk.utilities.simple_param_extractor import APIParamInfo, get_api_params, register_api_params, ParamInfo
 from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
 
 class FrameworkApiInfoKeeper(metaclass=Singleton):
-
     def __init__(self):
         self._cache: Dict[str, Optional[APIParamInfo]] = {}
 
@@ -28,8 +25,13 @@ class FrameworkApiInfoKeeper(metaclass=Singleton):
         if api_name in self._cache:
             return self._cache[api_name]
         try:
-            TorchOpsPackageLoader.ensure_registered(api_name)
-            info = get_api_params(api_name)
+            if api_name.startswith(("tf.", "tensorflow.")):
+                from ttk.utilities.tf_param_extractor import extract_tf_params
+
+                info = extract_tf_params(api_name)
+            else:
+                TorchOpsPackageLoader.ensure_registered(api_name)
+                info = get_api_params(api_name)
         except Exception as e:
             logging.warning(f"Parse {api_name} signature failed: {type(e).__name__}: {e}")
             info = None
@@ -50,17 +52,18 @@ class FrameworkApiInfoKeeper(metaclass=Singleton):
             register_api_params(api_name, params, source)
             self._cache[api_name] = get_api_params(api_name)
 
-    def validate_testcase_params(self, api_name: str, tensor_count: int,
-                                  scalar_count: int = 0) -> Optional[str]:
+    def validate_testcase_params(self, api_name: str, tensor_count: int, scalar_count: int = 0) -> Optional[str]:
         info = self.get(api_name)
         if info is None:
             return None
         api_tensor_count = info.tensor_count
         api_scalar_count = info.scalar_count
         if tensor_count != api_tensor_count:
-            return (f"API [{api_name}] has {api_tensor_count} tensor parameters, "
-                    f"but testcase configured {tensor_count}. "
-                    f"(source: {info.source})")
+            return (
+                f"API [{api_name}] has {api_tensor_count} tensor parameters, "
+                f"but testcase configured {tensor_count}. "
+                f"(source: {info.source})"
+            )
         return None
 
     def get_tensor_distribution(self, api_name: str) -> tuple:

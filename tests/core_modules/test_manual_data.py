@@ -84,7 +84,11 @@ def test_round_trip_uses_only_typed_data_files(tmp_path, file_format):
     store = ManualDataStore(tmp_path)
 
     case_dir = store.write_case(
-        case, "aclnn", inputs, goldens, scalars=scalars,
+        case,
+        "aclnn",
+        inputs,
+        goldens,
+        scalars=scalars,
         file_format=file_format,
     )
     loaded = store.load_case(case, "aclnn")
@@ -98,11 +102,7 @@ def test_round_trip_uses_only_typed_data_files(tmp_path, file_format):
         f"input_0_float32.{file_format}",
         f"input_1_float32.{file_format}",
         f"scalar_0_float32.{file_format}",
-        (
-            "golden_0_float32__shape_2.bin"
-            if file_format == "bin"
-            else f"golden_0_float32.{file_format}"
-        ),
+        ("golden_0_float32__shape_2.bin" if file_format == "bin" else f"golden_0_float32.{file_format}"),
     }
 
 
@@ -115,9 +115,7 @@ def test_complete_dataset_remains_loadable_after_directory_move(tmp_path, file_f
     source = tmp_path / "source"
     destination = tmp_path / "destination"
 
-    ManualDataStore(source).write_case(
-        case, "aclnn", inputs, goldens, scalars=scalars, file_format=file_format
-    )
+    ManualDataStore(source).write_case(case, "aclnn", inputs, goldens, scalars=scalars, file_format=file_format)
     shutil.copytree(source, destination)
     loaded = ManualDataStore(destination).load_case(case, "aclnn")
     loaded_goldens = loaded.load_goldens(references=goldens)
@@ -132,8 +130,7 @@ def test_npy_round_trip_restores_custom_bfloat16_dtype(tmp_path):
     case = _e2e_case("bfloat16_npy")
     case.tensor_dtypes = ("bfloat16", "bfloat16")
     dtype = resolve_custom_numpy_dtypes(("bfloat16",))[0]
-    inputs = [np.arange(9, dtype=np.float32).astype(dtype).reshape(3, 3),
-              np.zeros((2, 2), dtype=dtype)]
+    inputs = [np.arange(9, dtype=np.float32).astype(dtype).reshape(3, 3), np.zeros((2, 2), dtype=dtype)]
     golden = [np.ones((2, 2), dtype=dtype)]
     store = ManualDataStore(tmp_path)
 
@@ -187,9 +184,7 @@ def test_kernel_round_trip_uses_kernel_csv_shapes(tmp_path, file_format):
     goldens = [np.array([3.0, 4.0], np.float32)]
     store = ManualDataStore(tmp_path)
 
-    case_dir = store.write_case(
-        case, "kernel", inputs, goldens, file_format=file_format
-    )
+    case_dir = store.write_case(case, "kernel", inputs, goldens, file_format=file_format)
     loaded = store.load_case(case, "kernel")
     loaded_goldens = loaded.load_goldens(
         shapes=case.flat_output_shapes,
@@ -230,10 +225,12 @@ def test_e2e_none_golden_suppresses_optional_device_output(tmp_path):
     )
 
     loaded = store.load_case(case, "e2e")
-    goldens = loaded.load_goldens(references=[
-        np.zeros((2, 2), np.float32),
-        np.zeros((1, 2), np.float32),
-    ])
+    goldens = loaded.load_goldens(
+        references=[
+            np.zeros((2, 2), np.float32),
+            np.zeros((1, 2), np.float32),
+        ]
+    )
 
     np.testing.assert_array_equal(goldens[0], np.ones((2, 2), np.float32))
     assert goldens[1] is None
@@ -260,7 +257,7 @@ def test_tensor_list_grouping_is_rebuilt_from_csv_structure(tmp_path):
 
     loaded = store.load_case(case, "e2e")
     switches = SimpleNamespace(plugin_path=("must-not-be-scanned",))
-    backend = SimpleNamespace(alias=lambda: "npu")
+    backend = SimpleNamespace(device_type=lambda: "npu", inputs_from_numpy=lambda tc, ri: ri)
     generate_inputs(case, switches, backend, object(), stored_inputs=loaded.inputs)
 
     assert isinstance(case.tensors[0], list)
@@ -274,7 +271,8 @@ def test_changed_csv_dtype_is_rejected_by_filename(tmp_path):
     case = _e2e_case("contract_case")
     store = ManualDataStore(tmp_path)
     store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [np.zeros((2, 2), np.float32)],
     )
@@ -291,7 +289,8 @@ def test_precision_fields_can_change_without_invalidating_prepared_data(tmp_path
     case.absolute_precision = (1e-5,)
     store = ManualDataStore(tmp_path)
     store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [np.zeros((2, 2), np.float32)],
     )
@@ -306,7 +305,8 @@ def test_corrupt_file_is_rejected_before_loading(tmp_path):
     case = _e2e_case("hash_case")
     store = ManualDataStore(tmp_path)
     case_dir = store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [np.zeros((2, 2), np.float32)],
     )
@@ -334,6 +334,7 @@ def test_self_describing_format_rejects_same_size_wrong_shape(tmp_path, file_for
         np.save(path, wrong_shape)
     else:
         import torch
+
         torch.save(torch.from_numpy(wrong_shape), path)
 
     with pytest.raises(ManualDataError, match="stored shape"):
@@ -363,6 +364,7 @@ def test_self_describing_format_rejects_same_size_wrong_dtype(tmp_path, file_for
         np.save(path, wrong_dtype)
     else:
         import torch
+
         torch.save(torch.from_numpy(wrong_dtype), path)
 
     with pytest.raises(ManualDataError, match="dtype .* != filename dtype"):
@@ -521,7 +523,8 @@ def test_unknown_sidecar_is_rejected(tmp_path):
     case = _e2e_case("no_sidecars")
     store = ManualDataStore(tmp_path)
     case_dir = store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [np.zeros((2, 2), np.float32)],
     )
@@ -538,8 +541,7 @@ def test_unknown_sidecar_is_rejected(tmp_path):
         (("pt", "npy", "bin"), "bin", 3.0),
     ],
 )
-def test_mixed_data_formats_use_whole_dataset_priority(
-        tmp_path, formats, expected_format, expected_value):
+def test_mixed_data_formats_use_whole_dataset_priority(tmp_path, formats, expected_format, expected_value):
     case = _e2e_case("mixed_formats")
     values = {"pt": 1.0, "npy": 2.0, "bin": 3.0}
     target_store = ManualDataStore(tmp_path / "mixed")
@@ -561,17 +563,11 @@ def test_mixed_data_formats_use_whole_dataset_priority(
             shutil.copy2(path, target_dir / path.name)
 
     loaded = target_store.load_case(case, "e2e")
-    loaded_golden = loaded.load_goldens(
-        references=[np.zeros((2, 2), np.float32)]
-    )
+    loaded_golden = loaded.load_goldens(references=[np.zeros((2, 2), np.float32)])
 
     assert loaded.file_format == expected_format
-    np.testing.assert_array_equal(
-        loaded.inputs[0], np.full((3, 3), expected_value, np.float32)
-    )
-    np.testing.assert_array_equal(
-        loaded_golden[0], np.full((2, 2), expected_value, np.float32)
-    )
+    np.testing.assert_array_equal(loaded.inputs[0], np.full((3, 3), expected_value, np.float32))
+    np.testing.assert_array_equal(loaded_golden[0], np.full((2, 2), expected_value, np.float32))
 
 
 def test_incomplete_high_priority_format_does_not_fall_back(tmp_path):
@@ -621,14 +617,13 @@ def test_long_case_name_maps_stably_within_directory_limit(tmp_path):
     assert store.case_dir(name + "changed") != case_dir
 
 
-@pytest.mark.parametrize(
-    "filename", ["input_1_float32.bin", "golden_0_float32__shape_2x2.bin"]
-)
+@pytest.mark.parametrize("filename", ["input_1_float32.bin", "golden_0_float32__shape_2x2.bin"])
 def test_missing_data_slot_is_rejected(tmp_path, filename):
     case = _e2e_case("missing_slot")
     store = ManualDataStore(tmp_path)
     case_dir = store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [np.zeros((2, 2), np.float32)],
     )
@@ -643,7 +638,8 @@ def test_extra_data_slot_is_rejected(tmp_path):
     case = _e2e_case("extra_slot")
     store = ManualDataStore(tmp_path)
     case_dir = store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [np.zeros((2, 2), np.float32)],
     )
@@ -658,7 +654,8 @@ def test_nonempty_none_marker_is_rejected(tmp_path, file_format):
     case = _e2e_case("none_golden")
     store = ManualDataStore(tmp_path)
     case_dir = store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [None],
         file_format=file_format,
@@ -675,7 +672,8 @@ def test_bin_golden_filename_shape_matches_device_output(tmp_path):
     store = ManualDataStore(tmp_path)
     golden = np.arange(4, dtype=np.float32).reshape(2, 2)
     case_dir = store.write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [golden],
     )
@@ -711,8 +709,7 @@ def test_bin_golden_rejects_same_numel_wrong_device_shape(tmp_path):
         ((2, 0, 3), "2x0x3"),
     ],
 )
-def test_bin_golden_shape_filename_handles_scalar_and_zero_dimensions(
-        tmp_path, shape, token):
+def test_bin_golden_shape_filename_handles_scalar_and_zero_dimensions(tmp_path, shape, token):
     case = _e2e_case(f"shape_{token}")
     store = ManualDataStore(tmp_path)
     golden = np.zeros(shape, dtype=np.float32)
@@ -773,7 +770,8 @@ def test_golden_sentinel_never_publishes_case_directory(tmp_path):
 
     with pytest.raises(ManualDataError, match="sentinel"):
         store.write_case(
-            case, "e2e",
+            case,
+            "e2e",
             [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
             ["GOLDEN_FAILURE"],
         )
@@ -813,9 +811,7 @@ def test_invalidate_case_unlinks_directory_symlink_without_touching_target(tmp_p
 
 def test_prepare_and_replay_helpers_share_store_policy(tmp_path):
     prepare_case = _e2e_case("prepare_helper")
-    prepare_switches = SimpleNamespace(
-        manual_data_mode="prepare", manual_data_dirs=(str(tmp_path),)
-    )
+    prepare_switches = SimpleNamespace(manual_data_mode="prepare", manual_data_dirs=(str(tmp_path),))
 
     prepare_store = prepare_manual_data_store(prepare_case, "e2e", prepare_switches)
 
@@ -824,9 +820,7 @@ def test_prepare_and_replay_helpers_share_store_policy(tmp_path):
 
     replay_case = _e2e_case("replay_helper")
     inputs = [np.ones((3, 3), np.float32), np.zeros((2, 2), np.float32)]
-    ManualDataStore(tmp_path).write_case(
-        replay_case, "e2e", inputs, [np.zeros((2, 2), np.float32)]
-    )
+    ManualDataStore(tmp_path).write_case(replay_case, "e2e", inputs, [np.zeros((2, 2), np.float32)])
     replay_switches = SimpleNamespace(
         manual_data_mode="replay",
         manual_data_dirs=(str(tmp_path),),
@@ -847,7 +841,8 @@ def test_prepare_and_replay_helpers_share_store_policy(tmp_path):
 def test_registered_provider_is_an_extension_point_for_future_csv_sources(tmp_path):
     case = _e2e_case("provider_case")
     ManualDataStore(tmp_path).write_case(
-        case, "e2e",
+        case,
+        "e2e",
         [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
         [np.zeros((2, 2), np.float32)],
     )
@@ -873,12 +868,8 @@ def test_case_provider_takes_priority_over_cli_batch_directories(tmp_path):
     inputs = [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)]
     cli_root = tmp_path / "cli"
     provider_root = tmp_path / "provider"
-    ManualDataStore(cli_root).write_case(
-        case, "e2e", inputs, [np.full((2, 2), 1, np.float32)]
-    )
-    ManualDataStore(provider_root).write_case(
-        case, "e2e", inputs, [np.full((2, 2), 2, np.float32)]
-    )
+    ManualDataStore(cli_root).write_case(case, "e2e", inputs, [np.full((2, 2), 1, np.float32)])
+    ManualDataStore(provider_root).write_case(case, "e2e", inputs, [np.full((2, 2), 2, np.float32)])
     switches = SimpleNamespace(manual_data_dirs=(cli_root,))
 
     def provider(*_):
@@ -899,9 +890,7 @@ def test_case_provider_takes_priority_over_cli_batch_directories(tmp_path):
 
 def test_provider_replay_obeys_device_stage_constraints(tmp_path):
     case = _e2e_case("provider_constraints")
-    switches = SimpleNamespace(
-        manual_data_dirs=(), golden_mode="Enable", validate_only=False, force_cpu=True
-    )
+    switches = SimpleNamespace(manual_data_dirs=(), golden_mode="Enable", validate_only=False, force_cpu=True)
 
     def provider(*_):
         return tmp_path
@@ -915,15 +904,15 @@ def test_provider_replay_obeys_device_stage_constraints(tmp_path):
 
 
 def test_e2e_restore_rebuilds_view_without_running_input_plugin():
+    from ttk.core_modules.framework_api.input_generation import np_to_torch_inputs
+
     case = _e2e_case("restore_e2e")
     storage = np.arange(9, dtype=np.float32).reshape(3, 3)
     output = np.zeros((2, 2), dtype=np.float32)
     switches = SimpleNamespace(plugin_path=("must-not-be-scanned",))
-    backend = SimpleNamespace(alias=lambda: "npu")
+    backend = SimpleNamespace(device_type=lambda: "npu", inputs_from_numpy=np_to_torch_inputs)
 
-    raw = generate_inputs(
-        case, switches, backend, object(), stored_inputs=[storage, output]
-    )
+    raw = generate_inputs(case, switches, backend, object(), stored_inputs=[storage, output])
 
     assert tuple(case.tensors[0].stride()) == (3, 1)
     assert float(case.tensors[0][0, 0]) == float(storage.ravel()[1])

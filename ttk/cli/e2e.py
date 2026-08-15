@@ -10,7 +10,7 @@ from ttk.cli.sim_args import add_sim_args, apply_sim_args
 
 
 def register_e2e_command(subparsers):
-    parser = subparsers.add_parser("e2e", help="Framework API mode: torch_npu end-to-end test")
+    parser = subparsers.add_parser("e2e", help="Framework API mode: torch_npu / TensorFlow end-to-end test")
     add_common_args(parser)
     add_device_args(parser)
     _add_e2e_args(parser)

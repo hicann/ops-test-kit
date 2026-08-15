@@ -551,11 +551,12 @@ def _aclnn_param_order(context: TestcaseAclnn) -> list:
     op_api_info = OpApiInfoKeeper().info_of(context.api_name)
     if op_api_info is None:
         return []
-    pure_output_names = {op_api_info.tensors[i]
-                         for i in context.pure_output_indexes
-                         if i < len(op_api_info.tensors)}
-    return [name for name in op_api_info.params
-            if name not in pure_output_names and name not in ("workspaceSize", "executor")]
+    pure_output_names = {op_api_info.tensors[i] for i in context.pure_output_indexes if i < len(op_api_info.tensors)}
+    return [
+        name
+        for name in op_api_info.params
+        if name not in pure_output_names and name not in ("workspaceSize", "executor")
+    ]
 
 
 def __dump_to_file(data, file_name: str, dtype: Optional[str] = None):
@@ -611,7 +612,9 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
     process_ctx.change_name(context.testcase_name)
     if switches.single_testcase_log_mode:
         _log_dir = build_single_log_dir(switches.test_mode, context.api_name, switches.root_path)
-        default_logging_config(file_handler=switches.logging_to_file, testcase_name=context.testcase_name, log_dir=_log_dir)
+        default_logging_config(
+            file_handler=switches.logging_to_file, testcase_name=context.testcase_name, log_dir=_log_dir
+        )
     process_ctx.notify_status("OnParseParameters")
     ####################
     # Check whether there is need to do further test
@@ -694,7 +697,7 @@ def profile_process(context: TestcaseAclnn, device_grant_events: dict, device_gr
 
     # Following actions need to acquire global lock
     process_ctx.notify_status("OnAcquireLock")
-    use_device = switches.mode.use_device()
+    use_device = switches.mode.has_device()
     with DeviceLock(
         process_ctx,
         dev_id,

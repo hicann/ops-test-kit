@@ -206,8 +206,7 @@ def _kernel_param_order(op_info) -> list:
     """def.cpp param order (inputs then attrs) for server-side pool merge."""
     if not op_info:
         return []
-    return ([inp["name"] for inp in op_info["inputs"]] +
-            [attr["name"] for attr in op_info["attr"]])
+    return [inp["name"] for inp in op_info["inputs"]] + [attr["name"] for attr in op_info["attr"]]
 
 
 def profile_process(
@@ -225,7 +224,9 @@ def profile_process(
     process_ctx.change_name(context.testcase_name)
     if switches.single_testcase_log_mode:
         _log_dir = build_single_log_dir(switches.test_mode, context.op_name, switches.root_path)
-        default_logging_config(file_handler=switches.logging_to_file, testcase_name=context.testcase_name, log_dir=_log_dir)
+        default_logging_config(
+            file_handler=switches.logging_to_file, testcase_name=context.testcase_name, log_dir=_log_dir
+        )
     manual_mode = getattr(switches, "manual_data_mode", None)
     manual_case = None
     try:
@@ -378,7 +379,7 @@ def profile_process(
     # Following actions need to acquire global lock
     process_ctx.notify_status("OnAcquireLock")
     device_id = [dev_id]
-    use_device = switches.mode.use_device()
+    use_device = switches.mode.has_device()
     with DeviceLock(
         process_ctx,
         dev_id,
@@ -393,8 +394,7 @@ def profile_process(
         if get_global_storage().backend == "npusim":
             from ttk.core_modules.simulator import run_kernel_sim
 
-            (context.dyn_prof_result, context.cst_prof_result,
-             context.bin_prof_result) = run_kernel_sim(context)
+            (context.dyn_prof_result, context.cst_prof_result, context.bin_prof_result) = run_kernel_sim(context)
         else:
             context.dyn_prof_result = do_profiling(context, "dynamic")
             process_ctx.notify_status("OnCstProfiling")

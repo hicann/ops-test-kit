@@ -8,15 +8,12 @@
 Shared base class for aclnn (op_api) and framework_api (e2e) testcase structures.
 """
 
-
 __all__ = ["TensorApiTestcaseBase"]
 
 
 from .testcase_base import TestcaseBase
 from ...utilities import get, shape_stride
-from ...utilities.container_utils import (
-    infer_list_distribution_from_nesting, flatten_nested_sequence, deep_flatten
-)
+from ...utilities.container_utils import infer_list_distribution_from_nesting, flatten_nested_sequence, deep_flatten
 
 
 class TensorApiTestcaseBase(TestcaseBase):
@@ -59,13 +56,18 @@ class TensorApiTestcaseBase(TestcaseBase):
         "_flat_absolute_precision",
         "_pure_output_indexes",
         "_is_torch_dtype_support",
+        "_is_tf_dtype_support",
+        "const_input_indexes",
     )
 
     _scalar_tensor_fields = (
-        'tensor_dtypes', 'tensor_formats', 'tensor_view_offsets',
+        "tensor_dtypes",
+        "tensor_formats",
+        "tensor_view_offsets",
     )
     _shape_tensor_fields = (
-        'tensor_view_strides', 'tensor_storage_shapes',
+        "tensor_view_strides",
+        "tensor_storage_shapes",
     )
 
     def __init__(self):
@@ -97,6 +99,8 @@ class TensorApiTestcaseBase(TestcaseBase):
         self._flat_absolute_precision = None
         self._pure_output_indexes = None
         self._is_torch_dtype_support = None
+        self._is_tf_dtype_support = None
+        self.const_input_indexes = set()
 
     @property
     def op_name(self):
@@ -111,8 +115,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         Cached on first access. Returns () when no tensor_view_shapes.
         """
         if self._tensor_list_dist is None and self.tensor_view_shapes:
-            self._tensor_list_dist = infer_list_distribution_from_nesting(
-                self.tensor_view_shapes)
+            self._tensor_list_dist = infer_list_distribution_from_nesting(self.tensor_view_shapes)
         return self._tensor_list_dist or ()
 
     @property
@@ -152,8 +155,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         # use _flatten_by_distribution to respect TensorList boundaries.
         dist = self.tensor_list_dist
         if dist:
-            self._flat_tensor_dtypes = self._flatten_by_distribution(
-                self.tensor_dtypes, dist)
+            self._flat_tensor_dtypes = self._flatten_by_distribution(self.tensor_dtypes, dist)
         else:
             self._flat_tensor_dtypes = self.tensor_dtypes
         return self._flat_tensor_dtypes
@@ -182,8 +184,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         # flat_tensor_dtypes — use _flatten_by_distribution.
         dist = self.tensor_list_dist
         if dist:
-            self._flat_tensor_formats = self._flatten_by_distribution(
-                self.tensor_formats, dist)
+            self._flat_tensor_formats = self._flatten_by_distribution(self.tensor_formats, dist)
         else:
             self._flat_tensor_formats = self.tensor_formats
         return self._flat_tensor_formats
@@ -199,8 +200,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         # otherwise flatten_nested_sequence would split the shape tuple.
         dist = self.tensor_list_dist
         if dist:
-            self._flat_tensor_storage_shapes = self._flatten_by_distribution(
-                self.tensor_storage_shapes, dist)
+            self._flat_tensor_storage_shapes = self._flatten_by_distribution(self.tensor_storage_shapes, dist)
         else:
             self._flat_tensor_storage_shapes = self.tensor_storage_shapes
         return self._flat_tensor_storage_shapes
@@ -215,8 +215,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         # — use _flatten_by_distribution to respect TensorList boundaries.
         dist = self.tensor_list_dist
         if dist:
-            self._flat_tensor_view_offsets = self._flatten_by_distribution(
-                self.tensor_view_offsets, dist)
+            self._flat_tensor_view_offsets = self._flatten_by_distribution(self.tensor_view_offsets, dist)
         else:
             self._flat_tensor_view_offsets = self.tensor_view_offsets
         return self._flat_tensor_view_offsets
@@ -232,8 +231,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         # otherwise flatten_nested_sequence would split the stride tuple.
         dist = self.tensor_list_dist
         if dist:
-            self._flat_tensor_view_strides = self._flatten_by_distribution(
-                self.tensor_view_strides, dist)
+            self._flat_tensor_view_strides = self._flatten_by_distribution(self.tensor_view_strides, dist)
         else:
             self._flat_tensor_view_strides = self.tensor_view_strides
         return self._flat_tensor_view_strides
@@ -251,8 +249,7 @@ class TensorApiTestcaseBase(TestcaseBase):
             return self.input_data_ranges
         dist = self.tensor_list_dist
         if dist:
-            self._flat_input_data_ranges = self._flatten_by_distribution(
-                self.input_data_ranges, dist)
+            self._flat_input_data_ranges = self._flatten_by_distribution(self.input_data_ranges, dist)
         else:
             self._flat_input_data_ranges = self.input_data_ranges
         return self._flat_input_data_ranges
@@ -266,8 +263,7 @@ class TensorApiTestcaseBase(TestcaseBase):
             return self.precision_tolerances
         odist = self.output_dist
         if odist:
-            self._flat_precision_tolerances = self._flatten_by_distribution(
-                self.precision_tolerances, odist)
+            self._flat_precision_tolerances = self._flatten_by_distribution(self.precision_tolerances, odist)
         else:
             self._flat_precision_tolerances = self.precision_tolerances
         return self._flat_precision_tolerances
@@ -281,8 +277,7 @@ class TensorApiTestcaseBase(TestcaseBase):
             return self.absolute_precision
         odist = self.output_dist
         if odist:
-            self._flat_absolute_precision = self._flatten_by_distribution(
-                self.absolute_precision, odist)
+            self._flat_absolute_precision = self._flatten_by_distribution(self.absolute_precision, odist)
         else:
             self._flat_absolute_precision = self.absolute_precision
         return self._flat_absolute_precision
@@ -305,6 +300,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         if self._is_torch_dtype_support is not None:
             return self._is_torch_dtype_support
         from ttk.utilities.dtypes import is_torch_native_dtype
+
         result = True
         for dtype in self.flat_tensor_dtypes:
             if dtype is not None and not is_torch_native_dtype(dtype):
@@ -312,6 +308,29 @@ class TensorApiTestcaseBase(TestcaseBase):
                 break
         self._is_torch_dtype_support = result
         return result
+
+    def is_tf_dtype_support(self) -> bool:
+        """Check if all dtypes in testcase are supported by TF natively."""
+        if self._is_tf_dtype_support is not None:
+            return self._is_tf_dtype_support
+        from ttk.utilities.dtypes import is_tf_native_dtype
+
+        result = True
+        for dtype in self.flat_tensor_dtypes:
+            if dtype is not None and not is_tf_native_dtype(dtype):
+                result = False
+                break
+        self._is_tf_dtype_support = result
+        return result
+
+    def is_dtype_support(self) -> bool:
+        """Framework-aware dtype support check."""
+        from ttk.core_modules.framework_api.framework_detector import detect_framework
+
+        framework = detect_framework(self.api_name)
+        if framework == "tf":
+            return self.is_tf_dtype_support()
+        return self.is_torch_dtype_support()
 
     # ========== Legacy per-flat-index accessors (kept for backward compat) ==========
 
@@ -358,7 +377,7 @@ class TensorApiTestcaseBase(TestcaseBase):
             return self._pure_output_indexes
         dist = self.tensor_list_dist
         flat_output = set()
-        for idx in (self.output_tensor_indexes or ()):
+        for idx in self.output_tensor_indexes or ():
             flat_idx = sum(max(d, 1) for d in dist[:idx])
             count = dist[idx] if idx < len(dist) and dist[idx] > 0 else 1
             flat_output.update(range(flat_idx, flat_idx + count))
@@ -374,12 +393,12 @@ class TensorApiTestcaseBase(TestcaseBase):
         if dist:
             for field_name in self._scalar_tensor_fields:
                 self._normalize_scalar_field_by_dist(field_name, dist)
-            for field_name in (*self._shape_tensor_fields, 'input_data_ranges'):
+            for field_name in (*self._shape_tensor_fields, "input_data_ranges"):
                 self._normalize_range_field_by_dist(field_name, dist)
             odist = self.output_dist
             if odist:
-                self._normalize_scalar_field_by_dist('absolute_precision', odist)
-                self._normalize_range_field_by_dist('precision_tolerances', odist)
+                self._normalize_scalar_field_by_dist("absolute_precision", odist)
+                self._normalize_range_field_by_dist("precision_tolerances", odist)
 
     @staticmethod
     def _flatten_by_distribution(values, distribution):

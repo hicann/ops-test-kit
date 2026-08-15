@@ -43,7 +43,7 @@ class MODE(Enum):
     def is_online_board(self) -> bool:
         return True if self in [MODE.ASCEND_ONBOARD] else False
 
-    def use_device(self) -> bool:
+    def has_device(self) -> bool:
         return self.is_online_board()
 
     def is_esl_model(self):
@@ -177,6 +177,7 @@ class SWITCHES:
         "sim_report",
         "sim_cores",
         "sim_object_file",
+        "framework",
     ]
 
     def __init__(self):
@@ -259,6 +260,7 @@ class SWITCHES:
         self.sim_report: bool = False
         self.sim_cores: str = ""
         self.sim_object_file: str = ""
+        self.framework: str = "torch"
 
     def __getstate__(self):
         """Pickle 支持：仅导出 __slots__ 中已赋值的属性（跳过 property/私有）。"""

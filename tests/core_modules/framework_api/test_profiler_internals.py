@@ -28,15 +28,14 @@ class _FakeBackend:
     def __init__(self, profile):
         self.profile = profile
 
-    def alias(self):
+    def device_type(self):
         return "fake"
 
     def is_npu(self):
         return False
 
 
-def _make_profiler_via_real_init(monkeypatch, activities, torch_lib="cuda",
-                                 device_time_attr=None):
+def _make_profiler_via_real_init(monkeypatch, activities, torch_lib="cuda", device_time_attr=None):
     """Build a TorchProfiler through the real __init__ with profile() stubbed.
 
     monkeypatches torch.profiler.profile so no real profiler is constructed;
@@ -96,7 +95,7 @@ def test_device_time_fallback_legacy_self_device_total():
     """
     prof = TorchProfiler.__new__(TorchProfiler)
     prof._device_time_attr = None
-    evt = _Evt(self_cuda_time_total=11.0)   # 无 self_device_time_total
+    evt = _Evt(self_cuda_time_total=11.0)  # 无 self_device_time_total
     assert prof._device_time(evt, "cuda") == 11.0
 
 
@@ -110,10 +109,13 @@ def test_device_time_final_no_attrs_returns_zero():
 
 # --- I1: __init__ data-driven activities + _device contract ---
 
+
 def test_init_device_acts_from_activities_with_cuda(monkeypatch):
     """activities=[CPU, CUDA] -> _device_acts=["CUDA"], _device=torch_lib."""
     prof, backend, captured = _make_profiler_via_real_init(
-        monkeypatch, activities=["CPU", "CUDA"], torch_lib="cuda",
+        monkeypatch,
+        activities=["CPU", "CUDA"],
+        torch_lib="cuda",
     )
     assert prof._device_acts == ["CUDA"]
     assert prof._device == "cuda"
@@ -124,7 +126,9 @@ def test_init_device_acts_from_activities_with_cuda(monkeypatch):
 def test_init_device_acts_empty_for_cpu_only(monkeypatch):
     """activities=[CPU] -> _device_acts=[] (CPU-only profile)."""
     prof, backend, captured = _make_profiler_via_real_init(
-        monkeypatch, activities=["CPU"], torch_lib="cpu",
+        monkeypatch,
+        activities=["CPU"],
+        torch_lib="cpu",
     )
     assert prof._device_acts == []
     assert prof._device == "cpu"
@@ -137,7 +141,9 @@ def test_init_device_is_torch_lib_not_activity_name(monkeypatch):
     (Here simulated with torch_lib 'musa' + activity 'MUSA'.)
     """
     prof, backend, captured = _make_profiler_via_real_init(
-        monkeypatch, activities=["CPU", "CUDA"], torch_lib="musa",
+        monkeypatch,
+        activities=["CPU", "CUDA"],
+        torch_lib="musa",
     )
     assert prof._device == "musa"  # torch_lib, not "cuda" (activity name)
 
@@ -151,13 +157,16 @@ def test_init_unknown_activity_raises_valueerror(monkeypatch):
 def test_init_device_time_attr_passed_through(monkeypatch):
     """device_time_attr is read from profile['profiler'] when present."""
     prof, backend, captured = _make_profiler_via_real_init(
-        monkeypatch, activities=["CPU", "CUDA"], torch_lib="cuda",
+        monkeypatch,
+        activities=["CPU", "CUDA"],
+        torch_lib="cuda",
         device_time_attr="cuda_time_total",
     )
     assert prof._device_time_attr == "cuda_time_total"
 
 
 # --- I1: result() cpu + device branches ---
+
 
 class _FakeEvent:
     """Stand-in for a torch.profiler Event for result() tests."""
@@ -225,15 +234,14 @@ def test_result_device_branch_collects_kernels():
 
 def test_result_device_branch_uses_explicit_attr():
     """device_time_attr override takes precedence over self_device_time_total."""
-    events = [_FakeEvent("k1", 1, cuda_time_total=999.0,
-                         self_cuda_time_total=200.0)]
-    prof = _prof_for_result(events, device_acts=["CUDA"], device="cuda",
-                            device_time_attr="cuda_time_total")
+    events = [_FakeEvent("k1", 1, cuda_time_total=999.0, self_cuda_time_total=200.0)]
+    prof = _prof_for_result(events, device_acts=["CUDA"], device="cuda", device_time_attr="cuda_time_total")
     res = prof.result(_FakeBackend({}), repeat_count=1)
     assert res.kernel_details.kernels[0].device_us == 999.0
 
 
 # --- I5: get_profiler RuntimeError includes backend alias ---
+
 
 def test_get_profiler_npu_api_on_non_npu_includes_backend_alias():
     """I5: torch_npu.* on non-NPU backend -> RuntimeError names current alias."""
@@ -251,10 +259,11 @@ def test_get_profiler_torch_with_npu_builtin_returns_npu_profiler():
 
     class _NpuBackend:
         """Mock NPU backend with builtin profiler config."""
+
         def __init__(self):
             self.profile = {"profiler": "builtin"}
 
-        def alias(self):
+        def device_type(self):
             return "npu"
 
         def is_npu(self):
@@ -262,5 +271,4 @@ def test_get_profiler_torch_with_npu_builtin_returns_npu_profiler():
 
     backend = _NpuBackend()
     profiler = get_profiler("torch.add", backend)
-    assert isinstance(profiler, NpuProfiler), \
-        f"Expected NpuProfiler, got {type(profiler).__name__}"
+    assert isinstance(profiler, NpuProfiler), f"Expected NpuProfiler, got {type(profiler).__name__}"
