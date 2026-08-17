@@ -1,7 +1,15 @@
-# tests/test_cross_check.py
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 import numpy as np
 import pytest
-from ttk.core_modules.comparison.cross_check import CrossCheckComparison
+from ttk.core_modules.comparison.cross_check import CrossCheckComparison, safe_div
 
 
 def _make(output, golden, third_party, params):
@@ -46,12 +54,33 @@ def test_ratio_exceeded():
 
 
 def test_safe_div_branches():
-    """safe_div: max(den,1e-7) floor avoids div-by-0; nan/inf den -> inf."""
-    assert CrossCheckComparison._safe_div(0, 0) == 1.0            # 0/0 -> 1 (both perfect, consistent)
-    assert CrossCheckComparison._safe_div(1.0, 0) == 1e7          # num>0/den=0 -> num/1e-7 (no inf)
-    assert CrossCheckComparison._safe_div(6, 3) == 2.0            # normal
-    assert CrossCheckComparison._safe_div(0.1, float("nan")) == float("inf")  # nan den -> inf
-    assert isinstance(CrossCheckComparison._safe_div(6, 3), float)   # 守护 float() 强转
+    """safe_div: 分母夹按 dtype 取的小值域阈值 err（精度标准）；nan/inf 分母 -> inf。"""
+    err = 2 ** -14                                                # fp32 的 err
+    assert safe_div(0, 0, err) == 1.0       # 0/0 -> 1（两边都完美，一致）
+    assert safe_div(1.0, 0, err) == 1.0 / err   # 分母为 0 -> 夹到 err（非 inf）
+    assert safe_div(6, 3, err) == 2.0       # 分母 > err，照常相除
+    assert safe_div(0.1, float("nan"), err) == float("inf")  # nan 分母 -> inf
+    assert isinstance(safe_div(6, 3, err), float)   # 守护 float() 强转
+
+
+def test_safe_div_floor_is_dtype_err_not_constant():
+    """防回归：地板必须是传入的 err（随 dtype 变），不得退回写死常数。
+
+    实证来源 mmle_002_flo_10x6_mean：竞品逐位命中 golden(3.109)，我方偏 1 ULP。
+    旧实现夹 1e-7 时 rmse_ratio=2.3842 判 FAIL —— 正确舍入的结果不应判失败。
+    """
+    g = np.float32(3.109)
+    one_ulp = float(np.nextafter(g, np.float32(4.0))) - float(g)
+    assert one_ulp == 2.384185791015625e-07              # fp32 [2,4) 区间的 1 ULP = 2**-22
+
+    fp32_err = 2 ** -14
+    assert safe_div(one_ulp, 0.0, fp32_err) < 1.5     # 按标准 -> PASS
+    assert safe_div(one_ulp, 0.0, 1e-7) > 1.5         # 旧写死常数 -> FAIL
+
+    # err 随 dtype 变：同一绝对误差在 bf16 的 err(2**-8) 下比值应更小
+    bf16_err = 2 ** -8
+    assert (safe_div(one_ulp, 0.0, bf16_err)
+            < safe_div(one_ulp, 0.0, fp32_err))
 
 
 def test_small_value_partition_pass():

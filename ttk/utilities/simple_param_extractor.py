@@ -1192,6 +1192,28 @@ def _normalize_aten_schema_type(t: str) -> str:
     return _normalize_npu_type(t)
 
 
+_SCALAR_ANNOTATION_TYPES = {bool: "bool", int: "int", float: "float", str: "str"}
+
+_SEQUENCE_INNER_TYPES = {"Tensor": "tuple of Tensors", "int": "tuple of ints", "float": "tuple of floats"}
+
+
+def _torch_tensor_type():
+    """torch.Tensor;torch 不可用时返回一个不会与任何注解相等的哨兵。"""
+    try:
+        import torch
+        return torch.Tensor
+    except ImportError:
+        return object()
+
+
+def _sequence_annotation_to_type(annotation) -> str:
+    """list/tuple/Sequence[...] 按其元素类型归一成 tuple of xxx。"""
+    args = getattr(annotation, '__args__', ())
+    if not args:
+        return "int"
+    return _SEQUENCE_INNER_TYPES.get(_annotation_to_type(args[0]), "int")
+
+
 def _annotation_to_type(annotation) -> str:
     """Convert a type annotation object to our type string.
 
@@ -1199,36 +1221,32 @@ def _annotation_to_type(annotation) -> str:
     """
     if annotation is None:
         return ""
+    import types as _types
     import typing
-    origin = getattr(annotation, '__origin__', None)
-    if origin in (typing.Optional, typing.Union):
+    # PEP 604 的 `str | None` 是 types.UnionType,没有 __origin__(torch>=2.6 的
+    # .pyi/源码普遍改用这种写法),故 __origin__ 取不到时用 get_origin 兜底。
+    origin = getattr(annotation, '__origin__', None) or typing.get_origin(annotation)
+    # 不能写成 origin in (..., getattr(_types, 'UnionType', None)):Python < 3.10 无 UnionType,
+    # getattr 返回 None,而无 origin 的注解(int/float/str/bool)其 origin 恰为 None,
+    # 会整片落进 Union 分支、args 为空后误返回 "Tensor"。
+    if origin in (typing.Optional, typing.Union) or (
+        hasattr(_types, 'UnionType') and origin is _types.UnionType
+    ):
         args = getattr(annotation, '__args__', ())
         non_none = [a for a in args if a is not type(None)]
         return _annotation_to_type(non_none[0]) if non_none else "Tensor"
     if origin in (list, tuple, typing.List, typing.Tuple, typing.Sequence):
-        args = getattr(annotation, '__args__', ())
-        if args:
-            inner = _annotation_to_type(args[0])
-            if inner == "Tensor":
-                return "tuple of Tensors"
-            if inner == "int":
-                return "tuple of ints"
-            if inner == "float":
-                return "tuple of floats"
-        return "int"
-    if annotation is bool: return "bool"
-    if annotation is int: return "int"
+        return _sequence_annotation_to_type(annotation)
+    scalar = _SCALAR_ANNOTATION_TYPES.get(annotation)
+    if scalar:
+        return scalar
     try:
-        if isinstance(annotation, type) and issubclass(annotation, int): return "int"
-    except TypeError: pass
-    if annotation is float: return "float"
-    if annotation is str: return "str"
-    try:
-        import torch
-        if annotation is torch.Tensor:
-            return "Tensor"
-    except ImportError:
+        if isinstance(annotation, type) and issubclass(annotation, int):
+            return "int"
+    except TypeError:
         pass
+    if annotation is _torch_tensor_type():
+        return "Tensor"
     return ""
 
 
@@ -2080,15 +2098,7 @@ def _load_pyi_signatures():
             return _PYI_CACHE
         with open(pyi_path) as f:
             lines = f.readlines()
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if not stripped.startswith('def '):
-                continue
-            m = re.match(r'def\s+(\w+)\s*\((.+)\)\s*(?:->.*?)?:', stripped)
-            if not m:
-                continue
-            func_name = m.group(1)
-            param_str = m.group(2)
+        for func_name, param_str in _iter_pyi_defs(lines):
             full_name = f'torch.{func_name}'
             parsed = _parse_pyi_param_str(param_str)
             if parsed:
@@ -2102,6 +2112,62 @@ def _load_pyi_signatures():
     return _PYI_CACHE
 
 
+def _iter_pyi_defs(lines):
+    """从 .pyi 行序列里产出 (函数名, 参数串)。
+
+    torch>=2.6 起长签名会被折成多行:
+        def conv1d(
+            input: Tensor,
+            ...
+        ) -> Tensor: ...
+    逐行正则只能匹到单行 def(如 `def abs(...)->Tensor:`),多行的整条漏掉,
+    torch.conv1d 这类就进不了缓存。这里按括号配平把整条 def 拼回一行再匹。
+    """
+    buf = None
+    depth = 0
+    for line in lines:
+        stripped = line.strip()
+        if buf is None:
+            if not stripped.startswith('def '):
+                continue
+            buf = stripped
+            depth = stripped.count('(') - stripped.count(')')
+        else:
+            buf += ' ' + stripped
+            depth += stripped.count('(') - stripped.count(')')
+        if depth > 0:
+            continue
+        m = re.match(r'def\s+(\w+)\s*\((.*)\)\s*(?:->.*?)?:', buf)
+        buf = None
+        if m:
+            yield m.group(1), m.group(2)
+
+
+def _iter_pyi_reexports(lines):
+    """产出 .pyi 里 re-export 的 (被导出名, 本地名)。
+
+    两种写法都要认:torch<2.6 是单行 from-import-as;torch>=2.6 起改成括号包起来的
+    多行块,每行一个 "X as Y"。只认单行形式会把整块漏掉,torch.nn.functional.*
+    全部取不到签名。
+    """
+    single = re.compile(r'from\s+torch\s+import\s+(\w+)\s+as\s+(\w+)')
+    block_open = re.compile(r'from\s+torch\s+import\s*\(\s*$')
+    block_item = re.compile(r'(\w+)\s+as\s+(\w+)\s*,?\s*$')
+    in_block = False
+    for line in lines:
+        stripped = line.strip()
+        if in_block:
+            in_block = not stripped.startswith(')')
+            m = block_item.match(stripped)
+        elif block_open.match(stripped):
+            in_block = True
+            m = None
+        else:
+            m = single.match(stripped)
+        if m:
+            yield m.group(1), m.group(2)
+
+
 def _load_nn_functional_pyi(cache):
     try:
         import torch
@@ -2112,25 +2178,14 @@ def _load_nn_functional_pyi(cache):
             return
         with open(pyi_path) as f:
             lines = f.readlines()
-        reexport_pattern = re.compile(r'from\s+torch\s+import\s+(\w+)\s+as\s+(\w+)')
-        for line in lines:
-            stripped = line.strip()
-            m_reexport = reexport_pattern.match(stripped)
-            if m_reexport:
-                torch_name = m_reexport.group(1)
-                local_name = m_reexport.group(2)
-                full_name = f'torch.nn.functional.{local_name}'
-                torch_full = f'torch.{torch_name}'
-                if torch_full in cache and full_name not in cache:
-                    cache[full_name] = cache[torch_full]
-                continue
-            if not stripped.startswith('def '):
-                continue
-            m = re.match(r'def\s+(\w+)\s*\((.+)\)\s*(?:->.*?)?:', stripped)
-            if not m:
-                continue
-            func_name = m.group(1)
-            param_str = m.group(2)
+
+        for torch_name, local_name in _iter_pyi_reexports(lines):
+            full_name = f'torch.nn.functional.{local_name}'
+            torch_full = f'torch.{torch_name}'
+            if torch_full in cache and full_name not in cache:
+                cache[full_name] = cache[torch_full]
+
+        for func_name, param_str in _iter_pyi_defs(lines):
             full_name = f'torch.nn.functional.{func_name}'
             parsed = _parse_pyi_param_str(param_str)
             if parsed:

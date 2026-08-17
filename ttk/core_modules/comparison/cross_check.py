@@ -3,6 +3,20 @@ import numpy as np
 from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
 
 
+def safe_div(num, den, err):
+    """三比值的除法:分母一律夹小值域阈值 err。
+
+    精度标准:正常值域的 mare/mere/rmse 三比值,分母按 dtype 取的 small_value
+    (见 resolve.py)夹底。err 既防除零,也保证竞品误差落在噪声地板以下时不把比值
+    放大——固定常数会让判定随输出量级漂移。
+    """
+    if np.isnan(den) or np.isinf(den):
+        return float("inf")
+    if num == 0 and den == 0:
+        return 1.0   # both perfect match -> ratio=1 (consistent)
+    return float(num / max(den, err))
+
+
 @register_comparison(["cross_check"])
 class CrossCheckComparison(ComparisonBase):
     STANDARD_NAME = "cross_check"
@@ -39,11 +53,11 @@ class CrossCheckComparison(ComparisonBase):
             if large.any():
                 rel_npu = np.abs(t[large] - g[large]) / (np.abs(g[large]) + 1e-7)
                 rel_party = np.abs(b[large] - g[large]) / (np.abs(g[large]) + 1e-7)
-                mare_ratio = self._safe_div(rel_npu.max(), rel_party.max())
-                mere_ratio = self._safe_div(rel_npu.mean(), rel_party.mean())
+                mare_ratio = safe_div(rel_npu.max(), rel_party.max(), sv["small_value"])
+                mere_ratio = safe_div(rel_npu.mean(), rel_party.mean(), sv["small_value"])
                 rmse_npu = np.sqrt(np.mean((t[large] - g[large]) ** 2))
                 rmse_party = np.sqrt(np.mean((b[large] - g[large]) ** 2))
-                rmse_ratio = self._safe_div(rmse_npu, rmse_party)
+                rmse_ratio = safe_div(rmse_npu, rmse_party, sv["small_value"])
                 exceeded = []
                 if mare_ratio > mare_limit:
                     exceeded.append(f"mare({mare_ratio:.2f}>{mare_limit})")
@@ -133,12 +147,3 @@ class CrossCheckComparison(ComparisonBase):
                        fmt % float(abs(t[i] - g[i])), fmt % float(abs(b[i] - g[i]))))
         return log
 
-    @staticmethod
-    def _safe_div(num, den):
-        # max(den, 1e-7) avoids div-by-0 when third_party perfectly matches
-        # golden (den=0) — output epsilon no longer yields inf.
-        if np.isnan(den) or np.isinf(den):
-            return float("inf")
-        if num == 0 and den == 0:
-            return 1.0   # both perfect match -> ratio=1 (consistent)
-        return float(num / max(den, 1e-7))

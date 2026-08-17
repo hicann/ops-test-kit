@@ -23,6 +23,7 @@ import logging
 
 from ttk.core_modules.testcase_manager.param_plan import build_positional_args
 from ttk.core_modules.plugin_loader import get_plugin_function
+from ttk.utilities import DTYPE_PROMOTE_MAP
 from ttk.utilities.container_utils import apply_as_list, flatten_nested_sequence
 
 from .api_resolver import resolve_api
@@ -46,6 +47,41 @@ def _get_cpu_backend(framework="torch"):
     return _cpu_backend_cache[framework]
 
 
+def _promote_raw_inputs(testcase, raw_inputs, switches=None):
+    """golden_mode=Promote 时按 DTYPE_PROMOTE_MAP 抬高浮点输入精度(fp32->fp64, fp16/bf16->fp32),整型不动。
+
+    cross_check 用「我方误差 / 竞品误差」判定,前提是 golden 必须是独立于双方的高精度真值。
+    E2E 的 golden 与竞品同为 torch aten:golden 若停留在被测 dtype,两者实现同源、竞品误差
+    恒为 0,safe_div 的 err 地板接管,判据退化成「是否与 torch 逐位一致」——一次末位舍入
+    就会被放大成数倍比值。kernel/aclnn 通路早已用 golden_mode=Promote 规避,E2E 此前没有,
+    故在此补齐,语义与 npu/op/output_generation.py 的 __promote_dtype 一致。
+    """
+    # 模式判定放在此处而非调用点:让 generate_golden 少一层分支。
+    # golden_mode_override 由 profiling 侧在 cross_check 判据下设置。
+    mode = getattr(testcase, "golden_mode_override", None) or getattr(switches, "golden_mode", None)
+    if mode != "Promote":
+        return raw_inputs
+    # TestcaseE2e 暴露的是 flat_tensor_dtypes(与 raw_inputs 一一对齐);
+    # flat_input_dtypes 在该类上并不存在,取到 None 会让本函数直接原样返回、Promote 空转。
+    flat_dtypes = getattr(testcase, "flat_tensor_dtypes", None)
+    if not flat_dtypes:
+        return raw_inputs
+    promoted = list(raw_inputs)
+    for idx, array in enumerate(promoted):
+        if array is None or idx >= len(flat_dtypes):
+            continue
+        target = DTYPE_PROMOTE_MAP.get(flat_dtypes[idx])
+        if target is None:
+            continue
+        try:
+            promoted[idx] = array.astype(target)
+        except (TypeError, ValueError):
+            # 只兜 numpy astype 实际会抛的两类:目标 dtype 非法(TypeError)、值无法转换(ValueError)。
+            # 其余异常(如 array 非 ndarray)属调用方传参错误,不在此吞掉。
+            logging.warning(f"[golden] promote input#{idx} {flat_dtypes[idx]}->{target} failed, keep original")
+    return promoted
+
+
 def generate_golden(testcase, raw_inputs, plugin_path=None, switches=None, backend="cpu"):
     """
     Generate golden data using three-level fallback.
@@ -65,6 +101,11 @@ def generate_golden(testcase, raw_inputs, plugin_path=None, switches=None, backe
     api_name = testcase.api_name
     framework = detect_framework(api_name)
     cpu_backend = _get_cpu_backend(framework)
+
+    # 抬高浮点输入精度后再算 golden,使其成为独立于被测与竞品的高精度真值。
+    # 覆盖面:golden_api 路径与「同 API 跑 CPU」路径(两者都吃这里的 raw_inputs)。
+    # 自定义插件路径(Priority 2)不经 raw_inputs、由插件自行取数,故不受此处影响。
+    raw_inputs = _promote_raw_inputs(testcase, raw_inputs, switches)
 
     # --- Priority 1: CSV golden_api column (different API) ---
     if golden_api:

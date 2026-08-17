@@ -44,6 +44,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
         "batch_slice_info",
         "batch_seed",
         "batch_consistency_id",
+        "golden_mode_override",
     )
 
     identity_headers = {
@@ -109,6 +110,10 @@ class TestcaseE2e(TensorApiTestcaseBase):
         self.batch_slice_info = None
         self.batch_seed = None
         self.batch_consistency_id = None
+        # cross_check 判据下由 profiling 侧临时置 "Promote",令 golden 抬成高精度真值。
+        # 必须在 __slots__ 中声明:该类及其基类均无 __dict__,否则赋值抛 AttributeError,
+        # 被调用侧 try/except 咽掉后 Promote 静默空转。范式同 TestcaseOp / TestcaseAclnn。
+        self.golden_mode_override = None
 
     @classmethod
     def get_all_visible_headers(cls):

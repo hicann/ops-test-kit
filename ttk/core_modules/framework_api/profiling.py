@@ -453,6 +453,71 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     return result_nps, perf
 
 
+def _needs_golden_promote(testcase, switches, ref_nps):
+    """判据是否为 cross_check —— 是则 golden 必须抬成高精度真值。
+
+    cross_check 时 golden 必须走 Promote,与 geir/profiling.py、npu/op/profiling.py 对齐。
+    此前 E2E 不设该 override,理由是「比值判据对 golden 自身舍入不敏感(分子分母共享)」——
+    该前提只在竞品是独立实现时成立;而 cross_check 的竞品与 E2E golden 同为 torch aten,
+    rmse_party/rel_party 恒为 0,safe_div 的 err 地板接管,判据退化成「与 torch 逐位一致」,
+    一次末位舍入即被放大成数倍比值。故 resolve 提前到 golden 生成之前,仅为取得该标志。
+    """
+    if not ref_nps:
+        return False
+    try:
+        dtypes = tuple(str(r.dtype) if r is not None and hasattr(r, "dtype") else None for r in ref_nps)
+        standards = resolve_tolerance(
+            get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path),
+            testcase.flat_precision_tolerances,
+            testcase.flat_absolute_precision,
+            dtypes,
+            switches.compare_method,
+        )
+        return any(s.token == "cross_check" for s in standards)
+    except (KeyError, TypeError, ValueError):
+        # 只兜 tolerance spec 配置类错误(字段缺失/类型不对/取值非法)。
+        # 用 warning 而非 debug:此处静默跳过 Promote 正是本函数要修的症状
+        # (cross_check 误判 FAIL 却无任何提示),必须让用户看得见。
+        logging.warning(
+            "[%s] tolerance spec resolve failed, golden Promote skipped; "
+            "cross_check may misjudge without high-precision golden",
+            testcase.testcase_name,
+            exc_info=True,
+        )
+        return False
+
+
+def _generate_golden_maybe_promote(testcase, raw_inputs, switches, backend, ref_nps):
+    """cross_check 判据下临时挂上 golden_mode_override=Promote 再生成 golden。
+
+    不用 del 还原(TestcaseE2e 不支持删除该属性),改为记录原值后回写。
+    """
+    if not _needs_golden_promote(testcase, switches, ref_nps):
+        return _generate_golden_data(testcase, raw_inputs, switches, backend)
+
+    prev = getattr(testcase, "golden_mode_override", None)
+    restore = False
+    try:
+        testcase.golden_mode_override = "Promote"
+        restore = True
+    except AttributeError:
+        # golden_mode_override 已在 TestcaseE2e.__slots__ 中声明,正常不会走到这里;
+        # 一旦走到说明 Promote 静默空转,用 warning 让它可见。
+        logging.warning(
+            "[%s] cannot set golden_mode_override, golden Promote skipped", testcase.testcase_name
+        )
+    try:
+        return _generate_golden_data(testcase, raw_inputs, switches, backend)
+    finally:
+        if restore:
+            try:
+                testcase.golden_mode_override = prev
+            except AttributeError:
+                logging.warning(
+                    "[%s] restore golden_mode_override failed", testcase.testcase_name, exc_info=True
+                )
+
+
 def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
     """Generate golden outputs and dump them. Returns golden_nps list."""
     process_ctx = get_process_context()
@@ -773,6 +838,11 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
     gc.collect()
     _collect_sim_report(testcase, switches)
 
+    # 被测侧输出(device 结果)。容差按它的 dtype 解析,不能按 golden 的——
+    # Promote 会把 golden 抬到 fp64,拿 golden dtype 去 resolve_tolerance 要么查不到该
+    # dtype 的档、要么把 cross_check 判丢,三方就静默不采集了。
+    ref_nps = result_nps or graph_cst_nps or graph_dyn_nps or graph_aclgraph_nps
+
     if manual_case is not None:
         try:
             process_ctx.notify_status("OnLoadManualGolden")
@@ -791,18 +861,16 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
             _profiling_end_print(testcase, return_struct, switches=switches)
             return
     else:
-        golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend)
+        golden_nps = _generate_golden_maybe_promote(testcase, raw_inputs, switches, backend, ref_nps)
 
-    # E2E does NOT set golden_mode_override (unlike kernel/aclnn): E2E golden
-    # runs the same torch API on CPU, where bfloat16 is computed natively and
-    # reliably. kernel/aclnn need Promote because numpy/handwritten goldens
-    # cannot compute bfloat16 accurately. cross_check's ratio-based metric is
-    # also tolerant to golden's own bf16 rounding (shared in numerator/denominator).
     third_parties = None
     xpu_results = None
     if golden_nps and not any(isinstance(g, str) for g in golden_nps):
         tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
-        output_dtypes = tuple(str(g.dtype) if g is not None and hasattr(g, "dtype") else None for g in golden_nps)
+        # 按被测输出的 dtype 解析容差(golden 可能已被 Promote 抬精度,拿它解析会走偏);
+        # 拿不到 device 结果时退回 golden,保持原行为。
+        dtype_src = ref_nps if ref_nps else golden_nps
+        output_dtypes = tuple(str(g.dtype) if g is not None and hasattr(g, "dtype") else None for g in dtype_src)
         standards = resolve_tolerance(
             tolerance,
             testcase.flat_precision_tolerances,
