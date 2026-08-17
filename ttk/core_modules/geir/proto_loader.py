@@ -11,7 +11,7 @@ from ttk.utilities import Singleton
 
 
 class OpProtoInfo:
-    __slots__ = ("op_class", "proto_file", "inputs", "outputs", "dynamic_inputs", "attrs")
+    __slots__ = ("op_class", "proto_file", "inputs", "outputs", "dynamic_inputs", "dynamic_outputs", "attrs")
 
     def __init__(
         self,
@@ -20,6 +20,7 @@ class OpProtoInfo:
         inputs: List[str],
         outputs: List[str],
         dynamic_inputs: Optional[List[str]] = None,
+        dynamic_outputs: Optional[List[str]] = None,
         attrs: Optional[List[tuple]] = None,
     ):
         self.op_class = op_class
@@ -27,6 +28,7 @@ class OpProtoInfo:
         self.inputs = inputs
         self.outputs = outputs
         self.dynamic_inputs = dynamic_inputs or []
+        self.dynamic_outputs = dynamic_outputs or []
         self.attrs = attrs or []
 
 
@@ -41,7 +43,8 @@ class ProtoLoader(metaclass=Singleton):
     # 分两次 findall 拼接会假定"可选总在末尾"，导致输入错位。
     _ANY_INPUT_PATTERN = re.compile(r"\.(?:OPTIONAL_INPUT|DYNAMIC_INPUT|INPUT)\(\s*(\w+),")
     _DYNAMIC_INPUT_PATTERN = re.compile(r"\.DYNAMIC_INPUT\(\s*(\w+),")
-    _OUTPUT_PATTERN = re.compile(r"\.OUTPUT\(\s*(\w+),")
+    _ANY_OUTPUT_PATTERN = re.compile(r"\.(?:OUTPUT|DYNAMIC_OUTPUT)\(\s*(\w+),")
+    _DYNAMIC_OUTPUT_PATTERN = re.compile(r"\.DYNAMIC_OUTPUT\(\s*(\w+),")
     _ATTR_PATTERN = re.compile(r"\.ATTR\(\s*(\w+)\s*,\s*(\w+)")
     _REQUIRED_ATTR_PATTERN = re.compile(r"\.REQUIRED_ATTR\(\s*(\w+)\s*,\s*(\w+)")
 
@@ -135,8 +138,9 @@ class ProtoLoader(metaclass=Singleton):
 
         inputs = self._ANY_INPUT_PATTERN.findall(body)
         dynamic_inputs = self._DYNAMIC_INPUT_PATTERN.findall(body)
-        outputs = self._OUTPUT_PATTERN.findall(body)
+        outputs = self._ANY_OUTPUT_PATTERN.findall(body)
+        dynamic_outputs = self._DYNAMIC_OUTPUT_PATTERN.findall(body)
         attrs = self._ATTR_PATTERN.findall(body)
         attrs += self._REQUIRED_ATTR_PATTERN.findall(body)
 
-        return OpProtoInfo(canonical, proto_file, inputs, outputs, dynamic_inputs, attrs)
+        return OpProtoInfo(canonical, proto_file, inputs, outputs, dynamic_inputs, dynamic_outputs, attrs)

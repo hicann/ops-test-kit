@@ -89,6 +89,12 @@ def _resolve_format(fmt_str: str) -> str:
     return _FORMAT_TO_GE_ENUM.get(fmt_str, "FORMAT_ND")
 
 
+def _nested_or_broadcast(field, idx, default, count):
+    if isinstance(field, (list, tuple)) and idx < len(field) and isinstance(field[idx], (list, tuple)):
+        return field[idx]
+    return [default] * count
+
+
 def _attr_value_to_json(v):
     if isinstance(v, bool):
         return v
@@ -146,11 +152,13 @@ class GeirGraphBuilder:
                     f"Unsupported proto attr type '{proto_type}' for attr '{attr_name}' "
                     f"on operator '{proto_info.op_class}'"
                 )
-            attr_entries.append({
-                "name": attr_name,
-                "proto_type": proto_type,
-                "cpp_type": cpp_type,
-            })
+            attr_entries.append(
+                {
+                    "name": attr_name,
+                    "proto_type": proto_type,
+                    "cpp_type": cpp_type,
+                }
+            )
         return attr_entries
 
     def generate_op_source(self, op_name: str, mode="const", work_dir: str = None) -> Optional[str]:
@@ -172,12 +180,13 @@ class GeirGraphBuilder:
             input_names=proto_info.inputs[:],
             output_names=proto_info.outputs[:],
             dynamic_input_names=(proto_info.dynamic_inputs or []),
+            dynamic_output_names=(proto_info.dynamic_outputs or []),
             attr_entries=attr_entries,
             dtype_map=[(v, v) for v in _DTYPE_TO_GE_ENUM.values()],
             format_map=[(v, v) for v in _FORMAT_TO_GE_ENUM.values()],
         )
 
-        source_path = os.path.join(self._op_dir, "%s.cpp" % op_name)
+        source_path = os.path.join(self._op_dir, f"{op_name}.cpp")
         if os.path.isfile(source_path):
             try:
                 with open(source_path, "r", encoding="utf-8") as f:
@@ -257,26 +266,43 @@ class GeirGraphBuilder:
             )
             # DYNAMIC_INPUT(TensorList)端口:input_shapes[i] 是嵌套的 shape 列表,
             # 逐元素展开为 elements,模板按变参口(create_dynamic_input_X)接线。
-            if name in dynamic_input_names and isinstance(input_shapes[i], (list, tuple)) and input_shapes[i] and isinstance(input_shapes[i][0], (list, tuple)):
+            if (
+                name in dynamic_input_names
+                and isinstance(input_shapes[i], (list, tuple))
+                and input_shapes[i]
+                and isinstance(input_shapes[i][0], (list, tuple))
+            ):
                 elems = []
-                elt_dtypes = input_dtypes[i] if (isinstance(input_dtypes, (list, tuple)) and i < len(input_dtypes) and isinstance(input_dtypes[i], (list, tuple))) else [dtype_str] * len(input_shapes[i])
+                elt_dtypes = (
+                    input_dtypes[i]
+                    if (
+                        isinstance(input_dtypes, (list, tuple))
+                        and i < len(input_dtypes)
+                        and isinstance(input_dtypes[i], (list, tuple))
+                    )
+                    else [dtype_str] * len(input_shapes[i])
+                )
                 for j, eshape in enumerate(input_shapes[i]):
                     edt = elt_dtypes[j] if j < len(elt_dtypes) else elt_dtypes[-1]
-                    elems.append({
-                        "data_idx": data_idx + j,
-                        "data_shape": list(eshape),
-                        "desc_shape": list(eshape),
-                        "dtype": _resolve_dtype(edt),
-                        "format": _resolve_format(fmt_str),
-                        "ori_format": _resolve_format(ori_fmt_str),
-                    })
-                inputs_json.append({
-                    "name": name,
-                    "is_const": False,
-                    "dynamic": True,
-                    "count": len(elems),
-                    "elements": elems,
-                })
+                    elems.append(
+                        {
+                            "data_idx": data_idx + j,
+                            "data_shape": list(eshape),
+                            "desc_shape": list(eshape),
+                            "dtype": _resolve_dtype(edt),
+                            "format": _resolve_format(fmt_str),
+                            "ori_format": _resolve_format(ori_fmt_str),
+                        }
+                    )
+                inputs_json.append(
+                    {
+                        "name": name,
+                        "is_const": False,
+                        "dynamic": True,
+                        "count": len(elems),
+                        "elements": elems,
+                    }
+                )
                 data_idx += len(elems)
                 continue
             data_shape = list(input_shapes[i])
@@ -286,26 +312,35 @@ class GeirGraphBuilder:
                 desc_shape = [-1 for _ in data_shape]
             else:
                 desc_shape = data_shape
-            inputs_json.append({
-                "name": name,
-                "is_const": (name in attr_keys) or bool(os.environ.get("GEIR_CONST_FEED")),
-                "data_idx": data_idx,
-                "data_shape": data_shape,
-                "desc_shape": desc_shape,
-                "dtype": _resolve_dtype(dtype_str),
-                "format": _resolve_format(fmt_str),
-                "ori_format": _resolve_format(ori_fmt_str),
-                "ori_shape": (list(input_ori_shapes[i])
-                              if isinstance(input_ori_shapes, (list, tuple)) and i < len(input_ori_shapes)
-                                 and input_ori_shapes[i] is not None
-                              else list(input_shapes[i])),
-            })
+            inputs_json.append(
+                {
+                    "name": name,
+                    "is_const": (name in attr_keys) or bool(os.environ.get("GEIR_CONST_FEED")),
+                    "data_idx": data_idx,
+                    "data_shape": data_shape,
+                    "desc_shape": desc_shape,
+                    "dtype": _resolve_dtype(dtype_str),
+                    "format": _resolve_format(fmt_str),
+                    "ori_format": _resolve_format(ori_fmt_str),
+                    "ori_shape": (
+                        list(input_ori_shapes[i])
+                        if isinstance(input_ori_shapes, (list, tuple))
+                        and i < len(input_ori_shapes)
+                        and input_ori_shapes[i] is not None
+                        else list(input_shapes[i])
+                    ),
+                }
+            )
             data_idx += 1
 
         # ---- outputs ----
+        dynamic_output_names = set(getattr(proto_info, "dynamic_outputs", None) or [])
         outputs_json: List[Optional[Dict[str, Any]]] = []
         for i, name in enumerate(out_names):
             if i >= len(output_shapes):
+                outputs_json.append(None)
+                continue
+            if output_shapes[i] is None:
                 outputs_json.append(None)
                 continue
             dtype_str = (
@@ -327,23 +362,69 @@ class GeirGraphBuilder:
                 if output_ori_formats
                 else "ND"
             )
+            if (
+                name in dynamic_output_names
+                and isinstance(output_shapes[i], (list, tuple))
+                and output_shapes[i]
+                and isinstance(output_shapes[i][0], (list, tuple))
+            ):
+                count = len(output_shapes[i])
+                elt_dtypes = _nested_or_broadcast(output_dtypes, i, dtype_str, count)
+                elt_fmts = _nested_or_broadcast(output_formats, i, fmt_str, count)
+                elt_ori_fmts = _nested_or_broadcast(output_ori_formats, i, ori_fmt_str, count)
+                elt_ori_shapes = _nested_or_broadcast(output_ori_shapes, i, None, count)
+                elems = []
+                for j, eshape in enumerate(output_shapes[i]):
+                    edt = elt_dtypes[j] if j < len(elt_dtypes) else elt_dtypes[-1]
+                    efmt = elt_fmts[j] if j < len(elt_fmts) else elt_fmts[-1]
+                    eori_fmt = elt_ori_fmts[j] if j < len(elt_ori_fmts) else elt_ori_fmts[-1]
+                    eori_shape = elt_ori_shapes[j] if j < len(elt_ori_shapes) else None
+                    out_data_shape = list(eshape)
+                    if is_dynamic:
+                        out_desc_shape = [-1 for _ in out_data_shape]
+                    else:
+                        out_desc_shape = out_data_shape
+                    elems.append(
+                        {
+                            "data_shape": out_data_shape,
+                            "desc_shape": out_desc_shape,
+                            "dtype": _resolve_dtype(edt),
+                            "format": _resolve_format(efmt),
+                            "ori_format": _resolve_format(eori_fmt),
+                            "ori_shape": (list(eori_shape) if eori_shape is not None else out_data_shape),
+                        }
+                    )
+                outputs_json.append(
+                    {
+                        "name": name,
+                        "dynamic": True,
+                        "count": len(elems),
+                        "elements": elems,
+                    }
+                )
+                continue
             out_data_shape = list(output_shapes[i])
             if is_dynamic:
                 out_desc_shape = [-1 for _ in out_data_shape]
             else:
                 out_desc_shape = out_data_shape
-            outputs_json.append({
-                "name": name,
-                "data_shape": out_data_shape,
-                "desc_shape": out_desc_shape,
-                "dtype": _resolve_dtype(dtype_str),
-                "format": _resolve_format(fmt_str),
-                "ori_format": _resolve_format(ori_fmt_str),
-                "ori_shape": (list(output_ori_shapes[i])
-                              if isinstance(output_ori_shapes, (list, tuple)) and i < len(output_ori_shapes)
-                                 and output_ori_shapes[i] is not None
-                              else list(output_shapes[i])),
-            })
+            outputs_json.append(
+                {
+                    "name": name,
+                    "data_shape": out_data_shape,
+                    "desc_shape": out_desc_shape,
+                    "dtype": _resolve_dtype(dtype_str),
+                    "format": _resolve_format(fmt_str),
+                    "ori_format": _resolve_format(ori_fmt_str),
+                    "ori_shape": (
+                        list(output_ori_shapes[i])
+                        if isinstance(output_ori_shapes, (list, tuple))
+                        and i < len(output_ori_shapes)
+                        and output_ori_shapes[i] is not None
+                        else list(output_shapes[i])
+                    ),
+                }
+            )
 
         # ---- attrs (exclude input names and special prefixes) ----
         input_name_set = set(input_names)
@@ -372,7 +453,7 @@ class GeirGraphBuilder:
             "build_options": build_options,
         }
 
-        config_path = os.path.join(self._work_dir, "%s.json" % testcase.testcase_name)
+        config_path = os.path.join(self._work_dir, f"{testcase.testcase_name}.json")
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 

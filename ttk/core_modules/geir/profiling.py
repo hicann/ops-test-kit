@@ -16,7 +16,6 @@ import threading
 import numpy as np
 
 from ttk.core_modules.comparison.custom import compare_with_hooks
-
 from ttk.core_modules.npu.op.input_generation import __gen_input
 from ttk.core_modules.npu.op.output_generation import __gen_output
 from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
@@ -64,7 +63,9 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
 
     if switches.single_testcase_log_mode:
         _log_dir = build_single_log_dir(switches.test_mode, testcase.op_name, switches.root_path)
-        default_logging_config(file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name, log_dir=_log_dir)
+        default_logging_config(
+            file_handler=switches.logging_to_file, testcase_name=testcase.testcase_name, log_dir=_log_dir
+        )
 
     if not testcase.is_valid:
         from .geir_struct import GeirReturnStructure
@@ -142,11 +143,11 @@ def geir_profile_process(testcase, device_grant_events, device_granted_indices, 
 def _geir_param_order(testcase) -> list:
     """def.cpp param order (inputs then attrs) for server-side pool merge."""
     from ttk.core_modules.operator.op_info_keeper import OpInfoKeeper
+
     op_info = OpInfoKeeper().info_of(testcase.op_name)
     if not op_info:
         return []
-    return ([inp["name"] for inp in op_info["inputs"]] +
-            [attr["name"] for attr in op_info["attr"]])
+    return [inp["name"] for inp in op_info["inputs"]] + [attr["name"] for attr in op_info["attr"]]
 
 
 def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
@@ -236,16 +237,14 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         raise RuntimeError("GEIR case config generation failed")
 
     compiler = GeirCompiler(switches, build_dir=builder.work_dir)
-    binary = compiler.compile_op(
-        source_path, testcase.op_name, op_dir=builder.op_dir
-    )
+    binary = compiler.compile_op(source_path, testcase.op_name, op_dir=builder.op_dir)
     if binary is None:
         raise RuntimeError("GEIR compilation failed")
 
     # Write input files for C++ program (skip None inputs, use contiguous index)
     input_prefix = os.path.join(compiler.build_dir, f"{testcase.testcase_name}_input")
     data_idx = 0
-    for i, arr in enumerate(testcase.input_arrays):
+    for _i, arr in enumerate(testcase.input_arrays):
         if arr is None:
             continue
         if isinstance(arr, (list, tuple)):
@@ -283,7 +282,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     for run_idx in range(geir_run_count):
         if run_idx > 0:
             data_idx = 0
-            for i, arr in enumerate(testcase.input_arrays):
+            for _i2, arr in enumerate(testcase.input_arrays):
                 if arr is None:
                     continue
                 if isinstance(arr, (list, tuple)):
@@ -299,14 +298,14 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         data_r, data_w = os.pipe()
         data_holder = []
 
-        def _drain_pipe():
+        def _drain_pipe(_dr=data_r, _dh=data_holder):
             chunks = []
             while True:
-                chunk = os.read(data_r, 65536)
+                chunk = os.read(_dr, 65536)
                 if not chunk:
                     break
                 chunks.append(chunk)
-            data_holder.append(b"".join(chunks))
+            _dh.append(b"".join(chunks))
 
         reader = threading.Thread(target=_drain_pipe, name=f"geir_data_{testcase.testcase_name}")
         reader.start()
@@ -334,7 +333,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             reader.join(timeout=5)
             os.close(data_r)
             compiler.cleanup(input_prefix)
-            raise RuntimeError("GEIR execution timed out")
+            raise RuntimeError("GEIR execution timed out") from None
         reader.join(timeout=30)
         os.close(data_r)
 
@@ -361,7 +360,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         # Parse outputs from data channel
         run_outputs = _parse_stdout(
             data_holder[0] if data_holder else b"",
-            testcase.output_dtypes,
+            testcase.flat_output_dtypes,
             testcase.flat_output_shapes,
             case_name=testcase.testcase_name,
         )

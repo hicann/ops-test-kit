@@ -512,6 +512,27 @@ int main(int argc, char* argv[]) {
 {% for out_name in output_names %}
     {
         int idx = {{ loop.index0 }};
+{% if out_name in dynamic_output_names %}
+        if (idx < (int)outputs_cfg.size() && !outputs_cfg.at(idx).isNull()) {
+            const JsonValue& out = outputs_cfg.at(idx);
+            int dyn_n = (int)out.at("count").getInt();
+            op_inst.create_dynamic_output_{{ out_name }}(dyn_n);
+            for (int ei = 0; ei < dyn_n; ++ei) {
+                const JsonValue& el = out.at("elements").at(ei);
+                vector<int64_t> desc_shape = JsonToIntArray(el.at("desc_shape"));
+                DataType   dt     = StringToDataType(el.at("dtype").getString());
+                Format     fmt    = StringToFormat(el.at("format").getString());
+                Format     ori_fmt = StringToFormat(el.at("ori_format").getString());
+
+                TensorDesc desc(Shape(desc_shape), fmt, dt);
+                desc.SetOriginFormat(ori_fmt);
+                if (el.at("ori_shape").type == JsonValue::Array) {
+                    desc.SetOriginShape(Shape(JsonToIntArray(el.at("ori_shape"))));
+                }
+                op_inst.update_dynamic_output_desc_{{ out_name }}(ei, desc);
+            }
+        }
+{% else %}
         if (idx < (int)outputs_cfg.size() && !outputs_cfg.at(idx).isNull()) {
             const JsonValue& out = outputs_cfg.at(idx);
 
@@ -527,6 +548,7 @@ int main(int argc, char* argv[]) {
             }
             op_inst.update_output_desc_{{ out_name }}(desc);
         }
+{% endif %}
     }
 {% endfor %}
 
