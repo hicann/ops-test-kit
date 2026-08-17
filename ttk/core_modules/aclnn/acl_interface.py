@@ -129,6 +129,53 @@ class AclInterface:
         desc = ACLNN_ERROR_DESC_DICT.get(acl_ret, str(acl_ret))
         raise RuntimeError(f"Acl API Call {api_name}() Failed: {desc}, {extra_info}")
 
+    @staticmethod
+    def _find_numpy_storage(np_tensor: numpy.ndarray, storage_shape, elem_strides) \
+            -> Tuple[numpy.ndarray, int]:
+        """Find the exact contiguous storage and element offset for a NumPy view.
+
+        ``numpy.as_strided`` inserts a ``DummyArray`` into the base chain. The
+        first ndarray behind it can still be only the logical view, so every
+        base must be inspected. A larger parent allocation is intentionally
+        rejected because ``storage_shape`` does not identify where the declared
+        storage starts inside that allocation.
+        """
+        storage_numel = int(numpy.prod(storage_shape, dtype=numpy.int64))
+        storage_nbytes = storage_numel * np_tensor.itemsize
+        view_addr = np_tensor.__array_interface__['data'][0]
+        view_span = 0
+        if np_tensor.size:
+            view_span = sum((dim - 1) * stride for dim, stride in zip(np_tensor.shape, elem_strides))
+
+        candidates = []
+        current = np_tensor
+        visited = set()
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            if isinstance(current, numpy.ndarray) and current.flags['C_CONTIGUOUS']:
+                base_addr = current.__array_interface__['data'][0]
+                byte_offset = view_addr - base_addr
+                is_aligned = byte_offset >= 0 and byte_offset % np_tensor.itemsize == 0
+                offset = byte_offset // np_tensor.itemsize if is_aligned else -1
+                view_fits = offset >= 0 and (
+                    not np_tensor.size or offset + view_span < storage_numel
+                )
+                if current.nbytes == storage_nbytes and view_fits:
+                    candidates.append((current, offset))
+            current = getattr(current, 'base', None)
+
+        if not candidates:
+            raise ValueError(
+                f"Cannot find exact contiguous numpy storage with {storage_nbytes} bytes "
+                f"for view shape {tuple(np_tensor.shape)} and storage shape {tuple(storage_shape)}"
+            )
+
+        storage, offset = candidates[0]
+        if storage.dtype != np_tensor.dtype:
+            storage = storage.view(np_tensor.dtype)
+        storage = storage.reshape(-1)[:storage_numel]
+        return storage, offset
+
     def is_model(self) -> bool:
         return self._rts_interface.is_model()
 
@@ -263,27 +310,6 @@ class AclInterface:
         c_acl_dtype = ctypes.c_int32(DATA_TYPE_DICT[dtype_str])
         c_format = ctypes.c_int32(FORMAT_DICT[view_format])
 
-        # 获取原始 storage（as_strided 之前的连续数组）
-        # as_strided 的 base 可能是 DummyArray，需要递归找到真正的 ndarray
-        np_storage = np_tensor
-        while np_storage.base is not None:
-            if isinstance(np_storage.base, numpy.ndarray):
-                np_storage = np_storage.base
-                break
-            # as_strided 产生的 DummyArray，取其内部的 ndarray
-            if hasattr(np_storage.base, '__array_interface__'):
-                np_storage = numpy.asarray(np_storage.base)
-                # np.asarray 会将 as_strided 产生的 DummyArray 转为 ndarray，
-                # 但会丢失自定义 dtype（如 float4_e2m1 变为 |V1），导致后续
-                # _flatten_numpy_array 无法识别 4bit 类型并调用 pack_4bits。
-                # 因此需要用原始 tensor 的 dtype 重新 view，恢复正确的 dtype。
-                # 仅在 4bit 类型（int4/float4）且 dtype 丢失时才恢复，避免影响其他 dtype。
-                if ('int4' in str(np_tensor.dtype) or 'float4' in str(np_tensor.dtype)) \
-                        and 'int4' not in str(np_storage.dtype) and 'float4' not in str(np_storage.dtype):
-                    np_storage = np_storage.view(np_tensor.dtype)
-                break
-            np_storage = np_storage.base
-
         # numpy stride 单位是字节，转为元素单位
         elem_strides = tuple(s // np_tensor.itemsize for s in np_tensor.strides)
         is_contiguous = np_tensor.flags['C_CONTIGUOUS']
@@ -296,13 +322,12 @@ class AclInterface:
             c_storage_dims = (ctypes.c_int64 * len(view_dims))(*view_dims)
             c_storage_dims_num = ctypes.c_uint64(len(view_dims))
             offset = 0
+            np_storage = np_tensor
         else:
             stride = elem_strides
             c_stride = (ctypes.c_int64 * len(stride))(*stride)
+            np_storage, offset = self._find_numpy_storage(np_tensor, storage_shape, elem_strides)
             # storage_offset：view 起始地址相对 storage base 的元素偏移
-            base_addr = np_storage.__array_interface__['data'][0]
-            view_addr = np_tensor.__array_interface__['data'][0]
-            offset = (view_addr - base_addr) // np_tensor.itemsize
             c_offset = ctypes.c_int64(offset)
             c_storage_dims = (ctypes.c_int64 * len(storage_shape))(*storage_shape)
             c_storage_dims_num = ctypes.c_uint64(len(storage_shape))
