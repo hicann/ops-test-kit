@@ -247,16 +247,14 @@ class OpInfoKeeper(metaclass=Singleton):
         # 2. vendor op info (reversed: config.ini lists highest priority first)
         vendor_op_info_paths = self._find_ext_op_info_paths("vendor", soc_lower)
         for f in reversed(vendor_op_info_paths):
-            # extract vendor name from path: .../vendors/{vendor_name}/...
-            vendors_marker = os.sep + "vendors" + os.sep
-            vendor_name = ""
-            if vendors_marker in f:
-                vendor_name = f.split(vendors_marker)[1].split(os.sep)[0]
-            all_op_info_paths.append((f, "vendor", vendor_name))
+            all_op_info_paths.append((f, "vendor", self._extract_vendor_name(f)))
 
         # 3. custom op info from ASCEND_CUSTOM_OPP_PATH (reversed, highest priority)
+        # ASCEND_CUSTOM_OPP_PATH supports colon-separated multi-path; each path
+        # may carry its own vendor (e.g. .../vendors/<vendor>/...), extracted per-file.
         custom_op_info_paths = self._find_ext_op_info_paths("custom", soc_lower)
-        all_op_info_paths.extend([(f, "custom", "") for f in reversed(custom_op_info_paths)])
+        all_op_info_paths.extend([(f, "custom", self._extract_vendor_name(f))
+                                  for f in reversed(custom_op_info_paths)])
 
         if not all_op_info_paths:
             logging.warning("No op info config found (built-in or custom).")
@@ -331,10 +329,18 @@ class OpInfoKeeper(metaclass=Singleton):
         return result
 
     @staticmethod
+    def _extract_vendor_name(path: str) -> str:
+        """Extract vendor name from a path containing .../vendors/<vendor>/..."""
+        vendors_marker = os.sep + "vendors" + os.sep
+        if vendors_marker in path:
+            return path.split(vendors_marker)[1].split(os.sep)[0]
+        return ""
+
+    @staticmethod
     def _derive_op_source(config_file_path: str, source_type: str, vendor_name: str) -> dict:
         """Derive impl_prefix, ops_group, _impl_base_path from config file path."""
         impl_prefix = ""
-        if source_type == "vendor" and vendor_name:
+        if source_type in ("vendor", "custom") and vendor_name:
             impl_prefix = vendor_name + "_"
 
         config_filename = os.path.basename(config_file_path)

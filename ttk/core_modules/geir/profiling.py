@@ -337,11 +337,6 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         reader.join(timeout=30)
         os.close(data_r)
 
-        if proc.returncode != 0:
-            stderr = stderr_bytes.decode("utf-8", errors="replace")[:2000]
-            compiler.cleanup(input_prefix)
-            raise RuntimeError(f"GEIR execution failed (rc={proc.returncode}): {stderr}")
-
         # Capture plog to TTK logging. stdout holds plog echo (when
         # ASCEND_SLOG_PRINT_TO_STDOUT=1); stderr holds [TTK-GEIR] markers.
         if stdout_bytes:
@@ -352,6 +347,11 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             logging.debugc(
                 "[GEIR/%s] stderr:\n%s", testcase.testcase_name, stderr_bytes.decode("utf-8", errors="replace")
             )
+
+        if proc.returncode != 0:
+            stderr = stderr_bytes.decode("utf-8", errors="replace")[:2000]
+            compiler.cleanup(input_prefix)
+            raise RuntimeError(f"GEIR execution failed (rc={proc.returncode}): {stderr}")
 
         # Device profiling: run msprof.py export summary, parse op_summary CSV for Task Duration(us)
         if prof_path:
