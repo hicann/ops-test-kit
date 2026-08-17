@@ -36,6 +36,9 @@ _DTYPE_TO_GE_ENUM = {
     "float8_e5m2": "DT_FLOAT8_E5M2",
     "float8_e8m0": "DT_FLOAT8_E8M0",
     "hifloat8": "DT_HIFLOAT8",
+    "complex32": "DT_COMPLEX32",
+    "complex64": "DT_COMPLEX64",
+    "complex128": "DT_COMPLEX128",
 }
 
 _FORMAT_TO_GE_ENUM = {

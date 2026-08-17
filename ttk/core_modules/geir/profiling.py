@@ -20,7 +20,7 @@ from ttk.core_modules.npu.op.input_generation import __gen_input
 from ttk.core_modules.npu.op.output_generation import __gen_output
 from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
-from ttk.utilities import dump_to_file, get_global_storage, resolve_custom_numpy_dtypes, waiting_for_memory
+from ttk.utilities import dump_to_file, get_global_storage, get, resolve_custom_numpy_dtypes, waiting_for_memory
 
 from .compiler import GeirCompiler
 from .graph_builder import GeirGraphBuilder
@@ -466,6 +466,65 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     return result
 
 
+def _read_output_chunk(buf):
+    byte_count_raw = buf.read(8)
+    if len(byte_count_raw) < 8:
+        return None
+    byte_count = int(np.frombuffer(byte_count_raw, dtype=np.int64)[0])
+    raw = buf.read(byte_count)
+    if len(raw) < byte_count:
+        return None
+    return byte_count, raw
+
+
+def _reshape_output(arr, expect_shape, idx, case_name):
+    if expect_shape is None:
+        return arr
+    if arr.size == 0:
+        expect_numel = int(np.prod(expect_shape)) if expect_shape else 0
+        logging.warning(
+            "[%s] output[%d] empty from GE; expect_shape=%s, expect_numel=%d; skipping reshape",
+            case_name, idx, expect_shape, expect_numel,
+        )
+        return arr
+    try:
+        return arr.reshape(expect_shape)
+    except ValueError as e:
+        logging.warning(
+            "[%s] output[%d] reshape failed (%s); arr.size=%d, expect_shape=%s; keeping flat array",
+            case_name, idx, e, arr.size, expect_shape,
+        )
+        return arr
+
+
+def _parse_single_output(buf, idx, output_dtypes, output_shapes, case_name):
+    chunk = _read_output_chunk(buf)
+    if chunk is None:
+        return None, True
+    byte_count, raw = chunk
+
+    dtype_str = get(output_dtypes, idx) if output_dtypes else ""
+    is_complex32 = "complex32" in str(dtype_str)
+    np_dtype = np.dtype("float16") if is_complex32 else np.dtype(resolve_custom_numpy_dtypes([dtype_str])[0])
+    try:
+        arr = np.frombuffer(raw, dtype=np_dtype)
+    except ValueError as e:
+        itemsize = np_dtype.itemsize
+        usable = byte_count - (byte_count % itemsize) if itemsize else 0
+        logging.warning(
+            "[%s] output[%d] frombuffer failed (%s); byte_count=%d not multiple of "
+            "itemsize=%d (dtype=%s); truncating to %d usable bytes",
+            case_name, idx, e, byte_count, itemsize, dtype_str, usable,
+        )
+        arr = np.frombuffer(raw[:usable], dtype=np_dtype) if usable else np.array([], dtype=np_dtype)
+
+    expect_shape = get(output_shapes, idx) if output_shapes else None
+    if expect_shape is not None:
+        expect_shape = list(expect_shape) + ([2] if is_complex32 else [])
+    arr = _reshape_output(arr, expect_shape, idx, case_name)
+    return arr, False
+
+
 def _parse_stdout(data, output_dtypes, output_shapes, case_name=""):
     import io
 
@@ -480,69 +539,9 @@ def _parse_stdout(data, output_dtypes, output_shapes, case_name=""):
 
     results = []
     for i in range(num_outputs):
-        byte_count_raw = buf.read(8)
-        if len(byte_count_raw) < 8:
+        arr, stop = _parse_single_output(buf, i, output_dtypes, output_shapes, case_name)
+        if stop:
             break
-        byte_count = int(np.frombuffer(byte_count_raw, dtype=np.int64)[0])
-        raw = buf.read(byte_count)
-        if len(raw) < byte_count:
-            break
-
-        dtype_str = (
-            output_dtypes[i]
-            if isinstance(output_dtypes, (list, tuple)) and i < len(output_dtypes)
-            else str(output_dtypes[0])
-        )
-        np_dtype = resolve_custom_numpy_dtypes([dtype_str])[0]
-        itemsize = np.dtype(np_dtype).itemsize
-        try:
-            arr = np.frombuffer(raw, dtype=np.dtype(np_dtype))
-        except ValueError as e:
-            usable = byte_count - (byte_count % itemsize) if itemsize else 0
-            logging.warning(
-                "[%s] output[%d] frombuffer failed (%s); byte_count=%d not multiple of "
-                "itemsize=%d (dtype=%s); truncating to %d usable bytes",
-                case_name,
-                i,
-                e,
-                byte_count,
-                itemsize,
-                dtype_str,
-                usable,
-            )
-            arr = (
-                np.frombuffer(raw[:usable], dtype=np.dtype(np_dtype))
-                if usable
-                else np.array([], dtype=np.dtype(np_dtype))
-            )
-
-        expect_shape = output_shapes[i] if isinstance(output_shapes, (list, tuple)) and i < len(output_shapes) else None
-        if arr.size == 0 and expect_shape is not None:
-            expect_numel = int(np.prod(expect_shape)) if expect_shape else 0
-            logging.warning(
-                "[%s] output[%d] empty from GE (byte_count=%d, dtype=%s, "
-                "expect_shape=%s, expect_numel=%d); skipping reshape to avoid crash",
-                case_name,
-                i,
-                byte_count,
-                dtype_str,
-                expect_shape,
-                expect_numel,
-            )
-            results.append(arr)
-            continue
-        if expect_shape is not None:
-            try:
-                arr = arr.reshape(expect_shape)
-            except ValueError as e:
-                logging.warning(
-                    "[%s] output[%d] reshape failed (%s); arr.size=%d, expect_shape=%s; keeping flat array",
-                    case_name,
-                    i,
-                    e,
-                    arr.size,
-                    expect_shape,
-                )
         results.append(arr)
 
     return results

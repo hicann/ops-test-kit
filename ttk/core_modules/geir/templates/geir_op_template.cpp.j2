@@ -235,6 +235,9 @@ static uint32_t GetDataTypeSize(DataType dt) {
         case DT_BOOL:        return 1;
         case DT_FLOAT8_E4M3FN: return 1;
         case DT_FLOAT8_E5M2:  return 1;
+        case DT_COMPLEX32:   return 4;
+        case DT_COMPLEX64:   return 8;
+        case DT_COMPLEX128:  return 16;
         default:             return 1;
     }
 }
