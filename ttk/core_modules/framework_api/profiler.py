@@ -469,4 +469,6 @@ def get_profiler(api_name: str, backend, testcase_name: str = "", root_path: str
             return NpuProfiler(backend, testcase_name, root_path)
         return TorchProfiler(backend)
 
+    if backend.is_npu():
+        return NpuProfiler(backend, testcase_name, root_path)
     return WallClockProfiler(backend)
