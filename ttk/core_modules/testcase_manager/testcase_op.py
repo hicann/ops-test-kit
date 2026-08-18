@@ -68,6 +68,15 @@ class TestcaseOp(TestcaseBase):
                  "manual_golden_binaries",
                  # operator attributes
                  "attributes",
+                 "attributes1",
+                 "attributes2",
+                 "attributes3",
+                 "attributes4",
+                 "attributes5",
+                 "attributes6",
+                 "attributes7",
+                 "attributes8",
+                 "attributes9",
                  # === Runtime parameters below === #
                  # Compilation result
                  "dyn_compile_result",
@@ -144,6 +153,7 @@ class TestcaseOp(TestcaseBase):
                                   ("input_formats",), ("ND",)),
         "output_ori_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, ("output_formats",), ("ND",)),
         "attributes": (FIELD_TYPES.DICT, None, {}),
+        **{f"attributes{i}": (FIELD_TYPES.DICT, None, {}) for i in range(1, 10)},
     }
     static_property_headers: Dict[str, tuple] = {
         "input_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
@@ -174,84 +184,10 @@ class TestcaseOp(TestcaseBase):
     def __init__(self):
         super().__init__()
         self.op_name: Optional[str] = None
-        # STC
-        self.input_shapes: Optional[tuple] = None
-        self.input_dtypes: Optional[tuple] = None
-        self.input_formats: Optional[tuple] = None
-        self.output_shapes: Optional[tuple] = None
-        self.input_ori_shapes: Optional[tuple] = None
-        self.input_ori_formats: Optional[tuple] = None
-        self.output_dtypes = None
-        self.output_formats = None
-        self.output_ori_shapes = None
-        self.output_ori_formats = None
-        # Others
-        self.attributes: Optional[dict] = None
-        self.output_inplace_indexes = None  # flat input indexes after tensor_list expansion
-        self.output_shape_unknown_indexes: Optional[tuple] = None
-        # Manual controlled parameters
-        self.dump_file_prefix = None
-        self.manual_input_binaries: Optional[Tuple[str, ...]] = None
-        self.manual_golden_binaries = None
-        # End of testcase valid configurations
-        self.input_arrays = None
-        self.original_input_arrays = None
-        self.golden_arrays = None
-        self.output_arrays = None
-        self.dyn_workspace_arrays: Tuple[numpy.ndarray, ...] = ()
-        self.cst_workspace_arrays: Tuple[numpy.ndarray, ...] = ()
-        self.bin_workspace_arrays: Tuple[numpy.ndarray, ...] = ()
-        # DYN_RUNTIME
-        self.dyn_func_params = None
-        # compilation results
-        self.dyn_compile_result: Optional[DynamicCompilationResult] = None
-        self.cst_compile_result: Optional[ConstCompilationResult] = None
-        self.bin_compile_result: Optional[BinaryCompilationResult] = None
-        # Tiling
-        self.dyn_tuple_tiling_data = None
-        self.dyn_str_tiling_data = None
-        self.dyn_tiling_data_bytes = None
-        self.bin_tuple_tiling_data = None
-        self.bin_str_tiling_data = None
-        self.bin_tiling_data_bytes = None
-        # Outputs
-        self.dyn_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
-        self.cst_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
-        self.bin_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
-        # Test Runtime Attributes
-        self.compile_done: Optional[int] = 0
-        self.torch_func: Optional[Callable] = None
-        self.tf_func: Optional[Callable] = None
-        self.kb_pid: Optional[int] = None
-        self.core_type = "AiCore"
-        self._computed_list_distribution = None
-        self._input_distribution = None
-        self._output_distribution = None
-        self._flat_input_shapes = None
-        self._flat_input_dtypes = None
-        self._flat_input_formats = None
-        self._flat_input_ori_shapes = None
-        self._flat_input_ori_formats = None
-        self._flat_output_shapes = None
-        self._flat_output_dtypes = None
-        self._flat_output_formats = None
-        self._flat_output_ori_shapes = None
-        self._flat_output_ori_formats = None
-        self._flat_input_data_ranges = None
-        self._flat_precision_tolerances = None
-        self._flat_absolute_precision = None
-        self._flat_input_arrays = None
-        self._flat_manual_input_binaries = None
-        self._flat_manual_golden_binaries = None
-        # property override
-        self._dyn_clear_atomic = None
-        self._cst_clear_atomic = None
-        self._bin_clear_atomic = None
-        self._dyn_tensor_dict: Optional[Tuple[Tuple[dict], Tuple[dict]]] = None
-        self._bin_tensor_dict: Optional[Tuple[Tuple[dict], Tuple[dict]]] = None
-        self._dyn_input_ranges_cache: Optional[tuple] = None
-        self._dyn_output_ranges_cache: Optional[tuple] = None
-        self.xpu_results: dict = {}
+        self._init_stc_fields()
+        self._init_manual_and_runtime_fields()
+        self._init_compile_and_tiling_fields()
+        self._init_flat_and_property_fields()
 
     @property
     def cst_clear_atomic(self):
@@ -1376,6 +1312,105 @@ class TestcaseOp(TestcaseBase):
             else:
                 result.append(val)
         return tuple(result)
+
+    def _init_stc_fields(self):
+        """Initialize STC (shape/dtype/format) and attributes fields."""
+        # STC
+        self.input_shapes: Optional[tuple] = None
+        self.input_dtypes: Optional[tuple] = None
+        self.input_formats: Optional[tuple] = None
+        self.output_shapes: Optional[tuple] = None
+        self.input_ori_shapes: Optional[tuple] = None
+        self.input_ori_formats: Optional[tuple] = None
+        self.output_dtypes = None
+        self.output_formats = None
+        self.output_ori_shapes = None
+        self.output_ori_formats = None
+        # Others
+        self.attributes: Optional[dict] = None
+        self.attributes1: Optional[dict] = None
+        self.attributes2: Optional[dict] = None
+        self.attributes3: Optional[dict] = None
+        self.attributes4: Optional[dict] = None
+        self.attributes5: Optional[dict] = None
+        self.attributes6: Optional[dict] = None
+        self.attributes7: Optional[dict] = None
+        self.attributes8: Optional[dict] = None
+        self.attributes9: Optional[dict] = None
+        self.output_inplace_indexes = None  # flat input indexes after tensor_list expansion
+        self.output_shape_unknown_indexes: Optional[tuple] = None
+
+    def _init_manual_and_runtime_fields(self):
+        """Initialize manual-controlled parameters and runtime arrays."""
+        # Manual controlled parameters
+        self.dump_file_prefix = None
+        self.manual_input_binaries: Optional[Tuple[str, ...]] = None
+        self.manual_golden_binaries = None
+        # End of testcase valid configurations
+        self.input_arrays = None
+        self.original_input_arrays = None
+        self.golden_arrays = None
+        self.output_arrays = None
+        self.dyn_workspace_arrays: Tuple[numpy.ndarray, ...] = ()
+        self.cst_workspace_arrays: Tuple[numpy.ndarray, ...] = ()
+        self.bin_workspace_arrays: Tuple[numpy.ndarray, ...] = ()
+
+    def _init_compile_and_tiling_fields(self):
+        """Initialize DYN runtime, compilation results, tiling and prof outputs."""
+        # DYN_RUNTIME
+        self.dyn_func_params = None
+        # compilation results
+        self.dyn_compile_result: Optional[DynamicCompilationResult] = None
+        self.cst_compile_result: Optional[ConstCompilationResult] = None
+        self.bin_compile_result: Optional[BinaryCompilationResult] = None
+        # Tiling
+        self.dyn_tuple_tiling_data = None
+        self.dyn_str_tiling_data = None
+        self.dyn_tiling_data_bytes = None
+        self.bin_tuple_tiling_data = None
+        self.bin_str_tiling_data = None
+        self.bin_tiling_data_bytes = None
+        # Outputs
+        self.dyn_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
+        self.cst_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
+        self.bin_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
+
+    def _init_flat_and_property_fields(self):
+        """Initialize test runtime, flat-tensor caches and property overrides."""
+        # Test Runtime Attributes
+        self.compile_done: Optional[int] = 0
+        self.torch_func: Optional[Callable] = None
+        self.tf_func: Optional[Callable] = None
+        self.kb_pid: Optional[int] = None
+        self.core_type = "AiCore"
+        self._computed_list_distribution = None
+        self._input_distribution = None
+        self._output_distribution = None
+        self._flat_input_shapes = None
+        self._flat_input_dtypes = None
+        self._flat_input_formats = None
+        self._flat_input_ori_shapes = None
+        self._flat_input_ori_formats = None
+        self._flat_output_shapes = None
+        self._flat_output_dtypes = None
+        self._flat_output_formats = None
+        self._flat_output_ori_shapes = None
+        self._flat_output_ori_formats = None
+        self._flat_input_data_ranges = None
+        self._flat_precision_tolerances = None
+        self._flat_absolute_precision = None
+        self._flat_input_arrays = None
+        self._flat_manual_input_binaries = None
+        self._flat_manual_golden_binaries = None
+        # property override
+        self._dyn_clear_atomic = None
+        self._cst_clear_atomic = None
+        self._bin_clear_atomic = None
+        self._dyn_tensor_dict: Optional[Tuple[Tuple[dict], Tuple[dict]]] = None
+        self._bin_tensor_dict: Optional[Tuple[Tuple[dict], Tuple[dict]]] = None
+        self._dyn_input_ranges_cache: Optional[tuple] = None
+        self._dyn_output_ranges_cache: Optional[tuple] = None
+        self.xpu_results: dict = {}
 
     # ========== actual_input_data_ranges override ==========
 

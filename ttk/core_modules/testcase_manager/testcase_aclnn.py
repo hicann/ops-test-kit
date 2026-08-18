@@ -118,6 +118,15 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "scalar_dtypes",
         # input attributes
         "attributes",
+        "attributes1",
+        "attributes2",
+        "attributes3",
+        "attributes4",
+        "attributes5",
+        "attributes6",
+        "attributes7",
+        "attributes8",
+        "attributes9",
         # other help configuration
         "scalar_data_ranges",
         # specify dump file prefix
@@ -169,6 +178,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
     }
     attr_property_headers: Dict[str, tuple] = {
         "attributes": (FIELD_TYPES.DICT, None, {}),
+        **{f"attributes{i}": (FIELD_TYPES.DICT, None, {}) for i in range(1, 10)},
     }
     scalar_property_headers: Dict[str, tuple] = {
         "scalar_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ()),
@@ -215,6 +225,15 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self.scalar_dtypes: Optional[tuple] = None
         # attributes
         self.attributes: Optional[dict] = None
+        self.attributes1 = None
+        self.attributes2 = None
+        self.attributes3 = None
+        self.attributes4 = None
+        self.attributes5 = None
+        self.attributes6 = None
+        self.attributes7 = None
+        self.attributes8 = None
+        self.attributes9 = None
         # others
         self.scalar_data_ranges = None
         # Manual controlled parameters

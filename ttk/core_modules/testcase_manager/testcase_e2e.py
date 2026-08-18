@@ -36,6 +36,15 @@ class TestcaseE2e(TensorApiTestcaseBase):
 
     __slots__ = (
         "attributes",
+        "attributes1",
+        "attributes2",
+        "attributes3",
+        "attributes4",
+        "attributes5",
+        "attributes6",
+        "attributes7",
+        "attributes8",
+        "attributes9",
         "golden_api",
         "golden_data",
         "tensors",
@@ -68,6 +77,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
 
     attr_headers = {
         "attributes": (FIELD_TYPES.DICT, None, {}),
+        **{f"attributes{i}": (FIELD_TYPES.DICT, None, {}) for i in range(1, 10)},
     }
 
     batch_consistency_headers = {
@@ -102,6 +112,15 @@ class TestcaseE2e(TensorApiTestcaseBase):
     def __init__(self):
         super().__init__()
         self.attributes = {}
+        self.attributes1 = None
+        self.attributes2 = None
+        self.attributes3 = None
+        self.attributes4 = None
+        self.attributes5 = None
+        self.attributes6 = None
+        self.attributes7 = None
+        self.attributes8 = None
+        self.attributes9 = None
         self.golden_api = None
         self.golden_data = None
         self.tensors = None

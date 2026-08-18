@@ -212,6 +212,7 @@ class TestcaseBase(metaclass=ABCMeta):
         return tuple(data)
 
     def validate(self):
+        self._merge_extended_attributes()
         self._normalize_input_data_range()
 
     def _normalize_input_data_range(self):
@@ -447,3 +448,20 @@ class TestcaseBase(metaclass=ABCMeta):
             else:
                 result.append(val)
         return tuple(result)
+
+    def _merge_extended_attributes(self):
+        """Merge ``attributes1``~``attributes9`` into ``attributes`` (as attributes0).
+
+        Columns are merged in order attributes(0) -> attributes1 -> ... -> attributes9.
+        Later columns override earlier ones on key conflicts (no error).
+        """
+        if not self.is_valid:
+            return
+        if not any(getattr(self, f"attributes{i}", None) for i in range(1, 10)):
+            return
+        merged = dict(getattr(self, "attributes", None) or {})
+        for i in range(1, 10):
+            ext = getattr(self, f"attributes{i}", None)
+            if ext:
+                merged.update(ext)
+        self.attributes = merged
