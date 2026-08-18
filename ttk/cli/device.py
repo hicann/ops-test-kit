@@ -24,5 +24,5 @@ def add_device_args(parser):
                         type=int, default=0, choices=[0, 1, 2, 3],
                         help="Deterministic level: 0=off (default), 1=deterministic "
                              "compute (MD5 consistent across NPU runs), "
-                             "2=strong consistency,"
+                             "2=strong consistency, "
                              "3=batch consistency (cross-testcase slice compare)")

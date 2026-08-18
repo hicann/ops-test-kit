@@ -87,7 +87,7 @@ def add_common_args(parser):
         dest="task_prof",
         default=True,
         type=lambda x: x.lower() != "false",
-        help="Profile E2E duration (default: true)",
+        help="Task-level profiling (msprof) switch (default: true)",
     )
     parser.add_argument("--po", "--progress-output", dest="progress_output", help="Progress output file")
     parser.add_argument(

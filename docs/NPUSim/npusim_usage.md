@@ -1,7 +1,7 @@
 # TTK NPUSim 仿真测试使用指南
 
 > 通过 `--backend npusim`，让 TTK 的 **Kernel**、**ACLNN** 与 **E2E** 测试模式在 NPUSim（昇腾 SoC 级仿真器）上执行，代替真实芯片。适用于**无卡 / 芯片资源紧缺**环境下的算子精度验证与性能分析。
-> 关联设计文档：`docs/NPUSim/TTK_NPUSim仿真集成设计.md`
+> 关联设计文档：`docs/NPUSim/npusim_design.md`
 
 ---
 

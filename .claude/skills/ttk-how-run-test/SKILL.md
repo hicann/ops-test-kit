@@ -147,7 +147,7 @@ python3 -m ttk kernel -i cases.csv -o results.csv
 - ACLNN 专用参数：`references/aclnn-params.md`
 - E2E 专用参数：`references/e2e-params.md`
 
-完整文档：`docs/任务执行.md`（路径相对于 ops-test-kit 仓库根目录）
+完整文档：`docs/Task_Execution.md`（路径相对于 ops-test-kit 仓库根目录）
 
 ## 相关 Skill
 

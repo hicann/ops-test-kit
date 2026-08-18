@@ -1,6 +1,5 @@
 # mssanitizer适配方法指南
 
-[toc]
 
 ---
 

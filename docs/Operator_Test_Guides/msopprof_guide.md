@@ -1,6 +1,5 @@
-# Msopprof适配方法指南
+# msopprof适配方法指南
 
-[toc]
 
 ---
 

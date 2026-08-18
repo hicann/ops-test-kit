@@ -121,7 +121,7 @@ absolute_precision,1e-8
 - 错误模式表：`references/error-patterns.md`
 - 精度调试详解：`references/precision-debug.md`
 
-完整文档：`docs/FAQ和问题自定位指南/FAQ一本通.md`（路径相对于 ops-test-kit 仓库根目录）
+完整文档：`docs/FAQ/faq_guide.md`（路径相对于 ops-test-kit 仓库根目录）
 
 ## 相关 Skill
 

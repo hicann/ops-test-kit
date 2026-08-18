@@ -1,176 +1,142 @@
-# Task Execution
+# 任务执行
 
-[toc]
-
----
-
-# Command Overview
+# 命令行总览
 
 ```
-python3 -m ttk {kernel,aclnn,e2e,info,list} [options]
+python3 -m ttk {kernel,aclnn,e2e,geir,info,list} [选项]
 ```
 
-| Subcommand | Purpose |
-|-----------|---------|
-| `kernel` | AscendC kernel compile + NPU execute + precision compare |
-| `aclnn` | aclnn\* C API call + precision compare |
-| `e2e` | PyTorch framework API end-to-end test (NPU/MLU/CPU) |
-| `info` | Query local Ascend NPU device info |
-| `list` | Preview test case names from CSV |
+| 子命令 | 用途 |
+|--------|------|
+| `kernel` | AscendC 算子内核编译 + NPU 执行 + 精度比对 |
+| `geir` | GE 图编译 + 执行 + 精度比对 |
+| `aclnn` | aclnn\* C API 调用 + 精度比对 |
+| `e2e` | 框架 API 端到端测试 |
+| `info` | 查询本机 Ascend NPU 设备信息 |
+| `list` | 预览 CSV 中的测试用例列表 |
+
+查看版本：
 
 ```shell
-python3 -m ttk -v                    # Show version
-python3 -m ttk kernel --help         # Show help
+python3 -m ttk -v
 ```
 
-# Quick Start
+查看帮助：
 
 ```shell
-# Kernel
-python3 -m ttk kernel -i examples/case_store/kernel/mat_mul_v3.csv
-python3 -m ttk kernel -i examples/case_store/kernel/add.csv -d
-python3 -m ttk kernel -i examples/case_store/kernel/add.csv --co
+python3 -m ttk kernel --help
+python3 -m ttk aclnn --help
+python3 -m ttk e2e --help
+python3 -m ttk geir --help
+```
 
-# ACLNN
-python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
+# 设备信息与用例预览
 
-# E2E (auto-selects available backend per configured hardware segment)
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --cpu
-
-# Device info & case preview
+```shell
+# 查看设备信息
 python3 -m ttk info
+
+# 预览用例列表
+python3 -m ttk list -i examples/case_store/kernel/add.csv
+
+# 按算子名过滤预览
 python3 -m ttk list -i cases.csv --op add
 ```
 
-## E2E/ACLNN/Kernel Two-Stage Execution
+# 通用参数
 
-```shell
-# Prepare input and CPU golden without target API execution or comparison.
-python3 -m ttk e2e -i cases.csv --plugin /path/to/assets \
-  --no-prof --dump in,golden --dump-format bin \
-  --manual-data-dirs /data/manual
+| 参数 | 缩写 | 默认值 | 说明 | 示例 |
+|------|------|--------|------|------|
+| `--input` | `-i` | 无 | CSV 用例文件路径（必填） | `-i add.csv` |
+| `--config` | | 无 | ttk 配置 YAML 路径（覆盖 `~/.config/ttk/` 和 `./ttk.conf.yaml`） | `--config ttk.conf.yaml` |
 
-# Restore prepared data, execute the target API, and compare.
-python3 -m ttk e2e -i cases.csv --plugin /path/to/assets \
-  --manual-data-dirs /data/manual
-```
+## 用例筛选
 
-ACLNN uses the same options; add `--plat=<target-soc>` when a prepare host cannot
-detect the SoC. See [Manual-Data Prepare and Replay](./Manual_Data_Prepare_and_Replay.md)
-for formats, typed-data filename validation, directory defaults, and option constraints.
+| 参数 | 缩写 | 默认值 | 说明 | 示例 |
+|------|------|--------|------|------|
+| `--testcase` | `-t` | 无 | 按用例名筛选（逗号分隔） | `-t add_01,add_02` |
+| `--testcase-index` | `--ti` | 无 | 按用例索引筛选 | `--ti=1,3,5` 或 `--ti=1-10` |
+| `--testcase-count` | `--tc` | 无 | 随机选取N个用例 | `--tc=10` |
+| `--operator` | `--op` | 无 | 按算子名筛选 | `--op add,mat_mul_v3` |
+| `--exclude-operator` | `--no-op` | 无 | 排除算子名 | `--no-op concat_d` |
+| `--priority` | | 无 | 按优先级筛选 | `--priority=1-3` |
+| `--provider` | | 无 | 三方provider过滤（如torch/tf），缩小dispatch范围 | `--provider torch` |
+| `--rerun` | | 无 | 重跑失败项 | `--rerun=precision_status` |
 
-Kernel uses the same stage selectors while preserving its execution-mode options:
+## 设备与并行
 
-```shell
-python3 -m ttk kernel -i kernel_cases.csv --plugin /path/to/kernel_assets \
-  -d=false -c=false -b=release \
-  --no-prof --dump in,golden --dump-format bin \
-  --manual-data-dirs /data/kernel_manual
+| 参数 | 缩写 | 默认值 | 说明 | 示例 |
+|------|------|--------|------|------|
+| `--device` | `--dev` | 全部 | 使用设备数量 | `--dev 2` |
+| `--device-whitelist` | | 无 | 设备白名单 | `--device-whitelist 0,1` |
+| `--device-blacklist` | | 无 | 设备黑名单 | `--device-blacklist 2` |
+| `--process-count` | `--pc` | 1 | 每张卡进程数 | `--pc 4` |
+| `--proc-no-reuse` | | 关闭 | 每个用例创建新进程 | `--proc-no-reuse` |
+| `--no-memory-check` | | 关闭 | 跳过主机内存检查 | `--no-memory-check` |
+| `--platform` | `--plat` | 自动检测 | SoC版本 | `--plat Ascend910B3` |
+| `--proc-timeout` | | 0（不限） | 单用例超时（秒） | `--proc-timeout 120` |
+| `--limit` | `-l` | 30 | 单用例HBM内存上限（GB），超过则跳过 | `-l 16` |
 
-python3 -m ttk kernel -i kernel_cases.csv --plugin /path/to/kernel_assets \
-  -d=false -c=false -b=release \
-  --manual-data-dirs /data/kernel_manual
-```
+## 执行控制
 
-Standalone Kernel `--no-prof` keeps its existing dry-run behavior. Only the exact
-`--no-prof --dump in,golden` pair selects prepare; `--compile-only` cannot be used
-with either manual-data stage.
+| 参数 | 缩写 | 默认值 | 说明 | 示例 |
+|------|------|--------|------|------|
+| `--run` | | 3（仿真模式 1） | 执行次数 | `--run=5` |
+| `--task-prof` | | 开启 | 任务级 Profiling 开关 | `--task-prof=false` |
+| `--warmup` | | 开启 | Profiling 前预热 | `--warmup=false` |
+| `--npu-timeout` | | 无限制 | NPU 执行超时（ms） | `--npu-timeout 60000` |
+| `--no-prof` | | 关闭 | 只生成输入和 Golden，不执行目标 API | `--no-prof` |
+| `--validate` | | 关闭 | 仅校验 CSV 用例格式，不执行编译、输入生成、Golden 生成等流程 | `--validate` |
 
-# Case Selection
+## 精度控制
 
-| Parameter | Short | Description | Example |
-|-----------|-------|-------------|---------|
-| `--testcase` | `-t` | Filter by case name (comma-separated) | `-t add_01,add_02` |
-| `--testcase-index` | `--ti` | Filter by index | `--ti=1,3,5` or `--ti=1-10` |
-| `--testcase-count` | `--tc` | Randomly pick N cases | `--tc=10` |
-| `--operator` | `--op` | Filter by operator name | `--op add,mat_mul_v3` |
-| `--exclude-operator` | `--no-op` | Exclude operator name | `--no-op concat_d` |
-| `--priority` | | Filter by priority range | `--priority=1-3` |
-| `--rerun` | | Rerun failed cases | `--rerun=precision_status` |
+| 参数 | 缩写 | 默认值 | 说明 | 示例 |
+|------|------|--------|------|------|
+| `--compare` | | `stat_rel_err` | 精度对比方法。未指定时按 Spec.tolerance 路由（需 `--plugin`）。可选：`close`/`stat_rel_err`/`cosine`/`binary`/`requant`/`cross_check` | `--compare cosine` |
+| `--input-dist` | | `uniform` | 输入数据分布，可选：`uniform`/`normal` | `--input-dist normal` |
+| `--seed` | | 随机 | 随机种子（可复现） | `--seed 42` |
+| `--golden-mode` | | `Enable` | Golden生成模式，可选：`Enable`/`Disable`/`Promote` | `--golden-mode Disable` |
+| `--deterministic-level` | `--dl` | `0` | 确定性等级：`0`=关闭，`1`=确定性计算（MD5一致），`2`=强一致，`3`=批一致性（跨用例切片比对） | `--dl=1` |
 
-# Device & Parallelism
+> 精度比对方法的公式、容差及选择建议详见[精度比对方法](./Precision_Comparison.md)。确定性计算详见[确定性计算与批一致性](./Deterministic_Compute.md)。
 
-| Parameter | Short | Description | Default |
-|-----------|-------|-------------|---------|
-| `--device` | `--dev` | Number of devices to use | All |
-| `--device-whitelist` | | Device whitelist | None |
-| `--device-blacklist` | | Device blacklist | None |
-| `--process-count` | `--pc` | Processes per device | 1 |
-| `--platform` | `--plat` | SoC version | Auto-detect |
-| `--proc-timeout` | | Per-case timeout (seconds) | 0 (unlimited) |
-| `--limit` | `-l` | Memory limit per case (GB); skip if input+output exceeds | 30 |
+## 调试与诊断
 
-# Precision Control
+| 参数 | 缩写 | 默认值 | 说明 | 示例 |
+|------|------|--------|------|------|
+| `--dump` | | 关闭 | Dump数据：`full`/`in`/`out`/`golden` | `--dump full` |
+| `--dump-format` | | `bin` | Dump格式：`bin`/`npy`/`pt`/`print` | `--dump-format npy` |
+| `--dump-on-fail` | | 关闭 | 精度失败时Dump全部数据 | `--dump-on-fail` |
+| `--manual-data-dirs` | | 无 | prepare输出目录或replay有序搜索目录 | `--manual-data-dirs /data/op` |
+| `--single-log` | | 关闭 | 每个用例独立日志文件 | `--single-log` |
+| `--plugin` | | 无 | 外部插件路径 | `--plugin /path/to/plugin.py` |
+| `--xpu-perf` | | 关闭 | 采集三方XPU性能（需remote XPU配置） | `--xpu-perf` |
 
-| Parameter | Description | Options | Default |
-|-----------|-------------|---------|---------|
-| `--compare` | Comparison method | `close`/`stat_rel_err`/`cosine`/`binary`/`requant`/`cross_check` | Spec.tolerance routing (needs `--plugin`), else `stat_rel_err` |
-| `--input-dist` | Input distribution | `uniform`/`normal` | `uniform` |
-| `--seed` | Random seed (reproducible) | Integer | Random |
-| `--golden-mode` | Golden generation mode | `Enable`/`Disable`/`Promote` | `Enable` |
+## 结果输出
 
-> See [Result Analysis](./Result_Analysis.md) for comparison method details.
+| 参数 | 缩写 | 默认值 | 说明 | 示例 |
+|------|------|--------|------|------|
+| `--output` | `-o` | 无 | 输出结果CSV路径 | `-o results.csv` |
+| `--title` | | 无 | 自定义输出列 | `--title testcase_name,precision_status` |
+| `--csv-preserve` | | 关闭 | 保留原始CSV表头 | `--csv-preserve` |
+| `--print` | | 开启 | 打印摘要信息 | `--print=false` |
+| `--po` / `--progress-output` | | 无 | 进度输出路径 | `--po /tmp/progress.json` |
 
-# Debug & Diagnostics
+# 通路专属参数
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `--dump` | Dump data: `full`/`in`/`out`/`golden` | `--dump full` |
-| `--dump-format` | Dump format: `bin`/`npy`/`pt`/`print` | `--dump-format npy` |
-| `--dump-on-fail` | Auto-dump all data on precision failure | `--dump-on-fail` |
-| `--manual-data-dirs` | Prepare output or ordered replay search roots | `--manual-data-dirs /data/op` |
-| `--single-log` | One log file per test case | `--single-log` |
-| `--plugin` | External plugin path | `--plugin /path/to/plugin.py` |
-| `--validate` | Validate CSV format only (skips compilation, input/golden generation, device execution) | `--validate` |
+各通路专属参数详见对应指南：
 
-# Output
+- **Kernel编译控制**（`-d`/`-c`/`-b`/`--co`/`--compile-opts`等）：[Kernel测试指南](./Operator_Test_Guides/Kernel_Test_Guide.md)
+- **E2E后端选择**（`--cpu`/Backend抽象层）：[E2E测试指南](./Operator_Test_Guides/E2E_Test_Guide.md)
+- **GEIR编译模式**（`-c`/`-d`/`-b`）：[GEIR测试指南](./Operator_Test_Guides/GEIR_Test_Guide.md)
+- ACLNN复用通用参数，无专属选项
 
-| Parameter | Short | Description | Example |
-|-----------|-------|-------------|---------|
-| `--output` | `-o` | Output result CSV path | `-o results.csv` |
-| `--title` | | Custom output columns | `--title testcase_name,precision_status` |
-| `--csv-preserve` | | Preserve original CSV headers | `--csv-preserve` |
+# 高阶使用场景
 
-# Kernel Compilation Control
-
-| Parameter | Short | Description | Default |
-|-----------|-------|-------------|---------|
-| `--dynamic` | `-d` | Dynamic shape compilation; `-d false` to disable | **On** |
-| `--const` | `-c` | Static shape compilation | Off |
-| `--binary` | `-b` | Binary mode; `-b release` for released kernels | Off |
-| `--compile-only` | `--co` | Compile only, skip execution | Off |
-| `--no-prof` | | Kernel dry-run; with exact `--dump in,golden`, select manual-data prepare | Off |
-| `--compile-opts` | | Compile options (KEY=VALUE, can be specified multiple times) | None |
-| `--tiling-run` | `--tr` | Tiling run times | 3 |
-| `--reuse-hbm` | | Each case runs 3 times on NPU by default; reuse same HBM memory to enable L2 Cache | Off |
-| `--reserve-hbm` | | Reserve HBM (MB) | None |
-| `--clear-atomic` | | Force clear output and workspace before execution | Off |
-| `--clear-ub` / `--clear-l1` | | Fill UB / L1 with specified value before execution (default: 0) | Off |
-| `--simt-ub` / `--simt-stack-dcu` | | SIMT-mode UB / DCU stack size | None |
-| `--force-block-dim` | | Force `block_dim` value | None |
-
-# E2E-Specific Parameters
-
-> E2E mode runs through a unified Backend abstraction (`framework_api/backends/`); all backends share the same case parsing and precision comparison pipeline. The CPU backend is commonly used as the Golden source. The backend is auto-selected per the configured hardware segment (`yaml` `frameworks.torch.<seg>`); `--cpu` forces the CPU backend.
-
-# Two-Stage Selector
-
-`--no-prof --dump in,golden` prepares input/CPU-golden data without calling the
-target API or Kernel. See the two-stage guide above for required combinations.
-
-# General Parameters
-
-| Parameter | Short | Description | Default |
-|-----------|-------|-------------|---------|
-| `--input` | `-i` | CSV test case file (required) | |
-| `--output` | `-o` | Output result CSV path | None |
-| `--seed` | | Random seed | Random |
-| `--print` | | Print summary info | On |
-| `--no-memory-check` | | Skip host memory check | Off |
-| `--proc-no-reuse` | | New process per case | Off |
-| `--task-prof` | | Task-level profiling switch | On |
-| `--po` / `--progress-output` | | Progress output path | None |
-| `--run` | | Execution count | 3 (onboard) / 1 (model) |
-| `--warmup` | | Warmup before profiling | On |
-| `--npu-timeout` | | NPU execution timeout (ms) | Unlimited |
+| 文档 | 核心参数 |
+|------|---------|
+| [离线数据准备与导入](./Offline_Data_Prepare_and_Import.md) | `--no-prof --dump in,golden` + `--manual-data-dirs` |
+| [XPU 三方交叉校验](./XPU_Cross_Check.md) | `--compare cross_check` / `--xpu-perf` + `--config` |
+| [确定性计算与批一致性](./Deterministic_Compute.md) | `--deterministic-level` / `--dl` |
+| [Dump 数据调试](./Dump_Debug.md) | `--dump` + `--dump-format` + `--dump-on-fail` |
+| [NPUSim 仿真测试](./NPUSim/npusim_usage.md) | `--backend npusim` + `--sim-*` |

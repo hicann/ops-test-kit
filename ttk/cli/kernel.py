@@ -36,7 +36,7 @@ def _add_kernel_args(parser):
         nargs="?",
         const=True,
         default=None,
-        help="Enable binary test (only --binary=release supported)",
+        help="Binary mode; use -b=release to reuse pre-compiled release kernel",
     )
     parser.add_argument(
         "--co", "--compile-only", dest="compile_only", action="store_true", help="Compile only, skip profiling"
