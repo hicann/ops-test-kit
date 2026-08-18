@@ -10,7 +10,7 @@ Layout (one case):
     <sim_output>/<safe_case>/
         switches.pkl            # pickled SWITCHES (kernel wrapper)
         dyn|cst|bin/param.pkl   # pickled RTSProfilingParam per enabled mode
-        record_out/cannsim_*/   # NPUSim record archive (CANN cannsim)
+        record_out/{cannsim,npusim}_*/   # NPUSim record archive (CANN cannsim)
         output_*.bin / result.json   # wrapper-written results
 """
 import logging

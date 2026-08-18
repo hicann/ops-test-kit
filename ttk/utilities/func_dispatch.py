@@ -84,18 +84,12 @@ def bind_by_name(func, pool: dict) -> Tuple[list, dict]:
             else:
                 args.append(pool[name])
         elif p.default is inspect.Parameter.empty:
-            for k, v in pool.items():
-                if k not in consumed:
-                    consumed.add(k)
-                    if seen_star:
-                        kwargs[name] = v
-                    else:
-                        args.append(v)
-                    break
-            else:
-                raise UnknownParamError(
-                    f"parameter '{name}' of {getattr(func, '__qualname__', func)} "
-                    f"is not a known input or attribute name")
+            # Required param missing from pool: raise (not greedy-bind an
+            # unrelated unconsumed entry) so a golden/input name typo fails
+            # loudly instead of silently computing against the wrong value.
+            raise UnknownParamError(
+                f"parameter '{name}' of {getattr(func, '__qualname__', func)} "
+                f"is not a known input or attribute name")
         # has a default: leave it to Python (skip, use the default)
     leftover = [(k, v) for k, v in pool.items() if k not in consumed]
     if has_var_pos:

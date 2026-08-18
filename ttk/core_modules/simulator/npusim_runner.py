@@ -76,18 +76,27 @@ def _cannsim_cmd() -> list:
 
 
 def _latest_record_dir(record_out: Path, before: Iterable[str] = ()) -> Path:
-    """Return the newest cannsim_* archive NOT present in ``before``.
+    """Return the newest cannsim_*/npusim_* archive NOT present in ``before``.
+
+    The archive prefix is set by the installed cannsim package and differs
+    across CANN versions (``cannsim_`` on older toolkits, ``npusim_`` on
+    9.2.0+), so accept both rather than hard-coding a single prefix.
 
     ``clear_case_dir`` keeps ``record_out`` across reruns, so filtering out the
     pre-existing archives prevents a crashed record from silently returning a
     stale prior run's directory.
     """
     prev = set(before)
-    dirs = sorted(
-        (d for d in record_out.iterdir()
-         if d.is_dir() and d.name.startswith("cannsim_") and d.name not in prev),
-        key=lambda p: p.stat().st_mtime,
-    )
+    dirs = []
+    for d in record_out.iterdir():
+        if not d.is_dir():
+            continue
+        if d.name in prev:
+            continue
+        if not (d.name.startswith("cannsim_") or d.name.startswith("npusim_")):
+            continue
+        dirs.append(d)
+    dirs.sort(key=lambda p: p.stat().st_mtime)
     if not dirs:
         raise RuntimeError(f"cannsim record produced no new archive under {record_out}")
     return dirs[-1]
@@ -97,7 +106,7 @@ def run_record(sw, wrapper_path: Path, case_dir: Path,
                extra_argv: Iterable[str] = ()) -> Path:
     """Run ``record <wrapper> -s <soc> -o <case_dir>/record_out [-n ...] [-f ...]``.
 
-    Returns the archive root ``<case_dir>/record_out/cannsim_<ts>_<label>/``.
+    Returns the archive root ``<case_dir>/record_out/{cannsim,npusim}_<ts>_<label>/``.
     Note: record's exit code is unreliable for TTK kernels (camodel teardown
     may SIGSEGV after the user program finishes), so the caller must decide
     PASS/FAIL from the wrapper-written ``result.json``, not the return code.
@@ -143,8 +152,8 @@ def _instr_dir_of(export_dir: Path) -> Path:
     """The directory that directly contains instr.bin for ``report -e``.
 
     The CANN-bundled cannsim record writes instr.bin at the archive root
-    (``cannsim_*/instr.bin``); some layouts nest it under ``record/``, so fall
-    back to the archive root when the nested one is absent.
+    (``{cannsim,npusim}_*/instr.bin``); some layouts nest it under ``record/``,
+    so fall back to the archive root when the nested one is absent.
     """
     record_dir = export_dir / "record"
     if (record_dir / "instr.bin").is_file():

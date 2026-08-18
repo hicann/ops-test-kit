@@ -95,3 +95,16 @@ def test_invoke_unknown_param_raises():
             Bad, named={"x": 1}, attrs={},
             provider="torch", device_id="cpu", use_device=False,
         )
+
+
+def test_invoke_attrs_not_duplicated_positionally():
+    """attrs 不得既按位置又按关键字重复传入(issue #98 检视 #1)。"""
+    def f(inp, normalized_shape, weight=None, eps=1e-5):
+        return [inp, normalized_shape, weight, eps]
+
+    out = getattr(executor, "_invoke")(
+        f, named={"x": 5}, attrs={"normalized_shape": 64, "eps": 1e-3},
+        provider="torch", device_id="cpu", use_device=False,
+    )
+    # inp=5(位置绑定 x), normalized_shape/eps 走关键字, weight 用默认值。
+    assert out == [5, 64, None, 1e-3]

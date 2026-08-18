@@ -375,11 +375,33 @@ class TestSkipTeardown:
 class TestCannsimBackend:
     """record/report run the CANN-bundled cannsim, not the repo source."""
 
+    @staticmethod
+    def test_latest_record_dir_matches_npusim_prefix(tmp_path):
+        # CANN 9.2.0+ cannsim record emits npusim_* archives (issue #98).
+        from ttk.core_modules.simulator.npusim_runner import _latest_record_dir
+
+        (tmp_path / "npusim_20260810_abc").mkdir()
+        d = _latest_record_dir(tmp_path)
+        assert d.name == "npusim_20260810_abc"
+
+    @staticmethod
+    def test_latest_record_dir_picks_newest_archive(tmp_path):
+        # With both prefixes present, the newest archive (either prefix) wins.
+        from ttk.core_modules.simulator.npusim_runner import _latest_record_dir
+
+        old = tmp_path / "cannsim_20260810_old"
+        new = tmp_path / "npusim_20260810_new"
+        old.mkdir()
+        new.mkdir()
+        os.utime(old, (1_000_000, 1_000_000))
+        os.utime(new, (2_000_000, 2_000_000))
+        d = _latest_record_dir(tmp_path)
+        assert d.name == "npusim_20260810_new"
+
     def test_latest_record_dir_matches_cannsim_prefix(self, tmp_path):
         from ttk.core_modules.simulator.npusim_runner import _latest_record_dir
 
         (tmp_path / "cannsim_20260810_abc").mkdir()
-        (tmp_path / "npusim_20260810_old").mkdir()  # legacy prefix must not match
         d = _latest_record_dir(tmp_path)
         assert d.name == "cannsim_20260810_abc"
 

@@ -86,6 +86,17 @@ class TestMatchParamsV1:
 class TestBindParams:
     """bind_params: name-driven binding, * = calling style, unknown = raise (spec §7.2-7.4)."""
 
+    @staticmethod
+    def test_required_param_missing_raises_with_leftover():
+        """必填参数缺失时不得贪婪绑定未消费项(否则静默绑错值)。"""
+        class Impl:
+            @staticmethod
+            def __call__(x, scale):
+                return (x, scale)
+        # 'scale' 非 input/attr; 'alpha' 是未消费项, 不得被贪婪绑定给 'scale'。
+        with pytest.raises(UnknownParamError):
+            bind_params(Impl.__call__, {"x": 1, "alpha": 0.5})
+
     # --- positional vs keyword by * ---
 
     def test_no_star_inputs_are_positional(self):

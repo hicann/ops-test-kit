@@ -97,6 +97,15 @@ def test_bind_by_name_unknown_raises():
         bind_by_name(f, {"x": 1})
 
 
+def test_bind_by_name_required_missing_raises_with_leftover():
+    """必填参数名拼错时不得贪婪绑定未消费的 pool 项(否则静默算错)。"""
+    def f(x, scale):
+        return (x, scale)
+    # 'scale' 既非 input 也非 attr; 'alpha' 是未消费项, 不应被贪婪绑定给 'scale'。
+    with pytest.raises(UnknownParamError):
+        bind_by_name(f, {"x": 1, "alpha": 0.5})
+
+
 def test_resolve_callable_str():
     import numpy
     assert resolve_callable_str("numpy.add") is numpy.add

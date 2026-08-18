@@ -83,18 +83,12 @@ def bind_params(func, name_to_value: dict, device: Optional[str] = None,
             else:
                 args.append(value)
         elif param.default is inspect.Parameter.empty:
-            for k, v in name_to_value.items():
-                if k not in consumed:
-                    consumed.add(k)
-                    if seen_star:
-                        kwargs[name] = v
-                    else:
-                        args.append(v)
-                    break
-            else:
-                qual = getattr(func, "__qualname__", getattr(func, "__name__", func))
-                raise UnknownParamError(
-                    f"parameter '{name}' of {qual} is not a known input or attribute name")
+            # Required param missing from the pool: raise (not greedy-bind an
+            # unrelated unconsumed entry) so an input/attr name typo fails
+            # loudly instead of silently binding the wrong value.
+            qual = getattr(func, "__qualname__", getattr(func, "__name__", func))
+            raise UnknownParamError(
+                f"parameter '{name}' of {qual} is not a known input or attribute name")
         # has a default: leave it to Python (skip, use the default)
     leftover = {k: v for k, v in name_to_value.items() if k not in consumed}
     if has_var_positional:

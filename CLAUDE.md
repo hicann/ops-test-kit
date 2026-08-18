@@ -15,6 +15,9 @@ python3 -m ttk geir   -i examples/case_store/kernel/add.csv
 python3 -m ttk aclnn  -i examples/case_store/aclnn/aclnn_cat.csv
 python3 -m ttk e2e    -i examples/case_store/e2e/torch_add.csv   # --cpu 强制 CPU 后端
 
+# NPUSim 仿真后端（kernel/aclnn/e2e 均支持，无真机即可跑）
+python3 -m ttk kernel -i examples/case_store/kernel/add.csv --backend npusim --sim-report
+
 # 只解析校验 CSV（不跑设备）
 python3 -m ttk list -i cases.csv
 # 查看设备/环境
@@ -26,6 +29,7 @@ python3 -m ttk info
 - 精度：`--compare close|stat_rel_err|cosine|binary|requant|cross_check`（默认按 Spec.tolerance 路由，无插件时 stat_rel_err）
 - 自定义 golden/输入：`--plugin <path>`，指向包含 TestSpec 的目录或文件
 - 手工数据两阶段：`--no-prof --dump in,golden` 准备数据，`--manual-data-dirs <dir>` 回放
+- NPUSim 仿真（参数定义见 `ttk/cli/sim_args.py`）：`--backend npusim` 切到仿真后端；`--sim-soc`（默认 `Ascend950`）、`--sim-output`（默认 `<root>/sim_output`）、`--sim-report`（生成 trace_core*.json 与 HTML 性能报告）、`--sim-cores`、`--sim-obj`。与 `--no-prof`、`--cpu` 互斥
 
 ### 开发/测试
 
@@ -62,6 +66,10 @@ ruff check ttk/                  # lint（pre-commit 见 .pre-commit-config.yaml
 - 比对方法集中在 `ttk/core_modules/comparison/`；`cross_check` 三方交叉校验需配合 `third_party`。
 - E2E 的硬件中立 Backend 抽象在 `ttk/core_modules/framework_api/`（api_resolver、eager/graph execution、profiler）。
 - 远端 XPU 执行（mTLS、server/client、heartbeat）在 `ttk/remote/`，配置见 `ttk/config/default.yaml` 的 `remote:` / `frameworks:` 段。
+
+### NPUSim 仿真后端（`ttk/core_modules/simulator/`）
+
+`--backend npusim` 不引入新 Instance 类型：kernel/aclnn 仍走 `NpuInstance`、e2e 仍走 `FrameworkApiInstance`，只是把真机执行替换为 NPUSim 仿真。CLI 参数与归一化在 `ttk/cli/sim_args.py`（设置 `sw.backend="npusim"`、把 `dev_plat` 归一为 platform ini 名）；执行在 `simulator/npusim_runner.py`（定位 cannsim、`run_record`、`run_report`）与 `simulator/wrapper.py`（Python user_app，由 NPUSim `record` 启动）；配套 `case_writer.py`、`report.py`、`sim_profiling.py`。SoC 注册表在 `simulator/config.py::SIM_PLATFORM_BY_SOC`，当前仅 `Ascend950`/`Ascend950DT`。仿真结果写 `output_*.bin` 后走既有比对管线。指南见 `docs/NPUSim/TTK_NPUSim使用指南.md`。
 
 ### C++ 扩展（`csrc/`）
 
