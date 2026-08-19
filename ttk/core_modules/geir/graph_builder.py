@@ -70,9 +70,9 @@ _PROTO_ATTR_TYPE_TO_CPP = {
     "ListBool": "vector_int64",
     "ListString": "vector_string",
     "ListType": "vector_int64",
-    "Type": "int64_t",
-    "DataType": "int64_t",
-    "Format": "int64_t",
+    "Type": "ge_dtype",
+    "DataType": "ge_dtype",
+    "Format": "ge_format",
 }
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
@@ -468,11 +468,18 @@ class GeirGraphBuilder:
 
         # ---- attrs (exclude input names and special prefixes) ----
         input_name_set = set(input_names)
+        attr_proto_types = {name: ptype for name, ptype in proto_info.attrs}
         attrs_json: Dict[str, Any] = {}
         for k, v in attrs.items():
             if k in input_name_set or str(k)[0] in ("!", "#", "@"):
                 continue
-            attrs_json[k] = _attr_value_to_json(v)
+            proto_type = attr_proto_types.get(k)
+            if proto_type in ("Type", "DataType") and isinstance(v, str):
+                attrs_json[k] = _resolve_dtype(v)
+            elif proto_type == "Format" and isinstance(v, str):
+                attrs_json[k] = _resolve_format(v)
+            else:
+                attrs_json[k] = _attr_value_to_json(v)
 
         # ---- build options ----
         jit_compile = "0" if is_binary else "1"
