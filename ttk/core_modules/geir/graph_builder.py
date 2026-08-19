@@ -192,7 +192,7 @@ class GeirGraphBuilder:
         source_path = os.path.join(self._op_dir, f"{op_name}.cpp")
         if os.path.isfile(source_path):
             try:
-                with open(source_path, "r", encoding="utf-8") as f:
+                with open(source_path, encoding="utf-8") as f:
                     if f.read() == source:
                         logging.info("GEIR op source unchanged: %s", source_path)
                         return source_path
@@ -285,16 +285,38 @@ class GeirGraphBuilder:
                     )
                     else [dtype_str] * len(input_shapes[i])
                 )
+                elt_ori_shapes = _nested_or_broadcast(input_ori_shapes, i, None, len(input_shapes[i]))
                 for j, eshape in enumerate(input_shapes[i]):
                     edt = elt_dtypes[j] if j < len(elt_dtypes) else elt_dtypes[-1]
+                    eori_shape = elt_ori_shapes[j] if j < len(elt_ori_shapes) else None
+                    edata_shape = list(eshape)
+                    # 与普通输入对齐:dynamic 模式下 desc_shape 用 dyn_input_shapes
+                    # 对应元素(支持 -1/-2),缺省回退 -1;const 模式用实际 shape。
+                    edesc_shape = edata_shape
+                    if is_dynamic:
+                        edesc_shape = [-1 for _ in edata_shape]
+                        if dyn_input_shapes and i < len(dyn_input_shapes) and dyn_input_shapes[i] is not None:
+                            dyn_el = dyn_input_shapes[i]
+                            if (
+                                isinstance(dyn_el, (list, tuple))
+                                and j < len(dyn_el)
+                                and isinstance(dyn_el[j], (list, tuple))
+                            ):
+                                edesc_shape = list(dyn_el[j])
                     elems.append(
                         {
                             "data_idx": data_idx + j,
-                            "data_shape": list(eshape),
-                            "desc_shape": list(eshape),
+                            "data_shape": edata_shape,
+                            "desc_shape": edesc_shape,
                             "dtype": _resolve_dtype(edt),
                             "format": _resolve_format(fmt_str),
                             "ori_format": _resolve_format(ori_fmt_str),
+                            # 与普通输入对齐:dynamic 模式下 ori_shape 用动态 shape(-1/-2)
+                            "ori_shape": (
+                                edesc_shape
+                                if is_dynamic
+                                else (list(eori_shape) if eori_shape is not None else edata_shape)
+                            ),
                         }
                     )
                 inputs_json.append(
@@ -325,12 +347,18 @@ class GeirGraphBuilder:
                     "dtype": _resolve_dtype(dtype_str),
                     "format": _resolve_format(fmt_str),
                     "ori_format": _resolve_format(ori_fmt_str),
+                    # dynamic 模式下 ori_shape 也用动态 shape(-1/-2)，与真实动态场景一致：
+                    # 算子 infershape 的 GetInputShape 读的是 origin shape，编译期应看到未知维度。
                     "ori_shape": (
-                        list(input_ori_shapes[i])
-                        if isinstance(input_ori_shapes, (list, tuple))
-                        and i < len(input_ori_shapes)
-                        and input_ori_shapes[i] is not None
-                        else list(input_shapes[i])
+                        desc_shape
+                        if is_dynamic
+                        else (
+                            list(input_ori_shapes[i])
+                            if isinstance(input_ori_shapes, (list, tuple))
+                            and i < len(input_ori_shapes)
+                            and input_ori_shapes[i] is not None
+                            else list(input_shapes[i])
+                        )
                     ),
                 }
             )
@@ -394,7 +422,11 @@ class GeirGraphBuilder:
                             "dtype": _resolve_dtype(edt),
                             "format": _resolve_format(efmt),
                             "ori_format": _resolve_format(eori_fmt),
-                            "ori_shape": (list(eori_shape) if eori_shape is not None else out_data_shape),
+                            "ori_shape": (
+                                out_desc_shape
+                                if is_dynamic
+                                else (list(eori_shape) if eori_shape is not None else out_data_shape)
+                            ),
                         }
                     )
                 outputs_json.append(
@@ -419,12 +451,17 @@ class GeirGraphBuilder:
                     "dtype": _resolve_dtype(dtype_str),
                     "format": _resolve_format(fmt_str),
                     "ori_format": _resolve_format(ori_fmt_str),
+                    # 与输入侧对齐：dynamic 模式下 ori_shape 用动态 shape(-1/-2)
                     "ori_shape": (
-                        list(output_ori_shapes[i])
-                        if isinstance(output_ori_shapes, (list, tuple))
-                        and i < len(output_ori_shapes)
-                        and output_ori_shapes[i] is not None
-                        else list(output_shapes[i])
+                        out_desc_shape
+                        if is_dynamic
+                        else (
+                            list(output_ori_shapes[i])
+                            if isinstance(output_ori_shapes, (list, tuple))
+                            and i < len(output_ori_shapes)
+                            and output_ori_shapes[i] is not None
+                            else list(output_shapes[i])
+                        )
                     ),
                 }
             )

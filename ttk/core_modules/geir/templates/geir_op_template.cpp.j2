@@ -442,6 +442,9 @@ int main(int argc, char* argv[]) {
                 Format   ori_fmt = StringToFormat(el.at("ori_format").getString());
                 TensorDesc desc(Shape(desc_shape), fmt, dt);
                 desc.SetOriginFormat(ori_fmt);
+                if (el.at("ori_shape").type == JsonValue::Array) {
+                    desc.SetOriginShape(Shape(JsonToIntArray(el.at("ori_shape"))));
+                }
                 Tensor tensor;
                 string path = string(input_prefix) + "_" + to_string(data_idx) + ".bin";
                 if (LoadInputFromFile(path, dt, data_shape, tensor) != SUCCESS) {
