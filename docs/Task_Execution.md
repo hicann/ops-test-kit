@@ -116,7 +116,8 @@ python3 -m ttk list -i cases.csv --op add
 
 | 参数 | 缩写 | 默认值 | 说明 | 示例 |
 |------|------|--------|------|------|
-| `--output` | `-o` | 无 | 输出结果CSV路径 | `-o results.csv` |
+| `--output` | `-o` | 无 | 输出结果CSV路径（覆盖已有文件），与 `-a` 互斥 | `-o results.csv` |
+| `--append` | `-a` | 无 | 追加结果到已有CSV（表头不匹配则覆盖），与 `-o` 互斥 | `-a results.csv` |
 | `--title` | | 无 | 自定义输出列 | `--title testcase_name,precision_status` |
 | `--csv-preserve` | | 关闭 | 保留原始CSV表头 | `--csv-preserve` |
 | `--print` | | 开启 | 打印摘要信息 | `--print=false` |

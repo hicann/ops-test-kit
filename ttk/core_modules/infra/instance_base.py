@@ -84,6 +84,15 @@ class InstanceBase(metaclass=ABCMeta):
         self.heartbeat_manager = None  # HeartbeatManager or None
         self.collected_results: list = []
 
+    @staticmethod
+    def _read_existing_header(path: str):
+        try:
+            with open(path, newline='', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                return next(reader, None)
+        except (UnicodeDecodeError, csv.Error, OSError):
+            return None
+
     @abstractmethod
     def env_prepare(self):
         pass
@@ -436,10 +445,35 @@ class InstanceBase(metaclass=ABCMeta):
                          f"It will be set as {self.result_path}")
         if not self.result_path.endswith('.csv'):
             self.result_path += '.csv'
-        self.result_csv_file = open(self.result_path, newline='', mode='w+')
-        self.result_csv_writer = csv.writer(self.result_csv_file)
-        self._prepare_output_titles()
-        self._flush(self.case_result_titles)
+        parent_dir = os.path.dirname(self.result_path)
+        if parent_dir and not os.path.isdir(parent_dir):
+            os.makedirs(parent_dir, exist_ok=True)
+            logging.info(f"Created output directory: {parent_dir}")
+        append_mode = self.switches.append_mode
+        file_exists = os.path.exists(self.result_path) and os.path.getsize(self.result_path) > 0
+        if append_mode and file_exists:
+            self._prepare_output_titles()
+            existing_header = self._read_existing_header(self.result_path)
+            header_match = existing_header is not None and tuple(existing_header) == self.case_result_titles
+            if header_match:
+                self.result_csv_file = open(self.result_path, newline='', mode='a+')
+                self.result_csv_writer = csv.writer(self.result_csv_file)
+                self._header_flushed = True
+                self._precision_status_idx = self._resolve_precision_status_idx(self.case_result_titles)
+                logging.info(f"Append mode: appending to existing {self.result_path}")
+            else:
+                logging.warning(f"Append mode: existing file header does not match "
+                                f"(file has {len(existing_header) if existing_header else 0} columns, "
+                                f"current expects {len(self.case_result_titles)}). "
+                                f"Overwriting {self.result_path}")
+                self.result_csv_file = open(self.result_path, newline='', mode='w+')
+                self.result_csv_writer = csv.writer(self.result_csv_file)
+                self._flush(self.case_result_titles)
+        else:
+            self.result_csv_file = open(self.result_path, newline='', mode='w+')
+            self.result_csv_writer = csv.writer(self.result_csv_file)
+            self._prepare_output_titles()
+            self._flush(self.case_result_titles)
 
     def _prepare_output_titles(self):
         first_testcase = next(iter(self.flatten_testcases))

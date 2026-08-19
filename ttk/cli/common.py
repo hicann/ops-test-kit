@@ -3,12 +3,18 @@ import argparse
 from ttk.remote import is_remote_configured
 
 
-def add_common_args(parser):
+def _add_io_args(parser):
     parser.add_argument("-i", "--input", required=True, help="CSV test case file")
     parser.add_argument(
         "--config", default=None, help="Path to ttk config YAML (overrides ~/.config/ttk/ and ./ttk.conf.yaml)"
     )
-    parser.add_argument("-o", "--output", help="Output CSV file")
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument("-o", "--output", help="Output CSV file (overwrite existing)")
+    output_group.add_argument("-a", "--append", dest="append_file", help="Append results to existing CSV file; "
+                               "overwrites if file header does not match")
+
+
+def _add_case_filter_args(parser):
     parser.add_argument("-t", "--testcase", help="Specify testcase name(s), comma-separated")
     parser.add_argument(
         "--ti", "--testcase-index", dest="testcase_index", help="Specify testcase indexes, e.g. --ti=1,3,6 or --ti=1-5"
@@ -25,6 +31,9 @@ def add_common_args(parser):
         default="uniform",
         help="Input data distribution (default: uniform)",
     )
+
+
+def _add_precision_args(parser):
     parser.add_argument(
         "--compare",
         default=None,
@@ -57,8 +66,27 @@ def add_common_args(parser):
         help="Prepared input/golden data directories. Without --no-prof, "
         "load matching testcase data and run device comparison",
     )
+
+
+def _add_run_args(parser):
     parser.add_argument("--plugin", help="External plugin path for customized golden/inputs")
     parser.add_argument("--rerun", help="Rerun failed cases, e.g. --rerun=precision_status")
+    parser.add_argument(
+        "--validate", dest="validate_only", action="store_true", help="Validate CSV cases only, skip device execution"
+    )
+    parser.add_argument(
+        "--proc-no-reuse", dest="proc_no_reuse", action="store_true", help="Create new process for each case"
+    )
+    parser.add_argument(
+        "--provider",
+        default=None,
+        help="Which providers to TEST (e.g. torch,tf). "
+        "Test filter — narrows dispatch, does NOT override remote config. "
+        "If not set, uses the first available key from spec's third_party.",
+    )
+
+
+def _add_output_args(parser):
     parser.add_argument(
         "--title", "--titles", dest="title", help="Custom output columns, e.g. --title=testcase_name,dyn_perf_us"
     )
@@ -75,12 +103,6 @@ def add_common_args(parser):
         type=lambda x: x.lower() != "false",
         help="Print summary info periodically (default: true)",
     )
-    parser.add_argument(
-        "--validate", dest="validate_only", action="store_true", help="Validate CSV cases only, skip device execution"
-    )
-    parser.add_argument(
-        "--proc-no-reuse", dest="proc_no_reuse", action="store_true", help="Create new process for each case"
-    )
     parser.add_argument("--no-memory-check", dest="no_memory_check", action="store_true", help="Skip host memory check")
     parser.add_argument(
         "--task-prof",
@@ -90,13 +112,14 @@ def add_common_args(parser):
         help="Task-level profiling (msprof) switch (default: true)",
     )
     parser.add_argument("--po", "--progress-output", dest="progress_output", help="Progress output file")
-    parser.add_argument(
-        "--provider",
-        default=None,
-        help="Which providers to TEST (e.g. torch,tf). "
-        "Test filter — narrows dispatch, does NOT override remote config. "
-        "If not set, uses the first available key from spec's third_party.",
-    )
+
+
+def add_common_args(parser):
+    _add_io_args(parser)
+    _add_case_filter_args(parser)
+    _add_precision_args(parser)
+    _add_run_args(parser)
+    _add_output_args(parser)
 
 
 def validate_xpu_perf_precondition(sw):

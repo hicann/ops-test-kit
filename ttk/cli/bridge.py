@@ -7,23 +7,17 @@ _INTEGER_CLEAN_VALUE = re.compile(r"[+-]?(?:0[xX][0-9a-fA-F]+|0[oO][0-7]+|0[bB][
 _FLOAT_CLEAN_VALUE = re.compile(r"[+-]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?)$")
 
 
-def args_to_switches(args):
-    from ttk.utilities.classes import SWITCHES
-
-    sw = SWITCHES()
-    sw.logging_to_file = True
-    sw.config_path = getattr(args, "config", None)  # NEW: 经 SWITCHES pickle 传 worker
-    sw.provider_filter = getattr(args, "provider", None)  # NEW: --provider CLI 过滤器
-
-    # 无条件加载配置（config_path=None 时走标准路径：default.yaml + ~/.config/ttk + ./ttk.conf.yaml）。
-    # 删 get_config lazy fallback 后，这是 parent 侧唯一的 load 入口。
-    from ttk.config.loader import load_config
-
-    load_config(sw.config_path)
-
+def _apply_io_args(sw, args):
     sw.input_files = [args.input]
-    sw.output_file_name = args.output
+    if hasattr(args, "append_file") and args.append_file:
+        sw.output_file_name = args.append_file
+        sw.append_mode = True
+    else:
+        sw.output_file_name = args.output
+        sw.append_mode = False
 
+
+def _apply_case_selection_args(sw, args):
     if hasattr(args, "testcase") and args.testcase:
         sw.selected_testcases = args.testcase.split(",")
     if hasattr(args, "testcase_index") and args.testcase_index:
@@ -31,6 +25,8 @@ def args_to_switches(args):
     if hasattr(args, "testcase_count") and args.testcase_count is not None:
         sw.selected_testcase_count = args.testcase_count
 
+
+def _apply_filter_args(sw, args):
     if hasattr(args, "priority") and args.priority:
         sw.priorities = _parse_priorities(args.priority)
     if hasattr(args, "operator") and args.operator:
@@ -38,6 +34,8 @@ def args_to_switches(args):
     if hasattr(args, "exclude_operator") and args.exclude_operator:
         sw.excluded_operators = tuple(args.exclude_operator.split(","))
 
+
+def _apply_compare_dump_args(sw, args):
     if hasattr(args, "random_seed") and args.random_seed is not None:
         sw.random_seed = args.random_seed
     if hasattr(args, "input_dist"):
@@ -46,7 +44,6 @@ def args_to_switches(args):
         sw.compare_method = args.compare
     if hasattr(args, "golden_mode"):
         sw.golden_mode = args.golden_mode
-
     if hasattr(args, "dump") and args.dump is not None:
         _apply_dump_config(sw.dump_config, args.dump)
     if hasattr(args, "dump_format"):
@@ -56,12 +53,15 @@ def args_to_switches(args):
     if hasattr(args, "xpu_perf") and args.xpu_perf:
         sw.xpu_perf = True
 
+
+def _apply_plugin_rerun_args(sw, args):
     if hasattr(args, "plugin") and args.plugin:
         sw.plugin_path = tuple(pathlib.Path(p.strip()).resolve() for p in args.plugin.split(",") if p.strip())
-
     if hasattr(args, "rerun") and args.rerun:
         sw.rerun_targets = args.rerun.lower().split(",")
 
+
+def _apply_output_log_args(sw, args):
     if hasattr(args, "title") and args.title:
         sw.custom_columns = args.title.split(",")
     if hasattr(args, "csv_preserve") and args.csv_preserve:
@@ -78,6 +78,9 @@ def args_to_switches(args):
         sw.TASK_PROFILING = False
     if hasattr(args, "progress_output") and args.progress_output:
         sw.progress_output = args.progress_output
+
+
+def _apply_device_args(sw, args):
     if hasattr(args, "device") and args.device is not None:
         sw.device_count = args.device
     if hasattr(args, "device_blacklist") and args.device_blacklist:
@@ -90,6 +93,9 @@ def args_to_switches(args):
         sw.dev_plat = args.platform
     if hasattr(args, "proc_timeout") and args.proc_timeout:
         sw.proc_timeout = args.proc_timeout
+
+
+def _apply_run_args(sw, args):
     if hasattr(args, "validate_only") and args.validate_only:
         sw.validate_only = True
     if hasattr(args, "warmup") and not args.warmup:
@@ -100,6 +106,30 @@ def args_to_switches(args):
         sw.run_timeout = args.npu_timeout
     if hasattr(args, "deterministic_level") and args.deterministic_level:
         sw.deterministic_level = args.deterministic_level
+
+
+def args_to_switches(args):
+    from ttk.utilities.classes import SWITCHES
+
+    sw = SWITCHES()
+    sw.logging_to_file = True
+    sw.config_path = getattr(args, "config", None)  # NEW: 经 SWITCHES pickle 传 worker
+    sw.provider_filter = getattr(args, "provider", None)  # NEW: --provider CLI 过滤器
+
+    # 无条件加载配置（config_path=None 时走标准路径：default.yaml + ~/.config/ttk + ./ttk.conf.yaml）。
+    # 删 get_config lazy fallback 后，这是 parent 侧唯一的 load 入口。
+    from ttk.config.loader import load_config
+
+    load_config(sw.config_path)
+
+    _apply_io_args(sw, args)
+    _apply_case_selection_args(sw, args)
+    _apply_filter_args(sw, args)
+    _apply_compare_dump_args(sw, args)
+    _apply_plugin_rerun_args(sw, args)
+    _apply_output_log_args(sw, args)
+    _apply_device_args(sw, args)
+    _apply_run_args(sw, args)
 
     return sw
 

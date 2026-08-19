@@ -105,6 +105,7 @@ class SWITCHES:
         "mode",
         "input_files",
         "output_file_name",
+        "append_mode",
         "logging_to_file",
         "single_testcase_log_mode",
         "dev_plat",
@@ -181,86 +182,10 @@ class SWITCHES:
     ]
 
     def __init__(self):
-        self.root_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.mode: MODE = MODE.ASCEND_ONBOARD
-        self.input_files: Optional[List[str]] = None
-        self.output_file_name: Optional[str] = None
-        self.logging_to_file: bool = False
-        self.single_testcase_log_mode = False
-        self.dev_plat: str = "AUTO"
-        self.short_soc_version: Optional[str] = None  # None in non-NPU mode
-        self.custom_columns = None
-        self.print_help: bool = False
-        self.process_per_device = None
-        self.dyn_switches: OPTestSwitch = OPTestSwitch("Dynamic Shape", True, True, True)
-        self.cst_switches: OPTestSwitch = OPTestSwitch("Const Shape", False, True, True)
-        self.bin_switches: OPTestSwitch = OPTestSwitch("Binary Release", False, True, True)
-        self.rerun_targets = None
-        self.TASK_PROFILING = True
-        self.dump_config = DumpConfig()
-        self.device_count = -1
-        self.device_blacklist = []
-        self.device_whitelist = []
-        self.run_timeout = 0
-        self.proc_timeout = 0
-        self.tiling_run_time = 3
-        self.no_memory_check = False
-        self.force_clear_atomic = [None, None, None]
-        self.force_block_dim = [None, None, None]
-        self.force_clear_ub = None
-        self.force_clear_l1 = None
-        self.force_simt_ub_size = [None, None, None]  # dynamic/const/binary
-        self.proc_no_reuse = False
-        # Hidden switches
-        self.kernel_meta = os.path.join(self.root_path, "kernel_meta")
-        self.warmup = True
-        self.summary_print = True
-        # Constants
-        self.DAVINCI_HBM_SIZE_LIMIT = 30  # GB
-        # Testcases
-        self.selected_testcases = []
-        self.selected_testcase_indexes = []
-        self.selected_testcase_count = -1
-        self.selected_operators = None
-        self.excluded_operators = None
-        self.preserve_original_csv = False
-        self.random_seed = None
-        self.progress_output = None
-        self.op_impl_mode: Optional[str] = None
-        self.simt_cfg: SoCSimtCfg = SoCSimtCfg()
-        self.input_distribution: str = "uniform"
-        self.golden_mode: str = "Enable"
-        self.compare_method = None
-        self.xpu_perf: bool = False
-        self.precision_report: Optional[str] = None
-        self.reuse_hbm: bool = False
-        self.reserve_hbm: int = 0
-        self.priorities: Optional[tuple] = None
-        self.compile_options: dict = {}
-        self.plugin_path: Optional[Tuple[pathlib.Path]] = None
-        self.test_mode: str = "op"
-        self.force_cpu: bool = False
-        self.fullgraph: int = 0
-        self.aclgraph_enabled: bool = False
-        self.validate_only: bool = False
-        self.manual_data_mode: Optional[str] = None
-        self.manual_data_dirs: Tuple[str, ...] = ()
-        # private properties below
-        self._run_time: Optional[int] = None
-        self._compile_only: bool = False
-        self.config_path: Optional[str] = None
-        self.provider_filter: Optional[str] = None
-        # GEIR mode
-        self.geir_binary: bool = False
-        self.deterministic_level: int = 0
-        # NPUSim simulator backend
-        self.backend: str = "npu"  # "npu" | "npusim"
-        self.sim_soc_version: str = "Ascend950"
-        self.sim_output_dir: str = ""  # 空 -> root_path/sim_output
-        self.sim_report: bool = False
-        self.sim_cores: str = ""
-        self.sim_object_file: str = ""
-        self.framework: str = "torch"
+        self._init_paths_and_mode()
+        self._init_device_and_run()
+        self._init_testcases_and_filters()
+        self._init_modes_and_backend()
 
     def __getstate__(self):
         """Pickle 支持：仅导出 __slots__ 中已赋值的属性（跳过 property/私有）。"""
@@ -313,6 +238,94 @@ class SWITCHES:
 
     def oom_enabled(self) -> bool:
         return "oom" in self.compile_options.get("op_debug_config", "")
+
+    def _init_paths_and_mode(self):
+        self.root_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.mode: MODE = MODE.ASCEND_ONBOARD
+        self.input_files: Optional[List[str]] = None
+        self.output_file_name: Optional[str] = None
+        self.append_mode: bool = False
+        self.logging_to_file: bool = False
+        self.single_testcase_log_mode = False
+        self.dev_plat: str = "AUTO"
+        self.short_soc_version: Optional[str] = None  # None in non-NPU mode
+        self.custom_columns = None
+        self.print_help: bool = False
+        self.process_per_device = None
+        self.dyn_switches: OPTestSwitch = OPTestSwitch("Dynamic Shape", True, True, True)
+        self.cst_switches: OPTestSwitch = OPTestSwitch("Const Shape", False, True, True)
+        self.bin_switches: OPTestSwitch = OPTestSwitch("Binary Release", False, True, True)
+        self.rerun_targets = None
+        self.TASK_PROFILING = True
+        self.dump_config = DumpConfig()
+
+    def _init_device_and_run(self):
+        self.device_count = -1
+        self.device_blacklist = []
+        self.device_whitelist = []
+        self.run_timeout = 0
+        self.proc_timeout = 0
+        self.tiling_run_time = 3
+        self.no_memory_check = False
+        self.force_clear_atomic = [None, None, None]
+        self.force_block_dim = [None, None, None]
+        self.force_clear_ub = None
+        self.force_clear_l1 = None
+        self.force_simt_ub_size = [None, None, None]  # dynamic/const/binary
+        self.proc_no_reuse = False
+        # Hidden switches
+        self.kernel_meta = os.path.join(self.root_path, "kernel_meta")
+        self.warmup = True
+        self.summary_print = True
+        # Constants
+        self.DAVINCI_HBM_SIZE_LIMIT = 30  # GB
+
+    def _init_testcases_and_filters(self):
+        self.selected_testcases = []
+        self.selected_testcase_indexes = []
+        self.selected_testcase_count = -1
+        self.selected_operators = None
+        self.excluded_operators = None
+        self.preserve_original_csv = False
+        self.random_seed = None
+        self.progress_output = None
+        self.op_impl_mode: Optional[str] = None
+        self.simt_cfg: SoCSimtCfg = SoCSimtCfg()
+        self.input_distribution: str = "uniform"
+        self.golden_mode: str = "Enable"
+        self.compare_method = None
+        self.xpu_perf: bool = False
+        self.precision_report: Optional[str] = None
+        self.reuse_hbm: bool = False
+        self.reserve_hbm: int = 0
+        self.priorities: Optional[tuple] = None
+        self.compile_options: dict = {}
+        self.plugin_path: Optional[Tuple[pathlib.Path]] = None
+
+    def _init_modes_and_backend(self):
+        self.test_mode: str = "op"
+        self.force_cpu: bool = False
+        self.fullgraph: int = 0
+        self.aclgraph_enabled: bool = False
+        self.validate_only: bool = False
+        self.manual_data_mode: Optional[str] = None
+        self.manual_data_dirs: Tuple[str, ...] = ()
+        # private properties below
+        self._run_time: Optional[int] = None
+        self._compile_only: bool = False
+        self.config_path: Optional[str] = None
+        self.provider_filter: Optional[str] = None
+        # GEIR mode
+        self.geir_binary: bool = False
+        self.deterministic_level: int = 0
+        # NPUSim simulator backend
+        self.backend: str = "npu"  # "npu" | "npusim"
+        self.sim_soc_version: str = "Ascend950"
+        self.sim_output_dir: str = ""  # 空 -> root_path/sim_output
+        self.sim_report: bool = False
+        self.sim_cores: str = ""
+        self.sim_object_file: str = ""
+        self.framework: str = "torch"
 
 
 class OPTestSwitch:
