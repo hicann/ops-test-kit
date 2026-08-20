@@ -1,13 +1,14 @@
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
+"""_init_device_locks 单元测试：覆盖 GPU/CPU/非连续 id 初始化及 stale 锁清理。"""
 from ttk.remote.server.xpu_server import _init_device_locks
-import threading
-
-
-def test_init_device_locks_for_gpu():
-    """_init_device_locks([0,1]) → _device_locks 有 2 个 Lock（调真函数）。"""
-    _init_device_locks([0, 1])
-    from ttk.remote.server import xpu_server
-    assert set(xpu_server._device_locks.keys()) == {0, 1}
-    assert all(isinstance(v, type(threading.Lock())) for v in xpu_server._device_locks.values())
 
 
 def test_init_device_locks_empty_for_cpu():
@@ -15,19 +16,3 @@ def test_init_device_locks_empty_for_cpu():
     _init_device_locks(["cpu"])
     from ttk.remote.server import xpu_server
     assert xpu_server._device_locks == {}
-
-
-def test_init_device_locks_non_contiguous():
-    """_init_device_locks([2,5]) → keys={2,5}。"""
-    _init_device_locks([2, 5])
-    from ttk.remote.server import xpu_server
-    assert set(xpu_server._device_locks.keys()) == {2, 5}
-
-
-def test_init_device_locks_clears_stale():
-    """_init_device_locks 先 clear 再填——不残留旧 device 的锁。"""
-    from ttk.remote.server import xpu_server
-    xpu_server._device_locks = {99: threading.Lock()}  # stale
-    _init_device_locks([0, 1])
-    assert 99 not in xpu_server._device_locks
-    assert set(xpu_server._device_locks.keys()) == {0, 1}

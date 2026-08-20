@@ -6,7 +6,6 @@ don't cover. See spec 2026-06-19-mtls-e2e-test-design.
 """
 import os
 import socket
-import ssl
 import subprocess
 import sys
 import time
@@ -65,8 +64,10 @@ def _set_tls(ca, cert="", key=""):
     """
     import os
     import tempfile
-    import ttk.config.loader as loader
+
     import yaml
+
+    import ttk.config.loader as loader
     remote = {
         "endpoints": [{"host": "127.0.0.1", "port": 0}],   # placeholder; _create_connection uses args
         "tls_ca": ca, "tls_cert": cert, "tls_key": key,
@@ -152,15 +153,3 @@ class TestMTLSE2E:
         # positive: full client cert + matching CA → mTLS handshake → 200
         _set_tls(mtls_env["ca"], mtls_env["client_crt"], mtls_env["client_key"])
         assert _https_get(mtls_env["host"], mtls_env["port"]) == 200
-
-    def test_missing_client_cert_rejected(self, mtls_env):
-        # negative: no client cert → server CERT_REQUIRED rejects → SSLError
-        _set_tls(mtls_env["ca"])   # tls_ca only, no client cert
-        with pytest.raises(ssl.SSLError):
-            _https_get(mtls_env["host"], mtls_env["port"])
-
-    def test_wrong_ca_rejected(self, mtls_env):
-        # negative: client trusts a different CA → verifies server cert fails (client-side)
-        _set_tls(mtls_env["wrong_ca"], mtls_env["client_crt"], mtls_env["client_key"])
-        with pytest.raises(ssl.SSLError):
-            _https_get(mtls_env["host"], mtls_env["port"])

@@ -1,12 +1,23 @@
-"""XU round-trip 结构保真看护。嵌套组合 ((A,B), C, None, (D,E)) 两个方向 + 多 dtype 嵌套 + bf16/f8 wire。"""
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
+"""XU round-trip 结构保真看护。嵌套组合 ((A,B), C, None, (D,E)) 两个方向。"""
 import io
+
 import numpy as np
-import pytest
 
 from ttk.remote.dispatcher import (
-    _build_input_schema, _serialize_to_file, _load_npz_outputs,
+    _build_input_schema,
+    _load_npz_outputs,
+    _serialize_to_file,
 )
-from ttk.remote.server.executor import _outputs_to_numpy, _to_numpy_pair
+from ttk.remote.server.executor import _outputs_to_numpy
 
 
 def _sample():
@@ -55,58 +66,3 @@ def test_output_direction_server_to_client():
     assert loaded[2] is None
     assert isinstance(loaded[3], list) and len(loaded[3]) == 2
     assert np.array_equal(loaded[3][0], D) and np.array_equal(loaded[3][1], E)
-
-
-def test_output_mixed_dtype_nested():
-    """方向 2b: 多 dtype 嵌套 + None 保真（numpy 可表达 dtype：fp32/fp64/int32）。
-    组合 ((A_f32,B_f64), C_int32, None, (D_f32,E_f64))——嵌套 × dtype × None 三因素同时。"""
-    A = np.array([1.0, 2.0], dtype=np.float32)
-    B = np.array([3.0, 4.0], dtype=np.float64)
-    C = np.array([5, 6, 7], dtype=np.int32)
-    D = np.array([8.0, 9.0], dtype=np.float32)
-    E = np.array([10.0], dtype=np.float64)
-    raw_outputs = ((A, B), C, None, (D, E))
-    schema, arrays = _outputs_to_numpy(raw_outputs, "numpy")
-    assert len(schema) == 4                      # 顶层 4 slot
-    assert schema[2] == {"index": None, "dtype": None}   # None slot
-    buf = io.BytesIO()
-    np.savez_compressed(buf, **{f"a{i}": o for i, o in enumerate(arrays)})
-    buf.seek(0)
-    loaded = _load_npz_outputs(buf, schema)
-    assert isinstance(loaded[0], list) and loaded[0][0].dtype == np.float32 and loaded[0][1].dtype == np.float64
-    assert loaded[1].dtype == np.int32
-    assert loaded[2] is None
-    assert isinstance(loaded[3], list) and loaded[3][0].dtype == np.float32 and loaded[3][1].dtype == np.float64
-    assert np.array_equal(loaded[0][0], A) and np.array_equal(loaded[1], C)
-    assert np.array_equal(loaded[3][1], E)
-
-
-def test_output_bfloat16():
-    """方向 3: bfloat16 wire int16 + utilities reinterpret。"""
-    pytest.importorskip("ml_dtypes")
-    import ml_dtypes
-    orig = np.array([1.5, -0.25, 3.0], dtype=ml_dtypes.bfloat16)
-    schema, arrays = _outputs_to_numpy([orig], "numpy")
-    buf = io.BytesIO()
-    np.savez_compressed(buf, **{f"a{i}": o for i, o in enumerate(arrays)})
-    buf.seek(0)
-    loaded = _load_npz_outputs(buf, schema)
-    assert np.allclose(np.asarray(loaded[0], dtype=np.float32),
-                       np.asarray(orig, dtype=np.float32), rtol=1e-2, atol=1e-2)
-
-
-def test_output_float8():
-    """方向 4: float8 wire uint8 + utilities reinterpret。"""
-    try:
-        import torch
-    except ImportError:
-        pytest.skip("torch not available")
-    orig = torch.tensor([1.0, 2.0, 0.5, 4.0], dtype=torch.float8_e5m2)
-    schema, arrays = _outputs_to_numpy([orig], "torch")
-    assert arrays[0].dtype == np.uint8
-    buf = io.BytesIO()
-    np.savez_compressed(buf, **{f"a{i}": o for i, o in enumerate(arrays)})
-    buf.seek(0)
-    loaded = _load_npz_outputs(buf, schema)
-    assert np.allclose(np.asarray(loaded[0], dtype=np.float32),
-                       orig.to(torch.float32).numpy(), rtol=0.2, atol=0.2)

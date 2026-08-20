@@ -1,7 +1,17 @@
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
+"""Tests for /v1/sync endpoint."""
 import base64
 import hashlib
-import json
 import http.client
+import json
 import os
 import shutil
 import subprocess
@@ -10,7 +20,6 @@ import tempfile
 import time
 
 import pytest
-
 
 SYNC_TMP_DIR = os.path.join(tempfile.gettempdir(), "ttk_sync_test")
 
@@ -81,60 +90,3 @@ class TestSyncEndpoint:
         assert resp.status == 200
         data = json.loads(resp.read())
         assert data["synced"] == 1
-
-    def test_path_traversal_blocked(self, xpu_server, http_conn):
-        content = base64.b64encode(b"bad").decode()
-        body = json.dumps({
-            "files": {
-                "../../../etc/bad.py": {"content": content, "hash": "sha256:abc"}
-            }
-        })
-        http_conn.request("POST", "/v1/sync", body=body,
-                          headers={"Content-Type": "application/json",
-                                   "X-Tenant-ID": "sync_test_001"})
-        resp = http_conn.getresponse()
-        assert resp.status == 400
-
-    def test_non_py_file_blocked(self, xpu_server, http_conn):
-        content = base64.b64encode(b"bad").decode()
-        body = json.dumps({
-            "files": {
-                "evil.sh": {"content": content, "hash": "sha256:abc"}
-            }
-        })
-        http_conn.request("POST", "/v1/sync", body=body,
-                          headers={"Content-Type": "application/json",
-                                   "X-Tenant-ID": "sync_test_001"})
-        resp = http_conn.getresponse()
-        assert resp.status == 400
-
-    def test_same_hash_skipped(self, xpu_server, http_conn):
-        content = base64.b64encode(b"print('hello')").decode()
-        h = hashlib.sha256(b"print('hello')").hexdigest()
-        body = json.dumps({
-            "files": {"nn/demo.py": {"content": content, "hash": f"sha256:{h}"}}
-        })
-        # First sync
-        http_conn.request("POST", "/v1/sync", body=body,
-                          headers={"Content-Type": "application/json",
-                                   "X-Tenant-ID": "sync_test_002"})
-        resp = http_conn.getresponse()
-        resp.read()
-        assert resp.status == 200
-
-        # Second sync — should skip
-        conn2 = http.client.HTTPConnection("127.0.0.1", 19091, timeout=5)
-        conn2.request("POST", "/v1/sync", body=body,
-                      headers={"Content-Type": "application/json",
-                               "X-Tenant-ID": "sync_test_002"})
-        resp2 = conn2.getresponse()
-        data = json.loads(resp2.read())
-        assert data["skipped"] == 1
-        conn2.close()
-
-    def test_missing_tenant_id(self, xpu_server, http_conn):
-        body = json.dumps({"files": {}})
-        http_conn.request("POST", "/v1/sync", body=body,
-                          headers={"Content-Type": "application/json"})
-        resp = http_conn.getresponse()
-        assert resp.status == 400

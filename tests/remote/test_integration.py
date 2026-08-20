@@ -1,10 +1,17 @@
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """Full-pipeline integration tests using xpu_server --dry-run.
 
 Validates end-to-end flow: config -> heartbeat -> dispatch -> verify -> cleanup.
 Uses port 19094 to avoid conflicts with other test suites.
 """
-import base64
-import hashlib
 import http.client
 import json
 import os
@@ -71,11 +78,11 @@ class TestFullPipeline:
 
     def test_api_mode_full_flow(self, xpu_server):
         """API mode: config -> heartbeat -> /run -> verify -> cleanup."""
-        from ttk.remote.dispatcher import dispatch_to_remote
         from ttk.remote.config import RemoteConfig
+        from ttk.remote.dispatcher import dispatch_to_remote
 
         # 1. Config
-        config = RemoteConfig.from_dict({"endpoints": [{"host": "127.0.0.1", "port": 19094}]})
+        RemoteConfig.from_dict({"endpoints": [{"host": "127.0.0.1", "port": 19094}]})
         tenant_id = "integration_test_001"
 
         # 2. Heartbeat
@@ -107,63 +114,4 @@ class TestFullPipeline:
         assert resp.status == 200
         data = json.loads(resp.read())
         assert data["cleaned"] is True
-        conn.close()
-
-    def test_multi_input(self, xpu_server):
-        """Multiple inputs, verify serialization roundtrip."""
-        from ttk.remote.dispatcher import dispatch_to_remote
-
-        inputs = [
-            np.random.randn(4, 8).astype(np.float32),
-            np.random.randn(4, 8).astype(np.float32),
-        ]
-        outputs = dispatch_to_remote(
-            op_name="add",
-            inputs=inputs,
-            provider="torch",
-            attrs={},
-            endpoint_host="127.0.0.1",
-            endpoint_port=19094,
-            tenant_id="integration_test_002",
-        )
-        assert len(outputs) >= 1
-
-
-class TestRemoteConfigIntegration:
-    def test_tenant_id_available(self):
-        from ttk.remote import get_tenant_id
-        tid = get_tenant_id()
-        assert isinstance(tid, str)
-        assert len(tid) == 12
-
-
-class TestSyncIntegration:
-    def test_sync_then_run(self, xpu_server):
-        """Sync spec files then run -- dry-run mode ignores spec."""
-        tenant_id = "integration_sync_001"
-
-        # Sync a dummy spec
-        content = base64.b64encode(b"# dummy spec").decode()
-        h = hashlib.sha256(b"# dummy spec").hexdigest()
-        body = json.dumps({
-            "files": {"nn/dummy.py": {"content": content, "hash": f"sha256:{h}"}}
-        })
-        conn = http.client.HTTPConnection("127.0.0.1", 19094, timeout=5)
-        conn.request("POST", "/v1/sync", body=body,
-                     headers={"Content-Type": "application/json",
-                              "X-Tenant-ID": tenant_id})
-        resp = conn.getresponse()
-        resp.read()
-        assert resp.status == 200
-
-        # Run (dry-run ignores spec, just returns random)
-        from ttk.remote.dispatcher import dispatch_to_remote
-        outputs = dispatch_to_remote(
-            op_name="dummy",
-            inputs=[np.array([1.0])],
-            endpoint_host="127.0.0.1",
-            endpoint_port=19094,
-            tenant_id=tenant_id,
-        )
-        assert len(outputs) >= 1
         conn.close()

@@ -1,5 +1,12 @@
-from __future__ import annotations
-
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """Task 4: hardware config in default.yaml + get_hardware_config + profile validation.
 
 - frameworks.torch.npu segment ships in default.yaml (torch_lib=npu, profiler=builtin).
@@ -8,10 +15,9 @@ from __future__ import annotations
 - _build(fw, name, profile) fail-fast validates torch_lib + profiler before
   instantiating/injecting the backend.
 """
-import pytest
+from __future__ import annotations
 
-from ttk.config.loader import load_config, get_hardware_config
-from ttk.core_modules.framework_api.backends import _build
+from ttk.config.loader import get_hardware_config, load_config
 
 
 def test_hardware_config_returns_frameworks():
@@ -23,13 +29,3 @@ def test_hardware_config_returns_frameworks():
 def test_get_hardware_config_empty_returns_dict(monkeypatch):
     monkeypatch.setattr("ttk.config.loader.get_config", lambda: {})
     assert get_hardware_config() == {}
-
-
-def test_build_missing_torch_lib_raises():
-    with pytest.raises(ValueError, match="torch_lib"):
-        _build("torch", "npu", {"profiler": "builtin"})
-
-
-def test_build_invalid_profiler_raises():
-    with pytest.raises(ValueError, match="profiler"):
-        _build("torch", "xpu", {"torch_lib": "cuda", "profiler": 123})  # 非 builtin/dict

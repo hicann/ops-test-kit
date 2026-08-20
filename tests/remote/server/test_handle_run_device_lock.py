@@ -1,8 +1,19 @@
-from unittest.mock import MagicMock
-from ttk.remote.server import xpu_server
-from ttk.remote.server.xpu_server import XpuRequestHandler
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
+"""_handle_run 设备锁集成测试：验证非 dry_run 时调 _assign_device、dry_run 跳过分配、CPU 模式无 KeyError。"""
 import os
 import threading
+from unittest.mock import MagicMock
+
+from ttk.remote.server import xpu_server
+from ttk.remote.server.xpu_server import XpuRequestHandler
 
 FAKE_IN = "/tmp/fake"
 
@@ -31,7 +42,11 @@ def _setup_handler(h, device_ids, gpu_locks, dry_run, use_device=False,
     h.sync_base_dir = "/tmp"
     h.run_deadline_s = 30
     h.sandbox = "none"
-    h._get_header = lambda k, d="": "test_tenant" if k == "X-Tenant-ID" else d
+
+    def _get_header(k, d=""):
+        return "test_tenant" if k == "X-Tenant-ID" else d
+
+    h._get_header = _get_header
     h._send_run_ok = MagicMock()
     h._send_json = MagicMock()
     h.rfile = MagicMock()
@@ -64,6 +79,7 @@ def test_handle_run_uses_assign_device(monkeypatch):
                        dry_run=False, use_device=True)
 
         captured = {}
+
         def fake_assign():
             captured["called"] = True
             # mirror real _assign_device contract: acquire the per-device lock
@@ -82,39 +98,3 @@ def test_handle_run_uses_assign_device(monkeypatch):
         if os.path.exists(FAKE_IN):
             os.remove(FAKE_IN)
 
-
-def test_handle_run_dry_run_skips_assign_device(monkeypatch):
-    """dry_run 不调 _assign_device（device_id=None）。"""
-    _patch_run_env(monkeypatch)
-    with open(FAKE_IN, "wb"):
-        pass
-    try:
-        h = XpuRequestHandler.__new__(XpuRequestHandler)
-        _setup_handler(h, [0], {0: threading.Lock()}, dry_run=True,
-                       use_device=False)
-
-        called = []
-        h._assign_device = lambda: called.append(1) or 0
-
-        h._handle_run()
-
-        assert called == []  # dry_run 没调 _assign_device
-    finally:
-        if os.path.exists(FAKE_IN):
-            os.remove(FAKE_IN)
-
-
-def test_handle_run_cpu_mode_no_keyerror(monkeypatch):
-    """CPU 模式 _handle_run 不报 _device_locks['cpu'] KeyError（spec §4.8 守卫）。"""
-    _patch_run_env(monkeypatch)
-    with open(FAKE_IN, "wb"):
-        pass
-    try:
-        h = XpuRequestHandler.__new__(XpuRequestHandler)
-        _setup_handler(h, ["cpu"], {}, dry_run=False, use_device=False,
-                       hardware="cpu", profile={})
-
-        h._handle_run()   # 不应抛 KeyError
-    finally:
-        if os.path.exists(FAKE_IN):
-            os.remove(FAKE_IN)

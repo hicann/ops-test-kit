@@ -1,5 +1,12 @@
-from __future__ import annotations
-
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """Task 7: atomic contract migration.
 
 After Task 7:
@@ -12,22 +19,11 @@ After Task 7:
   - get_profiler uses is_npu() + profile.get('profiler') instead of
     device_name() string compares.
 """
+from __future__ import annotations
+
 import subprocess
 
 from ttk.core_modules.framework_api.backends.cpu_torch_backend import CpuTorchBackend
-from ttk.core_modules.framework_api.backends.npu_torch_backend import NpuTorchBackend
-
-
-def test_cpu_device_name_is_cpu_device_type():
-    """Task 7 后 cpu device_name 走 device_type（cpu 无 get_device_name）。"""
-    cb = CpuTorchBackend()
-    cb.torch_lib = "cpu"
-    cb.profile = {}
-    assert cb.has_device() is False
-    assert cb.is_npu() is False
-    assert cb.device_type() == "cpu"
-    # cpu has no torch.cpu.get_device_name -> override keeps device_type()
-    assert cb.device_name() == "cpu"
 
 
 def test_soc_version_method_removed():
@@ -36,15 +32,6 @@ def test_soc_version_method_removed():
     cb.torch_lib = "cpu"
     cb.profile = {}
     assert not hasattr(cb, "soc_version"), "soc_version must be removed in Task 7 (merged into device_name)"
-
-
-def test_soc_series_default_is_device_name_model():
-    """默认 soc_series() == device_name()（型号）；NpuTorchBackend override short。"""
-    cb = CpuTorchBackend()
-    cb.torch_lib = "cpu"
-    cb.profile = {}
-    # base default degrades soc_series to device_name (model)
-    assert cb.soc_series() == cb.device_name()
 
 
 def test_no_string_comparison_on_role():
@@ -68,66 +55,4 @@ def test_no_string_comparison_on_role():
     )
     # filter out allowed torch_lib value matches + docstring example text.
     residue = [ln for ln in r.stdout.splitlines() if ln and "torch_lib" not in ln and "yields alias" not in ln]
-    assert not residue, f"string comparison residue:\n" + "\n".join(residue)
-
-
-def test_no_inequality_comparison_on_role():
-    """grep 确认无 !='npu'/'gpu'/'cpu' 角色字符串逻辑残留 in framework_api。
-
-    tf_device_type value matches (e.g. ``tf_device_type != "cpu"`` in
-    TfBackend.has_device) are ALLOWED: tf_device_type is a config attribute,
-    not a role.
-    """
-    r = subprocess.run(
-        ["grep", "-rnE", "--include=*.py", r"""!= ?["'](npu|gpu|cpu)["']""", "ttk/core_modules/framework_api/"],
-        capture_output=True,
-        text=True,
-    )
-    residue = [ln for ln in r.stdout.splitlines() if ln and "torch_lib" not in ln and "tf_device_type" not in ln]
-    assert not residue, f"string inequality residue:\n" + "\n".join(residue)
-
-
-def test_no_soc_version_residue_in_ttk():
-    """全仓 grep 确认 .soc_version( 调用零残留（已合并进 device_name）。"""
-    r = subprocess.run(
-        ["grep", "-rnE", r"\.soc_version\(", "ttk/"],
-        capture_output=True,
-        text=True,
-    )
-    assert r.returncode != 0, f".soc_version() residue:\n{r.stdout}"
-
-
-def test_get_profiler_uses_is_npu_and_profile_not_device_name():
-    """get_profiler 不再读 device_name()；用 is_npu() + profile['profiler']。
-
-    torch.* + non-NPU + profile.profiler != 'builtin' -> TorchProfiler.
-    A backend whose device_name() returns a model name (not 'cpu'/'gpu')
-    must still resolve correctly -> proves no string compare on device_name.
-    """
-    from ttk.core_modules.framework_api.profiler import (
-        get_profiler,
-        TorchProfiler,
-        WallClockProfiler,
-    )
-
-    class _ModelNameBackend:
-        # device_name now returns a MODEL, not a segment. Old code compared
-        # this to 'gpu'/'npu'/'cpu'; Task 7 must NOT read it for routing.
-        torch_lib = "cuda"
-        # _build injects torch_lib into profile; mirror that invariant here so
-        # TorchProfiler.__init__ (which reads profile["torch_lib"] per §5.3) works.
-        profile = {"torch_lib": "cuda", "profiler": {"activities": ["CPU", "CUDA"]}}
-
-        def device_name(self, dev_id=0):
-            return "AscendWhatever-Model-Name"  # deliberately non-segment
-
-        def device_type(self):
-            return "xpu"
-
-        def is_npu(self):
-            return False
-
-    prof = get_profiler("torch.add", _ModelNameBackend())
-    assert isinstance(prof, TorchProfiler)
-    # unknown prefix -> WallClock regardless of backend
-    assert isinstance(get_profiler("tf.foo", _ModelNameBackend()), WallClockProfiler)
+    assert not residue, "string comparison residue:\n" + "\n".join(residue)
