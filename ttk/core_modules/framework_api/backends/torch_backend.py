@@ -45,6 +45,8 @@ class TorchBackend(Backend):
         """Move a (possibly non-contiguous) tensor to device preserving stride."""
         if tensor is None:
             return None
+        if not torch.is_tensor(tensor):
+            tensor = self.from_numpy(tensor)
         if self.torch_lib == "cpu":
             return tensor
         if tensor.is_contiguous():

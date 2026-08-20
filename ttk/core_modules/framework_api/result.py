@@ -118,6 +118,7 @@ class FrameworkApiReturnStructure:
                         [
                             {
                                 "name": k.name,
+                                "total": round(k.device_us, 3),
                                 "avg": round(k.avg_us, 3),
                                 "max": round(k.max_us, 3),
                                 "min": round(k.min_us, 3),

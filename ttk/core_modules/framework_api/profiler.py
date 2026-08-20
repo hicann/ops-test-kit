@@ -328,44 +328,41 @@ class WallClockProfiler(FrameworkProfiler):
         )
 
 
-_KERNEL_TASK_TYPES = frozenset({"KERNEL_AIVEC", "KERNEL_AICORE"})
+_KERNEL_TASK_TYPES = frozenset({
+    "AI_CORE", "AIV_SQE", "AI_VECTOR_CORE",
+    "MIX_AIC", "MIX_AIV",
+    "KERNEL_MIX_AIC", "KERNEL_MIX_AIV",
+    "KERNEL_AIVEC", "KERNEL_AICORE",
+})
 
 
 class TfNpuProfiler(FrameworkProfiler):
-    """Profiler for TF NPU using torch_npu.profiler.
+    """Profiler for TF NPU using CANN msprof directly.
 
-    torch_npu.profiler wraps the CANN profiling subsystem and works for TF ops
-    dispatched to NPU via npu_device, but only graph mode (tf.function) produces
-    per-kernel task_time rows.  Eager mode falls back to wall-clock timing.
-
-    Unlike NpuProfiler (which parses kernel_details.csv from the torch dispatch
-    layer), TF ops do not go through torch's dispatcher so kernel_details.csv is
-    not produced.  Instead we parse task_time.csv which contains the raw CANN
-    task-level records (kernel_name, kernel_type, task_time(us)).
+    TF ops do not go through torch's dispatcher, so torch_npu.profiler's
+    kernel_details.csv is not produced.  We use MsProfiler (libmsprofiler.so)
+    to collect CANN task-level records, then parse task_time.csv for
+    per-kernel device timing.  Eager mode falls back to wall-clock timing.
     """
 
-    def __init__(self, backend, testcase_name="", root_path="."):
+    def __init__(self, backend, testcase_name="", root_path=".", dev_id=0):
         self._testcase_name = testcase_name or "unknown"
         self._outdir = os.path.join(root_path, "msprof", "e2e", self._testcase_name)
         os.makedirs(self._outdir, exist_ok=True)
+        self._dev_id = dev_id
         self._prof = None
         self._wall = WallClockProfiler(backend)
 
     def __enter__(self):
-        from torch_npu.profiler import (
-            ProfilerActivity,
-            schedule,
-            tensorboard_trace_handler,
-            profile,
-        )
+        from ..msprof import MsProfiler, TtkMsProfType
 
-        self._prof = profile(
-            activities=[ProfilerActivity.CPU, ProfilerActivity.NPU],
-            record_shapes=True,
-            schedule=schedule(wait=0, warmup=1, active=1, repeat=1),
-            on_trace_ready=tensorboard_trace_handler(self._outdir),
+        self._prof = MsProfiler(
+            self._dev_id,
+            result_path=self._outdir,
+            ttk_prof_type=TtkMsProfType.API,
+            start_step=0,
         )
-        self._prof.start()
+        self._prof.__enter__()
         self._prof.step()
         self._wall.__enter__()
         return self
@@ -373,83 +370,86 @@ class TfNpuProfiler(FrameworkProfiler):
     def __exit__(self, *exc):
         self._wall.__exit__(*exc)
         if self._prof:
-            self._prof.step()
-            self._prof.stop()
+            self._prof.__exit__(*exc)
 
     def result(self, backend, repeat_count) -> ProfileResult:
-        task_csv = self._find_csv("task_time.csv")
-        kernels = []
-        total_device_us = 0.0
-        if task_csv:
-            kernels, total_device_us = self._parse_task_time(task_csv)
-
-        if total_device_us > 0:
+        kernels, total_us = self._sum_op_avg_us()
+        if total_us is not None and total_us > 0:
             return ProfileResult(
-                elapsed_us=total_device_us / max(repeat_count, 1),
+                elapsed_us=total_us,
                 kernel_details=KernelDetails(
                     kernels=kernels,
-                    total_device_us=total_device_us,
+                    total_device_us=total_us * max(repeat_count, 1),
                     total_cpu_us=0.0,
                 ),
             )
         return self._wall.result(backend, repeat_count)
 
-    def _find_csv(self, filename):
-        for root, _, files in os.walk(self._outdir):
-            if filename in files:
-                return os.path.join(root, filename)
-        return None
+    @staticmethod
+    def _parse_op_row(row):
+        """Parse one op_statistic row into KernelInfo, or None if invalid."""
+        try:
+            avg_us = float(row.get("Avg Time(us)", 0))
+            total_us = float(row.get("Total Time(us)", 0))
+            count = int(row.get("Count", 0))
+            min_us = float(row.get("Min Time(us)", 0))
+            max_us = float(row.get("Max Time(us)", 0))
+        except (ValueError, TypeError):
+            return None
+        if avg_us <= 0:
+            return None
+        name = row.get("OP Type", "").strip()
+        return KernelInfo(
+            name=name,
+            device_us=total_us,
+            calls=count,
+            avg_us=avg_us,
+            max_us=max_us,
+            min_us=min_us,
+        )
 
     @staticmethod
-    def _parse_task_time(csv_path):
-        """Parse task_time.csv for per-kernel device timing.
+    def _collect_op_rows(csv_path):
+        """Read op_statistic CSV and return (kernels, total_avg_us)."""
+        kernels = []
+        total = 0.0
+        with open(csv_path, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                info = TfNpuProfiler._parse_op_row(row)
+                if info is not None:
+                    kernels.append(info)
+                    total += info.avg_us
+        return kernels, total
 
-        Only rows with kernel_type in _KERNEL_TASK_TYPES (KERNEL_AIVEC /
-        KERNEL_AICORE) represent actual NPU kernel execution; other rows
-        (MODEL_EXECUTE, NOTIFY_*, PROFILER_TRACE_EX, PLACE_HOLDER_SQE) are
-        overhead and are excluded.
+    def _sum_op_avg_us(self):
+        """Sum of all NPU op kernel avg time (us) per call, from op_statistic_*.csv.
+
+        Matches aclnn通路: reads Avg Time(us) column, which is already
+        averaged by msprof over the actual采集次数.
+        Returns (kernels, total_us) — one KernelInfo per op row.
         """
-        kernels_map = {}
-        total_device_us = 0.0
+        csv_path = self._find_csv_prefix("op_statistic_")
+        if not csv_path:
+            return [], None
         try:
-            with open(csv_path, newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    ktype = (row.get("kernel_type") or "").strip()
-                    if ktype not in _KERNEL_TASK_TYPES:
-                        continue
-                    name = (row.get("kernel_name") or "").strip()
-                    try:
-                        dur = float(row.get("task_time(us)", 0))
-                    except (ValueError, TypeError):
-                        continue
-                    if name and dur > 0:
-                        total_device_us += dur
-                        if name in kernels_map:
-                            kernels_map[name]["total_us"] += dur
-                            kernels_map[name]["calls"] += 1
-                            kernels_map[name]["max_us"] = max(kernels_map[name]["max_us"], dur)
-                            kernels_map[name]["min_us"] = min(kernels_map[name]["min_us"], dur)
-                        else:
-                            kernels_map[name] = {"total_us": dur, "calls": 1, "max_us": dur, "min_us": dur}
+            kernels, total = self._collect_op_rows(csv_path)
         except Exception as e:
             logging.warning(f"Failed to parse {csv_path}: {e}")
+            return [], None
+        total = round(total, 3) if total > 0 else None
+        return kernels, total
 
-        kernels = [
-            KernelInfo(
-                name=name,
-                device_us=info["total_us"],
-                calls=info["calls"],
-                avg_us=info["total_us"] / info["calls"],
-                max_us=info["max_us"],
-                min_us=info["min_us"],
-            )
-            for name, info in kernels_map.items()
-        ]
-        return kernels, total_device_us
+    def _find_csv_prefix(self, prefix):
+        for root, _, files in os.walk(self._outdir):
+            for f in files:
+                if f.startswith(prefix) and f.endswith(".csv"):
+                    return os.path.join(root, f)
+        return None
 
 
-def get_profiler(api_name: str, backend, testcase_name: str = "", root_path: str = ".") -> FrameworkProfiler:
+def get_profiler(api_name: str, backend, testcase_name: str = "", root_path: str = ".",
+                 dev_id: int = 0) -> FrameworkProfiler:
     """Select profiler based on api_name prefix and backend.
 
     Hardware-neutral: routes on is_npu() + profile['profiler'] rather
@@ -457,7 +457,7 @@ def get_profiler(api_name: str, backend, testcase_name: str = "", root_path: str
     """
     if api_name.startswith(("tf.", "tensorflow.")):
         if backend.is_npu():
-            return TfNpuProfiler(backend, testcase_name, root_path)
+            return TfNpuProfiler(backend, testcase_name, root_path, dev_id=dev_id)
         return WallClockProfiler(backend)
     if api_name.startswith("torch_npu."):
         if not backend.is_npu():

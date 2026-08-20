@@ -46,7 +46,7 @@ from .profiler import get_profiler
 from .profiling_utils import prepare_device_args
 from .result import FrameworkApiReturnStructure
 
-WARMUP_COUNT = 5
+WARMUP_COUNT = 1
 
 
 def _print_get_shape(arr):
@@ -362,7 +362,8 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
 
     run_count = switches.run_time
     profiler = get_profiler(
-        testcase.api_name, backend, testcase_name=testcase.testcase_name, root_path=switches.root_path
+        testcase.api_name, backend, testcase_name=testcase.testcase_name, root_path=switches.root_path,
+        dev_id=dev_id,
     )
 
     inplace_input_indexes = getattr(testcase, "inplace_input_indexes", None) or ()

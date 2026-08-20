@@ -20,7 +20,7 @@ import logging
 from .profiling_utils import prepare_device_args
 from .tf_graph_network import TfGraphWrapper
 
-WARMUP_COUNT = 5
+WARMUP_COUNT = 1
 
 
 def _build_input_signature(testcase, dynamic):
@@ -100,7 +100,8 @@ def _execute_tf_graph(
         from .profiler import get_profiler
 
         profiler = get_profiler(
-            testcase.api_name, backend, testcase_name=testcase.testcase_name, root_path=switches.root_path
+            testcase.api_name, backend, testcase_name=testcase.testcase_name, root_path=switches.root_path,
+            dev_id=dev_id,
         )
         run_count = switches.run_time
         result = None

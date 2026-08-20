@@ -25,7 +25,7 @@ from .graph_network import GraphNetwork, split_params
 from .profiler import get_profiler
 from .profiling_utils import prepare_device_args
 
-WARMUP_COUNT = 5
+WARMUP_COUNT = 1
 
 
 @functools.lru_cache(maxsize=1)
@@ -134,7 +134,8 @@ def _run_compiled(
                 original_tensors[0] = args[0]
                 inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
 
-    profiler = get_profiler(api_name, backend, testcase_name=testcase_name, root_path=switches.root_path)
+    profiler = get_profiler(api_name, backend, testcase_name=testcase_name, root_path=switches.root_path,
+                            dev_id=dev_id)
     with profiler:
         for i in range(run_count):
             if i < run_count - 1:

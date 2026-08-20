@@ -140,4 +140,5 @@ python3 -m ttk list -i cases.csv --op add
 | [XPU 三方交叉校验](./XPU_Cross_Check.md) | `--compare cross_check` / `--xpu-perf` + `--config` |
 | [确定性计算与批一致性](./Deterministic_Compute.md) | `--deterministic-level` / `--dl` |
 | [Dump 数据调试](./Dump_Debug.md) | `--dump` + `--dump-format` + `--dump-on-fail` |
+| [性能测试](./Performance_Testing.md) | `--warmup` + `--run` |
 | [NPUSim 仿真测试](./NPUSim/npusim_usage.md) | `--backend npusim` + `--sim-*` |
