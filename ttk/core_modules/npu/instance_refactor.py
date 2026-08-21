@@ -64,6 +64,11 @@ class NpuInstance(InstanceBase):
         # NPUSim backend sets dev_plat to the platform ini name (e.g.
         # Ascend950PR_9589) in sim_args._normalize_sim_switches, so the normal
         # path below resolves short_soc_version / ccec versions from the ini.
+        if getattr(self.switches, "manual_data_mode", None) == "prepare":
+            if self.switches.dev_plat == "AUTO":
+                self.switches.dev_plat = "CPU"
+            self.switches.short_soc_version = "cpu"
+            return
         if self.switches.dev_plat == "AUTO":
             if self.switches.mode.is_model():
                 raise RuntimeError(f"Please specify your platform type with --plat in {self.switches.mode.name} mode")

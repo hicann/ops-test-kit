@@ -37,7 +37,13 @@ class DSMIInterface(metaclass=Singleton):
     device_frequency_invoke_ok: Optional[bool] = None
 
     def __init__(self):
-        self.dsmidll = ctypes.CDLL("libdrvdsmi_host.so")
+        self._dsmidll = None
+
+    @property
+    def dsmidll(self):
+        if self._dsmidll is None:
+            self._dsmidll = ctypes.CDLL("libdrvdsmi_host.so")
+        return self._dsmidll
 
     def print_so_path(self):
         """
