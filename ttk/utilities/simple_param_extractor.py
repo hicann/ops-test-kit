@@ -1206,6 +1206,15 @@ def _torch_tensor_type():
         return object()
 
 
+def _torch_dtype_type():
+    """torch.dtype;torch 不可用时返回一个不会与任何注解相等的哨兵。"""
+    try:
+        import torch
+        return torch.dtype
+    except ImportError:
+        return object()
+
+
 def _sequence_annotation_to_type(annotation) -> str:
     """list/tuple/Sequence[...] 按其元素类型归一成 tuple of xxx。"""
     args = getattr(annotation, '__args__', ())
@@ -1245,6 +1254,8 @@ def _annotation_to_type(annotation) -> str:
             return "int"
     except TypeError:
         pass
+    if annotation is _torch_dtype_type():
+        return "Dtype"
     if annotation is _torch_tensor_type():
         return "Tensor"
     return ""

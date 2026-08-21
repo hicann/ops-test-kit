@@ -300,6 +300,21 @@ class TestEnrichTypesFromAnnotations:
         assert params[0].default == 'fro'
 
 
+# == annotation 类型转换 ====================================================
+
+class TestAnnotationToType:
+
+    @staticmethod
+    def test_optional_torch_dtype_is_dtype():
+        """torch.dtype 及 Optional[torch.dtype] 均归一成 Dtype。"""
+        torch = pytest.importorskip("torch")
+        from typing import Optional
+        from ttk.utilities.simple_param_extractor import _annotation_to_type
+
+        assert _annotation_to_type(torch.dtype) == "Dtype"
+        assert _annotation_to_type(Optional[torch.dtype]) == "Dtype"
+
+
 # == nn.functional pyi ======================================================
 
 class TestNnFunctionalPyi:
