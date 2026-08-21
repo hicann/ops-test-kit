@@ -17,6 +17,7 @@ __all__ = ["set_process_name", "get_process_name", "is_main_process",
            "append_ld_library_path", "signal_registered",
            "cpu_count", "insert_env_path", "add_exec_permission",
            "get_ubuntu_main_version", "insert_python_path",
+           "msdebug_runtime_injection_enabled", "kernel_debug_compile_enabled",
            ]
 
 
@@ -183,3 +184,41 @@ def get_ubuntu_main_version() -> int:
     if v is None:
         v = get_ubuntu_main_version_via_etc_files()
     return v
+
+
+_REGBASE_V2_SOURCE_DEBUG_OPTION = "--cce-ignore-always-inline=false"
+
+
+def msdebug_runtime_injection_enabled() -> bool:
+    """
+    Return whether the current process runs under msdebug runtime injection.
+
+    msdebug launches the target process with:
+      - MSOP_SOCKET_PATH=<socket> (stub<->lldb communication)
+      - LD_PRELOAD=<...>/libruntime_stub.so (runtime hijack)
+    Either signal indicates RTS calls should resolve through the process-global
+    symbol table so that the preloaded stub intercepts them.
+    """
+    if os.getenv("MSOP_SOCKET_PATH"):
+        return True
+    return _msdebug_runtime_stub_preloaded()
+
+
+def _msdebug_runtime_stub_preloaded() -> bool:
+    """Return whether msdebug's runtime interposition library is preloaded."""
+    preload = os.getenv("LD_PRELOAD", "")
+    return any(
+        os.path.basename(path) == "libruntime_stub.so"
+        for path in preload.replace(":", " ").split()
+    )
+
+
+def kernel_debug_compile_enabled() -> bool:
+    """
+    Return whether TTK should compile kernels with source-level debug info (-g -O0).
+
+    MSOP_SOCKET_PATH is shared by other runtime interposers (for example
+    msopprof), so only msdebug's preloaded runtime stub is a sufficiently
+    specific signal for changing kernel compilation to -O0 -g.
+    """
+    return _msdebug_runtime_stub_preloaded()

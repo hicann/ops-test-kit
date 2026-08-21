@@ -85,6 +85,7 @@ python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
 
 - [mssanitizer 适配方法](./docs/Operator_Test_Guides/mssanitizer_guide.md) — 内存/竞争/同步检测
 - [msopprof 适配方法](./docs/Operator_Test_Guides/msopprof_guide.md) — 算子性能 Profiling
+- [msdebug 适配方法](./docs/Operator_Test_Guides/msdebug适配方法指南.md) — 算子源码级调试
 
 ### FAQ
 

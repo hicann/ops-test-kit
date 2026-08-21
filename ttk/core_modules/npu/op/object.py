@@ -16,7 +16,6 @@ __all__ = ["OpProfileObject"]
 
 
 # Standard Packages
-import os
 import logging
 import time
 from multiprocessing.context import BaseContext
@@ -36,6 +35,7 @@ from ...comparison.compare_log import (
     read_compare_log_failures,
     print_compare_log_failures,
 )
+from ....utilities.proc import msdebug_runtime_injection_enabled
 
 
 class OpProfileObject(ProfileObject):
@@ -46,6 +46,9 @@ class OpProfileObject(ProfileObject):
 
     def setup(self):
         self._compare_log_read_size = compare_log_size()
+        if msdebug_runtime_injection_enabled():
+            logging.warning("Running under msdebug, skipping KnowledgeBase server startup")
+            return
         self._launch_knowledge_server(self.mp_context)
 
     def possible_result_titles(self) -> tuple:
@@ -58,7 +61,7 @@ class OpProfileObject(ProfileObject):
 
     def init_tasks(self, testcases: Iterable[TestcaseOp]):
         for case in testcases:
-            case.kb_pid = self.kb.get_pid()
+            case.kb_pid = self.kb.get_pid() if self.kb else 0
         grouped_testcases = TestcaseOp.hash_cases_to_groups(testcases)
         for cases in grouped_testcases.values():
             is_first = True

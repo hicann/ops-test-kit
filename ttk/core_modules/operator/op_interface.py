@@ -13,7 +13,9 @@ Operator Compilation Interface
 """
 # Standard Packages
 import copy
+from contextlib import contextmanager
 import functools
+import importlib
 import inspect
 import json
 import logging
@@ -38,6 +40,61 @@ from ...utilities import BinaryCompilationResult, DynamicCompilationResult, Sing
 from ...utilities import ceil_div, get, get_global_storage, lcm
 from ...utilities import param_transformation, read_file, tuple_flatten, extract_plog_errors
 from ...utilities import get_dtype_width, resolve_custom_numpy_dtypes
+from ...utilities import kernel_debug_compile_enabled
+from ...utilities.proc import _REGBASE_V2_SOURCE_DEBUG_OPTION
+
+
+_ASCENDC_COMMON_UTILITY_MODULES = (
+    "asc_op_compile_base.asc_op_compiler.ascendc_common_utility",
+    "tbe.tikcpp.ascendc_common_utility",
+)
+
+
+def _append_regbase_v2_source_debug_option(compile_options: list):
+    """Complete the RegBase V2 source-debug option set produced by CANN."""
+    if ("-O0" in compile_options and "-g" in compile_options
+            and _REGBASE_V2_SOURCE_DEBUG_OPTION not in compile_options):
+        compile_options.append(_REGBASE_V2_SOURCE_DEBUG_OPTION)
+
+
+@contextmanager
+def _ascend950_source_debug_compatibility(enabled: bool):
+    """Supply the RegBase V2 companion flag missing from the AscendC path.
+
+    CANN's generic CCEC path adds this flag for tbe_debug_level=2, but the
+    high-level AscendC compiler path only translates op_debug_config to
+    ``-O0 -g``. Keep this compatibility patch scoped to one compilation and
+    restore CANN's static method afterwards.
+    """
+    if not enabled:
+        yield
+        return
+
+    patched = []
+    seen_classes = set()
+    try:
+        for module_name in _ASCENDC_COMMON_UTILITY_MODULES:
+            try:
+                common_utility = importlib.import_module(module_name).CommonUtility
+                descriptor = common_utility.__dict__["check_debug_options"]
+            except (ImportError, AttributeError, KeyError):
+                continue
+            if id(common_utility) in seen_classes:
+                continue
+            seen_classes.add(id(common_utility))
+            original = common_utility.check_debug_options
+
+            def check_debug_options(compile_options, original=original):
+                is_debug = original(compile_options)
+                _append_regbase_v2_source_debug_option(compile_options)
+                return is_debug
+
+            common_utility.check_debug_options = staticmethod(check_debug_options)
+            patched.append((common_utility, descriptor))
+        yield
+    finally:
+        for common_utility, descriptor in reversed(patched):
+            common_utility.check_debug_options = descriptor
 
 
 
@@ -335,7 +392,19 @@ class OperatorInterface(metaclass=Singleton):
 
     @staticmethod
     def _build_compile_cfg():
-        return dict(get_global_storage().compile_options)
+        compile_options = dict(get_global_storage().compile_options)
+        if kernel_debug_compile_enabled():
+            # Request CANN's complete source-level debug mode under msdebug and
+            # keep the explicit ccec flags for compiler-path compatibility. The
+            # AscendC compatibility context below supplies a target-specific
+            # option missing from this CANN release's high-level compiler path.
+            compile_options["tbe_debug_level"] = 2
+            debug_config = compile_options.get("op_debug_config", "")
+            missing = [opt for opt in ("ccec_O0", "ccec_g") if opt not in debug_config.split(",")]
+            if missing:
+                parts = [p for p in debug_config.split(",") if p]
+                compile_options["op_debug_config"] = ",".join(parts + missing)
+        return compile_options
 
     def _compile_op(self, mode: str, op_name: str,
                     op_func: Union[Callable, str], op_func_parameters: tuple,
@@ -347,7 +416,12 @@ class OperatorInterface(metaclass=Singleton):
             before_compile = time.time()
             if isinstance(op_func, Callable):
                 build_cfg = self._build_compile_cfg()
-                with self._opc.build_config(**build_cfg):
+                needs_debug_compatibility = (
+                    kernel_debug_compile_enabled()
+                    and self._opc.get_soc_spec("SHORT_SOC_VERSION") == "Ascend950"
+                )
+                with self._opc.build_config(**build_cfg), \
+                        _ascend950_source_debug_compatibility(needs_debug_compatibility):
                     op_func(*copy.deepcopy(tensor_list), **copy.deepcopy(op_kwargs))
             else:
                 raise RuntimeError(f"Operator [{op_name}] implement function is not callable: {type(op_func)}")

@@ -16,7 +16,12 @@ import pathlib
 import subprocess
 from typing import Optional, Union
 # Third-Party Packages
+from .....utilities import get_global_storage
 from .....utilities.platform import get_npu_hw_info
+from .....utilities.proc import (
+    _REGBASE_V2_SOURCE_DEBUG_OPTION,
+    kernel_debug_compile_enabled,
+)
 
 
 def normalize_mode(mode: str):
@@ -43,6 +48,20 @@ class CceManualCompile:
         ccec_cmd = ["ccec", "-O2", cce_file,
                     "--cce-aicore-arch=%s" % cls._get_arch_for_ccec(platform, core_type),
                     "--cce-aicore-only"]
+        # Source-level debug info. Driven by --compile-opts op_debug_config=ccec_O0,ccec_g
+        # (parsed into compile_options). Under msdebug the debug flags are auto-enabled
+        # so breakpoints resolve to source lines.
+        debug_config = get_global_storage().compile_options.get("op_debug_config", "")
+        debug_compile = kernel_debug_compile_enabled()
+        if debug_compile or "ccec_O0" in debug_config or "ccec_g" in debug_config:
+            if "ccec_O0" in debug_config or debug_compile:
+                ccec_cmd.append("-O0")
+            if "ccec_g" in debug_config or debug_compile:
+                ccec_cmd.append("-g")
+        short_soc_version = get_npu_hw_info(platform).get("short_soc_version")
+        if (short_soc_version == "Ascend950"
+                and "-O0" in ccec_cmd and "-g" in ccec_cmd):
+            ccec_cmd.append(_REGBASE_V2_SOURCE_DEBUG_OPTION)
         if extra_compile_options:
             if not isinstance(extra_compile_options, (tuple, list)):
                 extra_compile_options = [extra_compile_options]
@@ -50,7 +69,7 @@ class CceManualCompile:
         ccec_cmd.extend(["-o", i_obj_file,
                          "-mllvm", "--cce-aicore-jump-expand=true",
                          "-mllvm", "-cce-aicore-addr-transform"])
-        if get_npu_hw_info(platform).get("short_soc_version") not in ("Ascend950", "MC62CM12A"):
+        if short_soc_version not in ("Ascend950", "MC62CM12A"):
             ccec_cmd.extend(["-mllvm", "-cce-aicore-function-stack-size=16000",
                              "-mllvm", "-cce-aicore-record-overflow=true"])
         else:

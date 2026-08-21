@@ -73,6 +73,7 @@ Offline data prepare, XPU cross-check, deterministic compute, dump debug, NPUSim
 
 - [mssanitizer Adaptation](./docs/Operator_Test_Guides/mssanitizer_guide.md) (Chinese) — memory/race/sync detection
 - [msopprof Adaptation](./docs/Operator_Test_Guides/msopprof_guide.md) (Chinese) — operator performance profiling
+- [msdebug Adaptation](./docs/Operator_Test_Guides/msdebug适配方法指南.md) (Chinese) — operator source-level debugging
 
 ### FAQ
 

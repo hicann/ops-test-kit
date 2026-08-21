@@ -243,7 +243,7 @@ class Opc(metaclass=Singleton):
 
     def __getattribute__(self, item):
         if item in ("get_compile_info", "get_tiling_op_type",
-                    "get_param_generalization", "do_op_tiling",
+                    "get_param_generalization", "get_soc_spec", "do_op_tiling",
                     "build_config", "op_context", "op_info", "api_config"):
             return getattr(self._opc, item)
         else:

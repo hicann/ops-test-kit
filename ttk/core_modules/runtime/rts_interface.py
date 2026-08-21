@@ -28,6 +28,7 @@ from . import rts_info
 from . import rts_structures
 from .rts_interface_base import RTSInterfaceBase
 from ...utilities import align, get_loaded_so_path, pack_4bits, read_file, get_dtype_width
+from ...utilities.proc import msdebug_runtime_injection_enabled
 
 
 # noinspection PyPep8Naming,PyUnusedLocal
@@ -102,7 +103,7 @@ class RTSInterface(RTSInterfaceBase):
         else:
             runtime_path = f"{rts_custom_path}libruntime.so"
             self._origin_rtsdll = ctypes.CDLL(runtime_path, mode = ctypes.RTLD_GLOBAL)
-            if os.getenv("MSOP_SOCKET_PATH"):
+            if msdebug_runtime_injection_enabled():
                 self.rtsdll = ctypes.CDLL(None)
                 logging.debug("Using global RTS symbols for msopprof injection")
             else:
