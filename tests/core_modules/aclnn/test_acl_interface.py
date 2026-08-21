@@ -10,12 +10,56 @@
 
 """Tests for ACL runtime initialization interoperability."""
 
+import ctypes
+
+import numpy
 import pytest
 
 from ttk.core_modules.aclnn.acl_interface import (
     ACL_ERROR_REPEAT_INITIALIZE,
     AclInterface,
 )
+from ttk.core_modules.runtime import RTSInterface
+from ttk.utilities.dtypes import np_as_strided_safe
+
+
+class FakeRtsInterface(RTSInterface):
+    @classmethod
+    def create(cls, captured):
+        instance = cls.__new__(cls)
+        instance.captured = captured
+        instance.skip_teardown = True
+        return instance
+
+    def copy_nparray_to_hbm(self, array):
+        self.captured["copied_array"] = array
+        self.captured["flattened_array"] = self._flatten_numpy_array(array)
+        return ctypes.c_void_p(0x1000)
+
+
+class NumpyTensorAclInterface(AclInterface):
+    @classmethod
+    def create(cls, captured):
+        instance = cls.__new__(cls)
+        instance.captured = captured
+        instance._rts_interface = FakeRtsInterface.create(captured)
+        instance._acl_tensor_to_device_mem = {}
+        instance._acl_tensors = set()
+        return instance
+
+    def _opbase_api_call_with_ptr_return(self, api_name, extra_log, *args):
+        self.captured["api_name"] = api_name
+        self.captured["extra_log"] = extra_log
+        self.captured["args"] = args
+        return ctypes.c_void_p(0x2000)
+
+    def _on_exit(self):
+        self.captured["closed"] = True
+
+
+def make_numpy_tensor_device():
+    captured = {}
+    return NumpyTensorAclInterface.create(captured), captured
 
 
 def _noop():
@@ -120,3 +164,33 @@ def test_finalize_only_finalizes_owned_runtime(
     assert len(finalize_calls) == expected_finalize_calls
     assert device._acl_inited is False
     assert device._owns_acl_runtime is False
+
+
+def test_create_acl_tensor_from_numpy_copies_complete_storage_with_offset():
+    storage = numpy.arange(64, dtype=numpy.uint8).reshape(4, 16)
+    view = np_as_strided_safe(
+        storage.ravel()[3:], shape=(2, 2, 4), strides=(16, 4, 1)
+    )
+    device, captured = make_numpy_tensor_device()
+
+    device.create_acl_tensor(view, "ND", storage.shape)
+
+    copied = captured["copied_array"]
+    assert copied.flags.c_contiguous
+    assert copied.nbytes == storage.nbytes
+    assert numpy.array_equal(copied.reshape(storage.shape), storage)
+    assert tuple(captured["args"][3]) == (16, 4, 1)
+    assert captured["args"][4].value == 3
+
+
+def test_create_acl_tensor_from_numpy_rejects_ambiguous_parent_storage():
+    parent = numpy.arange(128, dtype=numpy.uint8)
+    storage_shape = (4, 16)
+    # The 93-byte tail and 128-byte parent are both larger than the declared storage.
+    view = np_as_strided_safe(
+        parent[35:], shape=(2, 2, 4), strides=(16, 4, 1)
+    )
+    device, _ = make_numpy_tensor_device()
+
+    with pytest.raises(ValueError, match="exact contiguous numpy storage"):
+        device.create_acl_tensor(view, "ND", storage_shape)

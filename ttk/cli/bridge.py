@@ -226,6 +226,38 @@ def apply_e2e_args(sw, args):
         sw.aclgraph_enabled = True
 
 
+def _configure_manual_data_prepare(sw, command, directories, complete_prepare, is_prepare_dump):
+    # Kernel's legacy --no-prof dry run remains valid until a complete prepare dump is requested.
+    if command == "kernel" and not complete_prepare:
+        if directories:
+            raise ValueError("Kernel manual-data preparation requires exactly --no-prof --dump in,golden")
+        return
+    if not is_prepare_dump:
+        raise ValueError(
+            "--no-prof requires exactly --dump in,golden or --dump in; "
+            "output/full dump cannot be produced before device execution"
+        )
+    if sw.dump_config.file_format not in ("bin", "pt", "npy"):
+        raise ValueError(
+            f"--dump-format {sw.dump_config.file_format!r} is not restorable with --no-prof; use bin, pt, or npy"
+        )
+    if sw.dump_config.dump_on_fail:
+        raise ValueError("--dump-on-fail requires comparison and cannot be used with --no-prof")
+    if sw.golden_mode == "Disable" and complete_prepare:
+        raise ValueError("--no-prof requires CPU golden generation; --golden-mode Disable is invalid")
+    if sw.validate_only:
+        raise ValueError("--validate cannot be combined with --no-prof data preparation")
+    if command == "kernel" and sw.compile_only:
+        raise ValueError("--compile-only cannot be combined with Kernel manual-data preparation")
+    graph_enabled = any((sw.cst_switches.enabled, sw.dyn_switches.enabled, sw.fullgraph))
+    if command == "e2e" and graph_enabled:
+        raise ValueError("graph execution options cannot be combined with --no-prof data preparation")
+    if len(directories) > 1:
+        raise ValueError("--no-prof writes one dataset; specify at most one --manual-data-dirs path")
+    sw.manual_data_mode = "prepare"
+    sw.manual_data_dirs = directories or (_default_manual_data_dir(sw),)
+
+
 def configure_manual_data(sw, args, command):
     """Validate and resolve the E2E/ACLNN/Kernel two-stage manual-data mode."""
     from ttk.utilities.classes import DumpLevel
@@ -240,8 +272,11 @@ def configure_manual_data(sw, args, command):
     )
 
     no_prof = getattr(args, "no_prof", False) is True
-    expected_dump = DumpLevel.INPUT.value | DumpLevel.GOLDEN.value
-    is_prepare_dump = no_prof and sw.dump_config.mode == expected_dump
+    input_dump = DumpLevel.INPUT.value
+    complete_dump = input_dump | DumpLevel.GOLDEN.value
+    input_only = sw.dump_config.mode == input_dump
+    complete_prepare = sw.dump_config.mode == complete_dump
+    is_prepare_dump = no_prof and (input_only or complete_prepare)
     if not no_prof and not directories:
         return
 
@@ -258,34 +293,9 @@ def configure_manual_data(sw, args, command):
         sw.manual_data_dirs = directories
         return
 
-    # Kernel's legacy --no-prof dry run remains valid until a complete prepare dump is requested.
-    if command == "kernel" and not is_prepare_dump:
-        if directories:
-            raise ValueError("Kernel manual-data preparation requires exactly --no-prof --dump in,golden")
-        return
-
-    if sw.dump_config.mode != expected_dump:
-        raise ValueError(
-            "--no-prof requires exactly --dump in,golden; output/full dump cannot be produced before device execution"
-        )
-    if sw.dump_config.file_format not in ("bin", "pt", "npy"):
-        raise ValueError(
-            f"--dump-format {sw.dump_config.file_format!r} is not restorable with --no-prof; use bin, pt, or npy"
-        )
-    if sw.dump_config.dump_on_fail:
-        raise ValueError("--dump-on-fail requires comparison and cannot be used with --no-prof")
-    if sw.golden_mode == "Disable":
-        raise ValueError("--no-prof requires CPU golden generation; --golden-mode Disable is invalid")
-    if sw.validate_only:
-        raise ValueError("--validate cannot be combined with --no-prof data preparation")
-    if command == "kernel" and sw.compile_only:
-        raise ValueError("--compile-only cannot be combined with Kernel manual-data preparation")
-    if command == "e2e" and (sw.cst_switches.enabled or sw.dyn_switches.enabled or sw.fullgraph):
-        raise ValueError("graph execution options cannot be combined with --no-prof data preparation")
-    if len(directories) > 1:
-        raise ValueError("--no-prof writes one dataset; specify at most one --manual-data-dirs path")
-    sw.manual_data_mode = "prepare"
-    sw.manual_data_dirs = directories or (_default_manual_data_dir(sw),)
+    _configure_manual_data_prepare(
+        sw, command, directories, complete_prepare, is_prepare_dump
+    )
 
 
 def _default_manual_data_dir(sw):

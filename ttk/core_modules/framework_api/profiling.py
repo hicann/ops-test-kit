@@ -32,6 +32,7 @@ from ttk.core_modules.manual_data import (
     snapshot_manual_values,
 )
 from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
+from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
@@ -42,7 +43,7 @@ from .api_resolver import resolve_api
 from .backends import get_backend
 from .eager_execution import call_api
 from .input_generation import generate_inputs
-from .profiler import get_profiler
+from .profiler import ProfilerConfig, get_profiler
 from .profiling_utils import prepare_device_args
 from .result import FrameworkApiReturnStructure
 
@@ -360,10 +361,28 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     resolved = backend.wrap_eager_callable(resolved)
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
-    run_count = switches.run_time
+    if backend.is_npu():
+        invoke_npu_preprocess(
+            testcase,
+            switches,
+            plan,
+            args,
+            kwargs,
+            device_scope=lambda: backend.device_scope(dev_id),
+        )
+
+    profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
+    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
+    run_count = switches.run_time if profiling_enabled or deterministic else (0 if is_inplace else 1)
     profiler = get_profiler(
-        testcase.api_name, backend, testcase_name=testcase.testcase_name, root_path=switches.root_path,
-        dev_id=dev_id,
+        testcase.api_name,
+        backend,
+        ProfilerConfig(
+            testcase_name=testcase.testcase_name,
+            root_path=switches.root_path,
+            dev_id=dev_id,
+            enabled=profiling_enabled,
+        ),
     )
 
     inplace_input_indexes = getattr(testcase, "inplace_input_indexes", None) or ()
@@ -392,7 +411,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     else:
         result = None
 
-    if switches.warmup:
+    if switches.warmup and profiling_enabled:
         for _ in range(WARMUP_COUNT):
             if is_inplace and inplace_backup is not None:
                 backend.restore_inplace(args[0], inplace_backup)
@@ -437,7 +456,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
                 result = r
         backend.synchronize(dev_id)
 
-    perf = profiler.result(backend, run_count)
+    perf = profiler.result(backend, max(run_count, 1))
 
     if not is_inplace:
         result_nps = backend.result_to_numpy(result)
@@ -696,6 +715,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 "e2e",
                 switches,
                 before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
+                require_goldens=False,
             )
             if manual_case is not None:
                 manual_mode = "replay"
@@ -728,7 +748,10 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 testcase.np_storages if testcase.np_storages is not None else raw_inputs,
                 "input",
             )
-            golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
+            prepare_goldens = bool(switches.dump_config.is_golden_enabled())
+            golden_nps = ()
+            if prepare_goldens:
+                golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
             process_ctx.notify_status("OnWriteManualData")
             case_dir = prepare_store.write_case(
                 testcase,
@@ -736,6 +759,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 prepared_inputs,
                 golden_nps,
                 file_format=switches.dump_config.file_format,
+                write_goldens=prepare_goldens,
             )
         except Exception as exc:
             logging.exception(f"[{testcase.testcase_name}] Manual data preparation failure")
@@ -854,8 +878,13 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 reference_outputs = graph_dyn_nps
             if reference_outputs is None:
                 reference_outputs = graph_aclgraph_nps
-            golden_nps = manual_case.load_goldens(references=reference_outputs)
-            _dump_goldens(testcase, golden_nps, switches)
+            if manual_case.has_goldens:
+                golden_nps = manual_case.load_goldens(references=reference_outputs)
+                _dump_goldens(testcase, golden_nps, switches)
+            else:
+                golden_nps = _generate_golden_maybe_promote(
+                    testcase, raw_inputs, switches, backend, ref_nps
+                )
         except Exception as exc:
             logging.exception(f"[{testcase.testcase_name}] Manual golden loading failure")
             return_struct.construct(f"MANUAL_DATA_READ_FAILURE: {exc}", "FAIL", None)

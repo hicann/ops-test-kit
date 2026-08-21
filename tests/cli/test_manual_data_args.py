@@ -131,8 +131,8 @@ def test_prepare_accepts_explicit_output_directory(tmp_path):
 @pytest.mark.parametrize(
     "mutate, message",
     [
-        # dump 模式不是精确的 in,golden 组合
-        (lambda sw: sw.dump_config.enable_output(), "exactly --dump in,golden"),
+        # output/full dump 不能在设备执行前生成
+        (lambda sw: sw.dump_config.enable_output(), "--dump in,golden or --dump in"),
         # dump 格式不可恢复（print 无法回放）
         (lambda sw: setattr(sw.dump_config, "file_format", "print"), "not restorable"),
         # --dump-on-fail 需要比对，不能与 --no-prof 共存
@@ -151,6 +151,19 @@ def test_prepare_rejects_incompatible_combinations(mutate, message):
 
     with pytest.raises(ValueError, match=message):
         configure_manual_data(switches, _args(no_prof=True), "e2e")
+
+
+def test_e2e_prepare_accepts_input_only_dump():
+    switches = SWITCHES()
+    switches.dyn_switches.enabled = False
+    switches.dump_config.enable_input()
+    switches.golden_mode = "Disable"
+
+    configure_manual_data(switches, _args(no_prof=True), "e2e")
+
+    assert switches.manual_data_mode == "prepare"
+    assert switches.dump_config.is_input_enabled()
+    assert not switches.dump_config.is_golden_enabled()
 
 
 # -- replay 模式 -------------------------------------------------------------

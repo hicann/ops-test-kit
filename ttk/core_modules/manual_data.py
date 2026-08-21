@@ -70,6 +70,10 @@ class ManualDataCase:
     file_format: str
     _golden_files: Tuple[_ManualDataFile, ...]
 
+    @property
+    def has_goldens(self) -> bool:
+        return bool(self._golden_files)
+
     def load_goldens(self, references=None, shapes=None, dtypes=None) -> List[Any]:
         """Load saved goldens after device output shapes are available.
 
@@ -249,7 +253,8 @@ def prepare_manual_data_store(testcase, case_type: str, switches) -> Optional["M
 
 
 def load_manual_data_case(testcase, case_type: str, switches,
-                          before_load: Optional[Callable[[], None]] = None) -> Optional[ManualDataCase]:
+                          before_load: Optional[Callable[[], None]] = None,
+                          require_goldens: bool = True) -> Optional[ManualDataCase]:
     """Load a replay case through the shared provider and CLI directory policy."""
     if getattr(switches, "manual_data_mode", None) == "prepare":
         return None
@@ -258,7 +263,7 @@ def load_manual_data_case(testcase, case_type: str, switches,
         return None
     if before_load is not None:
         before_load()
-    return store.load_case(testcase, case_type)
+    return store.load_case(testcase, case_type, require_goldens=require_goldens)
 
 
 def snapshot_manual_values(values: Sequence[Any], label: str) -> List[Any]:
@@ -549,7 +554,7 @@ class ManualDataStore:
         self._remove_existing(self.case_dir(testcase_name))
 
     def write_case(self, testcase, case_type: str, inputs, goldens, scalars=(),
-                   file_format: str = "bin") -> pathlib.Path:
+                   file_format: str = "bin", write_goldens: bool = True) -> pathlib.Path:
         self._validate_case_type(case_type)
         if file_format not in SUPPORTED_MANUAL_DATA_FORMATS:
             raise ManualDataError(
@@ -561,14 +566,15 @@ class ManualDataStore:
 
         input_values = list(inputs or ())
         scalar_values = list(scalars or ())
-        golden_values = list(goldens or ())
+        golden_values = list(goldens or ()) if write_goldens else []
         input_specs = _input_specs(testcase, case_type)
         scalar_specs = _scalar_specs(testcase, case_type)
         self._validate_value_count("input", input_values, len(input_specs))
         self._validate_value_count("scalar", scalar_values, len(scalar_specs))
-        expected_goldens = _expected_golden_count(testcase, case_type)
-        if expected_goldens is not None:
-            self._validate_value_count("golden", golden_values, expected_goldens)
+        if write_goldens:
+            expected_goldens = _expected_golden_count(testcase, case_type)
+            if expected_goldens is not None:
+                self._validate_value_count("golden", golden_values, expected_goldens)
 
         root = self.roots[0]
         root.mkdir(parents=True, exist_ok=True)
@@ -578,34 +584,17 @@ class ManualDataStore:
         try:
             self._write_values(temporary, input_values, "input", file_format, input_specs)
             self._write_values(temporary, scalar_values, "scalar", file_format, scalar_specs)
-            self._write_values(temporary, golden_values, "golden", file_format)
+            if write_goldens:
+                self._write_values(temporary, golden_values, "golden", file_format)
             self._scan_case(temporary)
             os.replace(str(temporary), str(target))
         except Exception:
             shutil.rmtree(str(temporary), ignore_errors=True)
             raise
-        logging.info("[%s] prepared restorable input/golden data at %s",
-                     testcase.testcase_name, target)
+        roles = "input/golden" if write_goldens else "input"
+        logging.info("[%s] prepared restorable %s data at %s",
+                     testcase.testcase_name, roles, target)
         return target
-
-    def load_case(self, testcase, case_type: str) -> ManualDataCase:
-        self._validate_case_type(case_type)
-        case_dir = self._find_case(testcase.testcase_name)
-        entries, file_format = self._scan_case(case_dir)
-        input_specs = _input_specs(testcase, case_type)
-        input_files = self._ordered_files(entries, "input", len(input_specs))
-        scalar_specs = _scalar_specs(testcase, case_type)
-        scalar_files = self._ordered_files(entries, "scalar", len(scalar_specs))
-
-        golden_count = _expected_golden_count(testcase, case_type)
-        golden_files = self._ordered_files(entries, "golden", golden_count)
-        inputs = self._load_expected_values(input_files, input_specs, "input")
-        scalars = self._load_expected_values(scalar_files, scalar_specs, "scalar")
-        logging.info("[%s] loaded prepared input/scalar data from %s",
-                     testcase.testcase_name, case_dir)
-        return ManualDataCase(
-            inputs, scalars, case_dir, file_format, tuple(golden_files)
-        )
 
     @staticmethod
     def _validate_case_type(case_type: str):
@@ -788,7 +777,8 @@ class ManualDataStore:
         return entries_by_format[selected_format], selected_format
 
     @staticmethod
-    def _ordered_files(entries, role: str, expected_count: Optional[int]):
+    def _ordered_files(entries, role: str, expected_count: Optional[int],
+                       required: bool = True):
         files = sorted(
             (entry for (entry_role, _), entry in entries.items() if entry_role == role),
             key=lambda entry: entry.index,
@@ -796,7 +786,8 @@ class ManualDataStore:
         indexes = [entry.index for entry in files]
         if indexes != list(range(len(files))):
             raise ManualDataError(f"{role} file indexes must be contiguous from zero, got {indexes}")
-        if expected_count is not None and len(files) != expected_count:
+        count_mismatch = expected_count is not None and len(files) != expected_count
+        if count_mismatch and (required or files):
             raise ManualDataError(f"{role} slot count {len(files)} != CSV {expected_count}")
         return files
 
@@ -817,3 +808,25 @@ class ManualDataStore:
                 )
             values.append(_load_array(entry, expected_shape))
         return values
+
+    def load_case(self, testcase, case_type: str,
+                  require_goldens: bool = True) -> ManualDataCase:
+        self._validate_case_type(case_type)
+        case_dir = self._find_case(testcase.testcase_name)
+        entries, file_format = self._scan_case(case_dir)
+        input_specs = _input_specs(testcase, case_type)
+        input_files = self._ordered_files(entries, "input", len(input_specs))
+        scalar_specs = _scalar_specs(testcase, case_type)
+        scalar_files = self._ordered_files(entries, "scalar", len(scalar_specs))
+
+        golden_count = _expected_golden_count(testcase, case_type)
+        golden_files = self._ordered_files(
+            entries, "golden", golden_count, required=require_goldens
+        )
+        inputs = self._load_expected_values(input_files, input_specs, "input")
+        scalars = self._load_expected_values(scalar_files, scalar_specs, "scalar")
+        logging.info("[%s] loaded prepared input/scalar data from %s",
+                     testcase.testcase_name, case_dir)
+        return ManualDataCase(
+            inputs, scalars, case_dir, file_format, tuple(golden_files)
+        )

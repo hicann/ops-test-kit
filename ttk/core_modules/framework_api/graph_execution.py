@@ -19,10 +19,11 @@ import logging
 
 import torch
 
+from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 from ttk.test_spec import get_spec_attr
 
 from .graph_network import GraphNetwork, split_params
-from .profiler import get_profiler
+from .profiler import ProfilerConfig, get_profiler
 from .profiling_utils import prepare_device_args
 
 WARMUP_COUNT = 1
@@ -81,14 +82,16 @@ def _run_compiled(
     inplace_backups=None,
     inplace_kwargs_keys=None,
 ):
-    run_count = switches.run_time
+    profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
+    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
+    run_count = switches.run_time if profiling_enabled or deterministic else 0
     is_kwargs_mode = inplace_kwargs_keys is not None
 
     result = compiled(*args, **kwargs)
     backend.synchronize(dev_id)
     result_nps = backend.result_to_numpy(result, copy=is_inplace)
 
-    if switches.warmup:
+    if switches.warmup and profiling_enabled:
         for _ in range(WARMUP_COUNT):
             if is_kwargs_mode:
                 for idx, key in inplace_kwargs_keys.items():
@@ -134,8 +137,16 @@ def _run_compiled(
                 original_tensors[0] = args[0]
                 inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
 
-    profiler = get_profiler(api_name, backend, testcase_name=testcase_name, root_path=switches.root_path,
-                            dev_id=dev_id)
+    profiler = get_profiler(
+        api_name,
+        backend,
+        ProfilerConfig(
+            testcase_name=testcase_name,
+            root_path=switches.root_path,
+            dev_id=dev_id,
+            enabled=profiling_enabled,
+        ),
+    )
     with profiler:
         for i in range(run_count):
             if i < run_count - 1:
@@ -157,7 +168,7 @@ def _run_compiled(
                 result = r
         backend.synchronize(dev_id)
 
-    perf = profiler.result(backend, run_count)
+    perf = profiler.result(backend, max(run_count, 1))
 
     if not is_inplace:
         result_nps = backend.result_to_numpy(result, copy=is_inplace)
@@ -213,6 +224,14 @@ def _execute_graph(
     logging.info(f"Executing graph mode: {mode_str}")
 
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
+    invoke_npu_preprocess(
+        testcase,
+        switches,
+        plan,
+        args,
+        kwargs,
+        device_scope=lambda: backend.device_scope(dev_id),
+    )
 
     inplace_backup = None
 

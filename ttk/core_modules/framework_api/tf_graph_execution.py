@@ -17,6 +17,8 @@ dispatch internally, no separate compiler backend needed.
 
 import logging
 
+from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
+
 from .profiling_utils import prepare_device_args
 from .tf_graph_network import TfGraphWrapper
 
@@ -88,22 +90,38 @@ def _execute_tf_graph(
 
     try:
         args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
+        if backend.is_npu():
+            invoke_npu_preprocess(
+                testcase,
+                switches,
+                plan,
+                args,
+                kwargs,
+                device_scope=lambda: backend.device_scope(dev_id),
+            )
 
         input_signature = _build_input_signature(testcase, dynamic)
         wrapper = TfGraphWrapper(resolved, input_signature=input_signature, dynamic=dynamic, api_name=testcase.api_name)
 
-        if switches.warmup:
+        profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
+        if switches.warmup and profiling_enabled:
             for _ in range(WARMUP_COUNT):
                 wrapper(*args, **kwargs)
             backend.synchronize(dev_id)
 
-        from .profiler import get_profiler
+        from .profiler import ProfilerConfig, get_profiler
 
         profiler = get_profiler(
-            testcase.api_name, backend, testcase_name=testcase.testcase_name, root_path=switches.root_path,
-            dev_id=dev_id,
+            testcase.api_name,
+            backend,
+            ProfilerConfig(
+                testcase_name=testcase.testcase_name,
+                root_path=switches.root_path,
+                dev_id=dev_id,
+                enabled=profiling_enabled,
+            ),
         )
-        run_count = switches.run_time
+        run_count = switches.run_time if profiling_enabled else 1
         result = None
         with profiler:
             for _ in range(run_count):

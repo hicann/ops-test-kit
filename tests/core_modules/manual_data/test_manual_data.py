@@ -120,6 +120,29 @@ def test_round_trip_uses_only_typed_data_files(tmp_path, file_format):
     }
 
 
+def test_input_only_dataset_replays_without_requiring_golden(tmp_path):
+    case = _aclnn_case()
+    inputs = [np.arange(2, dtype=np.float32), np.zeros(2, dtype=np.float32)]
+    scalars = [np.array(0.25, dtype=np.float32)]
+    store = ManualDataStore(tmp_path)
+
+    case_dir = store.write_case(
+        case,
+        "aclnn",
+        inputs,
+        (),
+        scalars=scalars,
+        write_goldens=False,
+    )
+    loaded = store.load_case(case, "aclnn", require_goldens=False)
+
+    assert not loaded.has_goldens
+    assert not any(path.name.startswith("golden_") for path in case_dir.iterdir())
+    np.testing.assert_array_equal(loaded.inputs[0], inputs[0])
+    with pytest.raises(ManualDataError, match="golden slot count"):
+        store.load_case(case, "aclnn")
+
+
 @pytest.mark.parametrize("file_format", ["bin", "npy", "pt"])
 def test_complete_dataset_remains_loadable_after_directory_move(tmp_path, file_format):
     """写入后整体拷贝到新目录仍可正常加载。"""

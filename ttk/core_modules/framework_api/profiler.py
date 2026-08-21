@@ -47,6 +47,16 @@ class ProfileResult:
     kernel_details: Optional[KernelDetails] = None
 
 
+@dataclass
+class ProfilerConfig:
+    """Runtime options shared by the framework profiler implementations."""
+
+    testcase_name: str = ""
+    root_path: str = "."
+    dev_id: int = 0
+    enabled: bool = True
+
+
 class FrameworkProfiler(ABC):
     """Framework-level profiler abstraction (context manager)."""
 
@@ -61,6 +71,19 @@ class FrameworkProfiler(ABC):
     @abstractmethod
     def result(self, backend, repeat_count) -> ProfileResult:
         pass
+
+
+class DisabledProfiler(FrameworkProfiler):
+    """No-op profiler used when task profiling is disabled."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def result(self, backend, repeat_count) -> ProfileResult:
+        return ProfileResult()
 
 
 class NpuProfiler(FrameworkProfiler):
@@ -448,27 +471,29 @@ class TfNpuProfiler(FrameworkProfiler):
         return None
 
 
-def get_profiler(api_name: str, backend, testcase_name: str = "", root_path: str = ".",
-                 dev_id: int = 0) -> FrameworkProfiler:
+def get_profiler(api_name: str, backend, config: Optional[ProfilerConfig] = None) -> FrameworkProfiler:
     """Select profiler based on api_name prefix and backend.
 
     Hardware-neutral: routes on is_npu() + profile['profiler'] rather
     than device_name() string compares.
     """
+    config = config or ProfilerConfig()
+    if not config.enabled:
+        return DisabledProfiler()
     if api_name.startswith(("tf.", "tensorflow.")):
         if backend.is_npu():
-            return TfNpuProfiler(backend, testcase_name, root_path, dev_id=dev_id)
+            return TfNpuProfiler(backend, config.testcase_name, config.root_path, dev_id=config.dev_id)
         return WallClockProfiler(backend)
     if api_name.startswith("torch_npu."):
         if not backend.is_npu():
             raise RuntimeError(f"API '{api_name}' requires NPU backend, but current is '{backend.device_type()}'")
-        return NpuProfiler(backend, testcase_name, root_path)
+        return NpuProfiler(backend, config.testcase_name, config.root_path)
     if api_name.startswith("torch."):
         # NPU with builtin profiler -> NpuProfiler; otherwise TorchProfiler.
         if backend.is_npu() and backend.profile.get("profiler") == "builtin":
-            return NpuProfiler(backend, testcase_name, root_path)
+            return NpuProfiler(backend, config.testcase_name, config.root_path)
         return TorchProfiler(backend)
 
     if backend.is_npu():
-        return NpuProfiler(backend, testcase_name, root_path)
+        return NpuProfiler(backend, config.testcase_name, config.root_path)
     return WallClockProfiler(backend)
