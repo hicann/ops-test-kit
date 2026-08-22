@@ -96,8 +96,12 @@ def __promote_dtype(context: TestcaseOp):
     context.invalidate_flat_cache("input_arrays", "input_dtypes")
 
     # --- Promote output dtypes: flat → promote → nested ---
+    # Skip _BIN_DTYPES (float4/float8_e8m0): they use binary_equal comparison
+    # which requires exact dtype match. Promoting them to float32 would cause
+    # cross-dtype rejection in BinaryComparison._cross_dtype_compare.
+    from ...comparison.resolve import _BIN_DTYPES
     flat_out_dtypes = context.flat_output_dtypes
-    new_flat_out_dtypes = [DTYPE_PROMOTE_MAP[d] if d in DTYPE_PROMOTE_MAP else d
+    new_flat_out_dtypes = [DTYPE_PROMOTE_MAP[d] if d in DTYPE_PROMOTE_MAP and d not in _BIN_DTYPES else d
                            for d in flat_out_dtypes]
     context.output_dtypes = tuple(input_apply_as_list(new_flat_out_dtypes, context.output_distribution))
     context.invalidate_flat_cache("output_dtypes")

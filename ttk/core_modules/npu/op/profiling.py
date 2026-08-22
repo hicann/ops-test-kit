@@ -299,9 +299,11 @@ def _resolve_tolerance(context: TestcaseOp):
         tolerance = get_spec_attr(context.op_name, "tolerance", getattr(switches, "plugin_path", None))
         pre_compare = get_spec_attr(context.op_name, "pre_compare", getattr(switches, "plugin_path", None))
         custom_compare = get_spec_attr(context.op_name, "compare", getattr(switches, "plugin_path", None))
+        output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
+        input_dtypes = resolve_custom_numpy_dtypes(context.flat_input_dtypes)
         standards = _resolve_tolerance(
             tolerance, context.flat_precision_tolerances, context.flat_absolute_precision,
-            context.flat_output_dtypes, switches.compare_method, input_dtypes=context.flat_input_dtypes,
+            output_dtypes, switches.compare_method, input_dtypes=input_dtypes,
         )
         need_3party = any(s.token == "cross_check" for s in standards)
         if need_3party:
@@ -344,10 +346,12 @@ def _generate_golden(context: TestcaseOp, manual_case, tol_state):
         if hasattr(context, "golden_mode_override"):
             del context.golden_mode_override
     if getattr(context, "output_shape_unknown_indexes", None):
+        output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
+        input_dtypes = resolve_custom_numpy_dtypes(context.flat_input_dtypes)
         tol_state.standards = _resolve_tolerance(
             tol_state.tolerance, context.flat_precision_tolerances,
-            context.flat_absolute_precision, context.flat_output_dtypes,
-            switches.compare_method, input_dtypes=context.flat_input_dtypes,
+            context.flat_absolute_precision, output_dtypes,
+            switches.compare_method, input_dtypes=input_dtypes,
         )
     return None
 

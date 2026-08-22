@@ -18,6 +18,7 @@ __all__ = ["profile_process"]
 import contextlib
 import csv
 import ctypes
+import math
 import os
 import logging
 import numpy
@@ -54,7 +55,7 @@ from ...tbe_logging import build_single_log_dir, default_logging_config
 from ...aclnn import AclInterface, OpApiInfoKeeper, OpApiInfo
 from ...msprof import MsProfiler, TtkMsProfType
 from ...npu_preprocess import invoke_npu_preprocess, resolve_npu_preprocess
-from ....utilities import get_global_storage, get, waiting_for_memory, frameless_table_print
+from ....utilities import get_global_storage, get, waiting_for_memory, frameless_table_print, get_dtype_width
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file, extract_plog_errors
 from ....test_spec import get_spec_attr
 from ..op.profiling_structure import _format_xpu_metrics
@@ -223,7 +224,7 @@ class Phase1ParamBuilder:
                             np_storage = numpy.asarray(np_storage.base)
                             break
                         np_storage = np_storage.base
-                    byte_size = np_storage.nbytes
+                    byte_size = int(math.ceil(np_storage.size * get_dtype_width(np_storage.dtype)))
                 else:
                     byte_size = tensor.storage().nbytes()
                 output_byte_arrays.append(self._dvc.get_data_from_hbm(npu_ptr, byte_size))

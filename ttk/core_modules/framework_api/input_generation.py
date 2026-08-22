@@ -273,7 +273,6 @@ def generate_np_storages(testcase, switches):
 
             init_val = 0 if testcase.api_name in ("torch.ones", "tf.ones") else 1
             np_storages.append(fixed_np_array(dtype, s_shape, init_value=init_val))
-
     testcase.np_storages = np_storages
 
 

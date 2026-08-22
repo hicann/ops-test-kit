@@ -36,6 +36,10 @@ DTYPE_PROMOTE_MAP: dict = {
     "float32": "float64",
     "complex32": "complex64",
     "complex64": "complex128",
+    "float8_e5m2": "float32",
+    "float8_e4m3fn": "float32",
+    "float8_e8m0": "float32",
+    "hifloat8": "float32",
 }
 
 
@@ -1407,12 +1411,18 @@ def is_torch_native_dtype(dtype_name):
 
     Note: ``torch.int4`` exists but is non-functional on CPU (cannot create
     valued tensors, no numpy interop), so it is explicitly excluded.
+
+    ``float8_e8m0`` is an alias for ``torch.float8_e8m0fnu``; the canonical
+    torch attribute name differs, so the alias is resolved before checking.
     """
     import torch
 
     name = str(dtype_name)
     if name == "int4":
         return False
+    torch_alias = {"float8_e8m0": "float8_e8m0fnu"}.get(name)
+    if torch_alias is not None:
+        return hasattr(torch, torch_alias)
     return hasattr(torch, name)
 
 

@@ -349,7 +349,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             )
 
         if proc.returncode != 0:
-            stderr = stderr_bytes.decode("utf-8", errors="replace")[:2000]
+            stderr = stderr_bytes.decode("utf-8", errors="replace")[:10000]
             compiler.cleanup(input_prefix)
             raise RuntimeError(f"GEIR execution failed (rc={proc.returncode}): {stderr}")
 

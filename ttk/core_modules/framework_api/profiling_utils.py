@@ -57,8 +57,10 @@ def prepare_device_args(testcase, backend, dev_id, plan, raw_inputs):
     use_framework_tensors = getattr(testcase, "tensors", None) is not None
     if use_framework_tensors:
         flat_tensors = testcase.flatten_tensors
+        preserve_stride = not backend.needs_numpy_fallback(testcase)
         dev_tensors = [
-            backend.to_device(t, dev_id, preserve_stride=True) if t is not None else None for t in flat_tensors
+            backend.to_device(t, dev_id, preserve_stride=preserve_stride) if t is not None else None
+            for t in flat_tensors
         ]
     else:
         dev_tensors = [backend.to_device(x, dev_id) if x is not None else None for x in raw_inputs]
