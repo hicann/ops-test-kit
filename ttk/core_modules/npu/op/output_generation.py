@@ -106,17 +106,22 @@ def __promote_dtype(context: TestcaseOp):
     context.output_dtypes = tuple(input_apply_as_list(new_flat_out_dtypes, context.output_distribution))
     context.invalidate_flat_cache("output_dtypes")
 
-    yield
+    try:
+        yield
+    finally:
+        # Restore. MUST be in `finally`: golden computation raises on invalid
+        # testcases (e.g. an out-of-range attr default), and without this the
+        # promoted dtypes stay on the context and leak into everything built
+        # afterwards -- notably the GEIR graph, which then declares DT_DOUBLE
+        # for a float32 testcase and gets rejected by the operator.
+        context.input_arrays = bak_input_arrays
+        context.original_input_arrays = bak_ori_input_arrays
+        context.input_dtypes = bak_input_dtypes
+        context.output_dtypes = bak_output_dtypes
+        context.invalidate_flat_cache("input_arrays", "input_dtypes", "output_dtypes")
 
-    # Restore
-    context.input_arrays = bak_input_arrays
-    context.original_input_arrays = bak_ori_input_arrays
-    context.input_dtypes = bak_input_dtypes
-    context.output_dtypes = bak_output_dtypes
-    context.invalidate_flat_cache("input_arrays", "input_dtypes", "output_dtypes")
-
-    del flat_arrays, flat_ori_arrays
-    gc.collect()
+        del flat_arrays, flat_ori_arrays
+        gc.collect()
 
 
 @contextlib.contextmanager

@@ -230,7 +230,11 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     builder = GeirGraphBuilder(switches)
     source_path = builder.generate_op_source(testcase.op_name, mode=mode)
     if source_path is None:
-        raise RuntimeError("GEIR op source generation failed")
+        raise RuntimeError(
+            f"GEIR op source generation failed for operator '{testcase.op_name}': "
+            f"its IR (REG_OP) was not found in the op_proto headers, or source rendering failed. "
+            f"See the log for the searched proto paths."
+        )
 
     config_path = builder.write_case_config(testcase, mode=mode)
     if config_path is None:

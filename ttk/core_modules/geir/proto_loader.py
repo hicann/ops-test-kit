@@ -34,9 +34,9 @@ class OpProtoInfo:
 
 class ProtoLoader(metaclass=Singleton):
     _REG_OP_PATTERN = re.compile(
-        r"REG_OP\((\w+)\)"
+        r"REG_OP\s*\((\w+)\)"
         r"(.*?)"
-        r"\.OP_END_FACTORY_REG\(\1\)",
+        r"\.OP_END_FACTORY_REG\s*\(\1\)",
         re.DOTALL,
     )
     # 按声明位置取输入序：少数算子(如 DropOutV3)的 OPTIONAL_INPUT 夹在必选中间，
@@ -93,7 +93,11 @@ class ProtoLoader(metaclass=Singleton):
                 self._cache[op_name] = info
                 return info
 
-        logging.warning(f"Operator '{op_name}' not found in proto files")
+        searched = ", ".join(d for _, d in self._proto_dirs) or "<no proto dir found>"
+        logging.warning(
+            f"Operator '{op_name}': no REG_OP declaration found in any op IR header. "
+            f"Searched (candidate names {candidates}): {searched}"
+        )
         return None
 
     def _scan_proto_files(self, op_name: str) -> Optional[OpProtoInfo]:
@@ -119,9 +123,9 @@ class ProtoLoader(metaclass=Singleton):
 
     def _parse_reg_op(self, content: str, proto_file: str, op_name: str) -> Optional[OpProtoInfo]:
         pattern = re.compile(
-            r"REG_OP\(" + re.escape(op_name) + r"\)"
+            r"REG_OP\s*\(" + re.escape(op_name) + r"\)"
             r"(.*?)"
-            r"\.OP_END_FACTORY_REG\(" + re.escape(op_name) + r"\)",
+            r"\.OP_END_FACTORY_REG\s*\(" + re.escape(op_name) + r"\)",
             re.DOTALL | re.IGNORECASE,
         )
         m = pattern.search(content)

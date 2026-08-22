@@ -170,7 +170,11 @@ class GeirGraphBuilder:
 
         proto_info = self._proto_loader.get_op_info(op_name)
         if proto_info is None:
-            logging.error("No proto info for operator '%s'", op_name)
+            logging.error(
+                "No op IR (REG_OP) found for operator '%s' in the op_proto headers; "
+                "GEIR graph cannot be built for it. See the preceding warning for searched paths.",
+                op_name,
+            )
             return None
         self._last_proto_file = proto_info.proto_file
 
@@ -229,7 +233,11 @@ class GeirGraphBuilder:
 
         proto_info = self._proto_loader.get_op_info(op_name)
         if proto_info is None:
-            logging.error("No proto info for operator '%s'", op_name)
+            logging.error(
+                "No op IR (REG_OP) found for operator '%s' in the op_proto headers; "
+                "GEIR graph cannot be built for it. See the preceding warning for searched paths.",
+                op_name,
+            )
             return None
         self._last_proto_file = proto_info.proto_file
 
