@@ -97,6 +97,8 @@ def load_server_config(yaml_path=None):
         "run_deadline_s":  _get(("server", "run_deadline_s"), 300),
         "sandbox":         _get(("execution", "sandbox"),     "none"),
         "gate_wait_s":     _get(("execution", "gate_wait_s"), 1.0),
+        "device_lost_retries": _get(("execution", "device_lost_retries"), 3),
+        "device_lost_wait_s": _get(("execution", "device_lost_wait_s"), 5.0),
         "providers":       _get(("providers",),               None),
         "provider_framework": _get(("provider_framework",),   {}),
         "sync_dir":        _get(("storage", "sync_dir"),

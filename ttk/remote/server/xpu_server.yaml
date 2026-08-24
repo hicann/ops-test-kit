@@ -12,6 +12,8 @@ server:
 execution:
   sandbox: none                   # none（mp.Process）| docker（容器隔离）
   gate_wait_s: 1.0                # data_gate 等待超时（背压 503）
+  device_lost_retries: 3            # 掉卡轮询次数（压测掉卡自动等待恢复，0=不等待）
+  device_lost_wait_s: 5           # 每次重试前等待秒数（等卡恢复）
 
 # hardware — 每硬件一个 profile 段（段名=角色）
 # 段顺序 = 探测顺序（/dev 按段顺序首个命中）。

@@ -40,7 +40,7 @@ class _MissingSpecDependency(ImportError):
 # returned by getattr(torch, profile["torch_lib"])). executor runs in a
 # per-request throwaway child process, so a module-global is safe (one request
 # == one process lifetime). Set ONCE in execute_request after the backend
-# import (Step 4a); read by _device_available and _run_perf pass-2 instead of
+# import (Step 4a); read by device_available and _run_perf pass-2 instead of
 # repeating `getattr(torch, profile["torch_lib"])`.
 _TORCH_DEV_MODULE = None
 
@@ -624,7 +624,7 @@ def _to_vendor_tensor(value, provider, device_str, dtype_name=None):
     return value
 
 
-def _device_available(provider, profile) -> bool:
+def device_available(provider, profile) -> bool:
     """Provider-aware device availability — never imports torch for a tf request.
 
     profile-driven: torch -> getattr(torch, torch_lib).is_available();
@@ -727,10 +727,10 @@ def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
     """
     profile = profile or {}
     perf = {"device_us": "NA", "peak_memory_mb": "NA"}
-    # use_device is first in the `and` chain so _device_available is NOT called
+    # use_device is first in the `and` chain so device_available is NOT called
     # when profile={} (cpu short-circuit upstream + and-use_device double-guard).
-    torch_dev = use_device and provider == "torch" and _device_available(provider, profile)
-    tf_dev = use_device and provider == "tf" and _device_available(provider, profile)
+    torch_dev = use_device and provider == "torch" and device_available(provider, profile)
+    tf_dev = use_device and provider == "tf" and device_available(provider, profile)
 
     # --- Pass 1: profiler (timing) ---
     outputs = None
@@ -950,7 +950,7 @@ def execute_request(*, tenant_sync_dir, exec_type, provider, api, spec_module,
 
         # On-demand import of the torch backend extension. Non-
         # default backends are extension packages; importing torch_{lib}
-        # registers the torch.<lib> namespace used by _device_available /
+        # registers the torch.<lib> namespace used by device_available /
         # memory / ProfilerActivity below. The default backend is built in
         # (already registered -> hasattr True -> skip); a missing extension
         # raises RuntimeError -> 500. torch-only (TF never touches the torch

@@ -151,6 +151,15 @@ def _resolve_class(module: object, dotted_name: str):
     return obj
 
 
+def _wait_device(provider, profile, retries, wait_s):
+    """设备不可用时轮询等待恢复（执行前调用）。设备在则直接返回。"""
+    while not executor.device_available(provider, profile):
+        if retries <= 0:
+            return
+        retries -= 1
+        time.sleep(wait_s)
+
+
 def _run_in_subprocess(kwargs: dict, deadline: float) -> dict:
     """Run execute_request in a FRESH forkserver child process; return envelope.
 
@@ -438,33 +447,55 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         return device_ids[start]
 
     def _handle_run(self):
-        # Hoist client api BEFORE validation: early-validation branches must
-        # also echo X-API (any non-crash scenario echoes back).
-        # Prefer X-API; fall back to X-Spec-Class (legacy) if absent.
-        req_api = self._get_header("X-API", "") or self._get_header("X-Spec-Class", "") or None
+        req_api = self._get_header("X-API", "") or \
+            self._get_header("X-Spec-Class", "") or None
+        parsed = self._parse_run_headers(req_api)
+        if parsed is None:
+            return
+        tenant_id = parsed["tenant_id"]
+        gate = self.data_gate
+        gate_held = False
+        if gate is not None:
+            if not gate.acquire(timeout=self.gate_wait_s):
+                self._send_json(503, {"error": "server busy, retry"},
+                                env={"api": req_api})
+                return
+            gate_held = True
+        req_dir = tempfile.mkdtemp(prefix=f"req_{tenant_id}_", dir=self.tmp_root)
+        try:
+            result, provider, n = self._dispatch_run(req_dir, req_api, parsed)
+            self._send_run_result(result, req_api, provider, n)
+        finally:
+            shutil.rmtree(req_dir, ignore_errors=True)
+            if gate_held:
+                try:
+                    gate.release()
+                except ValueError:
+                    pass
 
+    def _parse_run_headers(self, req_api):
+        """Parse and validate all /v1/run headers. Returns dict or None (error sent)."""
         tenant_id = self._get_header("X-Tenant-ID", "")
         if not self._valid_tenant_id(tenant_id):
             self._send_json(400, {"error": "invalid or missing tenant_id"},
                             env={"api": req_api})
-            return
+            return None
         mode = _parse_mode(self._get_header("X-Mode", "data"))
         exec_type = self._get_header("X-Execution-Type", "api")
         runtime = _clamp_runtime(self._get_header("X-Runtime", "3"))
-
         schema_raw = self._get_header("X-Input-Schema", "[]")
         try:
             input_schema = json.loads(schema_raw)
         except json.JSONDecodeError:
             self._send_json(400, {"error": "Invalid X-Input-Schema JSON"},
                             env={"api": req_api})
-            return
+            return None
         try:
             input_count = int(self._get_header("X-Input-Count", "0"))
         except ValueError:
             self._send_json(400, {"error": "Invalid X-Input-Count (not integer)"},
                             env={"api": req_api})
-            return
+            return None
         attrs_raw = self._get_header("X-Attrs", "{}")
         try:
             attrs = json.loads(attrs_raw)
@@ -477,100 +508,95 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
                 param_order = json.loads(param_order_raw)
             except json.JSONDecodeError:
                 param_order = None
+        return {"tenant_id": tenant_id, "mode": mode, "exec_type": exec_type,
+                "runtime": runtime, "input_schema": input_schema,
+                "input_count": input_count, "attrs": attrs,
+                "param_order": param_order}
 
-        # Gate (max_concurrent backpressure) applies to ALL /v1/run, including
-        # dry-run — dry-run must walk the real path (gate → req_dir →
-        # _send_run_ok) so it exercises the same control flow, not a shortcut.
-        gate = self.data_gate
-        gate_held = False
-        if gate is not None:
-            wait_s = self.gate_wait_s
-            if not gate.acquire(timeout=wait_s):
-                self._send_json(503, {"error": "server busy, retry"},
-                                env={"api": req_api})
-                return
-            gate_held = True
-
-        req_dir = tempfile.mkdtemp(prefix=f"req_{tenant_id}_", dir=self.tmp_root)
+    def _dispatch_run(self, req_dir, req_api, parsed):
+        """Build kwargs and dispatch to subprocess/container. Returns (result, provider, n)."""
+        tmp_in = _receive_body_to_file(self, dir=req_dir)
+        logging.info("_handle_run: dry_run=%s body_size=%s",
+                     self.dry_run, os.path.getsize(tmp_in) if tmp_in else 0)
+        n = None
+        provider = None
+        result = {"ok": False, "http_status": 500,
+                  "error": "internal error", "api": req_api}
         try:
-            tmp_in = _receive_body_to_file(self, dir=req_dir)
-            logging.info("_handle_run: dry_run=%s body_size=%s",
-                         self.dry_run, os.path.getsize(tmp_in) if tmp_in else 0)
-            deadline = self.run_deadline_s
-            # n=物理/cpu/None（主进程域，lock+render+visible_env）；provider 兜底 None（dry_run
-            # 不进 else，防 logging NameError）；result 兜底（_assign_device 抛异常时 result 已
-            # 定义，防 UnboundLocalError）。
-            n = None
-            provider = None
-            result = {"ok": False, "http_status": 500,
-                      "error": "internal error", "api": req_api}
-            try:
-                if self.dry_run:
-                    result = _dry_run_env(req_dir)
-                else:
-                    raw_provider = self._get_header("X-Provider", "torch")
-                    provider = get_framework(raw_provider, self.provider_framework)
-                    n = "cpu" if not self.use_device else self._assign_device()
-                    opts = _build_device_opts(self, n)
-                    if opts.get("ok") is False:           # docker fail-fast（render 前检查）
-                        result = {**opts, "api": req_api}
-                    else:
-                        kwargs = dict(
-                            tenant_sync_dir=os.path.join(self.sync_base_dir, tenant_id),
-                            exec_type=exec_type, provider=provider,
-                            profile=self.profile,
-                            op_name=self._get_header("X-Op-Name", "") or None,
-                            op_type=self._get_header("X-Op-Type", "") or None,
-                            api=req_api,
-                            spec_module=self._get_header("X-Spec-Module", "") or None,
-                            spec_class=self._get_header("X-Spec-Class", "") or None,
-                            mode=mode, input_schema=input_schema, attrs=attrs,
-                            tmp_in_path=tmp_in, input_count=input_count,
-                            device_id=opts["device_id"],
-                            use_device=self.use_device, output_dir=req_dir,
-                            runtime=runtime, param_order=param_order)
-                        if "env" in opts:                  # sandbox=none 分支才设 env
-                            kwargs["env"] = opts["env"]
-                        if self.sandbox == "docker":       # cpu+docker 保现状走容器（仅 --cap-drop）
-                            image = self.docker_images.get(provider)
-                            if image is None:
-                                result = {"ok": False, "http_status": 500,
-                                          "error": f"no docker image for provider {provider}",
-                                          "api": req_api}
-                            else:
-                                result = _run_in_container(
-                                    kwargs, deadline=deadline, image=image,
-                                    memory=self.docker_memory, network=self.docker_network,
-                                    use_device=self.use_device,
-                                    docker_args=opts.get("docker_args") or [])
-                        else:
-                            result = _run_in_subprocess(kwargs, deadline=deadline)
-            finally:
-                if n is not None and n != "cpu":           # None 守卫（dry_run）+ cpu 守卫
-                    _device_locks[n].release()
-            # status 三分（双层职责：500 服务端错 / <500 客户端错）：ok→info / ≥500→error（堆栈由 executor :846
-            # exception 记，handler 只补上下文）/ <500（400/424）→warning（客户端错）。
-            if result.get("ok"):
-                logging.info("_handle_run ok: api=%s provider=%s", req_api, provider)
-                self._send_run_ok(result)
+            if self.dry_run:
+                result = _dry_run_env(req_dir)
             else:
-                status = result.get("http_status", 500)
-                if status >= 500:
-                    logging.error("_handle_run fail: status=%s api=%s provider=%s device=%s err=%s",
-                                  status, req_api, provider, n, result.get("error"))
+                provider = get_framework(
+                    self._get_header("X-Provider", "torch"),
+                    self.provider_framework)
+                n = "cpu" if not self.use_device else self._assign_device()
+                opts = _build_device_opts(self, n)
+                if opts.get("ok") is False:
+                    result = {**opts, "api": req_api}
                 else:
-                    logging.warning("_handle_run client-err: status=%s api=%s err=%s",
-                                    status, req_api, result.get("error"))
-                self._send_json(status,
-                                {"error": result.get("error"), "missing": result.get("missing")},
-                                env=result)
+                    _wait_device(provider, self.profile,
+                                 self.device_lost_retries,
+                                 self.device_lost_wait_s)
+                    kwargs = self._build_run_kwargs(
+                        req_dir, req_api, provider, parsed, tmp_in, opts)
+                    result = self._exec_run(
+                        kwargs, opts, req_api, provider)
         finally:
-            shutil.rmtree(req_dir, ignore_errors=True)
-            if gate_held:
-                try:
-                    gate.release()
-                except ValueError:        # never over-release
-                    pass
+            if n is not None and n != "cpu":
+                _device_locks[n].release()
+        return result, provider, n
+
+    def _build_run_kwargs(self, req_dir, req_api, provider, parsed, tmp_in, opts):
+        kwargs = dict(
+            tenant_sync_dir=os.path.join(self.sync_base_dir, parsed["tenant_id"]),
+            exec_type=parsed["exec_type"], provider=provider,
+            profile=self.profile,
+            op_name=self._get_header("X-Op-Name", "") or None,
+            op_type=self._get_header("X-Op-Type", "") or None,
+            api=req_api,
+            spec_module=self._get_header("X-Spec-Module", "") or None,
+            spec_class=self._get_header("X-Spec-Class", "") or None,
+            mode=parsed["mode"], input_schema=parsed["input_schema"],
+            attrs=parsed["attrs"], tmp_in_path=tmp_in,
+            input_count=parsed["input_count"],
+            device_id=opts["device_id"],
+            use_device=self.use_device, output_dir=req_dir,
+            runtime=parsed["runtime"], param_order=parsed["param_order"])
+        if "env" in opts:
+            kwargs["env"] = opts["env"]
+        return kwargs
+
+    def _exec_run(self, kwargs, opts, req_api, provider):
+        if self.sandbox == "docker":
+            image = self.docker_images.get(provider)
+            if image is None:
+                return {"ok": False, "http_status": 500,
+                        "error": f"no docker image for provider {provider}",
+                        "api": req_api}
+            return _run_in_container(
+                kwargs, deadline=self.run_deadline_s, image=image,
+                memory=self.docker_memory, network=self.docker_network,
+                use_device=self.use_device,
+                docker_args=opts.get("docker_args") or [])
+        return _run_in_subprocess(kwargs, deadline=self.run_deadline_s)
+
+    def _send_run_result(self, result, req_api, provider, n):
+        if result.get("ok"):
+            logging.info("_handle_run ok: api=%s provider=%s", req_api, provider)
+            self._send_run_ok(result)
+            return
+        status = result.get("http_status", 500)
+        if status >= 500:
+            logging.error(
+                "_handle_run fail: status=%s api=%s provider=%s device=%s err=%s",
+                status, req_api, provider, n, result.get("error"))
+        else:
+            logging.warning("_handle_run client-err: status=%s api=%s err=%s",
+                            status, req_api, result.get("error"))
+        self._send_json(status,
+                        {"error": result.get("error"),
+                         "missing": result.get("missing")},
+                        env=result)
 
     def _send_run_ok(self, env):
         output_path = env.get("output_path")
@@ -638,6 +664,56 @@ def _detect_frameworks() -> dict:
     return providers
 
 
+def _resolve_devices(devices, cfg):
+    """Resolve device role/ids/use_device from CLI args or /dev auto-detect."""
+    if devices is not None:
+        use_device = bool(devices) and devices != "cpu"
+        if use_device:
+            role, _ = detect_hardware(cfg["hardware_config"])
+        else:
+            role = "cpu"
+        device_ids = [int(x) for x in devices.split(",")] if use_device else ["cpu"]
+    else:
+        use_device = True
+        role, device_ids = detect_hardware(cfg["hardware_config"])
+    return role, device_ids, use_device
+
+
+def _warn_max_concurrent(cfg, device_ids):
+    device_count = len([d for d in device_ids if d != "cpu"])
+    if device_count > 0 and cfg["max_concurrent"] < device_count:
+        logging.warning(
+            f"max_concurrent ({cfg['max_concurrent']}) < device count ({device_count}); "
+            f"data_gate caps total concurrency, {device_count - cfg['max_concurrent']} "
+            f"device(s) may idle")
+
+
+def _apply_handler_config(handler, cfg, role, device_ids, use_device,
+                          dry_run, sync_base_dir, tmp_root):
+    """Populate XpuRequestHandler class-level config from cfg + runtime state."""
+    handler.hardware = role
+    handler.profile = cfg["hardware_config"].get(role, {})
+    handler.device_ids = device_ids
+    handler.hardware_config = cfg["hardware_config"]
+    handler.provider_framework = cfg["provider_framework"]
+    handler.tenant_manager = TenantManager(sync_base_dir)
+    handler.dry_run = dry_run
+    handler.frameworks = _detect_frameworks()
+    handler.device_count = len([d for d in device_ids if d != "cpu"])
+    handler.use_device = use_device
+    handler.sandbox = cfg["sandbox"]
+    handler.docker_images = cfg["docker_images"]
+    handler.docker_memory = cfg["docker_memory"]
+    handler.docker_network = cfg["docker_network"]
+    handler.data_gate = threading.BoundedSemaphore(cfg["max_concurrent"])
+    handler.sync_base_dir = sync_base_dir
+    handler.tmp_root = tmp_root
+    handler.gate_wait_s = cfg["gate_wait_s"]
+    handler.device_lost_retries = cfg["device_lost_retries"]
+    handler.device_lost_wait_s = cfg["device_lost_wait_s"]
+    handler.run_deadline_s = cfg["run_deadline_s"]
+
+
 def run_server(port: int, dry_run: bool = False, devices: str = None,
                bind: str = "127.0.0.1", config_path: str = None):
     logging.basicConfig(
@@ -646,42 +722,12 @@ def run_server(port: int, dry_run: bool = False, devices: str = None,
 
     import sys
     try:
-        cfg = load_server_config(config_path)   # raises ValueError on bad yaml -> sys.exit(1)
-
-        # CLI args > yaml > defaults
+        cfg = load_server_config(config_path)
         bind = bind or cfg["bind"]
         port = port or cfg["port"]
-
-        # device 决策（2 分支）：
-        #   devices 显式（含 "cpu"/""）→ 用户主张，探测仅取 role（ids 丢弃）
-        #   devices None → /dev auto-detect
-        if devices is not None:
-            # bool 防护 --devices ""（int("") 崩）；"cpu"/"" → 显式 cpu，不信任探测
-            # （防 heartbeat 报假硬件）
-            use_device = bool(devices) and devices != "cpu"
-            if use_device:
-                role, _ = detect_hardware(cfg["hardware_config"])  # 取 role，ids 丢弃
-            else:
-                role = "cpu"
-            device_ids = [int(x) for x in devices.split(",")] if use_device else ["cpu"]
-        else:
-            use_device = True
-            role, device_ids = detect_hardware(cfg["hardware_config"])
-
-        XpuRequestHandler.hardware = role
-        XpuRequestHandler.profile = cfg["hardware_config"].get(role, {})
-        XpuRequestHandler.device_ids = device_ids
-        XpuRequestHandler.hardware_config = cfg["hardware_config"]
-        XpuRequestHandler.provider_framework = cfg["provider_framework"]
+        role, device_ids, use_device = _resolve_devices(devices, cfg)
         _init_device_locks(device_ids)
-        # max_concurrent < device count is allowed (data_gate caps total concurrency;
-        # extra devices idle). Warn so user notices under-utilization, not assert.
-        device_count = len([d for d in device_ids if d != "cpu"])
-        if device_count > 0 and cfg["max_concurrent"] < device_count:
-            logging.warning(
-                f"max_concurrent ({cfg['max_concurrent']}) < device count ({device_count}); "
-                f"data_gate caps total concurrency, {device_count - cfg['max_concurrent']} "
-                f"device(s) may idle")
+        _warn_max_concurrent(cfg, device_ids)
     except ValueError as e:
         logging.critical(f"startup failed: {e}")
         sys.exit(1)
@@ -692,64 +738,45 @@ def run_server(port: int, dry_run: bool = False, devices: str = None,
     os.makedirs(SYNC_BASE_DIR, exist_ok=True)
     os.makedirs(TMP_ROOT, exist_ok=True)
 
-    tenant_manager = TenantManager(SYNC_BASE_DIR)
-
-    frameworks = _detect_frameworks()
-
-    XpuRequestHandler.tenant_manager = tenant_manager
-    XpuRequestHandler.dry_run = dry_run
-    XpuRequestHandler.frameworks = frameworks
-    XpuRequestHandler.device_count = len([d for d in device_ids if d != "cpu"])
-    XpuRequestHandler.use_device = use_device
-    XpuRequestHandler.sandbox = cfg["sandbox"]
-    XpuRequestHandler.docker_images = cfg["docker_images"]
-    XpuRequestHandler.docker_memory = cfg["docker_memory"]
-    XpuRequestHandler.docker_network = cfg["docker_network"]
-    XpuRequestHandler.data_gate = threading.BoundedSemaphore(cfg["max_concurrent"])
-    XpuRequestHandler.sync_base_dir = SYNC_BASE_DIR
-    XpuRequestHandler.tmp_root = TMP_ROOT
-    XpuRequestHandler.gate_wait_s = cfg["gate_wait_s"]
-    XpuRequestHandler.run_deadline_s = cfg["run_deadline_s"]
-    try:
-        os.makedirs(TMP_ROOT, exist_ok=True)
-    except OSError as e:
-        logging.warning(f"cannot create TMP_ROOT {TMP_ROOT}: {e}")
+    _apply_handler_config(XpuRequestHandler, cfg, role, device_ids,
+                          use_device, dry_run, SYNC_BASE_DIR, TMP_ROOT)
 
     watcher = threading.Thread(target=_heartbeat_watcher,
-                               args=(tenant_manager,), daemon=True)
+                               args=(XpuRequestHandler.tenant_manager,), daemon=True)
     watcher.start()
 
     class _Server(ThreadingHTTPServer):
-        # Default backlog (5) is tight for concurrent fan-out (16+ in-flight
-        # requests); raise it so bursts aren't refused under load, and reuse
-        # the address so rapid restarts don't hit TIME_WAIT bind failures.
         request_queue_size = 128
         allow_reuse_address = True
 
     server = _Server((bind, port), XpuRequestHandler)
 
-    # mTLS: wrap socket if enabled
-    if cfg["tls_enabled"]:
-        tls_ca = cfg["tls_ca_cert"]
-        tls_cert = cfg["tls_server_cert"]
-        tls_key = cfg["tls_server_key"]
-        if tls_ca and tls_cert and tls_key:
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.verify_mode = ssl.CERT_REQUIRED
-            ctx.load_verify_locations(tls_ca)
-            ctx.load_cert_chain(tls_cert, tls_key)
-            server.socket = ctx.wrap_socket(server.socket, server_side=True)
-            logging.info("mTLS enabled (client cert required)")
-        else:
-            logging.error("tls.enabled=true but cert paths empty; refusing to start without TLS")
-            sys.exit(1)
-
+    _apply_tls(server, cfg)
     logging.info(f"xpu_server listening on {bind}:{port} (dry_run={dry_run})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logging.info("Shutting down")
         server.shutdown()
+
+
+def _apply_tls(server, cfg):
+    """Wrap server socket with mTLS if enabled, else exit on misconfig."""
+    import sys
+    if not cfg["tls_enabled"]:
+        return
+    tls_ca = cfg["tls_ca_cert"]
+    tls_cert = cfg["tls_server_cert"]
+    tls_key = cfg["tls_server_key"]
+    if not (tls_ca and tls_cert and tls_key):
+        logging.error("tls.enabled=true but cert paths empty; refusing to start")
+        sys.exit(1)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.load_verify_locations(tls_ca)
+    ctx.load_cert_chain(tls_cert, tls_key)
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    logging.info("mTLS enabled (client cert required)")
 
 
 def main():

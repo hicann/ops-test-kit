@@ -42,6 +42,8 @@ def _setup_handler(h, device_ids, gpu_locks, dry_run, use_device=False,
     h.sync_base_dir = "/tmp"
     h.run_deadline_s = 30
     h.sandbox = "none"
+    h.device_lost_retries = 0
+    h.device_lost_wait_s = 0.0
 
     def _get_header(k, d=""):
         return "test_tenant" if k == "X-Tenant-ID" else d
