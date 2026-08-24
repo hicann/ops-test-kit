@@ -10,6 +10,7 @@
 """
 RTS Interface
 """
+
 # Standard Packages
 import atexit
 import json
@@ -27,13 +28,12 @@ from typing import Any, List, NoReturn, Optional, Union
 from . import rts_info
 from . import rts_structures
 from .rts_interface_base import RTSInterfaceBase
-from ...utilities import align, get_loaded_so_path, pack_4bits, read_file, get_dtype_width
+from ...utilities import align, get_loaded_so_path, pack_4bits, read_file, get_dtype_width, is_4bit_dtype
 from ...utilities.proc import msdebug_runtime_injection_enabled
 
 
 # noinspection PyPep8Naming,PyUnusedLocal
-@ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_uint32, ctypes.c_uint32,
-                  ctypes.c_void_p, ctypes.c_uint32)
+@ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32)
 def MsprofReporterCallbackPlaceholder(_moduleId, _type, _data, _len=None):
     """
     This is just a placeholder for MsprofReporterCallback
@@ -46,21 +46,17 @@ def MsprofReporterCallbackPlaceholder(_moduleId, _type, _data, _len=None):
 def rts_task_fail_callback(c_exception_info_p: ctypes.c_void_p):
     if not c_exception_info_p:
         return
-    c_exception_info = ctypes.cast(c_exception_info_p,
-                                   ctypes.POINTER(rts_structures.RtExceptionInfo))[0]
+    c_exception_info = ctypes.cast(c_exception_info_p, ctypes.POINTER(rts_structures.RtExceptionInfo))[0]
     c_size_info = c_exception_info.exception_args.size_info
     if not c_size_info.magic_match():
-        c_exception_info = ctypes.cast(c_exception_info_p,
-                                       ctypes.POINTER(rts_structures.RtExceptionInfoV2))[0]
+        c_exception_info = ctypes.cast(c_exception_info_p, ctypes.POINTER(rts_structures.RtExceptionInfoV2))[0]
         c_size_info = c_exception_info.exception_args.size_info
     if not c_size_info.magic_match():
         return
-    c_info_addr_p = ctypes.cast(c_size_info.info_addr,
-                                ctypes.POINTER(ctypes.c_uint64))
+    c_info_addr_p = ctypes.cast(c_size_info.info_addr, ctypes.POINTER(ctypes.c_uint64))
     if not c_info_addr_p:
         return
-    c_cb_invoked_flag_p = ctypes.cast(c_info_addr_p[2],
-                                      ctypes.POINTER(ctypes.c_uint64))
+    c_cb_invoked_flag_p = ctypes.cast(c_info_addr_p[2], ctypes.POINTER(ctypes.c_uint64))
     c_cb_invoked_flag_p[0] = ctypes.c_uint64(1)
     return
 
@@ -76,8 +72,13 @@ class RTSInterface(RTSInterfaceBase):
     # atomic overflow will raise AIC Error. Moving-out needs block align, will not check oob.
     ATOMIC_ADD_BLACKLIST_SOC = ("Ascend910", "Ascend310P", "Ascend610", "Ascend310")
 
-    def __init__(self, camodel: Optional[str] = None, rts_custom_path: str = "",
-                 short_soc_version: str = None, skip_teardown: bool = False):
+    def __init__(
+        self,
+        camodel: Optional[str] = None,
+        rts_custom_path: str = "",
+        short_soc_version: str = None,
+        skip_teardown: bool = False,
+    ):
         super().__init__()
         self.context = None
         self.camodel = camodel
@@ -102,7 +103,7 @@ class RTSInterface(RTSInterfaceBase):
             self.print_so_path()
         else:
             runtime_path = f"{rts_custom_path}libruntime.so"
-            self._origin_rtsdll = ctypes.CDLL(runtime_path, mode = ctypes.RTLD_GLOBAL)
+            self._origin_rtsdll = ctypes.CDLL(runtime_path, mode=ctypes.RTLD_GLOBAL)
             if msdebug_runtime_injection_enabled():
                 self.rtsdll = ctypes.CDLL(None)
                 logging.debug("Using global RTS symbols for msopprof injection")
@@ -132,8 +133,7 @@ class RTSInterface(RTSInterfaceBase):
         start_time = time.time()
         api.restype = ctypes.c_uint64
         rt_error = api(*api_args)
-        self.parse_error(rt_error, rt_api_name,
-                         f"{extra_log} costs {round(time.time() - start_time, 3)} seconds")
+        self.parse_error(rt_error, rt_api_name, f"{extra_log} costs {round(time.time() - start_time, 3)} seconds")
 
     def set_device(self, device_id: int, skip_rt_intf: bool = False) -> None:
         """
@@ -142,8 +142,7 @@ class RTSInterface(RTSInterfaceBase):
         if self.device_id is not None:
             self.reset(skip_rt_intf)
         if not skip_rt_intf:
-            self.api_call("rtSetDevice", f"on device {device_id}",
-                          ctypes.c_int32(device_id))
+            self.api_call("rtSetDevice", f"on device {device_id}", ctypes.c_int32(device_id))
         self.device_id = device_id
         self._detect_rt_args_version()
 
@@ -156,10 +155,13 @@ class RTSInterface(RTSInterfaceBase):
         """
         c_context = ctypes.c_void_p()
         c_context_p = ctypes.c_void_p(ctypes.addressof(c_context))
-        self.api_call("rtCtxCreate", None,
-                      c_context_p,
-                      ctypes.c_uint32(rts_info.rt_context_mode[context_mode]),
-                      ctypes.c_int32(self.device_id))
+        self.api_call(
+            "rtCtxCreate",
+            None,
+            c_context_p,
+            ctypes.c_uint32(rts_info.rt_context_mode[context_mode]),
+            ctypes.c_int32(self.device_id),
+        )
         self.context = c_context
         self.context_storage.append(c_context)
         return c_context
@@ -217,8 +219,7 @@ class RTSInterface(RTSInterfaceBase):
         :return: None
         """
         if stream is None:
-            logging.warning("RTS interface [rtStreamDestroyForce] "
-                            "does not support default stream in context.")
+            logging.warning("RTS interface [rtStreamDestroyForce] does not support default stream in context.")
         self.api_call("rtStreamDestroyForce", None, stream)
 
     def register_device_binary_kernel(self, kernel_path: str, magic: int) -> ctypes.c_void_p:
@@ -240,8 +241,9 @@ class RTSInterface(RTSInterfaceBase):
             self.api_call("rtDevBinaryUnRegister", None, rts_binary_handle)
             del self.kernel_binary_storage[rts_binary_handle.value]
 
-    def register_function(self, rts_binary_handle: ctypes.c_void_p, kernel_name: str,
-                          func_mode: int = 0) -> ctypes.c_void_p:
+    def register_function(
+        self, rts_binary_handle: ctypes.c_void_p, kernel_name: str, func_mode: int = 0
+    ) -> ctypes.c_void_p:
         """
         Register function in device kernel on current thread
         :param rts_binary_handle: pointer to device binary
@@ -252,12 +254,15 @@ class RTSInterface(RTSInterfaceBase):
         kernel_name_bytes = kernel_name.encode("UTF-8")
         c_kernel_name_p = ctypes.c_char_p(kernel_name_bytes)
         c_func_mode = ctypes.c_uint32(func_mode)
-        self.api_call("rtFunctionRegister", None,
-                      rts_binary_handle,
-                      c_kernel_name_p,
-                      c_kernel_name_p,
-                      c_kernel_name_p,
-                      c_func_mode)
+        self.api_call(
+            "rtFunctionRegister",
+            None,
+            rts_binary_handle,
+            c_kernel_name_p,
+            c_kernel_name_p,
+            c_kernel_name_p,
+            c_func_mode,
+        )
         return ctypes.cast(c_kernel_name_p, ctypes.c_void_p)
 
     def register_all_kernel(self, kernel_path: str, magic: int) -> ctypes.c_void_p:
@@ -280,38 +285,35 @@ class RTSInterface(RTSInterfaceBase):
         if not isinstance(_bin, bytes):
             raise TypeError("Copy binary to hbm supports bytes only, received %s" % str(type(_bin)))
         aligned_size = self.get_npu_aligned_size(len(_bin))
-        c_memory_p = self.malloc(aligned_size,
-                                 rts_info.RTS_MEMORY_TYPE.RT_MEMORY_HBM,
-                                 "RT_MEMORY_POLICY_HUGE_PAGE_ONLY"
-                                 if aligned_size > 2048 else "RT_MEMORY_POLICY_NONE")
+        c_memory_p = self.malloc(
+            aligned_size,
+            rts_info.RTS_MEMORY_TYPE.RT_MEMORY_HBM,
+            "RT_MEMORY_POLICY_HUGE_PAGE_ONLY" if aligned_size > 2048 else "RT_MEMORY_POLICY_NONE",
+        )
         missing_size = aligned_size - len(_bin)
         if missing_size > 0:
             self._fill_align_bytes(missing_size, ctypes.c_void_p(c_memory_p.value + len(_bin)))
         self.memcpy(c_memory_p, aligned_size, _bin, len(_bin), "RT_MEMCPY_HOST_TO_DEVICE")
         return c_memory_p
 
-    def copy_nparray_to_hbm(self, _nparray: numpy.ndarray,
-                            fill_oob_flag: bool = False) -> ctypes.c_void_p:
+    def copy_nparray_to_hbm(self, _nparray: numpy.ndarray, fill_oob_flag: bool = False) -> ctypes.c_void_p:
         """
         Copy numpy array into device hbm
         """
         _nparray = self._flatten_numpy_array(_nparray)
-        return self._copy_bytes_to_hbm(_nparray.__array_interface__['data'][0],
-                                       _nparray.nbytes,
-                                       fill_oob_flag)
+        return self._copy_bytes_to_hbm(_nparray.__array_interface__["data"][0], _nparray.nbytes, fill_oob_flag)
 
-    def copy_torch_tensor_to_hbm(self, torch_tensor,
-                                 fill_oob_flag: bool = False) -> ctypes.c_void_p:
+    def copy_torch_tensor_to_hbm(self, torch_tensor, fill_oob_flag: bool = False) -> ctypes.c_void_p:
         """
         Copy torch tensor storage data into device hbm
         """
         from torch import Tensor
+
         if not isinstance(torch_tensor, Tensor):
-            raise TypeError(f"Copy torch tensor to hbm supports Tensor only, "
-                            f"but received {str(type(torch_tensor))}")
-        return self._copy_bytes_to_hbm(torch_tensor.storage().data_ptr(),
-                                       torch_tensor.storage().nbytes(),
-                                       fill_oob_flag)
+            raise TypeError(f"Copy torch tensor to hbm supports Tensor only, but received {str(type(torch_tensor))}")
+        return self._copy_bytes_to_hbm(
+            torch_tensor.storage().data_ptr(), torch_tensor.storage().nbytes(), fill_oob_flag
+        )
 
     def copy_bin_to_hbm_ptr(self, _bin: bytes, hbm_ptr: ctypes.c_void_p):
         """
@@ -326,13 +328,15 @@ class RTSInterface(RTSInterfaceBase):
         Copy numpy array into device hbm with memory allocated.
         """
         _nparray = self._flatten_numpy_array(_nparray)
-        self.memcpy(hbm_ptr, _nparray.nbytes,
-                    ctypes.c_void_p(_nparray.__array_interface__['data'][0]), _nparray.nbytes,
-                    "RT_MEMCPY_HOST_TO_DEVICE")
+        self.memcpy(
+            hbm_ptr,
+            _nparray.nbytes,
+            ctypes.c_void_p(_nparray.__array_interface__["data"][0]),
+            _nparray.nbytes,
+            "RT_MEMCPY_HOST_TO_DEVICE",
+        )
 
-    def get_data_from_hbm(self,
-                          c_memory_p: Union[ctypes.c_void_p, int],
-                          data_size: int):
+    def get_data_from_hbm(self, c_memory_p: Union[ctypes.c_void_p, int], data_size: int):
         """
         :param c_memory_p: a void* which points to the hbm address you want to access
         :param data_size: data size in bytes
@@ -343,17 +347,17 @@ class RTSInterface(RTSInterfaceBase):
         # noinspection PyTypeChecker
         c_buffer_type: Any = ctypes.c_char * data_size
         c_buffer: Any = c_buffer_type()
-        self.memcpy(c_buffer,
-                    data_size, c_memory_p, data_size,
-                    "RT_MEMCPY_DEVICE_TO_HOST")
+        self.memcpy(c_buffer, data_size, c_memory_p, data_size, "RT_MEMCPY_DEVICE_TO_HOST")
         return c_buffer
 
-    def memcpy(self,
-               c_memory_p: ctypes.c_void_p,
-               memory_size: int,
-               data: Union[bytes, ctypes.c_void_p],
-               data_size: int,
-               memcpy_kind: str = "RT_MEMCPY_HOST_TO_HOST") -> None:
+    def memcpy(
+        self,
+        c_memory_p: ctypes.c_void_p,
+        memory_size: int,
+        data: Union[bytes, ctypes.c_void_p],
+        data_size: int,
+        memcpy_kind: str = "RT_MEMCPY_HOST_TO_HOST",
+    ) -> None:
         """
         RTS memcpy interface
         :param c_memory_p:
@@ -376,15 +380,16 @@ class RTSInterface(RTSInterfaceBase):
             raise TypeError("Runtime function memcpy supports bytes or c_voidp only!")
         c_data_size = ctypes.c_uint64(data_size)
         c_memory_size = ctypes.c_uint64(memory_size)
-        self.api_call("rtMemcpy", None,
-                      c_memory_p, c_memory_size,
-                      c_data_p, c_data_size,
-                      rts_info.rt_memcpy_kind[memcpy_kind])
+        self.api_call(
+            "rtMemcpy", None, c_memory_p, c_memory_size, c_data_p, c_data_size, rts_info.rt_memcpy_kind[memcpy_kind]
+        )
 
-    def malloc(self,
-               memory_size: int,
-               memory_type: rts_info.RTS_MEMORY_TYPE = rts_info.RTS_MEMORY_TYPE.RT_MEMORY_DEFAULT,
-               memory_policy: str = "RT_MEMORY_POLICY_NONE") -> ctypes.c_void_p:
+    def malloc(
+        self,
+        memory_size: int,
+        memory_type: rts_info.RTS_MEMORY_TYPE = rts_info.RTS_MEMORY_TYPE.RT_MEMORY_DEFAULT,
+        memory_policy: str = "RT_MEMORY_POLICY_NONE",
+    ) -> ctypes.c_void_p:
         """
         RTS malloc interface
         :param memory_size:
@@ -398,12 +403,14 @@ class RTSInterface(RTSInterfaceBase):
         real_mem_size = memory_size + 512
         c_memory_p = ctypes.c_void_p()
         c_memory_size = ctypes.c_uint64(real_mem_size)
-        self.api_call("rtMalloc", f"trying to allocate {real_mem_size} bytes,",
-                      ctypes.c_void_p(ctypes.addressof(c_memory_p)),
-                      c_memory_size,
-                      memory_type.value
-                      | rts_info.rt_memory_policy[memory_policy],
-                      self.module_id)
+        self.api_call(
+            "rtMalloc",
+            f"trying to allocate {real_mem_size} bytes,",
+            ctypes.c_void_p(ctypes.addressof(c_memory_p)),
+            c_memory_size,
+            memory_type.value | rts_info.rt_memory_policy[memory_policy],
+            self.module_id,
+        )
         ret_c_memory_p = ctypes.c_void_p(512 * ((c_memory_p.value + 512 - 1) // 512))
         self.memory_manager[ret_c_memory_p.value] = c_memory_p.value
         logging.debug(f"rtMalloc : {hex(ret_c_memory_p.value)}")
@@ -421,33 +428,38 @@ class RTSInterface(RTSInterfaceBase):
         self.api_call("rtFree", None, ori_c_memory_p)
         del self.memory_manager[c_memory_p.value]
 
-    def launch_kernel(self,
-                      stubfunc: ctypes.c_void_p,
-                      blockdim: int,
-                      args: tuple, s_args: int = 0,
-                      sm_desc: Optional[Union[int, ctypes.c_uint64]] = None,
-                      stream: Optional[ctypes.c_void_p] = None,
-                      mix_kernel: bool = False,
-                      simt_share_memory_size: int = 0) -> None:
+    def launch_kernel(
+        self,
+        stubfunc: ctypes.c_void_p,
+        blockdim: int,
+        args: tuple,
+        s_args: int = 0,
+        sm_desc: Optional[Union[int, ctypes.c_uint64]] = None,
+        stream: Optional[ctypes.c_void_p] = None,
+        mix_kernel: bool = False,
+        simt_share_memory_size: int = 0,
+    ) -> None:
         """
         Launch registered kernel function on device
         """
         launch_args = rts_structures.LaunchKernelArgs(
-                        func_or_binary_hdl=stubfunc,
-                        block_dim=blockdim,
-                        op_args=args,
-                        simt_share_memory_size=simt_share_memory_size,
-                        mix_kernel=mix_kernel,
-                        sm_desc=sm_desc
-                    )
+            func_or_binary_hdl=stubfunc,
+            block_dim=blockdim,
+            op_args=args,
+            simt_share_memory_size=simt_share_memory_size,
+            mix_kernel=mix_kernel,
+            sm_desc=sm_desc,
+        )
         self.launch_kernel_with_flag(launch_args, stream)
 
-    def launch_kernel_with_handle(self, launch_args: rts_structures.LaunchKernelArgs,
-                                  stream: Optional[ctypes.c_void_p] = None):
+    def launch_kernel_with_handle(
+        self, launch_args: rts_structures.LaunchKernelArgs, stream: Optional[ctypes.c_void_p] = None
+    ):
         self._launch_kernel_v2(launch_args, stream)
 
-    def launch_kernel_with_flag(self, launch_args: rts_structures.LaunchKernelArgs,
-                                stream: Optional[ctypes.c_void_p] = None):
+    def launch_kernel_with_flag(
+        self, launch_args: rts_structures.LaunchKernelArgs, stream: Optional[ctypes.c_void_p] = None
+    ):
         self._launch_kernel_v2(launch_args, stream)
 
     def synchronize_with_stream(self, stream: Optional[ctypes.c_void_p], timeout: int = 0) -> None:
@@ -495,52 +507,66 @@ class RTSInterface(RTSInterfaceBase):
         # noinspection PyBroadException
         if self.prof_switch_version < 0:
             try:
-                self.set_prof_switch_v2(rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START,
-                                        c_device_ids, c_prof_config)
+                self.set_prof_switch_v2(
+                    rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
+                )
                 self.prof_switch_version = 2
             except:
                 try:
-                    self.set_prof_switch(rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START,
-                                         c_device_ids, c_prof_config)
+                    self.set_prof_switch(
+                        rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
+                    )
                     self.prof_switch_version = 1
                 except:
-                    self.api_call("rtProfilerStart", None,
-                                  c_prof_config,
-                                  ctypes.c_int32(1),
-                                  ctypes.c_void_p(ctypes.addressof(c_device_ids)))
+                    self.api_call(
+                        "rtProfilerStart",
+                        None,
+                        c_prof_config,
+                        ctypes.c_int32(1),
+                        ctypes.c_void_p(ctypes.addressof(c_device_ids)),
+                    )
                     self.prof_switch_version = 0
         else:
             if self.prof_switch_version == 0:
-                self.api_call("rtProfilerStart", None,
-                              c_prof_config,
-                              ctypes.c_int32(1),
-                              ctypes.c_void_p(ctypes.addressof(c_device_ids)))
+                self.api_call(
+                    "rtProfilerStart",
+                    None,
+                    c_prof_config,
+                    ctypes.c_int32(1),
+                    ctypes.c_void_p(ctypes.addressof(c_device_ids)),
+                )
             elif self.prof_switch_version == 1:
-                self.set_prof_switch(rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START,
-                                     c_device_ids, c_prof_config)
+                self.set_prof_switch(
+                    rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
+                )
             else:
-                self.set_prof_switch_v2(rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START,
-                                        c_device_ids, c_prof_config)
+                self.set_prof_switch_v2(
+                    rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
+                )
 
     def set_prof_switch(self, prof_switch_command_type, c_device_ids, c_prof_config):
         command_type = prof_switch_command_type.value
-        rt_prof_command_handle = \
-            rts_structures.RtProfCommandHandle(prof_switch=c_prof_config,
-                                               cmd_type=command_type,
-                                               c_dev_ids=c_device_ids)
-        self.api_call("rtProfSetProSwitch", None,
-                      ctypes.pointer(rt_prof_command_handle),
-                      ctypes.sizeof(rts_structures.RtProfCommandHandle))
+        rt_prof_command_handle = rts_structures.RtProfCommandHandle(
+            prof_switch=c_prof_config, cmd_type=command_type, c_dev_ids=c_device_ids
+        )
+        self.api_call(
+            "rtProfSetProSwitch",
+            None,
+            ctypes.pointer(rt_prof_command_handle),
+            ctypes.sizeof(rts_structures.RtProfCommandHandle),
+        )
 
     def set_prof_switch_v2(self, prof_switch_command_type, c_device_ids, c_prof_config):
         command_type = prof_switch_command_type.value
-        rt_prof_command_handle = \
-            rts_structures.RtProfCommandHandleV2(prof_switch=c_prof_config,
-                                                 cmd_type=command_type,
-                                                 c_dev_ids=c_device_ids)
-        self.api_call("rtProfSetProSwitch", None,
-                      ctypes.pointer(rt_prof_command_handle),
-                      ctypes.sizeof(rts_structures.RtProfCommandHandleV2))
+        rt_prof_command_handle = rts_structures.RtProfCommandHandleV2(
+            prof_switch=c_prof_config, cmd_type=command_type, c_dev_ids=c_device_ids
+        )
+        self.api_call(
+            "rtProfSetProSwitch",
+            None,
+            ctypes.pointer(rt_prof_command_handle),
+            ctypes.sizeof(rts_structures.RtProfCommandHandleV2),
+        )
 
     def stop_profiler(self, device_id: int):
         """
@@ -555,16 +581,21 @@ class RTSInterface(RTSInterfaceBase):
         if self.prof_switch_version < 0:
             raise RuntimeError("start_profiler should be called before stop_profiler")
         if self.prof_switch_version == 0:
-            self.api_call("rtProfilerStop", None,
-                          c_prof_config,
-                          ctypes.c_int32(1),
-                          ctypes.c_void_p(ctypes.addressof(c_device_ids)))
+            self.api_call(
+                "rtProfilerStop",
+                None,
+                c_prof_config,
+                ctypes.c_int32(1),
+                ctypes.c_void_p(ctypes.addressof(c_device_ids)),
+            )
         elif self.prof_switch_version == 1:
-            self.set_prof_switch(rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_STOP,
-                                 c_device_ids, c_prof_config)
+            self.set_prof_switch(
+                rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_STOP, c_device_ids, c_prof_config
+            )
         else:
-            self.set_prof_switch_v2(rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_STOP,
-                                    c_device_ids, c_prof_config)
+            self.set_prof_switch_v2(
+                rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_STOP, c_device_ids, c_prof_config
+            )
 
     def set_task_fail_callback(self):
         self.api_call("rtSetTaskFailCallback", None, rts_task_fail_callback)
@@ -584,16 +615,13 @@ class RTSInterface(RTSInterfaceBase):
             mode = mode.value
         self.api_call("rtSetDeviceSatMode", None, ctypes.c_int(mode))
 
-    def set_simt_stack_size(self,
-                            dcu_stack: Optional[int] = None,
-                            dvg_stack: Optional[int] = None,
-                            device_id: Optional[int] = None):
+    def set_simt_stack_size(
+        self, dcu_stack: Optional[int] = None, dvg_stack: Optional[int] = None, device_id: Optional[int] = None
+    ):
         if dcu_stack is not None:
-            self._set_simt_stack_size(rts_info.RtLimitType.SIMT_WARP_STACK_SIZE.value,
-                                      dcu_stack, device_id)
+            self._set_simt_stack_size(rts_info.RtLimitType.SIMT_WARP_STACK_SIZE.value, dcu_stack, device_id)
         if dvg_stack is not None:
-            self._set_simt_stack_size(rts_info.RtLimitType.SIMT_DVG_WARP_STACK_SIZE.value,
-                                      dvg_stack, device_id)
+            self._set_simt_stack_size(rts_info.RtLimitType.SIMT_DVG_WARP_STACK_SIZE.value, dvg_stack, device_id)
 
     def get_oob_check_offset_bytes(self, array_size) -> tuple:
         aligned_byte_size = self.get_npu_aligned_size(array_size, fill_oob_flag=True)
@@ -609,42 +637,40 @@ class RTSInterface(RTSInterfaceBase):
 
     def warmup(self, switches: "ttk.utilities.SWITCHES"):
         if switches.warmup:
-            self._launch_helper_kernel(os.path.join(switches.kernel_meta, "warmup.o"),
-                                       args=(0,))
+            self._launch_helper_kernel(os.path.join(switches.kernel_meta, "warmup.o"), args=(0,))
 
     def clear_l1(self, switches: "ttk.utilities.SWITCHES"):
         if switches.force_clear_l1 is None or switches.mode.is_model():
             return
         clean_val = switches.force_clear_l1
         dtype_bytes = clean_val.dtype.itemsize
-        input_np_array = numpy.array([clean_val.item(0)] * (128 * 1024 // dtype_bytes),
-                                     dtype=clean_val.dtype)
-        self._launch_helper_kernel(os.path.join(switches.kernel_meta, "clear_l1.o"),
-                                   args=(input_np_array,))
+        input_np_array = numpy.array([clean_val.item(0)] * (128 * 1024 // dtype_bytes), dtype=clean_val.dtype)
+        self._launch_helper_kernel(os.path.join(switches.kernel_meta, "clear_l1.o"), args=(input_np_array,))
 
     def clear_ub(self, switches: "ttk.utilities.SWITCHES"):
         if switches.force_clear_ub is None or switches.mode.is_model():
             return
         clean_val = switches.force_clear_ub
         dtype_bytes = clean_val.dtype.itemsize
-        input_np_array = numpy.array([clean_val.item(0)] * (32 // dtype_bytes),
-                                     dtype=clean_val.dtype)
-        self._launch_helper_kernel(os.path.join(switches.kernel_meta, "clear_ub.o"),
-                                   args=(input_np_array,))
+        input_np_array = numpy.array([clean_val.item(0)] * (32 // dtype_bytes), dtype=clean_val.dtype)
+        self._launch_helper_kernel(os.path.join(switches.kernel_meta, "clear_ub.o"), args=(input_np_array,))
 
     def test_clear_ub(self, switches: "ttk.utilities.SWITCHES"):
         if switches.force_clear_ub is None or switches.mode.is_model():
             return
         clean_val = switches.force_clear_ub
         dtype_bytes = clean_val.dtype.itemsize
-        output_np_array = numpy.array([3] * (2 * 32 // dtype_bytes),
-                                      dtype=clean_val.dtype)
-        self._launch_helper_kernel(os.path.join(switches.kernel_meta, "test_clear_ub.o"),
-                                   args=(output_np_array,), print_arg_indices=(0,))
+        output_np_array = numpy.array([3] * (2 * 32 // dtype_bytes), dtype=clean_val.dtype)
+        self._launch_helper_kernel(
+            os.path.join(switches.kernel_meta, "test_clear_ub.o"), args=(output_np_array,), print_arg_indices=(0,)
+        )
 
-    def _launch_helper_kernel(self, kernel: str,
-                              args: Optional[Union[type(None), numpy.ndarray]] = None,
-                              print_arg_indices: Optional[tuple] = None):
+    def _launch_helper_kernel(
+        self,
+        kernel: str,
+        args: Optional[Union[type(None), numpy.ndarray]] = None,
+        print_arg_indices: Optional[tuple] = None,
+    ):
         stream = self.create_stream()
         kernel_name = Path(kernel).stem
         kernel_json = os.path.join(os.path.dirname(kernel), f"{kernel_name}.json")
@@ -662,9 +688,9 @@ class RTSInterface(RTSInterfaceBase):
                 else:
                     dev_mem_addrs.append(arg)
         try:
-            self.launch_kernel(stubfunc_p, json_data["blockDim"],
-                               tuple(dev_mem_addrs), len(dev_mem_addrs),
-                               None, stream)
+            self.launch_kernel(
+                stubfunc_p, json_data["blockDim"], tuple(dev_mem_addrs), len(dev_mem_addrs), None, stream
+            )
         except:
             raise RuntimeError(f"launch kernel {kernel_name} failed.")
         else:
@@ -685,8 +711,7 @@ class RTSInterface(RTSInterfaceBase):
                     self.free(addr)
             self.destroy_stream(stream)
 
-    def _fill_align_bytes(self, align_size, c_align_mem_start_p: ctypes.c_void_p,
-                          fill_oob_flag: bool = False):
+    def _fill_align_bytes(self, align_size, c_align_mem_start_p: ctypes.c_void_p, fill_oob_flag: bool = False):
         # fill with random bytes
         if self.short_soc_version in self.ATOMIC_ADD_BLACKLIST_SOC:
             extra_bin = numpy.zeros(shape=(align_size,), dtype=numpy.uint8)
@@ -695,26 +720,35 @@ class RTSInterface(RTSInterfaceBase):
             random_size = align_size - (self.DEVICE_ALIGN_SIZE if fill_oob_flag else 0)
             # fill extra memory with memory out-of-bound flag. latest soc needs to check oob exactly
             extra_bin[random_size:] = self.OOB_SENTINEL
-        self.memcpy(c_align_mem_start_p, align_size,
-                    ctypes.c_void_p(extra_bin.__array_interface__['data'][0]), align_size,
-                    "RT_MEMCPY_HOST_TO_DEVICE")
+        self.memcpy(
+            c_align_mem_start_p,
+            align_size,
+            ctypes.c_void_p(extra_bin.__array_interface__["data"][0]),
+            align_size,
+            "RT_MEMCPY_HOST_TO_DEVICE",
+        )
 
     def _copy_bytes_to_hbm(self, data_ptr, nbytes: int, fill_oob_flag) -> ctypes.c_void_p:
         aligned_size = self.get_npu_aligned_size(nbytes, fill_oob_flag)
-        c_memory_p = self.malloc(aligned_size, rts_info.RTS_MEMORY_TYPE.RT_MEMORY_HBM,
-                                 "RT_MEMORY_POLICY_HUGE_PAGE_ONLY"
-                                 if aligned_size > 2048 else "RT_MEMORY_POLICY_NONE")
+        c_memory_p = self.malloc(
+            aligned_size,
+            rts_info.RTS_MEMORY_TYPE.RT_MEMORY_HBM,
+            "RT_MEMORY_POLICY_HUGE_PAGE_ONLY" if aligned_size > 2048 else "RT_MEMORY_POLICY_NONE",
+        )
         missing_size = aligned_size - nbytes - (0 if not fill_oob_flag else self.OOB_BYTES)
         if missing_size > 0:
             self._fill_align_bytes(missing_size, ctypes.c_void_p(c_memory_p.value + nbytes), fill_oob_flag)
         if fill_oob_flag:
             # fill extra memory with memory out-of-bound flag.
             extra_bin = numpy.array([self.OOB_SENTINEL] * self.OOB_BYTES, dtype=numpy.uint8)
-            self.memcpy(ctypes.c_void_p(c_memory_p.value + aligned_size - self.OOB_BYTES), self.OOB_BYTES,
-                        ctypes.c_void_p(extra_bin.__array_interface__['data'][0]), self.OOB_BYTES,
-                        "RT_MEMCPY_HOST_TO_DEVICE")
-        self.memcpy(c_memory_p, nbytes, ctypes.c_void_p(data_ptr),
-                    nbytes, "RT_MEMCPY_HOST_TO_DEVICE")
+            self.memcpy(
+                ctypes.c_void_p(c_memory_p.value + aligned_size - self.OOB_BYTES),
+                self.OOB_BYTES,
+                ctypes.c_void_p(extra_bin.__array_interface__["data"][0]),
+                self.OOB_BYTES,
+                "RT_MEMCPY_HOST_TO_DEVICE",
+            )
+        self.memcpy(c_memory_p, nbytes, ctypes.c_void_p(data_ptr), nbytes, "RT_MEMCPY_HOST_TO_DEVICE")
         return c_memory_p
 
     def _register_kernel(self, kernel_path: str, magic: int, api_name: str):
@@ -724,19 +758,23 @@ class RTSInterface(RTSInterfaceBase):
         logging.debug("Read %d bytes from kernel" % kernel_size)
         # Check kernel size
         if kernel_size <= 0:
-            raise IOError(f"RTS Interface received kernel of invalid size "
-                          f"{kernel_size} with path {kernel_path}")
+            raise IOError(f"RTS Interface received kernel of invalid size {kernel_size} with path {kernel_path}")
         c_kernel_p = ctypes.c_char_p(kernel)
         # Construct device binary structure
-        rts_device_binary = rts_structures.RtDevBinary(data=c_kernel_p,
-                                                       length=ctypes.c_uint64(kernel_size),
-                                                       version=ctypes.c_uint32(0),
-                                                       magic=ctypes.c_uint32(magic))
+        rts_device_binary = rts_structures.RtDevBinary(
+            data=c_kernel_p,
+            length=ctypes.c_uint64(kernel_size),
+            version=ctypes.c_uint32(0),
+            magic=ctypes.c_uint32(magic),
+        )
         # Prepare result structure
         rts_binary_handle = ctypes.c_void_p()
-        self.api_call(api_name, None,
-                      ctypes.c_void_p(ctypes.addressof(rts_device_binary)),
-                      ctypes.c_void_p(ctypes.addressof(rts_binary_handle)))
+        self.api_call(
+            api_name,
+            None,
+            ctypes.c_void_p(ctypes.addressof(rts_device_binary)),
+            ctypes.c_void_p(ctypes.addressof(rts_binary_handle)),
+        )
         self.kernel_binary_storage[rts_binary_handle.value] = kernel
         return rts_binary_handle
 
@@ -760,31 +798,39 @@ class RTSInterface(RTSInterfaceBase):
         else:
             return None
 
-    def _launch_kernel_v2(self, launch_args: rts_structures.LaunchKernelArgs,
-                          stream: Optional[ctypes.c_void_p] = None):
+    def _launch_kernel_v2(self, launch_args: rts_structures.LaunchKernelArgs, stream: Optional[ctypes.c_void_p] = None):
         launch_args.insert_ffts_addr(self._get_c2c_ctrl_addr(launch_args.mix_kernel))
         rt_args = launch_args.construct_rt_args(self.rt_args_version)
         c_block_dim = ctypes.c_uint32(launch_args.block_dim)
-        cfg_info = self._build_rt_task_cfg_info(launch_args.simt_share_memory_size,
-                                                launch_args.schedule_mode)
-        c_cfg_info_p = None if cfg_info is None \
-            else ctypes.c_void_p(ctypes.addressof(cfg_info))
-        c_sm_desc_p = None if launch_args.sm_desc is None \
-            else ctypes.c_void_p(ctypes.addressof(launch_args.sm_desc))
+        cfg_info = self._build_rt_task_cfg_info(launch_args.simt_share_memory_size, launch_args.schedule_mode)
+        c_cfg_info_p = None if cfg_info is None else ctypes.c_void_p(ctypes.addressof(cfg_info))
+        c_sm_desc_p = None if launch_args.sm_desc is None else ctypes.c_void_p(ctypes.addressof(launch_args.sm_desc))
         if launch_args.tiling_key is None:
             c_flags = ctypes.c_uint32(0)
-            self.api_call("rtKernelLaunchWithFlagV2", None,
-                          launch_args.func_or_binary_hdl, c_block_dim,
-                          ctypes.c_void_p(ctypes.addressof(rt_args)),
-                          c_sm_desc_p, stream, c_flags,
-                          c_cfg_info_p)
+            self.api_call(
+                "rtKernelLaunchWithFlagV2",
+                None,
+                launch_args.func_or_binary_hdl,
+                c_block_dim,
+                ctypes.c_void_p(ctypes.addressof(rt_args)),
+                c_sm_desc_p,
+                stream,
+                c_flags,
+                c_cfg_info_p,
+            )
         else:
             c_tiling_key = ctypes.c_uint64(launch_args.tiling_key)
-            self.api_call("rtKernelLaunchWithHandleV2", None,
-                          launch_args.func_or_binary_hdl, c_tiling_key, c_block_dim,
-                          ctypes.c_void_p(ctypes.addressof(rt_args)),
-                          c_sm_desc_p, stream,
-                          c_cfg_info_p)
+            self.api_call(
+                "rtKernelLaunchWithHandleV2",
+                None,
+                launch_args.func_or_binary_hdl,
+                c_tiling_key,
+                c_block_dim,
+                ctypes.c_void_p(ctypes.addressof(rt_args)),
+                c_sm_desc_p,
+                stream,
+                c_cfg_info_p,
+            )
 
     def _detect_rt_args_version(self):
         if not hasattr(self.rtsdll, "rtCreateLaunchArgs"):
@@ -795,9 +841,15 @@ class RTSInterface(RTSInterfaceBase):
         c_args_data = ctypes.c_void_p(ctypes.addressof(c_args_size))
         c_launch_args_p = ctypes.c_void_p()
         c_launch_args_pp = ctypes.c_void_p(ctypes.addressof(c_launch_args_p))
-        self.api_call("rtCreateLaunchArgs", None,
-                      c_args_size, c_host_info_total_size, c_host_info_num, c_args_data,
-                      c_launch_args_pp)
+        self.api_call(
+            "rtCreateLaunchArgs",
+            None,
+            c_args_size,
+            c_host_info_total_size,
+            c_host_info_num,
+            c_args_data,
+            c_launch_args_pp,
+        )
         px = ctypes.cast(c_launch_args_p, ctypes.POINTER(rts_structures.RtLaunchArgs))
         self.rt_args_version = "" if px[0].args_info.no_need_h2d_copy == 1 else "V2"
         self.api_call("rtDestroyLaunchArgs", None, c_launch_args_p)
@@ -809,11 +861,9 @@ class RTSInterface(RTSInterfaceBase):
         if simt_share_memory_size <= 0 and schedule_mode == 0:
             return None
         elif self._is_0903_branch():
-            return rts_structures.RtTaskCfgInfoBranch0903(simt_share_memory_size,
-                                                          schedule_mode)
+            return rts_structures.RtTaskCfgInfoBranch0903(simt_share_memory_size, schedule_mode)
         else:
-            return rts_structures.RtTaskCfgInfo(simt_share_memory_size,
-                                                schedule_mode)
+            return rts_structures.RtTaskCfgInfo(simt_share_memory_size, schedule_mode)
 
     def _set_simt_stack_size(self, typ: int, stack_size: int, device_id: Optional[int] = None):
         if stack_size < 0:
@@ -824,17 +874,16 @@ class RTSInterface(RTSInterfaceBase):
             logging.warning(f"Current RTS do not support rtDeviceSetLimit.")
             return
         device_id = self.device_id if device_id is None else device_id
-        self.api_call("rtDeviceSetLimit", None,
-                      ctypes.c_int(device_id),
-                      ctypes.c_int(typ),
-                      ctypes.c_uint32(stack_size))
+        self.api_call("rtDeviceSetLimit", None, ctypes.c_int(device_id), ctypes.c_int(typ), ctypes.c_uint32(stack_size))
 
     @staticmethod
     def prepare_tensor_list_info(addrs: Union[list, tuple], arrays: List[numpy.ndarray]):
         if len(addrs) != len(arrays):
-            raise RuntimeError(f"Length of device addresses and numpy arrays not match: "
-                               f"{len(addrs)} vs {len(arrays)}."
-                               f"It should never happen. Maybe a BUG !!!")
+            raise RuntimeError(
+                f"Length of device addresses and numpy arrays not match: "
+                f"{len(addrs)} vs {len(arrays)}."
+                f"It should never happen. Maybe a BUG !!!"
+            )
         return rts_structures.DynamicTensorInfo(addresses=addrs, arrays=arrays)
 
     @staticmethod
@@ -853,9 +902,8 @@ class RTSInterface(RTSInterfaceBase):
             return "TIMEOUT"
         elif "HEARTBEAT" in exception:
             logging.critical("Detected critical device heartbeat lost exception, process will halt.")
-            if shutil.which('msnpureport') is not None:
-                os.system(
-                    f"mkdir -p errors/{os.getpid()} && cd errors/{os.getpid()} && msnpureport && cd -")
+            if shutil.which("msnpureport") is not None:
+                os.system(f"mkdir -p errors/{os.getpid()} && cd errors/{os.getpid()} && msnpureport && cd -")
             while True:
                 time.sleep(10)
                 logging.critical("This testcase is killing device!!!! AND DEVICE WAS ALREADY DEAD")
@@ -866,9 +914,8 @@ class RTSInterface(RTSInterfaceBase):
     @staticmethod
     def _flatten_numpy_array(_nparray: numpy.ndarray):
         if not isinstance(_nparray, numpy.ndarray):
-            raise TypeError(f"Copy numpy array to hbm supports ndarray only, "
-                            f"but received {str(type(_nparray))}")
-        if 'int4' in str(_nparray.dtype) or 'float4' in str(_nparray.dtype):
+            raise TypeError(f"Copy numpy array to hbm supports ndarray only, but received {str(type(_nparray))}")
+        if is_4bit_dtype(_nparray.dtype):
             return pack_4bits(_nparray)
         else:
             return _nparray.flatten()
@@ -910,15 +957,21 @@ class RTSInterface(RTSInterfaceBase):
             acl_result = self.parse_acl_error_code(rt_error)
             if acl_result:
                 raise RuntimeError(f"Runtime API Call {rt_api_name}() Failed: {acl_result}, {extra_info}")
-            raise RuntimeError(f"Received invalid runtime error code for Runtime API Call {rt_api_name}(): "
-                               f"{hex(rt_error)}, {extra_info}")
+            raise RuntimeError(
+                f"Received invalid runtime error code for Runtime API Call {rt_api_name}(): "
+                f"{hex(rt_error)}, {extra_info}"
+            )
         rt_error_type = rt_error & 0x00FF0000
         if rt_error_type not in rts_info.rt_error_type_dict and not self.is_model():
-            raise RuntimeError(f"Received invalid runtime error type for Runtime API Call {rt_api_name}(): "
-                               f"{hex(rt_error)}, {extra_info}")
+            raise RuntimeError(
+                f"Received invalid runtime error type for Runtime API Call {rt_api_name}(): "
+                f"{hex(rt_error)}, {extra_info}"
+            )
         rt_error_code = rt_error & 0x0000FFFF
-        raise RuntimeError(f"Runtime API Call {rt_api_name}() Failed: "
-                           f"{self._parse_error_code(rt_error_type, rt_error_code)}, {extra_info}")
+        raise RuntimeError(
+            f"Runtime API Call {rt_api_name}() Failed: "
+            f"{self._parse_error_code(rt_error_type, rt_error_code)}, {extra_info}"
+        )
 
     @staticmethod
     def int_magic(magic: str) -> int:

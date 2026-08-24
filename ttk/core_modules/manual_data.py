@@ -29,7 +29,7 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
 import numpy
 
-from ttk.utilities import dump_to_file, load_numpy_data, resolve_custom_numpy_dtypes
+from ttk.utilities import dump_to_file, load_numpy_data, resolve_custom_numpy_dtypes, is_4bit_dtype
 from ttk.utilities.dtypes import torch_to_numpy_tensor
 
 SUPPORTED_MANUAL_DATA_FORMATS = ("bin", "npy", "pt")
@@ -43,8 +43,15 @@ _UNKNOWN_SHAPE = object()
 _DIRECTORY_PROVIDERS: List[Callable] = []
 _DIRECTORY_PROVIDERS_LOCK = threading.RLock()
 _CUSTOM_NUMPY_DTYPES = {
-    "bfloat16", "int4", "float8_e5m2", "float8_e4m3fn", "float8_e8m0",
-    "float4_e2m1", "float4_e1m2", "hifloat8", "hifloat4",
+    "bfloat16",
+    "int4",
+    "float8_e5m2",
+    "float8_e4m3fn",
+    "float8_e8m0",
+    "float4_e2m1",
+    "float4_e1m2",
+    "hifloat8",
+    "hifloat4",
 }
 
 
@@ -99,10 +106,7 @@ class ManualDataCase:
                     logical_shape = _value_shape(value, label)
                     storage = _as_numpy(value, label)
                     storage_shape = tuple(storage.shape)
-                    expected_shape = (
-                        logical_shape if not logical_shape and storage.size == 1
-                        else storage_shape
-                    )
+                    expected_shape = logical_shape if not logical_shape and storage.size == 1 else storage_shape
                     expected_shapes.append(expected_shape)
                     storage_shapes.append(storage_shape)
         elif shapes is not None:
@@ -122,10 +126,7 @@ class ManualDataCase:
                     storage_shape = _saved_array_shape(shape)
                 else:
                     storage_shape = _physical_array_spec(dtype_values[index], shape)[1]
-                expected_shape = (
-                    logical_shape if not logical_shape and math.prod(storage_shape) == 1
-                    else storage_shape
-                )
+                expected_shape = logical_shape if not logical_shape and math.prod(storage_shape) == 1 else storage_shape
                 expected_shapes.append(expected_shape)
                 storage_shapes.append(storage_shape)
         else:
@@ -134,13 +135,11 @@ class ManualDataCase:
 
         if len(expected_shapes) != len(self._golden_files):
             raise ManualDataError(
-                f"golden slot count {len(self._golden_files)} != device output count "
-                f"{len(expected_shapes)}"
+                f"golden slot count {len(self._golden_files)} != device output count {len(expected_shapes)}"
             )
 
         values = []
-        for entry, expected_shape, storage_shape in zip(
-                self._golden_files, expected_shapes, storage_shapes):
+        for entry, expected_shape, storage_shape in zip(self._golden_files, expected_shapes, storage_shapes):
             # A None golden suppresses comparison for an optional output. The
             # device API may still materialize that output during replay.
             if entry.dtype == _NONE_DTYPE:
@@ -150,8 +149,7 @@ class ManualDataCase:
                 values.append(_load_none(entry, "golden"))
                 continue
             if entry.saved_shape is not None:
-                if (expected_shape is not _UNKNOWN_SHAPE and
-                        tuple(expected_shape) != entry.saved_shape):
+                if expected_shape is not _UNKNOWN_SHAPE and tuple(expected_shape) != entry.saved_shape:
                     raise ManualDataError(
                         f"golden[{entry.index}] saved shape {entry.saved_shape} "
                         f"!= device output shape {tuple(expected_shape)}"
@@ -185,9 +183,9 @@ def unregister_manual_data_directory_provider(provider: Callable):
             _DIRECTORY_PROVIDERS.remove(provider)
 
 
-def resolve_manual_data_directories(testcase, case_type: str, switches,
-                                    include_providers: bool = True,
-                                    required: bool = True) -> Tuple[pathlib.Path, ...]:
+def resolve_manual_data_directories(
+    testcase, case_type: str, switches, include_providers: bool = True, required: bool = True
+) -> Tuple[pathlib.Path, ...]:
     """Resolve per-case provider paths before CLI batch-search directories."""
     values: List[Any] = []
     if include_providers:
@@ -212,24 +210,20 @@ def resolve_manual_data_directories(testcase, case_type: str, switches,
             seen.add(path)
     if not result and required:
         raise ManualDataError(
-            "no manual data directory was resolved; pass --manual-data-dirs "
-            "or register a data-source provider"
+            "no manual data directory was resolved; pass --manual-data-dirs or register a data-source provider"
         )
     return tuple(result)
 
 
-def manual_data_store(testcase, case_type: str, switches,
-                      include_providers: bool = True) -> "ManualDataStore":
-    return ManualDataStore(resolve_manual_data_directories(
-        testcase, case_type, switches, include_providers=include_providers
-    ))
+def manual_data_store(testcase, case_type: str, switches, include_providers: bool = True) -> "ManualDataStore":
+    return ManualDataStore(
+        resolve_manual_data_directories(testcase, case_type, switches, include_providers=include_providers)
+    )
 
 
 def replay_manual_data_store(testcase, case_type: str, switches) -> Optional["ManualDataStore"]:
     """Return a replay store selected by a per-case provider or the CLI."""
-    directories = resolve_manual_data_directories(
-        testcase, case_type, switches, include_providers=True, required=False
-    )
+    directories = resolve_manual_data_directories(testcase, case_type, switches, include_providers=True, required=False)
     if directories:
         if getattr(switches, "golden_mode", "Enable") != "Enable":
             raise ManualDataError("manual-data replay requires --golden-mode Enable")
@@ -252,9 +246,9 @@ def prepare_manual_data_store(testcase, case_type: str, switches) -> Optional["M
     return store
 
 
-def load_manual_data_case(testcase, case_type: str, switches,
-                          before_load: Optional[Callable[[], None]] = None,
-                          require_goldens: bool = True) -> Optional[ManualDataCase]:
+def load_manual_data_case(
+    testcase, case_type: str, switches, before_load: Optional[Callable[[], None]] = None, require_goldens: bool = True
+) -> Optional[ManualDataCase]:
     """Load a replay case through the shared provider and CLI directory policy."""
     if getattr(switches, "manual_data_mode", None) == "prepare":
         return None
@@ -379,7 +373,7 @@ def _scalar_specs(testcase, case_type: str) -> List[Optional[Tuple[str, Tuple[in
     if case_type != "aclnn":
         return []
     result = []
-    for dtype in (getattr(testcase, "flat_scalar_dtypes", ()) or ()):
+    for dtype in getattr(testcase, "flat_scalar_dtypes", ()) or ():
         if dtype is None:
             result.append(None)
         else:
@@ -402,7 +396,7 @@ def _resolve_file_dtype(dtype_name: str):
 
 def _expected_bin_size(dtype_name: str, shape: Tuple[int, ...]) -> int:
     count = math.prod(shape)
-    if "int4" in dtype_name or "float4" in dtype_name:
+    if is_4bit_dtype(dtype_name):
         return (count + 1) // 2
     try:
         return count * numpy.dtype(_resolve_file_dtype(dtype_name)).itemsize
@@ -441,22 +435,16 @@ def _load_pt(path: pathlib.Path, dtype, shape: Optional[Tuple[int, ...]]) -> num
         except Exception as exc:
             raise ManualDataError(f"invalid raw-byte pt shape: {path}") from exc
         if shape is not None and stored_shape != tuple(shape):
-            raise ManualDataError(
-                f"{path} stored shape {stored_shape} != expected {tuple(shape)}"
-            )
+            raise ManualDataError(f"{path} stored shape {stored_shape} != expected {tuple(shape)}")
         raw = raw_tensor.detach().cpu().contiguous().numpy().tobytes()
         try:
             array = numpy.frombuffer(raw, dtype=dtype).copy().reshape(stored_shape)
         except ValueError as exc:
-            raise ManualDataError(
-                f"{path} raw bytes cannot be reshaped to stored shape {stored_shape}"
-            ) from exc
+            raise ManualDataError(f"{path} raw bytes cannot be reshaped to stored shape {stored_shape}") from exc
     elif hasattr(payload, "detach"):
         array = torch_to_numpy_tensor(payload.detach().cpu())
         if shape is not None and tuple(array.shape) != tuple(shape):
-            raise ManualDataError(
-                f"{path} stored shape {tuple(array.shape)} != expected {tuple(shape)}"
-            )
+            raise ManualDataError(f"{path} stored shape {tuple(array.shape)} != expected {tuple(shape)}")
     else:
         raise ManualDataError(f"invalid pt payload: {path}")
     return array
@@ -465,25 +453,18 @@ def _load_pt(path: pathlib.Path, dtype, shape: Optional[Tuple[int, ...]]) -> num
 def _load_npy(path: pathlib.Path, dtype, shape: Optional[Tuple[int, ...]]) -> numpy.ndarray:
     array = numpy.load(str(path), allow_pickle=False)
     if shape is not None and tuple(array.shape) != tuple(shape):
-        raise ManualDataError(
-            f"{path} stored shape {tuple(array.shape)} != expected {tuple(shape)}"
-        )
+        raise ManualDataError(f"{path} stored shape {tuple(array.shape)} != expected {tuple(shape)}")
 
     expected_dtype = numpy.dtype(dtype)
     if array.dtype.name == expected_dtype.name:
         return array
     if expected_dtype.name not in _CUSTOM_NUMPY_DTYPES:
-        raise ManualDataError(
-            f"{path} stored dtype {array.dtype.name!r} != filename dtype {expected_dtype.name!r}"
-        )
+        raise ManualDataError(f"{path} stored dtype {array.dtype.name!r} != filename dtype {expected_dtype.name!r}")
     if array.dtype.kind != "V":
-        raise ManualDataError(
-            f"{path} stored dtype {array.dtype.name!r} != filename dtype {expected_dtype.name!r}"
-        )
+        raise ManualDataError(f"{path} stored dtype {array.dtype.name!r} != filename dtype {expected_dtype.name!r}")
     if array.dtype.itemsize != expected_dtype.itemsize:
         raise ManualDataError(
-            f"{path} itemsize {array.dtype.itemsize} != filename dtype itemsize "
-            f"{expected_dtype.itemsize}"
+            f"{path} itemsize {array.dtype.itemsize} != filename dtype itemsize {expected_dtype.itemsize}"
         )
     return array.view(dtype)
 
@@ -518,9 +499,7 @@ def _load_array(entry: _ManualDataFile, shape: Optional[Tuple[int, ...]]) -> num
         array = numpy.ascontiguousarray(array)
     expected_dtype = numpy.dtype(dtype).name
     if array.dtype.name != expected_dtype:
-        raise ManualDataError(
-            f"{entry.path} dtype {array.dtype.name!r} != filename dtype {expected_dtype!r}"
-        )
+        raise ManualDataError(f"{entry.path} dtype {array.dtype.name!r} != filename dtype {expected_dtype!r}")
     if shape is not None and tuple(array.shape) != tuple(shape):
         raise ManualDataError(f"{entry.path} shape {tuple(array.shape)} != expected {tuple(shape)}")
     return array
@@ -553,8 +532,16 @@ class ManualDataStore:
             raise ManualDataError("manual data preparation requires exactly one output directory")
         self._remove_existing(self.case_dir(testcase_name))
 
-    def write_case(self, testcase, case_type: str, inputs, goldens, scalars=(),
-                   file_format: str = "bin", write_goldens: bool = True) -> pathlib.Path:
+    def write_case(
+        self,
+        testcase,
+        case_type: str,
+        inputs,
+        goldens,
+        scalars=(),
+        file_format: str = "bin",
+        write_goldens: bool = True,
+    ) -> pathlib.Path:
         self._validate_case_type(case_type)
         if file_format not in SUPPORTED_MANUAL_DATA_FORMATS:
             raise ManualDataError(
@@ -592,8 +579,7 @@ class ManualDataStore:
             shutil.rmtree(str(temporary), ignore_errors=True)
             raise
         roles = "input/golden" if write_goldens else "input"
-        logging.info("[%s] prepared restorable %s data at %s",
-                     testcase.testcase_name, roles, target)
+        logging.info("[%s] prepared restorable %s data at %s", testcase.testcase_name, roles, target)
         return target
 
     @staticmethod
@@ -614,68 +600,66 @@ class ManualDataStore:
         elif path.is_dir():
             shutil.rmtree(str(path))
 
-    def _write_values(self, case_dir: pathlib.Path, values: Sequence[Any], role: str,
-                      file_format: str,
-                      specs: Optional[Sequence[Optional[Tuple[str, Tuple[int, ...]]]]] = None):
+    def _write_values(
+        self,
+        case_dir: pathlib.Path,
+        values: Sequence[Any],
+        role: str,
+        file_format: str,
+        specs: Optional[Sequence[Optional[Tuple[str, Tuple[int, ...]]]]] = None,
+    ):
         for index, value in enumerate(values):
             expected = specs[index] if specs is not None else None
-            if value is None:
-                if specs is not None and expected is not None:
-                    raise ManualDataError(f"{role}[{index}] is None but CSV declares a tensor")
-                path = case_dir / f"{role}_{index}_{_NONE_DTYPE}.{file_format}"
-                path.touch()
-                continue
-            if specs is not None and expected is None:
-                raise ManualDataError(f"{role}[{index}] has data but CSV declares None")
+            self._write_single(case_dir, index, value, expected, role, file_format, specs is not None)
 
-            label = f"{role}[{index}]"
-            logical_shape = _value_shape(value, label)
-            array = _as_numpy(value, label)
-            if expected is not None:
-                expected_dtype, expected_shape = expected
-                if array.dtype.name != expected_dtype:
-                    raise ManualDataError(
-                        f"{role}[{index}] dtype {array.dtype.name!r} != CSV storage dtype "
-                        f"{expected_dtype!r}"
-                    )
-                if tuple(array.shape) != expected_shape:
-                    raise ManualDataError(
-                        f"{role}[{index}] shape {tuple(array.shape)} != CSV storage shape "
-                        f"{expected_shape}"
-                    )
+    def _write_single(self, case_dir, index, value, expected, role, file_format, has_specs):
+        if value is None:
+            if has_specs and expected is not None:
+                raise ManualDataError(f"{role}[{index}] is None but CSV declares a tensor")
+            path = case_dir / f"{role}_{index}_{_NONE_DTYPE}.{file_format}"
+            path.touch()
+            return
+        if has_specs and expected is None:
+            raise ManualDataError(f"{role}[{index}] has data but CSV declares None")
 
-            dtype_name = array.dtype.name
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", dtype_name):
-                raise ManualDataError(f"dtype {dtype_name!r} cannot be encoded in a data filename")
-            stem = f"{role}_{index}_{dtype_name}"
-            saved_shape = None
-            if role == "golden" and file_format == "bin":
-                saved_shape = (
-                    logical_shape if not logical_shape and array.size == 1
-                    else tuple(array.shape)
+        label = f"{role}[{index}]"
+        logical_shape = _value_shape(value, label)
+        array = _as_numpy(value, label)
+        if expected is not None:
+            expected_dtype, expected_shape = expected
+            if array.dtype.name != expected_dtype:
+                raise ManualDataError(
+                    f"{role}[{index}] dtype {array.dtype.name!r} != CSV storage dtype {expected_dtype!r}"
                 )
-                stem += f"__shape_{_encode_shape(saved_shape)}"
-            path = case_dir / f"{stem}.{file_format}"
-            self._write_array(path, array, stem, file_format)
-            restored = _load_array(
-                _ManualDataFile(
-                    role, index, dtype_name, file_format, path, saved_shape
-                ),
-                tuple(array.shape),
-            )
-            is_packed_4bit = file_format == "bin" and (
-                "int4" in dtype_name or "float4" in dtype_name
-            )
-            if is_packed_4bit:
-                verified = numpy.array_equal(restored, array)
-            else:
-                verified = restored.tobytes(order="C") == array.tobytes(order="C")
-            if not verified:
-                raise ManualDataError(f"{path} did not pass write/read verification")
+            if tuple(array.shape) != expected_shape:
+                raise ManualDataError(
+                    f"{role}[{index}] shape {tuple(array.shape)} != CSV storage shape {expected_shape}"
+                )
+
+        dtype_name = array.dtype.name
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", dtype_name):
+            raise ManualDataError(f"dtype {dtype_name!r} cannot be encoded in a data filename")
+        stem = f"{role}_{index}_{dtype_name}"
+        saved_shape = None
+        if role == "golden" and file_format == "bin":
+            saved_shape = logical_shape if not logical_shape and array.size == 1 else tuple(array.shape)
+            stem += f"__shape_{_encode_shape(saved_shape)}"
+        path = case_dir / f"{stem}.{file_format}"
+        self._write_array(path, array, stem, file_format)
+        restored = _load_array(
+            _ManualDataFile(role, index, dtype_name, file_format, path, saved_shape),
+            tuple(array.shape),
+        )
+        is_packed_4bit = file_format == "bin" and is_4bit_dtype(dtype_name)
+        if is_packed_4bit:
+            verified = numpy.array_equal(restored, array)
+        else:
+            verified = restored.tobytes(order="C") == array.tobytes(order="C")
+        if not verified:
+            raise ManualDataError(f"{path} did not pass write/read verification")
 
     @staticmethod
-    def _write_array(path: pathlib.Path, array: numpy.ndarray,
-                     stem: str, file_format: str):
+    def _write_array(path: pathlib.Path, array: numpy.ndarray, stem: str, file_format: str):
         if file_format == "bin":
             dump_to_file(array, str(path.parent), stem, file_format=file_format)
             return
@@ -712,15 +696,11 @@ class ManualDataStore:
                 if case_dir.is_symlink() or not case_dir.is_dir():
                     raise ManualDataError(f"prepared testcase path is not a regular directory: {case_dir}")
                 return case_dir
-        raise ManualDataError(
-            f"prepared testcase {testcase_name!r} was not found; checked: " + ", ".join(checked)
-        )
+        raise ManualDataError(f"prepared testcase {testcase_name!r} was not found; checked: " + ", ".join(checked))
 
     @staticmethod
     def _scan_case(case_dir: pathlib.Path):
-        entries_by_format = {
-            file_format: {} for file_format in SUPPORTED_MANUAL_DATA_FORMATS
-        }
+        entries_by_format = {file_format: {} for file_format in SUPPORTED_MANUAL_DATA_FORMATS}
         try:
             paths = sorted(case_dir.iterdir(), key=lambda item: item.name)
         except Exception as exc:
@@ -735,22 +715,14 @@ class ManualDataStore:
             if match is None:
                 raise ManualDataError(f"unexpected file in manual-data case: {path.name}")
             role, index_text, dtype_name, shape_token, current_format = match.groups()
-            if (role == "golden" and current_format == "bin" and
-                    dtype_name != _NONE_DTYPE and shape_token is None):
-                raise ManualDataError(
-                    f"non-None bin Golden filename must include a shape suffix: {path.name}"
-                )
-            if shape_token is not None and (
-                    role != "golden" or current_format != "bin" or dtype_name == _NONE_DTYPE):
-                raise ManualDataError(
-                    f"shape suffix is only valid for non-None bin Golden files: {path.name}"
-                )
+            if role == "golden" and current_format == "bin" and dtype_name != _NONE_DTYPE and shape_token is None:
+                raise ManualDataError(f"non-None bin Golden filename must include a shape suffix: {path.name}")
+            if shape_token is not None and (role != "golden" or current_format != "bin" or dtype_name == _NONE_DTYPE):
+                raise ManualDataError(f"shape suffix is only valid for non-None bin Golden files: {path.name}")
             key = (role, int(index_text))
             format_entries = entries_by_format[current_format]
             if key in format_entries:
-                raise ManualDataError(
-                    f"duplicate {current_format} manual-data slot {role}[{index_text}]"
-                )
+                raise ManualDataError(f"duplicate {current_format} manual-data slot {role}[{index_text}]")
             if dtype_name != _NONE_DTYPE:
                 _resolve_file_dtype(dtype_name)
             format_entries[key] = _ManualDataFile(
@@ -763,8 +735,7 @@ class ManualDataStore:
             )
 
         available_formats = [
-            file_format for file_format in SUPPORTED_MANUAL_DATA_FORMATS
-            if entries_by_format[file_format]
+            file_format for file_format in SUPPORTED_MANUAL_DATA_FORMATS if entries_by_format[file_format]
         ]
         selected_format = available_formats[0]
         if len(available_formats) > 1:
@@ -777,8 +748,7 @@ class ManualDataStore:
         return entries_by_format[selected_format], selected_format
 
     @staticmethod
-    def _ordered_files(entries, role: str, expected_count: Optional[int],
-                       required: bool = True):
+    def _ordered_files(entries, role: str, expected_count: Optional[int], required: bool = True):
         files = sorted(
             (entry for (entry_role, _), entry in entries.items() if entry_role == role),
             key=lambda entry: entry.index,
@@ -803,14 +773,12 @@ class ManualDataStore:
                 raise ManualDataError(f"{role}[{entry.index}] is None but CSV declares a tensor")
             if entry.dtype != expected_dtype:
                 raise ManualDataError(
-                    f"{role}[{entry.index}] filename dtype {entry.dtype!r} != CSV storage dtype "
-                    f"{expected_dtype!r}"
+                    f"{role}[{entry.index}] filename dtype {entry.dtype!r} != CSV storage dtype {expected_dtype!r}"
                 )
             values.append(_load_array(entry, expected_shape))
         return values
 
-    def load_case(self, testcase, case_type: str,
-                  require_goldens: bool = True) -> ManualDataCase:
+    def load_case(self, testcase, case_type: str, require_goldens: bool = True) -> ManualDataCase:
         self._validate_case_type(case_type)
         case_dir = self._find_case(testcase.testcase_name)
         entries, file_format = self._scan_case(case_dir)
@@ -820,13 +788,8 @@ class ManualDataStore:
         scalar_files = self._ordered_files(entries, "scalar", len(scalar_specs))
 
         golden_count = _expected_golden_count(testcase, case_type)
-        golden_files = self._ordered_files(
-            entries, "golden", golden_count, required=require_goldens
-        )
+        golden_files = self._ordered_files(entries, "golden", golden_count, required=require_goldens)
         inputs = self._load_expected_values(input_files, input_specs, "input")
         scalars = self._load_expected_values(scalar_files, scalar_specs, "scalar")
-        logging.info("[%s] loaded prepared input/scalar data from %s",
-                     testcase.testcase_name, case_dir)
-        return ManualDataCase(
-            inputs, scalars, case_dir, file_format, tuple(golden_files)
-        )
+        logging.info("[%s] loaded prepared input/scalar data from %s", testcase.testcase_name, case_dir)
+        return ManualDataCase(inputs, scalars, case_dir, file_format, tuple(golden_files))

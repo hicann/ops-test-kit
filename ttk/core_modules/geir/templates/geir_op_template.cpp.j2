@@ -285,7 +285,17 @@ static int LoadInputFromFile(const string& path, DataType dt,
     }
     size_t file_size = static_cast<size_t>(pos);
     file.seekg(0, ios::beg);
-    int64_t expected = ShapeSize(data_shape) * GetDataTypeSize(dt);
+    int64_t num_elements = ShapeSize(data_shape);
+    int64_t expected;
+    switch (dt) {
+        case DT_FLOAT4_E2M1:
+        case DT_FLOAT4_E1M2:
+        case DT_HIFLOAT4:
+            expected = (num_elements + 1) / 2;
+            break;
+        default:
+            expected = num_elements * GetDataTypeSize(dt);
+    }
     if (file_size < (size_t)expected) {
         fprintf(stderr, "[TTK-GEIR] Input file size mismatch: %s (got %zu, need %lld)\n",
                 path.c_str(), file_size, (long long)expected);

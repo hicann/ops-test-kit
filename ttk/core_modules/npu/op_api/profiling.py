@@ -228,7 +228,13 @@ class Phase1ParamBuilder:
                             np_storage = numpy.asarray(np_storage.base)
                             break
                         np_storage = np_storage.base
-                    byte_size = int(math.ceil(np_storage.size * get_dtype_width(np_storage.dtype)))
+                    declared_dtype = get(self._ctx.flat_tensor_dtypes, flat_idx, None)
+                    effective_dtype = (
+                        tensor.dtype
+                        if ("float4" in str(declared_dtype) or "int4" in str(declared_dtype))
+                        else np_storage.dtype
+                    )
+                    byte_size = int(math.ceil(np_storage.size * get_dtype_width(effective_dtype)))
                 else:
                     byte_size = tensor.storage().nbytes()
                 output_byte_arrays.append(self._dvc.get_data_from_hbm(npu_ptr, byte_size))

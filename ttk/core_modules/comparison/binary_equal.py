@@ -18,9 +18,10 @@ import numpy as np
 
 # Third-party Packages
 from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
+from ...utilities.dtypes import is_4bit_dtype
 
 
-@register_comparison(['bin', 'binary', 'binary_equal'])
+@register_comparison(["bin", "binary", "binary_equal"])
 class BinaryComparison(ComparisonBase):
     STANDARD_NAME = "binary_equal"
 
@@ -33,17 +34,22 @@ class BinaryComparison(ComparisonBase):
 
     def _result(self, diff_idx, golden_size, diff_idx_size):
         if diff_idx_size == 0:
-            return EachCompareResult(1, is_pass=True, standard="binary_equal",
-                                     metrics={"standard": "binary_equal", "pass": True})
+            return EachCompareResult(
+                1, is_pass=True, standard="binary_equal", metrics={"standard": "binary_equal", "pass": True}
+            )
         precision = (golden_size - diff_idx_size) / golden_size
-        return EachCompareResult(precision, diff_idx, is_pass=False, standard="binary_equal",
-                                 metrics={"standard": "binary_equal", "pass": False,
-                                          "reason": FAIL_REASONS["bitwise_mismatch"]})
+        return EachCompareResult(
+            precision,
+            diff_idx,
+            is_pass=False,
+            standard="binary_equal",
+            metrics={"standard": "binary_equal", "pass": False, "reason": FAIL_REASONS["bitwise_mismatch"]},
+        )
 
     def _cross_dtype_compare(self) -> EachCompareResult:
         od, gd = self.output.dtype, self.golden.dtype
         # int4/float4 自定义 dtype 会让 np.issubdtype/promote_types 崩，短路拒
-        if any(x in str(d) for d in (od, gd) for x in ("int4", "float4")):
+        if is_4bit_dtype(od) or is_4bit_dtype(gd):
             return self._reject(od, gd)
         out_int = np.issubdtype(od, np.integer) or od.kind == "b"
         gold_int = np.issubdtype(gd, np.integer) or gd.kind == "b"
@@ -51,27 +57,31 @@ class BinaryComparison(ComparisonBase):
             promoted = np.promote_types(od, gd)
             if np.issubdtype(promoted, np.integer):
                 diff_idx, golden_size, diff_idx_size = self._numpy_binary_compare(
-                    self.output.astype(promoted), self.golden.astype(promoted))
+                    self.output.astype(promoted), self.golden.astype(promoted)
+                )
                 return self._result(diff_idx, golden_size, diff_idx_size)
         return self._reject(od, gd)
 
     def _reject(self, od, gd) -> EachCompareResult:
-        return EachCompareResult(0, is_pass=False, standard="binary_equal",
-                                 log=f"Dtype not bitwise-comparable: {od} vs {gd}",
-                                 metrics={"standard": "binary_equal", "pass": False,
-                                          "reason": FAIL_REASONS["cross_dtype_uncomparable"]})
+        return EachCompareResult(
+            0,
+            is_pass=False,
+            standard="binary_equal",
+            log=f"Dtype not bitwise-comparable: {od} vs {gd}",
+            metrics={"standard": "binary_equal", "pass": False, "reason": FAIL_REASONS["cross_dtype_uncomparable"]},
+        )
 
     @staticmethod
     def _numpy_binary_compare(output: np.ndarray, golden: np.ndarray):
-        if not golden.flags['C_CONTIGUOUS']:
+        if not golden.flags["C_CONTIGUOUS"]:
             golden = np.ascontiguousarray(golden)
-        if 'float8_e8m0' in str(output.dtype):
+        if "float8_e8m0" in str(output.dtype):
             output = output.view(np.uint8)
             golden = golden.view(np.uint8)
-        if 'float4' in str(output.dtype):
+        if "float4" in str(output.dtype):
             output = output.view(np.int8)
             golden = golden.view(np.int8)
-        if output.dtype.name not in ('bfloat16', 'int4', 'float8_e5m2', 'float8_e4m3fn', 'hifloat8'):
+        if output.dtype.name not in ("bfloat16", "int4", "float8_e5m2", "float8_e4m3fn", "hifloat8"):
             hash_output = hashlib.sha256(output.data).hexdigest()
             hash_golden = hashlib.sha256(golden.data).hexdigest()
         else:

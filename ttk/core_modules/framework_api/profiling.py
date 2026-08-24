@@ -45,7 +45,7 @@ from .eager_execution import call_api
 from .input_generation import generate_inputs
 from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
 from .profiler import ProfilerConfig, get_profiler
-from .profiling_utils import prepare_device_args
+from .profiling_utils import prepare_device_args, unpack_4bit_outputs
 from .result import FrameworkApiReturnStructure
 
 WARMUP_COUNT = 1
@@ -480,6 +480,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
                 result_nps.append(inplace_np)
 
     del args, kwargs
+    result_nps = unpack_4bit_outputs(testcase, result_nps)
     return result_nps, perf
 
 

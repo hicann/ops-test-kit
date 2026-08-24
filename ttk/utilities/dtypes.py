@@ -19,6 +19,14 @@ import copy
 
 BFP16_NEEDS_FP32_FOR_NPY: Optional[bool] = None
 
+# Numpy 4-bit dtypes (unpacked, 1 byte/element) → torch packed dtype names.
+# torch stores 2 values per byte (x2 suffix); numpy en_dtypes stores 1 per byte.
+_NUMPY_TO_TORCH_4BIT_DTYPE = {
+    "float4_e2m1": "float4_e2m1fn_x2",
+    "float4_e1m2": "float4_e1m2fn_x2",
+    "int4": "int4",
+}
+
 
 # Shared dtype promotion map for golden "Promote" mode.
 #
@@ -295,6 +303,17 @@ def get_dtype_range(dt):
     return numpy_info.min, numpy_info.max
 
 
+def is_4bit_dtype(dtype) -> bool:
+    """
+    True if dtype is a packed 4-bit type (int4 / float4_e2m1 / float4_e1m2 / hifloat4).
+
+    Accepts str, numpy.dtype, torch.dtype, or any object whose str() contains
+    the dtype name.
+    """
+    s = str(dtype)
+    return "int4" in s or "float4" in s
+
+
 def get_dtype_width(dt: str) -> Union[int, float]:
     """
     Dtype string to byte width mapping
@@ -304,7 +323,7 @@ def get_dtype_width(dt: str) -> Union[int, float]:
         str_dtype = dt
     elif hasattr(dt, "name"):
         str_dtype = dt.name
-    if "float4" in str_dtype or "int4" in str_dtype:
+    if is_4bit_dtype(str_dtype):
         return 0.5
     try:
         dtype = numpy.dtype(dt)
@@ -793,7 +812,7 @@ def pack_4bits(src: numpy.ndarray):
     Pack int4/float4 numpy array (each int4 number stored in one byte actually)
     to be continuous bytes stored in uint8
     """
-    if "int4" not in str(src.dtype) and "float4" not in str(src.dtype):
+    if not is_4bit_dtype(src.dtype):
         raise RuntimeError(f"Dtype of source tensor only support int4/float4")
     pack_size = 2
     shift = numpy.array([0, 4], dtype=numpy.uint8)
@@ -869,8 +888,14 @@ def numpy_to_torch_tensor(np_array: numpy.ndarray, is_complex32: bool = False):
         np_int16 = np_array.view(dtype=numpy.int16)
         t_int16 = torch.from_numpy(np_int16)
         return t_int16.view(torch.bfloat16)
-    elif "int4" in np_dtype or "float4" in np_dtype:
-        raise RuntimeError(f"Can only transfer numpy.ndarray to torch.Tensor with dtype [{np_dtype}]")
+    elif is_4bit_dtype(np_dtype):
+        if np_dtype == "int4":
+            raise RuntimeError(f"Can only transfer numpy.ndarray to torch.Tensor with dtype [{np_dtype}]")
+        torch_dtype_name = _NUMPY_TO_TORCH_4BIT_DTYPE.get(np_dtype)
+        if torch_dtype_name is None or not hasattr(torch, torch_dtype_name):
+            raise RuntimeError(f"Current pytorch version [{torch.__version__}] does not support [{np_dtype}].")
+        packed = pack_4bits(np_array)
+        return torch.from_numpy(packed).view(getattr(torch, torch_dtype_name))
     elif "float8" in np_dtype:
         if np_dtype not in ("float8_e4m3fn", "float8_e5m2", "float8_e8m0"):
             raise RuntimeError(f"Dtype [{np_dtype}] is not supported to convert to torch.Tensor yet.")
@@ -919,6 +944,13 @@ def torch_to_numpy_tensor(torch_tensor) -> numpy.ndarray:
         np_dtype = eval(f"numpy_{np_func_suffix}()")
         np_uint8 = torch_tensor.view(torch.uint8).numpy()
         return np_uint8.view(np_dtype)
+    elif is_4bit_dtype(torch_dtype_str):
+        np_uint8 = torch_tensor.view(torch.uint8).numpy()
+        torch_dtype_name = torch_dtype_str.split(".")[-1]
+        for np_name, torch_name in _NUMPY_TO_TORCH_4BIT_DTYPE.items():
+            if torch_name == torch_dtype_name:
+                return unpack_4bits(np_uint8, eval(f"numpy_{np_name}()"))
+        raise RuntimeError(f"Unsupported torch 4-bit dtype [{torch_dtype_str}]")
     else:
         return torch_tensor.numpy()
 

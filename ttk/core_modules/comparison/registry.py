@@ -37,6 +37,7 @@ def _to_numpy(arr):
     if not hasattr(arr, "numel"):
         return arr
     from ...utilities.dtypes import torch_to_numpy_tensor
+
     return torch_to_numpy_tensor(arr)
 
 
@@ -44,13 +45,15 @@ class ComparisonBase(metaclass=ABCMeta):
     # Max diff entries printed by _log_diff_output (worst-first). One place to tune.
     MAX_DIFF_OUTPUT = 100
 
-    def __init__(self,
-                 output: Union[np.ndarray, np.ndarray],
-                 golden: Union[np.ndarray, np.ndarray],
-                 output_idx: int,
-                 output_dtype: str,
-                 options: dict = None,
-                 third_party=None):
+    def __init__(
+        self,
+        output: Union[np.ndarray, np.ndarray],
+        golden: Union[np.ndarray, np.ndarray],
+        output_idx: int,
+        output_dtype: str,
+        options: dict = None,
+        third_party=None,
+    ):
         if not options:
             options = {}
         self.tol_options = options
@@ -76,11 +79,13 @@ class ComparisonBase(metaclass=ABCMeta):
         out_empty = self.output.size == 0
         gold_empty = self.golden.size == 0
         if out_empty and gold_empty:
-            return EachCompareResult(1, is_pass=True, standard=self.standard,
-                                     metrics={"standard": self.standard, "pass": True})
+            return EachCompareResult(
+                1, is_pass=True, standard=self.standard, metrics={"standard": self.standard, "pass": True}
+            )
         if out_empty or gold_empty:
-            return EachCompareResult(0, is_pass=False, standard=self.standard,
-                                     metrics={"standard": self.standard, "pass": False})
+            return EachCompareResult(
+                0, is_pass=False, standard=self.standard, metrics={"standard": self.standard, "pass": False}
+            )
         return None
 
     def compare(self):
@@ -92,7 +97,7 @@ class ComparisonBase(metaclass=ABCMeta):
         compare_result = self._check_empty()
         if compare_result is None:
             compare_result = self.compare_impl()
-        if compare_result.error_info:                      # 失败原因→ERROR 日志（空不打；不进 metrics）
+        if compare_result.error_info:  # 失败原因→ERROR 日志（空不打；不进 metrics）
             logging.error("Output %d %s", self.output_idx, compare_result.error_info)
         if isinstance(compare_result.precision, str):
             precision = compare_result.precision
@@ -105,11 +110,12 @@ class ComparisonBase(metaclass=ABCMeta):
 
     def _pad_int4_if_need(self):
         # only numpy dtype has `name` attribute. Op api output will always be torch.Tensor.
-        if (hasattr(self.output.dtype, "name") and
-                ('int4' in str(self.output.dtype) or 'float4' in str(self.output.dtype))):
+        from ...utilities.dtypes import is_4bit_dtype
+
+        if hasattr(self.output.dtype, "name") and is_4bit_dtype(self.output.dtype):
             # output will always be 2*n
             if self.output.size >= 2 and self.golden.size == self.output.size - 1:
-                self.golden = np.pad(self.golden, (0, 1), mode='constant')
+                self.golden = np.pad(self.golden, (0, 1), mode="constant")
 
     def _log_diff_output(self, diff_index) -> str:
         log = ""
@@ -122,28 +128,45 @@ class ComparisonBase(metaclass=ABCMeta):
                 golden_v = self.golden[real_index] if golden_size > 0 else 0
                 actual_v = self.output[real_index]
                 if golden_size <= 0:
-                    log += "Index: %03d RealIndex: %06d Expected: 0 Actual: %-14.18f, Diff: inf\n" \
-                            % (idx, real_index, actual_v)
-                elif any([s in str(self.golden.dtype) for s in ('float8', 'float4', 'hifloat8')]):
+                    log += "Index: %03d RealIndex: %06d Expected: 0 Actual: %-14.18f, Diff: inf\n" % (
+                        idx,
+                        real_index,
+                        actual_v,
+                    )
+                elif any([s in str(self.golden.dtype) for s in ("float8", "float4", "hifloat8")]):
                     # out-of-range number will be nan/inf in
                     # `- (golden_v - actual_v) / golden_v`. convert to float.
                     tmp_array = np.array([float(golden_v), float(actual_v)], dtype=np.float32)
-                    log += "Index: %03d RealIndex: %06d Expected: %-14.18f Actual: %-14.18f Diff: %-14.06f\n" \
-                           % (idx, real_index, golden_v, actual_v, - (tmp_array[0] - tmp_array[1]) / tmp_array[0])
+                    log += "Index: %03d RealIndex: %06d Expected: %-14.18f Actual: %-14.18f Diff: %-14.06f\n" % (
+                        idx,
+                        real_index,
+                        golden_v,
+                        actual_v,
+                        -(tmp_array[0] - tmp_array[1]) / tmp_array[0],
+                    )
                 elif "bool" not in str(self.golden.dtype):
                     # (golden_v - actual_v) is different with (actual_v - golden_v) in BFP16 vs FP32-Golden
-                    log += "Index: %03d RealIndex: %06d Expected: %-14.18f Actual: %-14.18f Diff: %-14.06f\n" \
-                            % (idx, real_index, golden_v, actual_v, - (golden_v - actual_v) / golden_v)
+                    log += "Index: %03d RealIndex: %06d Expected: %-14.18f Actual: %-14.18f Diff: %-14.06f\n" % (
+                        idx,
+                        real_index,
+                        golden_v,
+                        actual_v,
+                        -(golden_v - actual_v) / golden_v,
+                    )
                 else:
-                    log += "Index: %03d RealIndex: %06d Expected: %s Actual: %s Diff: FAIL\n" \
-                            % (idx, real_index, str(golden_v), str(actual_v))
+                    log += "Index: %03d RealIndex: %06d Expected: %s Actual: %s Diff: FAIL\n" % (
+                        idx,
+                        real_index,
+                        str(golden_v),
+                        str(actual_v),
+                    )
                 if idx == self.MAX_DIFF_OUTPUT:
                     break
         return log
 
 
 class ComparisonRegister:
-    registry: Dict[str, type] = {}   # token(lower) -> 比对类；只此一份，无 metadata dict
+    registry: Dict[str, type] = {}  # token(lower) -> 比对类；只此一份，无 metadata dict
 
 
 # 失败 reason 模板（PASS 无 reason）；带 {占位符} 的由各比对类 .format() 填实值

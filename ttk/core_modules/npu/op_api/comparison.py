@@ -20,7 +20,14 @@ import logging
 import numpy
 
 from ....test_spec import get_spec_attr
-from ....utilities import get, get_global_storage, numpy_to_torch_tensor, resolve_custom_numpy_dtypes, unpack_4bits
+from ....utilities import (
+    get,
+    get_global_storage,
+    numpy_to_torch_tensor,
+    resolve_custom_numpy_dtypes,
+    unpack_4bits,
+    is_4bit_dtype,
+)
 from ....utilities.dtypes import np_as_strided_safe
 
 # Third-party Packages
@@ -46,7 +53,7 @@ class Comparator:
         """Decode raw bytes to numpy array based on dtype."""
         if "complex32" in str(dtype):
             return numpy.frombuffer(raw, "float16")
-        if "int4" in str(dtype) or "float4" in str(dtype):
+        if is_4bit_dtype(dtype):
             return unpack_4bits(numpy.frombuffer(raw, "uint8"), dtype)
         return numpy.frombuffer(raw, dtype)
 
@@ -70,7 +77,8 @@ class Comparator:
         except RuntimeError:
             logging.error(
                 f"torch.as_strided failed. storage_shape={t_storage.shape} "
-                f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}")
+                f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}"
+            )
             raise
 
     def _build_numpy_view(self, np_array, idx, outputs):
@@ -92,7 +100,8 @@ class Comparator:
         except Exception:
             logging.error(
                 f"numpy.as_strided failed. storage_shape={np_storage.shape} "
-                f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}")
+                f"view_shape={v_shape}, view_stride={v_stride}, view_offset={v_offset}"
+            )
             raise
 
     def _output_bytes_to_tensors(self):

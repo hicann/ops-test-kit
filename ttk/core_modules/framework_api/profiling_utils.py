@@ -73,3 +73,33 @@ def prepare_device_args(testcase, backend, dev_id, plan, raw_inputs):
         nested_tensors = dev_tensors
     args, kwargs, _ = plan.build_args(nested_tensors)
     return args, kwargs
+
+
+def unpack_4bit_outputs(testcase, result_nps):
+    """Unpack uint8 packed 4-bit outputs to float4/int4 numpy arrays.
+
+    When torch has no native float4 dtype, the NPU op may return uint8
+    (packed) data. This post-processing step unpacks it based on the
+    testcase's declared output dtypes, mirroring the _decode_output_bytes
+    logic in ACLNN comparison.py and Kernel comparison.py.
+    """
+    if not result_nps:
+        return result_nps
+    output_dtypes = getattr(testcase, "flat_output_dtypes", None)
+    if not output_dtypes:
+        return result_nps
+
+    from ttk.utilities import unpack_4bits
+
+    for idx, dtype_str in enumerate(output_dtypes):
+        if idx >= len(result_nps) or result_nps[idx] is None:
+            continue
+        if not isinstance(result_nps[idx], np.ndarray):
+            continue
+        ds = str(dtype_str)
+        if ("float4" in ds or "int4" in ds) and result_nps[idx].dtype == np.uint8:
+            try:
+                result_nps[idx] = unpack_4bits(result_nps[idx], ds)
+            except Exception:
+                pass
+    return result_nps

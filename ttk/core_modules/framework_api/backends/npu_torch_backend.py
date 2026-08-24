@@ -14,6 +14,7 @@ import numpy as np
 from .torch_backend import TorchBackend
 from ....utilities import (
     is_torch_native_dtype,
+    is_4bit_dtype,
     get_npu_hw_info,
 )
 
@@ -45,8 +46,9 @@ class NpuTorchBackend(TorchBackend):
             torch_tensor = self.from_numpy(tensor)
             return torch_tensor.npu(dev_id)
         else:
-            if str_dtype == "int4":
-                raise RuntimeError(f"Dtype [{str_dtype}] is not supported yet.")
+            if is_4bit_dtype(str_dtype):
+                torch_tensor = self.from_numpy(tensor)
+                return torch_tensor.npu(dev_id)
             elif str_dtype == "float8_e8m0":
                 return self.from_numpy(tensor).npu(dev_id)
             else:
