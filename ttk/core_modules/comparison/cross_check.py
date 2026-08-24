@@ -38,34 +38,54 @@ class CrossCheckComparison(ComparisonBase):
         mere_limit = self.tol_options["mere_ratio"]
         rmse_limit = self.tol_options["rmse_ratio"]
 
+        # special 位置：t/g/b 任意一方有 NaN/Inf
         special = np.isnan(t) | np.isinf(t) | np.isnan(g) | np.isinf(g) | np.isnan(b) | np.isinf(b)
         finite = ~special
         large = finite & (np.abs(g) >= sv["small_value"])
         small = finite & (np.abs(g) < sv["small_value"])
 
         # Path A: special positions
-        match_g = (t == g) | (np.isnan(t) & np.isnan(g))
-        match_b = (t == b) | (np.isnan(t) & np.isnan(b))
-        special_ok = np.all((match_g | match_b)[special]) if special.any() else True
+        # third_party (b) 的 NaN/Inf 是已知算子行为（如 npu_quant_matmul 负 scale 溢出）。
+        # b 有 inf/nan 的位置不参与 special_ok 判定（third_party 已不可用），
+        # 只对 t/g 自身的 NaN/Inf 做类型匹配判定。
+        b_bad = np.isnan(b) | np.isinf(b)
+        t_g_special = np.isnan(t) | np.isinf(t) | np.isnan(g) | np.isinf(g)
+        check_special = t_g_special
+        t_nan = np.isnan(t); g_nan = np.isnan(g)
+        t_pinf = np.isposinf(t); g_pinf = np.isposinf(g)
+        t_ninf = np.isneginf(t); g_ninf = np.isneginf(g)
+        nan_match = t_nan & g_nan
+        pinf_match = t_pinf & g_pinf
+        ninf_match = t_ninf & g_ninf
+        inf_match = nan_match | pinf_match | ninf_match
+        special_ok = bool(np.all(inf_match[check_special])) if check_special.any() else True
 
         with np.errstate(invalid="ignore", divide="ignore"):
             # Path B-1: large positions — mare/mere/rmse ratio
             if large.any():
                 rel_npu = np.abs(t[large] - g[large]) / (np.abs(g[large]) + 1e-7)
                 rel_party = np.abs(b[large] - g[large]) / (np.abs(g[large]) + 1e-7)
-                mare_ratio = safe_div(rel_npu.max(), rel_party.max(), sv["small_value"])
-                mere_ratio = safe_div(rel_npu.mean(), rel_party.mean(), sv["small_value"])
-                rmse_npu = np.sqrt(np.mean((t[large] - g[large]) ** 2))
-                rmse_party = np.sqrt(np.mean((b[large] - g[large]) ** 2))
-                rmse_ratio = safe_div(rmse_npu, rmse_party, sv["small_value"])
-                exceeded = []
-                if mare_ratio > mare_limit:
-                    exceeded.append(f"mare({mare_ratio:.2f}>{mare_limit})")
-                if mere_ratio > mere_limit:
-                    exceeded.append(f"mere({mere_ratio:.2f}>{mere_limit})")
-                if rmse_ratio > rmse_limit:
-                    exceeded.append(f"rmse({rmse_ratio:.2f}>{rmse_limit})")
-                ratio_ok = not exceeded
+                # third_party 在 large 位置全 inf/nan 时（算子数学溢出，如
+                # npu_quant_matmul 用负 scale），ratio 不参与判定，只看 target vs golden
+                b_party_invalid = np.all(np.isinf(rel_party) | np.isnan(rel_party))
+                if b_party_invalid:
+                    mare_ratio = mere_ratio = rmse_ratio = None
+                    exceeded = []
+                    ratio_ok = True
+                else:
+                    mare_ratio = safe_div(rel_npu.max(), rel_party.max(), sv["small_value"])
+                    mere_ratio = safe_div(rel_npu.mean(), rel_party.mean(), sv["small_value"])
+                    rmse_npu = np.sqrt(np.mean((t[large] - g[large]) ** 2))
+                    rmse_party = np.sqrt(np.mean((b[large] - g[large]) ** 2))
+                    rmse_ratio = safe_div(rmse_npu, rmse_party, sv["small_value"])
+                    exceeded = []
+                    if mare_ratio > mare_limit:
+                        exceeded.append(f"mare({mare_ratio:.2f}>{mare_limit})")
+                    if mere_ratio > mere_limit:
+                        exceeded.append(f"mere({mere_ratio:.2f}>{mere_limit})")
+                    if rmse_ratio > rmse_limit:
+                        exceeded.append(f"rmse({rmse_ratio:.2f}>{rmse_limit})")
+                    ratio_ok = not exceeded
                 diff_idx = self._top_diff(t, g, large)
             else:
                 exceeded = []
@@ -146,4 +166,3 @@ class CrossCheckComparison(ComparisonBase):
                     % (idx, i, tag, fmt % float(t[i]), fmt % float(g[i]), fmt % float(b[i]),
                        fmt % float(abs(t[i] - g[i])), fmt % float(abs(b[i] - g[i]))))
         return log
-

@@ -820,7 +820,7 @@ def do_profiling(context: TestcaseOp, mode: str) -> RTSProfilingResult:
     switches = get_global_storage()
     op_name = context.op_name
     output_placeholder: bool = OpInfoKeeper().op_output_defined(op_name)
-    param = RTSProfilingParam(*__construct_profiling_param(context, mode, output_placeholder))
+    param = RTSProfilingParam(*__construct_profiling_param(context, mode, output_placeholder), op_name=op_name)
     if param.switch:
         if not param.compile_result == "SUCC":
             result = RTSProfilingResult.fail(param.compile_result)

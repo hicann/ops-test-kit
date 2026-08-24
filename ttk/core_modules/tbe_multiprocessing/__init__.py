@@ -9,7 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 
 
-__all__ = ["get_process_context", "SimpleCommandProcess", "DeviceLock"]
+__all__ = ["get_process_context", "SimpleCommandProcess", "DeviceLock", "MultiDeviceLock"]
 
 
-from .pool import SimpleCommandProcess, get_process_context, DeviceLock
+from .pool import SimpleCommandProcess, get_process_context, DeviceLock, MultiDeviceLock

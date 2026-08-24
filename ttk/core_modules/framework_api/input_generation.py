@@ -260,6 +260,10 @@ def generate_np_storages(testcase, switches):
 
         dtype = flat_dtypes[idx]
         s_shape = testcase.flat_storage_shape(idx)
+        # Storage shape may be None even if view_shape is not (e.g. fp8 tensors
+        # without explicit storage shape). Fall back to view_shape.
+        if s_shape is None:
+            s_shape = view_shape
         data_range = ranges[idx] if idx < len(ranges) else (None, None)
 
         if idx not in pure_output_indexes:

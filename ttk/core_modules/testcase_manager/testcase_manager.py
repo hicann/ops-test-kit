@@ -450,6 +450,7 @@ class UniversalTestcaseFactory:
             testcase_struct = type(self.testcase_instance)()
             testcase_struct.original_line = self.raw_data[testcase_idx]
             testcase_struct.original_dict = dict(zip(self.header, self.raw_data[testcase_idx]))
+            testcase_struct._csv_row_index = testcase_idx
             headers = testcase_struct.get_all_legit_headers()
             unidentified_headers = []
             for header_idx, header in enumerate(headers):

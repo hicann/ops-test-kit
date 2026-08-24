@@ -47,12 +47,15 @@ class FrameworkApiProfileObject(ProfileObject):
     def init_tasks(self, testcases: Iterable[TestcaseBase]):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
-        for testcase in testcases:
+        sorted_cases = sorted(testcases, key=lambda t: getattr(t, '_csv_row_index', -1))
+        for testcase in sorted_cases:
+            device_ids = list(testcase.device_ids) if testcase.is_multi_device() else None
             task = TaskA(
                 testcase,
                 profile_process,
                 (testcase, grant_events, granted_indices),
                 TaskType.PROFILE,
+                device_ids=device_ids,
             )
             self.task_keeper.append(task)
 

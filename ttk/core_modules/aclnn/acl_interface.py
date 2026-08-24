@@ -19,6 +19,7 @@ __all__ = ["AclInterface"]
 import atexit
 import ctypes
 import logging
+import threading
 import time
 
 import numpy
@@ -240,7 +241,9 @@ class AclInterface:
         return self._rts_interface.get_data_from_hbm(c_memory_p, data_size)
 
     def create_acl_tensor(self, tensor, view_format: str,
-                          storage_shape: Optional[Union[tuple, list]] = None) -> ctypes.c_void_p:
+                          storage_shape: Optional[Union[tuple, list]] = None,
+                          view_shape_override: Optional[Union[tuple, list]] = None,
+                          acl_dtype_override: Optional[int] = None) -> ctypes.c_void_p:
         """
         Create aclTensor via torch.Tensor or numpy.ndarray
         aclTensor *aclCreateTensor(const int64_t *viewDims, uint64_t viewDimsNum, aclDataType dataType,
@@ -249,22 +252,27 @@ class AclInterface:
                                    void *tensorData);
         """
         if isinstance(tensor, numpy.ndarray):
-            return self._create_acl_tensor_from_numpy(tensor, view_format, storage_shape)
+            return self._create_acl_tensor_from_numpy(tensor, view_format, storage_shape,
+                                                       view_shape_override, acl_dtype_override)
         else:
-            return self._create_acl_tensor_from_torch(tensor, view_format, storage_shape)
+            return self._create_acl_tensor_from_torch(tensor, view_format, storage_shape,
+                                                       view_shape_override, acl_dtype_override)
 
     def _create_acl_tensor_from_torch(self, torch_tensor, view_format: str,
-                                       storage_shape: Optional[Union[tuple, list]] = None) -> ctypes.c_void_p:
+                                       storage_shape: Optional[Union[tuple, list]] = None,
+                                       view_shape_override: Optional[Union[tuple, list]] = None,
+                                       acl_dtype_override: Optional[int] = None) -> ctypes.c_void_p:
         """Create aclTensor from torch.Tensor"""
-        view_dims = torch_tensor.shape
+        view_dims = tuple(view_shape_override) if view_shape_override is not None else torch_tensor.shape
         c_view_dims = (ctypes.c_int64 * len(view_dims))(*view_dims)
         c_view_dims_num = ctypes.c_uint64(len(view_dims))
         dtype_str = str(torch_tensor.dtype).split('.')[-1]
-        c_acl_dtype = ctypes.c_int32(DATA_TYPE_DICT[dtype_str])
+        c_acl_dtype = ctypes.c_int32(
+            acl_dtype_override if acl_dtype_override is not None else DATA_TYPE_DICT[dtype_str])
         c_format = ctypes.c_int32(FORMAT_DICT[view_format])
 
-        if not storage_shape or (
-                tuple(view_dims) == tuple(storage_shape) and torch_tensor.is_contiguous()):
+        if (not storage_shape or
+                (tuple(torch_tensor.shape) == tuple(storage_shape) and torch_tensor.is_contiguous())):
             stride = 0
             c_stride = None
             c_offset = ctypes.c_int64(0)
@@ -292,13 +300,21 @@ class AclInterface:
         return c_ptr
 
     def _create_acl_tensor_from_numpy(self, np_tensor: numpy.ndarray, view_format: str,
-                                       storage_shape: Optional[Union[tuple, list]] = None) -> ctypes.c_void_p:
+                                       storage_shape: Optional[Union[tuple, list]] = None,
+                                       view_shape_override: Optional[Union[tuple, list]] = None,
+                                       acl_dtype_override: Optional[int] = None) -> ctypes.c_void_p:
         """Create aclTensor from numpy.ndarray（可能是 as_strided 后的 view）"""
-        view_dims = np_tensor.shape
+        # FP4/other sub-byte tensors are stored as packed bytes, while ACLNN
+        # receives the logical unpacked view shape and dtype.
+        view_dims = tuple(view_shape_override) if view_shape_override is not None else np_tensor.shape
         c_view_dims = (ctypes.c_int64 * len(view_dims))(*view_dims)
         c_view_dims_num = ctypes.c_uint64(len(view_dims))
-        dtype_str = np_tensor.dtype.name
-        c_acl_dtype = ctypes.c_int32(DATA_TYPE_DICT[dtype_str])
+        if acl_dtype_override is not None:
+            dtype_str = f"acl_dtype_{acl_dtype_override}"
+            c_acl_dtype = ctypes.c_int32(acl_dtype_override)
+        else:
+            dtype_str = np_tensor.dtype.name
+            c_acl_dtype = ctypes.c_int32(DATA_TYPE_DICT[dtype_str])
         c_format = ctypes.c_int32(FORMAT_DICT[view_format])
 
         # numpy stride 单位是字节，转为元素单位
@@ -475,7 +491,7 @@ class AclInterface:
             # need to synchronize stream to clean up
             # no matter phase-2 is success or not.
             try:
-                self._rts_interface.synchronize_with_stream(stream)
+                self._rts_interface.synchronize_with_stream(stream, timeout=600000)
             except RuntimeError as e:
                 sync_status = self._rts_interface.handle_stream_sync_exception(e.args[0])
                 if status == "OK":
@@ -556,6 +572,8 @@ class AclInterface:
             self._owns_acl_runtime = status == 0
 
     def _acl_finalize(self):
+        if getattr(self, '_suppress_finalize', False):
+            return
         if self._acl_inited and self._owns_acl_runtime:
             self._acl_api_call("aclFinalize", None)
         self._acl_inited = False
@@ -567,6 +585,8 @@ class AclInterface:
         self._device_id = device_id
 
     def _acl_reset_device(self):
+        if getattr(self, '_suppress_reset', False):
+            return
         if self._device_id is None:
             return
         self._acl_api_call("aclrtResetDevice", None,
@@ -629,8 +649,9 @@ class AclInterface:
 
     # Shared across all AclInterface instances. ctypes.CDLL loads each SO once per process, so sharing is safe.
     _SO_CACHE: dict = {}
+    _SO_CACHE_LOCK = threading.Lock()
 
-    def _get_op_api(self, api_name):
+    def _get_op_api(self, api_name: str):
         from .op_api_info_keeper import OpApiInfoKeeper
         lookup_name = api_name
         if lookup_name.endswith('GetWorkspaceSize'):
@@ -642,10 +663,16 @@ class AclInterface:
         if not info.so_path:
             logging.error(f"API [{api_name}] has category=[{info.category}] but SO path is empty")
             return None
-        dll = self._SO_CACHE.get(info.so_path)
-        if dll is None:
-            dll = ctypes.CDLL(info.so_path)
-            self._SO_CACHE[info.so_path] = dll
+        # Guard ctypes.CDLL with a lock: in multi-device runs two child threads
+        # concurrently entered this method and both called ctypes.CDLL on the
+        # same SO (the get-then-set on _SO_CACHE was not atomic). The duplicate
+        # load produced a handle whose aclnn symbols mis-resolved, causing
+        # ACLNN_ERR_INNER at execute time. The lock ensures one load per SO.
+        with self._SO_CACHE_LOCK:
+            dll = self._SO_CACHE.get(info.so_path)
+            if dll is None:
+                dll = ctypes.CDLL(info.so_path)
+                self._SO_CACHE[info.so_path] = dll
         api = getattr(dll, api_name, None)
         if not api:
             logging.error(f"API [{api_name}] not found in SO [{info.so_path}]")

@@ -41,7 +41,7 @@ __all__ = [
 import ast
 import logging
 import re
-from typing import Union
+from typing import Optional, Union
 
 # Third-Party Packages
 from ...utilities import is_shape
@@ -431,7 +431,7 @@ def shapelike_float_nested(value: str):
                             if not isinstance(v, allowed):
                                 raise TypeError("%s is not a valid float value in %s" % (str(v), value))
                             if v < 0:
-                                logging.warning("shapelike value should not have negative dim %s" % str(sub))
+                                raise ValueError("shapelike value should not have negative dim %s" % str(sub))
                         sub_items.append(tuple(sub))
                     else:
                         raise TypeError("%s is not a valid float range in %s" % (str(sub), value))
@@ -441,7 +441,7 @@ def shapelike_float_nested(value: str):
                     if not isinstance(v, allowed):
                         raise TypeError("%s is not a valid float value in %s" % (str(v), value))
                     if v < 0:
-                        logging.warning("shapelike value should not have negative dim %s" % str(element))
+                        raise ValueError("shapelike value should not have negative dim %s" % str(element))
                 result.append(tuple(element))
         else:
             raise TypeError("%s of %s is not a valid float shapelike value" % (str(element), value))
@@ -560,12 +560,14 @@ def int_container(value: str) -> tuple:
     return tuple(result)
 
 
-def process_int(value: str) -> int:
+def process_int(value: str) -> Optional[int]:
     """
     Integer
     :param value:
     :return:
     """
+    if value is None or value == "None" or value == "":
+        return None
     try:
         result = eval(value)
     except:
@@ -573,6 +575,8 @@ def process_int(value: str) -> int:
     else:
         if isinstance(result, int):
             return result
+        elif result is None:
+            return None
         else:
             raise TypeError(f"Invalid value [{value}] for int")
 

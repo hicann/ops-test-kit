@@ -62,10 +62,13 @@ class ApiProfileObject(ProfileObject):
     def init_tasks(self, testcases: Iterable[TestcaseBase]):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
-        for t in testcases:
-            self.task_keeper.append(TaskA(t, profile_process, 
-                                         (t, grant_events, granted_indices), 
-                                         TaskType.PROFILE))
+        sorted_cases = sorted(testcases, key=lambda t: getattr(t, '_csv_row_index', -1))
+        for t in sorted_cases:
+            device_ids = list(t.device_ids) if hasattr(t, 'device_ids') and t.device_ids else None
+            self.task_keeper.append(TaskA(t, profile_process,
+                                          (t, grant_events, granted_indices),
+                                          TaskType.PROFILE,
+                                          device_ids=device_ids))
 
     def apply_profile_success_result(self, testcase: TestcaseAclnn, result: Any) -> tuple:
         if not isinstance(result, ApiProfilingReturnStructure):

@@ -110,6 +110,19 @@ class OpApiInfoKeeper(metaclass=Singleton):
         Each entry is (category, hdr_path, opp_root). opp_root is used to derive SO path."""
         dirs = []
 
+        # Developer builds may expose an ACLNN symbol from libopapi before its
+        # public header is installed into the CANN scene directory.  Allow TTK
+        # to parse one or more source op_api directories in that situation.
+        # These are treated as built-in APIs so the owning SO is still resolved
+        # from the installed libopapi symbol table.
+        source_so = os.getenv("TTK_OP_API_SO_PATH", "").strip()
+        source_dirs = []
+        for source_dir in os.getenv("TTK_OP_API_HEADER_PATH", "").split(":"):
+            source_dir = source_dir.strip()
+            if os.path.isdir(source_dir):
+                category = "source" if source_so else "builtin"
+                source_dirs.append((category, source_dir, source_so))
+
         # 1. Built-in: scene-based path
         builtin_dir = self._find_builtin_header_dir()
         if builtin_dir:
@@ -130,6 +143,11 @@ class OpApiInfoKeeper(metaclass=Singleton):
                 hdr = os.path.join(copp, "op_api", "include")
             if os.path.isdir(hdr):
                 dirs.append(("custom", hdr, copp))
+
+        # Explicit source headers describe the library selected by
+        # TTK_OP_API_SO_PATH and must win over installed headers with the same
+        # API name (for example, a newer generated MegaMoe signature).
+        dirs.extend(source_dirs)
 
         return dirs
 
@@ -167,7 +185,8 @@ class OpApiInfoKeeper(metaclass=Singleton):
         api_dict: Dict[str, OpApiInfo] = {}
         for category, hdr_path, opp_root in self._hdr_dirs:
             files = [f for f in os.listdir(hdr_path)
-                     if os.path.isfile(os.path.join(hdr_path, f))]
+                     if os.path.isfile(os.path.join(hdr_path, f))
+                     and f.endswith((".h", ".hpp"))]
             for f in files:
                 with open(os.path.join(hdr_path, f), 'r') as hf:
                     content = hf.read()
@@ -191,5 +210,7 @@ class OpApiInfoKeeper(metaclass=Singleton):
                     info.category = category
                     if category in ("custom", "vendor"):
                         info._so_path = os.path.join(opp_root, "op_api", "lib", "libcust_opapi.so")
+                    elif category == "source":
+                        info._so_path = opp_root
                     api_dict[api_name] = info
         return api_dict

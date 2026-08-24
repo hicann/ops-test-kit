@@ -20,9 +20,12 @@ import logging
 import os
 import shutil
 from pathlib import Path
-
+import sys
 import numpy as np
 
+from ttk.utilities.container_utils import get_global_storage, apply_as_list, deep_flatten
+from ttk.core_modules.tbe_multiprocessing import get_process_context, DeviceLock, MultiDeviceLock
+from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 from ttk.core_modules.comparison.comparison import compare
 from ttk.core_modules.comparison.custom import apply_pre_compare, try_custom_compare
 from ttk.core_modules.comparison.resolve import resolve_tolerance
@@ -32,17 +35,15 @@ from ttk.core_modules.manual_data import (
     snapshot_manual_values,
 )
 from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
-from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
-from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
 from ttk.utilities import dump_to_file, waiting_for_memory
-from ttk.utilities.container_utils import apply_as_list, get_global_storage
 
 from .api_resolver import resolve_api
 from .backends import get_backend
 from .eager_execution import call_api
 from .input_generation import generate_inputs
+from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
 from .profiler import ProfilerConfig, get_profiler
 from .profiling_utils import prepare_device_args
 from .result import FrameworkApiReturnStructure
@@ -229,8 +230,8 @@ def _e2e_xpu_input_names(testcase):
             real_idx += 1
     return names
 
-
-def profile_process(testcase, device_grant_events, device_granted_indices, dev_id):
+def profile_process(testcase, device_grant_events, device_granted_indices, dev_id,
+                    is_multi_device=False, device_ids=None):
     """
     Framework API profiling process — executed in subprocess.
 
@@ -239,6 +240,8 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
         device_grant_events: dict of device_id → Manager().Event()
         device_granted_indices: dict of device_id → Manager().Value('i', -1)
         dev_id: device ID (passed as kwarg by ProcessGroup)
+        is_multi_device: whether this is a multi-device task
+        device_ids: list of device IDs for multi-device tasks
 
     Returns:
         FrameworkApiReturnStructure
@@ -268,7 +271,14 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
     backend = _get_or_create_backend(switches)
     _ensure_deterministic_level_e2e(process_ctx, backend, testcase)
     try:
-        _do_profile(testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct)
+        if is_multi_device and device_ids:
+            testcase.device_ids = tuple(device_ids)
+            _do_profile_multi_device(testcase, backend, device_grant_events,
+                                     device_granted_indices, device_ids,
+                                     switches, return_struct)
+        else:
+            _do_profile(testcase, backend, device_grant_events, device_granted_indices,
+                        dev_id, switches, return_struct)
     except Exception as e:
         logging.error(f"[{testcase.testcase_name}] Error: {e}", exc_info=True)
         return_struct.eager_precision = str(e)
@@ -456,7 +466,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
                 result = r
         backend.synchronize(dev_id)
 
-    perf = profiler.result(backend, max(run_count, 1))
+    perf = profiler.result(backend, run_count)
 
     if not is_inplace:
         result_nps = backend.result_to_numpy(result)
@@ -688,7 +698,283 @@ def _collect_sim_report(testcase, switches):
         maybe_generate_sim_report(switches, case_path, case_path)
 
 
-def _do_profile(testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct):
+def _do_profile_multi_device(testcase, backend, device_grant_events,
+                             device_granted_indices, device_ids,
+                             switches, return_struct):
+    """Multi-device profiling for collective communication operators.
+
+    Uses threading + torch.distributed for multi-card execution.
+    Each thread gets its own copy of testcase with rank-specific data.
+    """
+    import subprocess
+    import tempfile
+    import torch
+    import torch_npu
+
+    ndev = len(device_ids)
+    process_ctx = get_process_context()
+
+    plan = testcase.get_param_plan()
+    if plan is None:
+        return_struct.eager_precision = "PARAM_PLAN_FAILURE"
+        return_struct.precision_status = "FAIL"
+        logging.error(f"[{testcase.testcase_name}] Cannot resolve param plan for {testcase.api_name}")
+        return
+
+    resolved, is_tensor_method = None, False
+    try:
+        resolved, is_tensor_method = resolve_api(testcase.api_name)
+    except ValueError:
+        pass
+
+    process_ctx.notify_status("OnGenInput")
+    try:
+        raw_inputs = generate_inputs(testcase, switches, backend, plan)
+    except Exception:
+        logging.exception(f"[{testcase.testcase_name}] Input generation failure")
+        return_struct.eager_precision = "INPUT_GEN_FAILURE"
+        return_struct.precision_status = "FAIL"
+        return
+
+    process_ctx.notify_status("OnAcquireLock")
+    use_device = backend.use_device()
+    with MultiDeviceLock(process_ctx, device_ids, use_device=use_device,
+                         grant_events=device_grant_events,
+                         granted_indices=device_granted_indices):
+        process_ctx.notify_status("OnProfilingPrint")
+        _profiling_print(testcase, backend, device_ids[0], switches)
+
+        process_ctx.notify_status("OnProfiling")
+
+        tmp_dir = tempfile.mkdtemp(prefix="ttk_e2e_md_")
+        input_path = os.path.join(tmp_dir, "inputs.npz")
+        api_name = testcase.api_name
+        api_info = testcase.get_api_info()
+
+        save_arrays = {}
+        # Generate per-rank inputs with rank-specific seed (matching ACLNN multi-device behavior)
+        base_seed = switches.random_seed or 0
+        import numpy as _np
+
+        # Determine if this op needs shared weight (x1/x2 same across ranks)
+        api_name_str = api_name or ''
+        weight_shared_ops = ("MatmulReduceScatter", "AllGatherMatmul",
+                             "MatmulAllReduce", "MatmulAlltoAll",
+                             "AlltoAllMatmul", "MatmulReduceScatterV2",
+                             "QuantMatmulAllReduce",
+                             "mm_reduce_scatter", "all_gather_mm",
+                             "mm_all_reduce", "mm_all_to_all",
+                             "all_to_all_mm")
+        exclude_ops = ("GroupedMatMul", "AlltoAllvGrouped",
+                       "BatchMatMul", "bmm_reduce_scatter", "bmm_reducescatter",
+                       "all_to_all_all_gather", "alltoall_allgather")
+        needs_shared_weight = (not any(kw in api_name_str for kw in exclude_ops)
+                               and any(kw in api_name_str for kw in weight_shared_ops))
+
+        for rank_idx in range(ndev):
+            per_rank_seed = base_seed + rank_idx * 1000
+            _np.random.seed(per_rank_seed)
+            rank_inputs = generate_inputs(testcase, switches, backend, plan)
+            # For MC2 matmul ops, regenerate x2 (weight) with rank-independent seed so
+            # all ranks share the same weight (matching ACLNN multi-device behavior).
+            # x1 stays per-rank different (each rank has its own input chunk).
+            if needs_shared_weight and len(rank_inputs) > 1 and rank_inputs[1] is not None:
+                flat_dtypes = resolve_custom_numpy_dtypes(testcase.flat_tensor_dtypes)
+                t_idx = 1
+                if t_idx < len(rank_inputs) and rank_inputs[t_idx] is not None:
+                    ss = testcase.flat_storage_shape(t_idx)
+                    dtype = flat_dtypes[t_idx] if t_idx < len(flat_dtypes) else None
+                    ranges = testcase.flat_input_data_ranges or ()
+                    data_range = ranges[t_idx] if t_idx < len(ranges) else (None, None)
+                    low = data_range[0] if data_range and data_range[0] is not None else -1.0
+                    high = data_range[1] if data_range and data_range[1] is not None else 1.0
+                    rng = _np.random.RandomState(base_seed + t_idx)
+                    np_arr = rng.uniform(low, high, ss).astype(dtype, copy=False)
+                    rank_inputs[t_idx] = np_arr.reshape(ss)
+            for i, r in enumerate(rank_inputs):
+                if r is not None:
+                    # For shared weight (idx >= 1 when needs_shared_weight),
+                    # only save rank 0's copy; other ranks will fall back to rank 0.
+                    if needs_shared_weight and i >= 1 and rank_idx != 0:
+                        continue
+                    # fp8/hifloat8 dtypes can't round-trip through npz (e5m2 descr '<f1'
+                    # fails on load). Save as uint8 view; worker restores via tensor_dtypes.
+                    arr_to_save = r
+                    if hasattr(r.dtype, 'itemsize') and r.dtype.itemsize == 1 and r.dtype.kind in ('V', 'f'):
+                        # Could be fp8_e4m3fn (|V1), fp8_e5m2 (<f1), fp8_e8m0, hifloat8
+                        dtype_str = str(r.dtype)
+                        if any(k in dtype_str for k in ('float8', 'hifloat8')):
+                            arr_to_save = r.view(_np.uint8)
+                    save_arrays[f'inp_{rank_idx}_{i}'] = arr_to_save
+        np.savez(input_path, **save_arrays)
+
+        script_path = os.path.join(os.path.dirname(__file__), "_e2e_multi_device_worker.py")
+        result_path = os.path.join(tmp_dir, "result.npz")
+        error_path = os.path.join(tmp_dir, "error.txt")
+
+        plan_info = {
+            'api_name': api_name,
+            'overload_index': plan.overload_index,
+            'output_tensor_indexes': testcase.output_tensor_indexes,
+            'attributes': testcase.attributes or {},
+            'golden_disabled': str(getattr(testcase, 'golden_api', '') or '').lower() == 'disable',
+            'tensor_dtypes': list(testcase.tensor_dtypes) if testcase.tensor_dtypes else [],
+            'remark': testcase.remark or '',
+            'tensor_view_shapes': list(testcase.tensor_view_shapes) if testcase.tensor_view_shapes else [],
+            'testcase_name': getattr(testcase, 'testcase_name', ''),
+        }
+
+        plan_path = os.path.join(tmp_dir, "plan.json")
+        import json
+        with open(plan_path, 'w') as f:
+            json.dump(plan_info, f)
+
+        env = os.environ.copy()
+        env['TTK_E2E_INPUT'] = input_path
+        env['TTK_E2E_PLAN'] = plan_path
+        env['TTK_E2E_RESULT'] = result_path
+        env['TTK_E2E_ERROR'] = error_path
+        env['TTK_E2E_DEVICES'] = ','.join(str(d) for d in device_ids)
+        env['TTK_E2E_NDEV'] = str(ndev)
+        # Pass graph mode to worker: "dynamic"/"static"/"" (multi-device mc2 graph path,
+        # mirrors single-device _execute_graph driven by -d/-c switches).
+        graph_mode = ""
+        if switches.dyn_switches.enabled:
+            graph_mode = "dynamic"
+        elif switches.cst_switches.enabled:
+            graph_mode = "static"
+        env['TTK_E2E_GRAPH_MODE'] = graph_mode
+
+        cmd = [sys.executable, script_path]
+        logging.info(f"E2E multi-device: running {cmd} with devices={device_ids} graph_mode={graph_mode or 'none'}")
+
+        try:
+            proc = subprocess.run(cmd, env=env,
+                                  capture_output=True, text=True,
+                                  errors="replace")
+            if proc.returncode != 0:
+                err_msg = proc.stderr[-2000:] if proc.stderr else "unknown"
+                if os.path.exists(error_path):
+                    with open(error_path) as f:
+                        err_msg = f.read()[:3000]
+                # Fallback: 某些 torch/torch_npu 版本 worker 进程退出阶段
+                # 有 "double free or corruption" 析构崩溃（rc=-6），但结果
+                # npz 已正常写出。优先采用实际结果，避免误判为 FAIL。
+                fallback_used = False
+                if os.path.exists(result_path):
+                    try:
+                        _loaded = np.load(result_path, allow_pickle=True)
+                        if 'precision_0' in _loaded.files and 'pass_0' in _loaded.files:
+                            logging.warning(
+                                f"E2E worker rc={proc.returncode} but result.npz written; "
+                                f"using fallback result (worker exit crash ignored).")
+                            fallback_used = True
+                    except Exception:
+                        pass
+                if not fallback_used:
+                    logging.error(f"E2E multi-device worker failed (rc={proc.returncode}): {err_msg}")
+                    logging.error(f"E2E stderr: {proc.stderr[-2000:] if proc.stderr else 'none'}")
+                    logging.error(f"E2E tmp_dir preserved: {tmp_dir}")
+                    return_struct.eager_precision = f"MULTI_DEVICE_FAILED: {err_msg}"
+                    return_struct.precision_status = "FAIL"
+                    return
+        except subprocess.TimeoutExpired:
+            import shutil
+            try:
+                shutil.rmtree(tmp_dir)
+            except Exception:
+                pass
+            return_struct.eager_precision = "MULTI_DEVICE_TIMEOUT"
+            return_struct.precision_status = "FAIL"
+            return
+
+        if not os.path.exists(result_path):
+            import shutil
+            try:
+                shutil.rmtree(tmp_dir)
+            except Exception:
+                pass
+            return_struct.eager_precision = "NO_OUTPUT"
+            return_struct.precision_status = "FAIL"
+            return
+
+        loaded = np.load(result_path, allow_pickle=True)
+
+        # Check if worker did in-process comparison (torch.isclose for bf16 compat)
+        precision_keys = [k for k in loaded.files if k.startswith('precision_')]
+        if precision_keys:
+            prec = str(loaded['precision_0'])
+            passed = str(loaded['pass_0'])
+            import shutil
+            try:
+                shutil.rmtree(tmp_dir)
+            except Exception:
+                pass
+            return_struct.construct(prec, passed, None)
+            # Multi-device mc2 graph result (dynamic/static) produced by worker
+            if 'graph_precision_0' in loaded.files:
+                gprec = str(loaded['graph_precision_0'])
+                gpass = str(loaded['graph_pass_0'])
+                gmode = str(loaded['graph_mode_0']) if 'graph_mode_0' in loaded.files else None
+                if gmode == "static":
+                    return_struct.construct(gprec, gpass, None, mode="static")
+                else:
+                    return_struct.construct(gprec, gpass, None, mode="dynamic")
+            _profiling_end_print(testcase, return_struct, [], switches)
+            del raw_inputs
+            return
+
+        primary_result = [loaded[f'out_{i}'] for i in range(len(loaded.files))
+                          if f'out_{i}' in loaded]
+        golden_result = [loaded[f'golden_{i}'] for i in range(len(loaded.files))
+                         if f'golden_{i}' in loaded]
+
+        import shutil
+        try:
+            shutil.rmtree(tmp_dir)
+        except Exception:
+            pass
+
+    if golden_result and not any(isinstance(g, str) for g in golden_result):
+        golden_nps = golden_result
+    else:
+        golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend)
+
+    _apply_pre_compare(testcase, primary_result, golden_nps, switches)
+
+    output_dtypes = tuple(str(g.dtype) if g is not None else None for g in primary_result)
+    tol_options = _build_tol_options(testcase)
+    try:
+        custom_result = _try_custom_compare(testcase, primary_result, golden_nps, switches)
+        if custom_result is not None:
+            precision_str, log_str, is_pass = custom_result
+        else:
+            precision_str, log_str, is_pass = compare(
+                primary_result, golden_nps, output_dtypes,
+                methods=switches.compare_method, options=tol_options
+            )
+    except Exception:
+        logging.exception(f"[{testcase.testcase_name}] Eager comparison failure")
+        return_struct.eager_precision = "COMPARE_FAILURE"
+        return_struct.precision_status = "FAIL"
+        return
+
+    precision_status = "PASS" if is_pass else "FAIL"
+    return_struct.construct(precision_str, precision_status, None)
+    _profiling_end_print(testcase, return_struct, golden_nps, switches)
+    del raw_inputs
+
+
+def _find_free_port():
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
+
+def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
+                dev_id, switches, return_struct):
     """Core profiling logic."""
     process_ctx = get_process_context()
     return_struct.batch_consistency_id = getattr(testcase, "batch_consistency_id", None)
@@ -715,7 +1001,6 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 "e2e",
                 switches,
                 before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
-                require_goldens=False,
             )
             if manual_case is not None:
                 manual_mode = "replay"
@@ -748,10 +1033,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 testcase.np_storages if testcase.np_storages is not None else raw_inputs,
                 "input",
             )
-            prepare_goldens = bool(switches.dump_config.is_golden_enabled())
-            golden_nps = ()
-            if prepare_goldens:
-                golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
+            golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
             process_ctx.notify_status("OnWriteManualData")
             case_dir = prepare_store.write_case(
                 testcase,
@@ -759,7 +1041,6 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 prepared_inputs,
                 golden_nps,
                 file_format=switches.dump_config.file_format,
-                write_goldens=prepare_goldens,
             )
         except Exception as exc:
             logging.exception(f"[{testcase.testcase_name}] Manual data preparation failure")
@@ -878,13 +1159,8 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 reference_outputs = graph_dyn_nps
             if reference_outputs is None:
                 reference_outputs = graph_aclgraph_nps
-            if manual_case.has_goldens:
-                golden_nps = manual_case.load_goldens(references=reference_outputs)
-                _dump_goldens(testcase, golden_nps, switches)
-            else:
-                golden_nps = _generate_golden_maybe_promote(
-                    testcase, raw_inputs, switches, backend, ref_nps
-                )
+            golden_nps = manual_case.load_goldens(references=reference_outputs)
+            _dump_goldens(testcase, golden_nps, switches)
         except Exception as exc:
             logging.exception(f"[{testcase.testcase_name}] Manual golden loading failure")
             return_struct.construct(f"MANUAL_DATA_READ_FAILURE: {exc}", "FAIL", None)

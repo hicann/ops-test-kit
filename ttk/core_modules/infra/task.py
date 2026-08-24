@@ -42,6 +42,10 @@ class TaskA:
     type: TaskType = TaskType.PROFILE
     sub_type: str = ''
     proc_options: dict = field(default_factory=dict)
+    device_ids: Optional[list] = None
+
+    def is_multi_device(self) -> bool:
+        return self.device_ids is not None and len(self.device_ids) > 1
 
 
 class TaskKeeper:

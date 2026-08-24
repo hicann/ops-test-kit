@@ -96,6 +96,10 @@ class Backend(ABC):
     def has_device(self) -> bool:
         """Whether use device resource."""
 
+    def use_device(self) -> bool:
+        """Compatibility alias used by the framework multi-device runner."""
+        return self.has_device()
+
     def is_npu(self) -> bool:
         """Whether this is an NPU backend. Default False; NpuTorchBackend overrides."""
         return False

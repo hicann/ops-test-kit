@@ -56,14 +56,19 @@ class ProcessGroup:
         for proc in self.processes:
             proc.close()
 
-    def push(self, task: TaskA):
+    def push(self, task: TaskA, is_multi_device: bool = False,
+             rank_dev_id: int = None):
         for proc in self.processes:
             if proc.is_idle():
                 logging.debug(f"Sending {task.type.name} task {task.sub_type} "
                               f"of testcase {task.testcase.testcase_name} "
                               f"to process pid {proc.get_pid()}")
                 self.process_to_task[proc] = task
-                proc.send_action(task.func, task.params, {"dev_id": self.dev_id})
+                kwargs = {"dev_id": rank_dev_id if rank_dev_id is not None else self.dev_id}
+                if is_multi_device:
+                    kwargs["is_multi_device"] = True
+                    kwargs["device_ids"] = task.device_ids
+                proc.send_action(task.func, task.params, kwargs)
                 break
         else:
             raise RuntimeError(f"[BUG] no idle process in device{self.dev_id}. "

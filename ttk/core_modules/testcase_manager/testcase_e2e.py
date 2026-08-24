@@ -49,6 +49,8 @@ class TestcaseE2e(TensorApiTestcaseBase):
         "golden_data",
         "tensors",
         "_api_info_cache",
+        "device_ids",
+        "_multi_device_thread_contexts",
         "batch_axis",
         "batch_slice_info",
         "batch_seed",
@@ -59,6 +61,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
     identity_headers = {
         **TensorApiTestcaseBase.identity_headers,
         "api_name": (FIELD_TYPES.STRING, None),
+        "device_ids": (FIELD_TYPES.STRING, None, None),
     }
 
     tensor_property_headers = {
@@ -125,6 +128,8 @@ class TestcaseE2e(TensorApiTestcaseBase):
         self.golden_data = None
         self.tensors = None
         self._api_info_cache = None
+        self.device_ids = None
+        self._multi_device_thread_contexts = None
         self.batch_axis = None
         self.batch_slice_info = None
         self.batch_seed = None
@@ -359,10 +364,24 @@ class TestcaseE2e(TensorApiTestcaseBase):
             return
         self._normalize_compressed_fields()
         self._auto_fill_inplace_tensor_method()
+        self._parse_device_ids_field()
         self._check_top_level_counts()
         self._check_tensor_configuration()
         self._check_output_configuration()
         self._generate_batch_consistency_id()
+
+    def _parse_device_ids_field(self):
+        if self.device_ids is not None and isinstance(self.device_ids, str):
+            raw = self.device_ids.strip()
+            if raw:
+                self.device_ids = tuple(int(d.strip()) for d in raw.split(',') if d.strip())
+            else:
+                self.device_ids = None
+        if self.device_ids is not None and not isinstance(self.device_ids, tuple):
+            self.device_ids = tuple(self.device_ids)
+
+    def is_multi_device(self) -> bool:
+        return self.device_ids is not None and len(self.device_ids) > 1
 
     def _try_get_api_info_for_factory(self):
         """Check if API is a factory function (no required input tensors)."""
@@ -462,7 +481,10 @@ class TestcaseE2e(TensorApiTestcaseBase):
         """
         out_indices = set(self.output_tensor_indexes or ())
         top_count = len(self.tensor_view_shapes or ())
-        input_count = sum(1 for i in range(top_count) if i not in out_indices)
+        # Match get_param_plan logic: filter None tensors (placeholders for optional
+        # params not used in this case) in addition to output tensors.
+        input_count = sum(1 for i in range(top_count)
+                          if i not in out_indices and self.tensor_view_shapes[i] is not None)
         # If any overload has a VAR_POSITIONAL tensor param, it can accept
         # any number of tensors — skip the count check entirely.
         has_var_pos = any(
@@ -552,12 +574,28 @@ class TestcaseE2e(TensorApiTestcaseBase):
         out_indices = set(self.output_tensor_indexes or ())
         if self._is_inplace_tensor_method(self.api_name):
             input_shapes = list(self.tensor_view_shapes)
+            skip_flags = [shape is None for shape in input_shapes]
         else:
-            input_shapes = [s for i, s in enumerate(self.tensor_view_shapes) if i not in out_indices]
+            # A top-level None is an omitted optional Tensor, except for a
+            # TensorList parameter where it represents an omitted list while
+            # still occupying that parameter's position.
+            tensor_params = [p for p in info.overloads[0].layout.input_params]
+            input_shapes = []
+            skip_flags = []
+            tensor_pos = 0
+            for i, shape in enumerate(self.tensor_view_shapes):
+                if i in out_indices:
+                    continue
+                param = tensor_params[tensor_pos] if tensor_pos < len(tensor_params) else None
+                if shape is None and (param is None or not param.is_tensor_list):
+                    continue
+                input_shapes.append(shape)
+                skip_flags.append(shape is None)
+                tensor_pos += 1
         input_count = len(input_shapes)
         nested_flags, has_none = self._classify_input_types(input_shapes)
 
-        matched, _, oidx = info.match_overload(input_count, nested_flags, has_none)
+        matched, _, oidx = info.match_overload(input_count, nested_flags, skip_flags)
         if matched:
             self._check_required_attrs(info, oidx)
             return

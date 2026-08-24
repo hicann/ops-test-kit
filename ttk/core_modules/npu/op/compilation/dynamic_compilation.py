@@ -23,6 +23,21 @@ from .....utilities import get_global_storage, process_kernel_string, OPTestSwit
 from .....utilities import DynamicCompilationResult, DynamicOpTilingResult, KernelJsonInfo
 from ....operator.op_interface import OperatorInterface, CaseNotSupportedError
 from ....tbe_multiprocessing import get_process_context
+from ..mc2_hccl_helper import is_mc2_op, get_hccl_group_name, init_hccl
+
+
+def _inject_mc2_hccl_group(testcase):
+    if not is_mc2_op(testcase.op_name):
+        return
+    if testcase.attributes and "group" in testcase.attributes:
+        try:
+            _, group_name, _ = init_hccl()
+            if group_name:
+                old_group = testcase.attributes["group"]
+                testcase.attributes["group"] = group_name
+                logging.info(f"mc2_hccl: replaced group '{old_group}' -> '{group_name}' for op {testcase.op_name}")
+        except Exception as e:
+            logging.warning(f"mc2_hccl: failed to init HCCL for tiling: {e}")
 from .binary_kernel_match import binary_kernel_match, parse_matched_bin_info
 from .common import normalize_mode
 from .common import CceManualCompile
@@ -56,6 +71,7 @@ def dynamic_compilation(testcase: TestcaseOp, mode_name: str = "Dyn"):
         return result
     get_process_context().notify_status(f"{mode_name}EstablishInterface")
     interface = OperatorInterface().with_core_type(testcase.core_type)
+    _inject_mc2_hccl_group(testcase)
     compilation_id = dynamic_characteristic_code = str(testcase.get_compilation_hash(mode_name == "Bin"))
     if not switch.realtime:
         load_compile_info_cache(dynamic_characteristic_code, result)

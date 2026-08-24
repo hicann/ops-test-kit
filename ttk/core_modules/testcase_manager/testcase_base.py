@@ -83,6 +83,7 @@ class TestcaseBase(metaclass=ABCMeta):
         "fail_reason",
         # private
         "_actual_input_data_ranges",
+        "_csv_row_index",
         "xpu_results",
     )
 
@@ -127,6 +128,7 @@ class TestcaseBase(metaclass=ABCMeta):
         self.fail_reason: Optional[str] = None
         # private
         self._actual_input_data_ranges = None
+        self._csv_row_index: int = -1
         self.xpu_results = {}
 
     def __hash__(self):

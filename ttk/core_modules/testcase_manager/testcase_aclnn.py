@@ -140,6 +140,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "batch_slice_info",
         "batch_seed",
         "batch_consistency_id",
+        # === multi-device (HCCL) support === #
+        "device_ids",
+        "my_rank",
+        "hccl_comm",
+        "hccl_comms",
         # === Runtime parameters below === #
         # torch.Tensor or sequence of torch.Tensor with strides & offsets.
         "tensors",
@@ -158,11 +163,16 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "_scalar_list_dist",
         "golden_mode_override",
         "xpu_metrics",
+        "_multi_device_thread_contexts",
+        "_multi_device_hccl_handles",
+        "_hccl_handles",
     )
 
     identity_headers: Dict[str, tuple] = {
         **TensorApiTestcaseBase.identity_headers,
         "api_name": (FIELD_TYPES.STRING, None),  # Required
+        "device_ids": (FIELD_TYPES.STRING, None, None),
+        "my_rank": (FIELD_TYPES.INT, None, None),
     }
     tensor_property_headers: Dict[str, tuple] = {
         "tensor_view_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
@@ -240,6 +250,11 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self.dump_file_prefix = None
         self.manual_tensor_binaries: Optional[Tuple[str, ...]] = None
         self.manual_golden_binaries = None
+        # multi-device HCCL support
+        self.device_ids: Optional[tuple] = None
+        self.my_rank: Optional[int] = None
+        self.hccl_comm = None
+        self.hccl_comms = None
         # End of testcase valid configurations
         self.tensors = None
         self.scalars = None
@@ -257,6 +272,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self._scalar_list_dist: Optional[tuple] = None
         self.golden_mode_override = None
         self.xpu_metrics = {}
+        self._multi_device_thread_contexts = None
 
     @property
     def tensor_bytes(self):
@@ -481,7 +497,10 @@ class TestcaseAclnn(TensorApiTestcaseBase):
     def validate(self):
         """Run all validation checks on testcase configuration."""
         super().validate()
+        self._parse_device_ids_field()
         self._check_api_name()
+        if not self.is_valid:
+            return
         self._normalize_compressed_fields()
         self._check_tensor_parm()
         self._parse_tensor_dtypes()
@@ -492,6 +511,16 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self._parse_scalar_dtypes()
         self._check_params_count()
         self._generate_batch_consistency_id()
+
+    def _parse_device_ids_field(self):
+        if self.device_ids is not None and isinstance(self.device_ids, str):
+            raw = self.device_ids.strip()
+            if raw:
+                self.device_ids = tuple(int(d.strip()) for d in raw.split(',') if d.strip())
+            else:
+                self.device_ids = None
+        if self.device_ids is not None and not isinstance(self.device_ids, tuple):
+            self.device_ids = tuple(self.device_ids)
 
     def _normalize_compressed_fields(self):
         """Expand compressed tensor/scalar fields to fully specified nested format.
@@ -606,6 +635,21 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             if dtype is not None and not is_torch_native_dtype(dtype):
                 return False
         return True
+
+    def is_multi_device(self) -> bool:
+        return self.device_ids is not None and len(self.device_ids) > 1
+
+    def parse_device_ids(self, raw_value):
+        if raw_value is None or raw_value == '':
+            self.device_ids = None
+            self.my_rank = None
+            return
+        if isinstance(raw_value, str):
+            self.device_ids = tuple(int(d.strip()) for d in raw_value.split(',') if d.strip())
+        elif isinstance(raw_value, (tuple, list)):
+            self.device_ids = tuple(int(d) for d in raw_value)
+        else:
+            self.device_ids = (int(raw_value),)
 
     def get_param_plan(self):
         """Resolve and cache parameter assembly plan for this testcase.
@@ -723,6 +767,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             self.is_valid = False
             self.fail_reason = "API_NAME_MISSING"
             logging.error("api_name must be specified.")
+            return
         if not OpApiInfoKeeper().has_api(self.api_name):
             self.is_valid = False
             self.fail_reason = "OP_API_NOT_FOUND"

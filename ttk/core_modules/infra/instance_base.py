@@ -72,6 +72,9 @@ class InstanceBase(metaclass=ABCMeta):
         self.process_groups: Dict[int, ProcessGroup] = {}
         # Tasks
         self.task_keeper: TaskKeeper = TaskKeeper()
+        # Multi-device task tracking
+        self._multi_device_completed: Dict[str, dict] = {}
+        self._multi_device_running = False
         # DFX
         self.start_timestamp = time.time()
         self.last_print_timestamp = time.time() - 20
@@ -528,6 +531,8 @@ class InstanceBase(metaclass=ABCMeta):
                         f"CompletedCases:{str(self.completed_case_count)}")
 
     def _push_at_least_one_prof_task_to_process(self):
+        if self._multi_device_running:
+            return
         for pg in self.process_groups.values():
             idles = pg.idle_count()
             if idles <= 0:
@@ -537,30 +542,87 @@ class InstanceBase(metaclass=ABCMeta):
             task = self.task_keeper.pop(TaskType.PROFILE)
             if task is None:
                 break
+            if task.is_multi_device():
+                if self._try_push_multi_device_task(task):
+                    self._multi_device_running = True
+                    return
+                else:
+                    self.task_keeper.insert(task)
+                    break
             pg.push(task)
 
+    def _try_push_multi_device_task(self, task: TaskA) -> bool:
+        primary_dev = task.device_ids[0]
+        pg = self.process_groups.get(primary_dev)
+        if pg is None or pg.idle_count() <= 0:
+            return False
+        pg.push(task, is_multi_device=True, rank_dev_id=primary_dev)
+        return True
+
     def _push_task_to_process(self):
+        if self._multi_device_running:
+            return
         self._push_at_least_one_prof_task_to_process()
+        if self._multi_device_running:
+            return
         while True:
             max_pg = self._get_most_idle_process_group()
             if not max_pg:
                 return
             task = self.task_keeper.pop()
             if task:
+                if task.is_multi_device():
+                    if self._try_push_multi_device_task(task):
+                        self._multi_device_running = True
+                        return
+                    else:
+                        self.task_keeper.insert(task)
+                        break
                 max_pg.push(task)
             else:
                 break
 
     def _handle_completed_process(self):
-        # Check for completed process
         completed_process = []
         for pg in self.process_groups.values():
             completed_process.extend(pg.completed_process())
         for pt_pair in completed_process:
             proc, task = pt_pair
-            self._handle_task_result(task, proc)
-            if task.type == TaskType.PROFILE:
-                self.testcase_complete()
+            if task.is_multi_device():
+                self._multi_device_running = False
+                self._handle_multi_device_task_result(task, proc)
+            else:
+                self._handle_task_result(task, proc)
+                if task.type == TaskType.PROFILE:
+                    self.testcase_complete()
+
+    def _handle_multi_device_task_result(self, task: TaskA, proc: SimpleCommandProcess):
+        case_name = task.testcase.testcase_name
+        result = proc.get_result()
+        pid = proc.get_pid()
+        dev_id = None
+        for pg_dev_id, pg in self.process_groups.items():
+            if proc in pg.process_to_task:
+                dev_id = pg_dev_id
+                break
+        if isinstance(result, (SystemError, RuntimeError)):
+            proc.resurrect()
+            if isinstance(result, SystemError):
+                output_data = self.profile_object.handle_task_result_system_error(
+                    task, result, "MultiDevice", pid)
+            else:
+                output_data = self.profile_object.handle_task_result_runtime_error(
+                    task, result, pid)
+        elif result is not None:
+            output_data, kill_proc = self.profile_object.handle_task_result_complete(task, result)
+            if self.switches.proc_no_reuse or kill_proc or task.is_multi_device():
+                proc.close()
+                proc.resurrect()
+        else:
+            output_data = self.profile_object.handle_task_result_none(task)
+        if output_data:
+            self._flush(output_data)
+        self.testcase_complete()
 
     def _handle_task_result(self, task: TaskA, proc: SimpleCommandProcess):
         result = proc.get_result()

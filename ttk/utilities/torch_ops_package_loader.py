@@ -66,13 +66,10 @@ class TorchOpsPackageLoader:
     @classmethod
     def ensure_registered(cls, api_name):
         package_name = cls.package_for_api(api_name)
-        if package_name is None or package_name in sys.modules:
+        if package_name is None:
             return
 
         with cls.LOCK:
-            if package_name in sys.modules:
-                return
-
             candidates = cls.site_package_candidates()
             inserted = []
             for candidate in reversed(candidates):
@@ -83,7 +80,8 @@ class TorchOpsPackageLoader:
             importlib.invalidate_caches()
 
             try:
-                importlib.import_module(package_name)
+                if package_name not in sys.modules:
+                    importlib.import_module(package_name)
             except Exception as error:
                 for candidate_str in inserted:
                     if candidate_str in sys.path:

@@ -12,7 +12,7 @@ Custom Pool Classes
 """
 
 
-__all__ = ["get_process_context", "SimpleCommandProcess", "DeviceLock"]
+__all__ = ["get_process_context", "SimpleCommandProcess", "DeviceLock", "MultiDeviceLock"]
 
 
 # Standard Packages
@@ -64,6 +64,8 @@ class PROCESS_RPC(Enum):
     SEMAPHORE_DEAD_SEQUENCE = auto()
     GET_LOCK = auto()
     RELEASE_LOCK = auto()
+    GET_MULTI_LOCK = auto()
+    RELEASE_MULTI_LOCK = auto()
 
 
 process_context = None
@@ -84,10 +86,32 @@ class DeviceLockManager:
             cls.pending.setdefault(device_id, []).append((proc, lock_id))
 
     @classmethod
+    def try_grant_multi(cls, proc, device_ids, lock_id,
+                        grant_events, granted_indices):
+        for dev_id in device_ids:
+            if cls.lock_holders.get(dev_id) is not None:
+                for d in device_ids:
+                    cls.pending.setdefault(d, []).append((proc, lock_id))
+                return False
+        for dev_id in device_ids:
+            cls.lock_holders[dev_id] = proc
+            granted_indices[dev_id].value = lock_id
+            grant_events[dev_id].set()
+        return True
+
+    @classmethod
     def release(cls, proc, device_id, grant_event, granted_idx):
         if cls.lock_holders.get(device_id) is proc:
             cls.lock_holders[device_id] = None
             cls._grant_next(device_id, grant_event, granted_idx)
+
+    @classmethod
+    def release_multi(cls, proc, device_ids, grant_events, granted_indices):
+        for dev_id in device_ids:
+            if cls.lock_holders.get(dev_id) is proc:
+                cls.lock_holders[dev_id] = None
+                cls._grant_next(dev_id, grant_events[dev_id],
+                                granted_indices[dev_id])
 
     @classmethod
     def on_process_dead(cls, proc, grant_events, granted_indices):
@@ -149,6 +173,51 @@ class DeviceLock:
         if not self.use_device:
             return
         self.process_ctx.release_lock(self.device_id)
+
+
+class MultiDeviceLock:
+    """Context manager for child-side multi-device lock.
+
+    Acquires locks for multiple devices simultaneously to support
+    HCCL collective communication operators.
+
+    Deadlock prevention: all processes acquire locks in ascending
+    device_id order and release in descending order.
+    """
+
+    def __init__(self, process_ctx, device_ids, use_device=True,
+                 grant_events=None, granted_indices=None):
+        self.process_ctx = process_ctx
+        self.device_ids = sorted(device_ids)
+        self.use_device = use_device
+        self.grant_events = grant_events or {}
+        self.granted_indices = granted_indices or {}
+        self._lock_id = os.getpid()
+
+    def __enter__(self):
+        if not self.use_device:
+            return self
+        sorted_events = {d: self.grant_events[d] for d in self.device_ids
+                         if d in self.grant_events}
+        sorted_indices = {d: self.granted_indices[d] for d in self.device_ids
+                          if d in self.granted_indices}
+        for dev_id in self.device_ids:
+            if dev_id not in sorted_events or dev_id not in sorted_indices:
+                raise RuntimeError(f"MultiDeviceLock: no grant event/idx for device {dev_id}")
+        self.process_ctx.get_multi_lock(
+            self.device_ids, self._lock_id, sorted_events, sorted_indices)
+        for dev_id in self.device_ids:
+            evt = sorted_events[dev_id]
+            evt.wait()
+            while sorted_indices[dev_id].value != self._lock_id:
+                evt.wait()
+            evt.clear()
+        return self
+
+    def __exit__(self, *args):
+        if not self.use_device:
+            return
+        self.process_ctx.release_multi_lock(self.device_ids)
 
 
 def get_process_context() -> "Optional[ProcessContext]":
@@ -325,6 +394,13 @@ class ProcessContext:
     def release_lock(self, device_id):
         self.pipe.send((PROCESS_RPC.RELEASE_LOCK, (device_id,)))
 
+    def get_multi_lock(self, device_ids, lock_id, grant_events, granted_indices):
+        self.pipe.send((PROCESS_RPC.GET_MULTI_LOCK,
+                        (device_ids, lock_id, grant_events, granted_indices)))
+
+    def release_multi_lock(self, device_ids):
+        self.pipe.send((PROCESS_RPC.RELEASE_MULTI_LOCK, (device_ids,)))
+
     def notify_status(self, status: str):
         set_thread_name(status)
         self.send_data("stage", status)
@@ -490,6 +566,17 @@ class SimpleCommandProcess:
             DeviceLockManager.release(self, device_id,
                                       SimpleCommandProcess._device_grant_events[device_id],
                                       SimpleCommandProcess._device_granted_indices[device_id])
+        elif rpc_command == PROCESS_RPC.GET_MULTI_LOCK:
+            device_ids, lock_id, grant_events, granted_indices = rpc_args
+            logging.debug(f"Get multi-lock for devices {device_ids}")
+            DeviceLockManager.try_grant_multi(self, device_ids, lock_id,
+                                              grant_events, granted_indices)
+        elif rpc_command == PROCESS_RPC.RELEASE_MULTI_LOCK:
+            device_ids = rpc_args[0]
+            logging.debug(f"Release multi-lock for devices {device_ids}")
+            DeviceLockManager.release_multi(self, device_ids,
+                                            SimpleCommandProcess._device_grant_events,
+                                            SimpleCommandProcess._device_granted_indices)
         else:
             raise NotImplementedError(f"SimpleCommandProcess Master received invalid rpc call: "
                                       f"{rpc_command, rpc_args}")

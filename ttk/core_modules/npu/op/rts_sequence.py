@@ -30,6 +30,7 @@ from ...runtime import RTSInterface, RTSInterfaceBase, rts_info, LaunchKernelArg
 from ...adump import AdxInterface
 from ...msprof import MsProfiler, TtkMsProfType, MsProfOpDfx
 from ....utilities import get_global_storage, get_dtype_width, extract_csv_cells
+from .mc2_hccl_helper import is_mc2_op, init_hccl
 
 
 def _process_total_cycles(results: list):
@@ -109,7 +110,8 @@ class OnlineRtsProfiling:
 
     @contextlib.contextmanager
     def rts_stream(self):
-        if self._device.is_model():
+        op_name = getattr(self._param, 'op_name', '') or ''
+        if self._device.is_model() or is_mc2_op(op_name):
             yield None
         else:
             stream = self._device.create_stream()
@@ -201,11 +203,13 @@ class OnlineRtsProfiling:
                                           "during kernel launch stage:")
                         status = "LAUNCH_FAILED"
                     else:
-                        try:
-                            rts_timeout = 0 if self._device.is_model() else self._switches.run_timeout
-                            self._device.synchronize_with_stream(stream, timeout=rts_timeout)
-                        except RuntimeError as e:
-                            status = self._device.handle_stream_sync_exception(e.args[0])
+                        op_name = getattr(self._param, 'op_name', '') or ''
+                        if not is_mc2_op(op_name):
+                            try:
+                                rts_timeout = 0 if self._device.is_model() else self._switches.run_timeout
+                                self._device.synchronize_with_stream(stream, timeout=rts_timeout)
+                            except RuntimeError as e:
+                                status = self._device.handle_stream_sync_exception(e.args[0])
                         if repeat_idx == 0:
                             self._print_dump_workspace()
                     # Collect Data
@@ -435,7 +439,83 @@ class OnlineRtsProfiling:
 
         return op_args
 
+    def _launch_kernel_fwk(self, stream: Optional[ctypes.c_void_p] = None):
+        """mc2 operators: execute via aclnn API with multi-rank threading."""
+        import threading
+        op_name = getattr(self._param, 'op_name', '') or ''
+        api_name = 'aclnn' + ''.join(p.capitalize() for p in op_name.split('_'))
+        logging.info(f"mc2_hccl: launching via aclnn API '{api_name}'")
+        from ...aclnn.acl_interface import AclInterface, DATA_TYPE_DICT, FORMAT_DICT
+        input_arrays = self._param.flatten_input_arrays
+        input_hbm = self._dvc_mem[self.INPUT_MEM]
+        output_hbm = self._dvc_mem[self.OUTPUT_MEM]
+        hccl_device_ids, group_name, rank_size = init_hccl()
+        group_name = group_name or 'ep'
+        rank0_dev = self._device.device_id
+        rank1_dev = hccl_device_ids[1] if rank_size > 1 else rank0_dev
+        thread_errors = {}
+        thread_result = {"status": "UNKNOWN"}
+        pre_barrier = threading.Barrier(2) if rank_size > 1 else None
+
+        def run_rank(dev_id, is_rank0):
+            try:
+                acl_iface = AclInterface()
+                acl_iface.set_device(dev_id)
+                acl_dll = ctypes.CDLL("libascendcl.so")
+                x1, x2 = input_arrays[0], input_arrays[1]
+                out_dim0 = x1.shape[0] * rank_size
+                c_dtype = ctypes.c_int32(DATA_TYPE_DICT.get(x1.dtype.name, 1))
+                c_fmt = ctypes.c_int32(FORMAT_DICT.get('ND', 2))
+                def mk_tensor(shape, hbm):
+                    if isinstance(hbm, ctypes.c_void_p):
+                        hbm = hbm.value
+                    dims = (ctypes.c_int64 * len(shape))(*shape)
+                    return acl_iface._opbase_api_call_with_ptr_return(
+                        "aclCreateTensor", f"shape={shape}",
+                        dims, ctypes.c_uint64(len(shape)), c_dtype,
+                        None, ctypes.c_int64(0), c_fmt,
+                        dims, ctypes.c_uint64(len(shape)), ctypes.c_void_p(hbm))
+                tx1 = mk_tensor(x1.shape, input_hbm[0])
+                tx2 = mk_tensor(x2.shape, input_hbm[1])
+                tout0 = mk_tensor((out_dim0, x2.shape[1]), output_hbm[0])
+                tout1 = mk_tensor((out_dim0, x1.shape[1]), output_hbm[1])
+                c_group = ctypes.c_char_p(group_name.encode())
+                args = [tx1, tx2, ctypes.c_void_p(0), c_group,
+                        ctypes.c_int64(0), ctypes.c_int64(0), ctypes.c_int64(1),
+                        tout0, tout1]
+                if pre_barrier:
+                    pre_barrier.wait(timeout=60)
+                ws_size, executor = acl_iface.acl_get_workspace(api_name, args)
+                logging.info(f"mc2_hccl: rank{dev_id} GetWorkspaceSize ws={ws_size}")
+                exec_stream = ctypes.c_void_p(0)
+                acl_dll.aclrtCreateStream(ctypes.pointer(exec_stream))
+                status = acl_iface.acl_execute(api_name, ws_size, executor, exec_stream)
+                logging.info(f"mc2_hccl: rank{dev_id} execute status={status}")
+                if is_rank0:
+                    thread_result["status"] = status
+                acl_dll.aclrtDestroyStream(exec_stream)
+                acl_iface.free_all_memory()
+            except Exception as e:
+                logging.warning(f"mc2_hccl: rank{dev_id} exception: {e}")
+                thread_errors[dev_id] = e
+
+        threads = []
+        if rank_size > 1:
+            t1 = threading.Thread(target=run_rank, args=(rank1_dev, False))
+            threads.append(t1)
+            t1.start()
+        run_rank(rank0_dev, True)
+        for t in threads:
+            t.join(timeout=120)
+        if thread_errors:
+            raise list(thread_errors.values())[0]
+        logging.info(f"mc2_hccl: aclnn launch complete, status={thread_result['status']}")
+
     def _launch_kernel(self, stream: Optional[ctypes.c_void_p] = None):
+        op_name = getattr(self._param, 'op_name', '') or ''
+        if is_mc2_op(op_name):
+            self._launch_kernel_fwk(stream)
+            return
         op_args = self._pack_launch_op_args()
         mix_kernel = self._param.kernel_json_info.is_mix_kernel
         if self._param.kernel_json_info.is_fat_bin:

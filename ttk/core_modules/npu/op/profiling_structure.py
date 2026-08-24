@@ -41,10 +41,12 @@ class RTSProfilingParam:
                  fail_reason: str,
                  tensor_list_distribution: Optional[tuple],
                  testcase_name: str,
-                 run_mode: str):
+                 run_mode: str,
+                 op_name: str = ""):
         self.compile_result = compile_result.compile_result
         self.tiling_key: Optional[int] = compile_result.tiling_key
         self.kernel_name = compile_result.kernel_name
+        self.op_name = op_name
         self.block_dim = int(compile_result.block_dim)
         self.kernel_dir = compile_result.kernel_dir or get_global_storage().kernel_meta
         if not os.path.isabs(self.kernel_dir):  # in case model && --cce
