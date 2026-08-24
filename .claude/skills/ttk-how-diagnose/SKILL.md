@@ -1,6 +1,6 @@
 ---
 name: ttk-how-diagnose
-description: 诊断 TTK 测试失败（跑完后结果不对/报错/超时排障）。只要用户提到测试跑不过、结果不对、精度差、编译挂了、执行超时、OOM、需要 dump 数据或排障，就必须使用此 skill。即使用户只是说"精度差一点"、"编译报错怎么解决"、"跑不过了"、"挂了/被杀了"，也应触发。首次正常运行用 ttk-how-run-test；定义/编写 golden 等资产用 ttk-how-write-plugin。
+description: 诊断 TTK 测试失败（跑完后结果不对/报错/超时排障）。只要用户提到测试跑不过、结果不对、精度差、编译挂了、执行超时、OOM、仿真报错（--backend npusim）、需要 dump 数据或排障，就必须使用此 skill。即使用户只是说"精度差一点"、"编译报错怎么解决"、"跑不过了"、"挂了/被杀了"、"仿真跑出来不对"、"无卡跑不了"、"SIM_RESULT_MISSING"等口语化表述，也应触发。首次正常运行用 ttk-how-run-test；定义/编写 golden 等资产用 ttk-how-write-plugin。
 ---
 
 # 诊断 TTK 测试失败
@@ -24,6 +24,7 @@ TTK 启动时自动检测并 source CANN 环境（`setenv.bash`），通常无�
 | **执行** | `timeout`、`OOM`、`HBM`、`runtime` | 内存/超时参数 |
 | **精度** | `precision`、`cosine`、`close`、`compare` | Step 4 精度调试 |
 | **插件** | `plugin`、`register`、`golden` | 注册名/插件路径 |
+| **仿真** | `npusim`、`sim`、`SIM_`、`wrapper`、`cannsim` | NPUSim 仿真排障（见 `references/npusim-errors.md`） |
 
 ## Step 3: 锁定单个用例调试
 
@@ -65,8 +66,26 @@ python3 -m ttk kernel -i cases.csv --pc=1  # 减少进程数
 **可复现性**：
 
 ```shell
-python3 -m ttk kernel -i cases.csv --seed 42  # 固定种子
+python3 -m ttk kernel -i cases.csv --seed 42  # 固定种子（固定输入数据生成）
 ```
+
+**重跑与校验**：
+
+```shell
+# 只重跑上次结果里精度失败的用例（-i 须为含 precision_status 列的结果 CSV，不能是原始用例 CSV）
+python3 -m ttk kernel -i result.csv --rerun precision_status
+python3 -m ttk kernel -i cases.csv --validate                 # 仅校验 CSV（不跑设备）
+```
+
+**NPUSim 仿真问题**：仿真报错与真机不同，先确认环境含 950-ops，再看 wrapper 产物：
+
+```shell
+python3 -m ttk kernel --backend npusim -i cases.csv -t case_name --sim-cores 0  # 单用例重跑
+ls <sim_output>/<case>/wrapper_error.json     # wrapper 异常（内容非空即有错）
+ls <sim_output>/<case>/record_out/cannsim_*/cannsim.log   # record 日志
+```
+
+完整仿真排障（`SIM_RESULT_MISSING`、`OPTILING_FAILURE`、`ACLNN_EXECUTE_FAILED`、卡死等）见 `references/npusim-errors.md`。
 
 **插件不生效**：确认 `--plugin` 已传、类名/`__spec__` 注册名与 CSV 一致、插件无语法错。详见 `references/error-patterns.md` 插件错误表。
 
@@ -120,6 +139,7 @@ absolute_precision,1e-8
 详细错误模式和修复见 `references/`：
 - 错误模式表：`references/error-patterns.md`
 - 精度调试详解：`references/precision-debug.md`
+- NPUSim 仿真排障：`references/npusim-errors.md`
 
 完整文档：`docs/FAQ/faq_guide.md`（路径相对于 ops-test-kit 仓库根目录）
 

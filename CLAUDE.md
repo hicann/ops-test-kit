@@ -25,8 +25,9 @@ python3 -m ttk info
 ```
 
 用例筛选与常用选项（定义见 `ttk/cli/common.py`）：
-- 筛选：`-t/--testcase add_01,add_02`、`--ti/--testcase-index 1-10`、`--op`、`--priority`、`--tc`（随机取 N 条）
+- 筛选：`-t/--testcase add_01,add_02`、`--ti/--testcase-index 1-10`、`--op`、`--priority`、`--tc`（随机取 N 条；注意 `--seed` 只固定输入数据生成（`numpy.random.seed`），**不固定** `--tc` 的用例抽取（`random.sample` 未播种））
 - 精度：`--compare close|stat_rel_err|cosine|binary|requant|cross_check`（默认按 Spec.tolerance 路由，无插件时 stat_rel_err）
+- 排障/数据：`--rerun precision_status` 按上次结果 CSV 的列重跑失败用例（**`-i` 须指向含该列的结果 CSV**，不能是原始用例 CSV）；`--dump in,golden` 备数据、`--dump-on-fail` 失败自动 dump、`--dump-format npy|pt|bin|print`
 - 自定义 golden/输入：`--plugin <path>`，指向包含 TestSpec 的目录或文件
 - 手工数据两阶段：`--no-prof --dump in,golden` 准备数据，`--manual-data-dirs <dir>` 回放
 - NPUSim 仿真（参数定义见 `ttk/cli/sim_args.py`）：`--backend npusim` 切到仿真后端；`--sim-soc`（默认 `Ascend950`）、`--sim-output`（默认 `<root>/sim_output`）、`--sim-report`（生成 trace_core*.json 与 HTML 性能报告）、`--sim-cores`、`--sim-obj`。与 `--no-prof`、`--cpu` 互斥
@@ -38,6 +39,7 @@ pip install -e ".[dev]"          # pytest/ruff/mypy 等开发依赖
 pytest                           # 全部单测（tests/，需 NPU 的自动跳过）
 pytest tests/test_spec.py -k golden   # 单文件 / 关键字筛选
 ruff check ttk/                  # lint（pre-commit 见 .pre-commit-config.yaml）
+pre-commit run --all-files       # ruff + codespell + 基础检查（v4，非 pre-commit 2.x）
 ```
 
 - pytest 配置在 `pyproject.toml` 的 `[tool.pytest.ini_options]`：marker 有 `slow`/`device`/`e2e`，`xfail_strict=true`。
@@ -69,7 +71,7 @@ ruff check ttk/                  # lint（pre-commit 见 .pre-commit-config.yaml
 
 ### NPUSim 仿真后端（`ttk/core_modules/simulator/`）
 
-`--backend npusim` 不引入新 Instance 类型：kernel/aclnn 仍走 `NpuInstance`、e2e 仍走 `FrameworkApiInstance`，只是把真机执行替换为 NPUSim 仿真。CLI 参数与归一化在 `ttk/cli/sim_args.py`（设置 `sw.backend="npusim"`、把 `dev_plat` 归一为 platform ini 名）；执行在 `simulator/npusim_runner.py`（定位 cannsim、`run_record`、`run_report`）与 `simulator/wrapper.py`（Python user_app，由 NPUSim `record` 启动）；配套 `case_writer.py`、`report.py`、`sim_profiling.py`。SoC 注册表在 `simulator/config.py::SIM_PLATFORM_BY_SOC`，当前仅 `Ascend950`/`Ascend950DT`。仿真结果写 `output_*.bin` 后走既有比对管线。指南见 `docs/NPUSim/TTK_NPUSim使用指南.md`。
+`--backend npusim` 不引入新 Instance 类型：kernel/aclnn 仍走 `NpuInstance`、e2e 仍走 `FrameworkApiInstance`，只是把真机执行替换为 NPUSim 仿真。CLI 参数与归一化在 `ttk/cli/sim_args.py`（设置 `sw.backend="npusim"`、把 `dev_plat` 归一为 platform ini 名）；执行在 `simulator/npusim_runner.py`（定位 cannsim、`run_record`、`run_report`）与 `simulator/wrapper.py`（Python user_app，由 NPUSim `record` 启动）；配套 `case_writer.py`、`report.py`、`sim_profiling.py`。SoC 注册表在 `simulator/config.py::SIM_PLATFORM_BY_SOC`，当前仅 `Ascend950`/`Ascend950DT`。仿真结果写 `output_*.bin` 后走既有比对管线。指南见 `docs/NPUSim/npusim_usage.md`，设计文档见 `docs/NPUSim/npusim_design.md`。注意本分支 `ttk/core_modules/simulator_v2/` 为空目录（NPUSim v2 套壳集成的 M1–M5 代码当前在 `origin/master_cannsim` 分支，尚未合入）——本分支生效的 NPUSim 实现仍是 `simulator/`。
 
 ### C++ 扩展（`csrc/`）
 
@@ -82,6 +84,7 @@ ruff check ttk/                  # lint（pre-commit 见 .pre-commit-config.yaml
 ## 关键约定
 
 - 执行 ttk 必须在本仓库根目录；每次运行会清理根目录 `ttk-*.log`（`_env.py`）。
+- 仓库根目录的 `kernel_meta/`、`sim_output/`、`ttk-*.log` 是运行时产物（已 gitignore），不是源码；根目录残留的 `add_npusim_full.csv`、`wangyi_ws/` 等散落文件多为手工调试遗留。
 - 版本号以 `ttk/_version.py` 的 `__version__` 为准（当前 3.0.0），`pyproject.toml` 可能滞后。
 - **Commit 规范：commit message 不要添加 `Co-Authored-By` 行。**
 

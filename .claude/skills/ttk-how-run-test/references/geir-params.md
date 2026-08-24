@@ -38,6 +38,9 @@ GEIR 模式复用 Kernel 模式的 CSV 和 golden 资产，无需额外编写。
 | 参数 | 缩写 | 说明 | 默认 |
 |------|------|------|------|
 | `--binary` | `-b` | 二进制复用；`-b release` 使用 CANN 预编译 kernel，`-b false` 关闭 | 关闭（在线编译） |
+| `--xpu-perf` | | 采集 XPU 远程性能；需远程 XPU 配置（`ttk.conf.yaml` 或 `--config`） | 关闭 |
+
+> **注意**：GEIR **不支持** `--backend npusim` 仿真（仿真仅 kernel/aclnn/e2e 三模式支持）。
 
 ## 调试
 

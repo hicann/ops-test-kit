@@ -5,9 +5,13 @@
 | 参数 | 说明 | 默认 |
 |------|------|------|
 | `--cpu` | 强制 CPU 执行（跳过 NPU 自动探测） | 关闭 |
+| `--no-prof` | 仅准备输入/golden，不执行主 API | 关闭 |
 | `--fullgraph` | Graph 模式（torch.compile）；0=禁用，1=启用 | 0 |
-| `-d`/`--dynamic` | 动态图 | 自动 |
-| `-c`/`--const` | 静态图 | 自动 |
+| `--aclgraph` | aclgraph 模式（torch.compile reduce-overhead） | 关闭 |
+| `-d`/`--dynamic` | 动态图 | 默认关闭 |
+| `-c`/`--const` | 静态图 | 默认关闭 |
+
+> **仿真**：E2E 支持 `--backend npusim` 无卡仿真，但仅 **eager** 执行（graph/aclgraph/fullgraph 禁用），且仅支持 aclnn 算子——非 aclnn 的 legacy 自定义算子（如 `torch_npu.npu_conv2d`）会被 torch_npu 拒绝。详见 `npusim-params.md`。
 
 ## 后端依赖
 
