@@ -528,8 +528,8 @@ int main(int argc, char* argv[]) {
 {% for out_name in output_names %}
     {
         int idx = {{ loop.index0 }};
-{% if out_name in dynamic_output_names %}
         if (idx < (int)outputs_cfg.size() && !outputs_cfg.at(idx).isNull()) {
+{% if out_name in dynamic_output_names %}
             const JsonValue& out = outputs_cfg.at(idx);
             int dyn_n = (int)out.at("count").getInt();
             op_inst.create_dynamic_output_{{ out_name }}(dyn_n);
@@ -547,9 +547,7 @@ int main(int argc, char* argv[]) {
                 }
                 op_inst.update_dynamic_output_desc_{{ out_name }}(ei, desc);
             }
-        }
 {% else %}
-        if (idx < (int)outputs_cfg.size() && !outputs_cfg.at(idx).isNull()) {
             const JsonValue& out = outputs_cfg.at(idx);
 
             vector<int64_t> desc_shape = JsonToIntArray(out.at("desc_shape"));
@@ -563,13 +561,33 @@ int main(int argc, char* argv[]) {
                 desc.SetOriginShape(Shape(JsonToIntArray(out.at("ori_shape"))));
             }
             op_inst.update_output_desc_{{ out_name }}(desc);
-        }
 {% endif %}
+        }
     }
 {% endfor %}
 
+    // ---------- graph outputs ----------
+    // op_inst covers declared output ports. Inplace outputs (data nodes modified
+    // in place) must also be graph outputs so RunGraph returns their data.
+{% if output_names %}
     output_ops.push_back(op_inst);
-    graph.SetInputs(data_ops).SetOutputs(output_ops);
+{% endif %}
+    for (size_t oi = 0; oi < outputs_cfg.size(); ++oi) {
+        const JsonValue& out = outputs_cfg.at(oi);
+        if (!out.isNull() && out.has("inplace_input_idx")) {
+            int di = (int)out.at("inplace_input_idx").getInt();
+            if (di >= 0 && di < (int)data_ops.size())
+                output_ops.push_back(data_ops[di]);
+        }
+    }
+    if (output_ops.empty()) {
+        output_ops.push_back(op_inst);
+    }
+    if (data_ops.empty()) {
+        graph.SetInputs({op_inst}).SetOutputs(output_ops);
+    } else {
+        graph.SetInputs(data_ops).SetOutputs(output_ops);
+    }
 
     // ---------- session ----------
     map<AscendString, AscendString> build_options;

@@ -373,7 +373,30 @@ class GeirGraphBuilder:
             data_idx += 1
 
         # ---- outputs ----
+        # Inplace outputs inherit desc (shape/dtype/format) from the
+        # corresponding input data node. Build a flat lookup: data_idx → desc.
         dynamic_output_names = set(getattr(proto_info, "dynamic_outputs", None) or [])
+        inplace_indexes = getattr(testcase, "output_inplace_indexes", None) or ()
+
+        _DESC_KEYS = ("desc_shape", "dtype", "format", "ori_format", "ori_shape")
+
+        def _desc_of(entry):
+            return {k: entry[k] for k in _DESC_KEYS if k in entry}
+
+        input_desc_map = {}
+        for inp in inputs_json:
+            if inp is None:
+                continue
+            if inp.get("dynamic"):
+                for el in inp.get("elements", []):
+                    di = el.get("data_idx")
+                    if di is not None:
+                        input_desc_map[di] = _desc_of(el)
+            else:
+                di = inp.get("data_idx")
+                if di is not None:
+                    input_desc_map[di] = _desc_of(inp)
+
         outputs_json: List[Optional[Dict[str, Any]]] = []
         for i, name in enumerate(out_names):
             if i >= len(output_shapes):
@@ -401,6 +424,7 @@ class GeirGraphBuilder:
                 if output_ori_formats
                 else "ND"
             )
+            inplace_idx = inplace_indexes[i] if i < len(inplace_indexes) else None
             if (
                 name in dynamic_output_names
                 and isinstance(output_shapes[i], (list, tuple))
@@ -437,29 +461,25 @@ class GeirGraphBuilder:
                             ),
                         }
                     )
-                outputs_json.append(
-                    {
-                        "name": name,
-                        "dynamic": True,
-                        "count": len(elems),
-                        "elements": elems,
-                    }
-                )
-                continue
-            out_data_shape = list(output_shapes[i])
-            if is_dynamic:
-                out_desc_shape = [-1 for _ in out_data_shape]
+                entry = {
+                    "name": name,
+                    "dynamic": True,
+                    "count": len(elems),
+                    "elements": elems,
+                }
             else:
-                out_desc_shape = out_data_shape
-            outputs_json.append(
-                {
+                out_data_shape = list(output_shapes[i])
+                if is_dynamic:
+                    out_desc_shape = [-1 for _ in out_data_shape]
+                else:
+                    out_desc_shape = out_data_shape
+                entry = {
                     "name": name,
                     "data_shape": out_data_shape,
                     "desc_shape": out_desc_shape,
                     "dtype": _resolve_dtype(dtype_str),
                     "format": _resolve_format(fmt_str),
                     "ori_format": _resolve_format(ori_fmt_str),
-                    # 与输入侧对齐：dynamic 模式下 ori_shape 用动态 shape(-1/-2)
                     "ori_shape": (
                         out_desc_shape
                         if is_dynamic
@@ -472,7 +492,21 @@ class GeirGraphBuilder:
                         )
                     ),
                 }
-            )
+            if inplace_idx is not None:
+                entry["inplace_input_idx"] = inplace_idx
+                entry.update(input_desc_map.get(inplace_idx, {}))
+            outputs_json.append(entry)
+
+        # ---- inplace outputs without proto OUTPUT declaration ----
+        # When proto has no OUTPUT (out_names empty), the for loop above doesn't
+        # run. Inplace outputs from CSV's output_inplace_indexes still need to be
+        # added to outputs_json with desc inherited from the corresponding input.
+        if not out_names:
+            for idx in inplace_indexes:
+                if idx is not None:
+                    entry = {"inplace_input_idx": idx}
+                    entry.update(input_desc_map.get(idx, {}))
+                    outputs_json.append(entry)
 
         # ---- attrs (exclude input names and special prefixes) ----
         input_name_set = set(input_names)
