@@ -24,7 +24,7 @@ import re
 import shutil
 import tempfile
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
 import numpy
@@ -44,6 +44,16 @@ _DIRECTORY_PROVIDERS: List[Callable] = []
 _DIRECTORY_PROVIDERS_LOCK = threading.RLock()
 _CUSTOM_NUMPY_DTYPES = {
     "bfloat16",
+    "int4",
+    "float8_e5m2",
+    "float8_e4m3fn",
+    "float8_e8m0",
+    "float4_e2m1",
+    "float4_e1m2",
+    "hifloat8",
+    "hifloat4",
+}
+_RAW_UINT8_COMPATIBLE_DTYPES = {
     "int4",
     "float8_e5m2",
     "float8_e4m3fn",
@@ -369,6 +379,34 @@ def _input_specs(testcase, case_type: str) -> List[Optional[Tuple[str, Tuple[int
     return result
 
 
+def _saved_input_indexes(testcase, case_type: str, input_count: int) -> Tuple[int, ...]:
+    """Return input slots whose contents are required to replay the API."""
+    if case_type != "aclnn":
+        return tuple(range(input_count))
+    pure_outputs = set(getattr(testcase, "pure_output_indexes", ()) or ())
+    return tuple(index for index in range(input_count) if index not in pure_outputs)
+
+
+def _restore_pure_outputs(testcase, values, full_specs, saved_indexes):
+    """Expand compact ACLNN data with fresh storage for pure output slots."""
+    saved_values = dict(zip(saved_indexes, values))
+    init_value = 0 if testcase.api_name == "aclnnInplaceOne" else 1
+    restored = []
+    for index, spec in enumerate(full_specs):
+        if index in saved_values:
+            restored.append(saved_values[index])
+            continue
+        if spec is None:
+            restored.append(None)
+            continue
+        dtype_name, storage_shape = spec
+        from ttk.utilities.data import fixed_np_array
+
+        dtype = resolve_custom_numpy_dtypes((dtype_name,))[0]
+        restored.append(fixed_np_array(dtype, storage_shape, init_value=init_value))
+    return restored
+
+
 def _scalar_specs(testcase, case_type: str) -> List[Optional[Tuple[str, Tuple[int, ...]]]]:
     if case_type != "aclnn":
         return []
@@ -551,12 +589,15 @@ class ManualDataStore:
         if len(self.roots) != 1:
             raise ManualDataError("manual data preparation requires exactly one output directory")
 
-        input_values = list(inputs or ())
+        all_input_values = list(inputs or ())
         scalar_values = list(scalars or ())
         golden_values = list(goldens or ()) if write_goldens else []
-        input_specs = _input_specs(testcase, case_type)
+        full_input_specs = _input_specs(testcase, case_type)
         scalar_specs = _scalar_specs(testcase, case_type)
-        self._validate_value_count("input", input_values, len(input_specs))
+        self._validate_value_count("input", all_input_values, len(full_input_specs))
+        saved_input_indexes = _saved_input_indexes(testcase, case_type, len(full_input_specs))
+        input_values = [all_input_values[index] for index in saved_input_indexes]
+        input_specs = [full_input_specs[index] for index in saved_input_indexes]
         self._validate_value_count("scalar", scalar_values, len(scalar_specs))
         if write_goldens:
             expected_goldens = _expected_golden_count(testcase, case_type)
@@ -771,25 +812,55 @@ class ManualDataStore:
             expected_dtype, expected_shape = expected
             if entry.dtype == _NONE_DTYPE:
                 raise ManualDataError(f"{role}[{entry.index}] is None but CSV declares a tensor")
+            load_entry = entry
             if entry.dtype != expected_dtype:
-                raise ManualDataError(
-                    f"{role}[{entry.index}] filename dtype {entry.dtype!r} != CSV storage dtype {expected_dtype!r}"
+                raw_bin_compatible = (
+                    entry.file_format == "bin"
+                    and "uint8" in (entry.dtype, expected_dtype)
+                    and ({entry.dtype, expected_dtype} - {"uint8"}) <= _RAW_UINT8_COMPATIBLE_DTYPES
                 )
-            values.append(_load_array(entry, expected_shape))
+                if not raw_bin_compatible:
+                    raise ManualDataError(
+                        f"{role}[{entry.index}] filename dtype {entry.dtype!r} != CSV storage dtype {expected_dtype!r}"
+                    )
+                logging.info(
+                    "Reinterpreting raw bin %s[%s] from %s to %s",
+                    role,
+                    entry.index,
+                    entry.dtype,
+                    expected_dtype,
+                )
+                load_entry = replace(entry, dtype=expected_dtype)
+            values.append(_load_array(load_entry, expected_shape))
         return values
 
     def load_case(self, testcase, case_type: str, require_goldens: bool = True) -> ManualDataCase:
         self._validate_case_type(case_type)
         case_dir = self._find_case(testcase.testcase_name)
         entries, file_format = self._scan_case(case_dir)
-        input_specs = _input_specs(testcase, case_type)
-        input_files = self._ordered_files(entries, "input", len(input_specs))
+        full_input_specs = _input_specs(testcase, case_type)
+        saved_input_indexes = _saved_input_indexes(testcase, case_type, len(full_input_specs))
+        compact_input_specs = [full_input_specs[index] for index in saved_input_indexes]
+        input_files = self._ordered_files(entries, "input", None)
+        if len(input_files) == len(full_input_specs):
+            input_specs = full_input_specs
+            compact_inputs = False
+        elif len(input_files) == len(compact_input_specs):
+            input_specs = compact_input_specs
+            compact_inputs = True
+        else:
+            raise ManualDataError(
+                f"input slot count {len(input_files)} != CSV replay inputs "
+                f"{len(compact_input_specs)} or legacy tensors {len(full_input_specs)}"
+            )
         scalar_specs = _scalar_specs(testcase, case_type)
         scalar_files = self._ordered_files(entries, "scalar", len(scalar_specs))
 
         golden_count = _expected_golden_count(testcase, case_type)
         golden_files = self._ordered_files(entries, "golden", golden_count, required=require_goldens)
         inputs = self._load_expected_values(input_files, input_specs, "input")
+        if compact_inputs and len(compact_input_specs) != len(full_input_specs):
+            inputs = _restore_pure_outputs(testcase, inputs, full_input_specs, saved_input_indexes)
         scalars = self._load_expected_values(scalar_files, scalar_specs, "scalar")
         logging.info("[%s] loaded prepared input/scalar data from %s", testcase.testcase_name, case_dir)
         return ManualDataCase(inputs, scalars, case_dir, file_format, tuple(golden_files))

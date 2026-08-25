@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """ManualDataStore 读写往返、完整性校验与 prepare/replay 机制的单元测试。"""
+
 import logging
 import shutil
 from types import SimpleNamespace
@@ -48,8 +49,6 @@ def _e2e_case(name="case/with spaces"):
     case.attributes = {"alpha": 1}
     case.input_data_ranges = ((-1, 1), (-1, 1))
     case.golden_api = ""
-    case._tensor_list_dist = (0, 0)
-    case._pure_output_indexes = [1]
     return case
 
 
@@ -71,9 +70,6 @@ def _aclnn_case():
     case.input_data_ranges = ((-1, 1), (-1, 1))
     case.scalar_dtypes = ("float32",)
     case.scalar_data_ranges = ((0, 1),)
-    case._tensor_list_dist = (0, 0)
-    case._scalar_list_dist = (0,)
-    case._pure_output_indexes = [1]
     return case
 
 
@@ -109,15 +105,104 @@ def test_round_trip_uses_only_typed_data_files(tmp_path, file_format):
     loaded_goldens = loaded.load_goldens(references=goldens)
 
     np.testing.assert_array_equal(loaded.inputs[0], inputs[0])
-    np.testing.assert_array_equal(loaded.inputs[1], inputs[1])
+    np.testing.assert_array_equal(loaded.inputs[1], np.ones(2, dtype=np.float32))
     np.testing.assert_array_equal(loaded.scalars[0], scalars[0])
     np.testing.assert_array_equal(loaded_goldens[0], goldens[0])
     assert {path.name for path in case_dir.iterdir()} == {
         f"input_0_float32.{file_format}",
-        f"input_1_float32.{file_format}",
         f"scalar_0_float32.{file_format}",
         ("golden_0_float32__shape_2.bin" if file_format == "bin" else f"golden_0_float32.{file_format}"),
     }
+
+
+@pytest.mark.parametrize("file_format", ["bin", "npy", "pt"])
+def test_e2e_and_aclnn_share_compact_inputs(tmp_path, file_format):
+    """E2E and ACLNN can exchange their compatible compact tensor inputs."""
+    e2e = _e2e_case("shared_input")
+    e2e.tensor_view_shapes = ((2,),)
+    e2e.tensor_dtypes = ("float32",)
+    e2e.tensor_formats = ("ND",)
+    e2e.tensor_storage_shapes = ((2,),)
+    e2e.tensor_view_offsets = (0,)
+    e2e.tensor_view_strides = ((1,),)
+    e2e.output_tensor_indexes = ()
+
+    aclnn = _aclnn_case()
+    aclnn.testcase_name = e2e.testcase_name
+    aclnn.scalar_dtypes = ()
+    aclnn.scalar_data_ranges = ()
+    inputs = [np.array([1.0, 2.0], np.float32), np.zeros(2, np.float32)]
+    golden = [np.array([3.0, 4.0], np.float32)]
+
+    e2e_store = ManualDataStore(tmp_path / "e2e")
+    e2e_store.write_case(e2e, "e2e", [inputs[0]], golden, file_format=file_format)
+    restored_aclnn = e2e_store.load_case(aclnn, "aclnn")
+    np.testing.assert_array_equal(restored_aclnn.inputs[0], inputs[0])
+    np.testing.assert_array_equal(restored_aclnn.inputs[1], np.ones(2, np.float32))
+
+    aclnn_store = ManualDataStore(tmp_path / "aclnn")
+    case_dir = aclnn_store.write_case(aclnn, "aclnn", inputs, golden, file_format=file_format)
+    assert not any(path.name.startswith("input_1_") for path in case_dir.iterdir())
+    np.testing.assert_array_equal(aclnn_store.load_case(e2e, "e2e").inputs[0], inputs[0])
+
+    # A pre-0824 ACLNN directory carrying every tensor slot remains valid.
+    legacy_path = case_dir / f"input_1_float32.{file_format}"
+    source_path = case_dir / f"input_0_float32.{file_format}"
+    shutil.copy2(source_path, legacy_path)
+    loaded = aclnn_store.load_case(aclnn, "aclnn")
+    np.testing.assert_array_equal(loaded.inputs[0], inputs[0])
+    np.testing.assert_array_equal(loaded.inputs[1], inputs[0])
+
+
+@pytest.mark.parametrize(
+    "custom_dtype,e2e_shape,aclnn_shape",
+    [("float8_e4m3fn", (4,), (4,)), ("float4_e2m1", (4,), (8,)), ("hifloat8", (4,), (4,))],
+)
+def test_raw_bin_uint8_reinterprets_portable_storage(tmp_path, custom_dtype, e2e_shape, aclnn_shape):
+    """Raw bins may exchange uint8 storage with ACLNN custom dtypes."""
+    try:
+        dtype = resolve_custom_numpy_dtypes((custom_dtype,))[0]
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
+
+    e2e = _e2e_case(f"raw_{custom_dtype}")
+    e2e.tensor_view_shapes = (e2e_shape,)
+    e2e.tensor_dtypes = ("uint8",)
+    e2e.tensor_formats = ("ND",)
+    e2e.tensor_storage_shapes = (e2e_shape,)
+    e2e.tensor_view_offsets = (0,)
+    e2e.tensor_view_strides = ((1,),)
+    e2e.output_tensor_indexes = ()
+
+    aclnn = _aclnn_case()
+    aclnn.testcase_name = e2e.testcase_name
+    aclnn.tensor_view_shapes = (aclnn_shape, aclnn_shape)
+    aclnn.tensor_dtypes = (custom_dtype, "float32")
+    aclnn.tensor_formats = ("ND", "ND")
+    aclnn.tensor_storage_shapes = (aclnn_shape, aclnn_shape)
+    aclnn.tensor_view_offsets = (0, 0)
+    aclnn.tensor_view_strides = ((1,), (1,))
+    aclnn.scalar_dtypes = ()
+    aclnn.scalar_data_ranges = ()
+
+    raw = np.array([0x10, 0x32, 0x54, 0x76], dtype=np.uint8).reshape(e2e_shape)
+    golden = [np.zeros(aclnn_shape, dtype=np.float32)]
+    e2e_store = ManualDataStore(tmp_path / "e2e")
+    e2e_store.write_case(e2e, "e2e", [raw], golden)
+
+    loaded_aclnn = e2e_store.load_case(aclnn, "aclnn")
+    assert loaded_aclnn.inputs[0].dtype == np.dtype(dtype)
+    assert loaded_aclnn.inputs[0].shape == aclnn_shape
+
+    aclnn_store = ManualDataStore(tmp_path / "aclnn")
+    aclnn_store.write_case(
+        aclnn,
+        "aclnn",
+        [loaded_aclnn.inputs[0], np.zeros(aclnn_shape, dtype=np.float32)],
+        golden,
+    )
+    loaded_e2e = aclnn_store.load_case(e2e, "e2e")
+    np.testing.assert_array_equal(loaded_e2e.inputs[0], raw)
 
 
 def test_input_only_dataset_replays_without_requiring_golden(tmp_path):
@@ -289,8 +374,6 @@ def test_tensor_list_grouping_is_rebuilt_from_csv_structure(tmp_path):
     case.tensor_view_offsets = ((0, 0), 0)
     case.tensor_view_strides = (((1,), (1,)), (1,))
     case.output_tensor_indexes = (1,)
-    case._tensor_list_dist = (2, 0)
-    case._pure_output_indexes = [2]
     inputs = [
         np.array([1.0, 2.0], np.float32),
         np.array([3, 4, 5], np.int32),

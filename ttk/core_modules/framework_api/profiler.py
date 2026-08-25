@@ -101,11 +101,11 @@ class NpuProfiler(FrameworkProfiler):
 
     def __enter__(self):
         from torch_npu.profiler import (
-            ProfilerActivity,
-            _ExperimentalConfig,
-            ProfilerLevel,
             AiCMetrics,
             ExportType,
+            ProfilerActivity,
+            ProfilerLevel,
+            _ExperimentalConfig,
             profile,
             schedule,
             tensorboard_trace_handler,
@@ -236,7 +236,7 @@ class TorchProfiler(FrameworkProfiler):
     """
 
     def __init__(self, backend):
-        from torch.profiler import profile, ProfilerActivity
+        from torch.profiler import ProfilerActivity, profile
 
         cfg = backend.profile["profiler"]
         activities = []
@@ -351,12 +351,19 @@ class WallClockProfiler(FrameworkProfiler):
         )
 
 
-_KERNEL_TASK_TYPES = frozenset({
-    "AI_CORE", "AIV_SQE", "AI_VECTOR_CORE",
-    "MIX_AIC", "MIX_AIV",
-    "KERNEL_MIX_AIC", "KERNEL_MIX_AIV",
-    "KERNEL_AIVEC", "KERNEL_AICORE",
-})
+_KERNEL_TASK_TYPES = frozenset(
+    {
+        "AI_CORE",
+        "AIV_SQE",
+        "AI_VECTOR_CORE",
+        "MIX_AIC",
+        "MIX_AIV",
+        "KERNEL_MIX_AIC",
+        "KERNEL_MIX_AIV",
+        "KERNEL_AIVEC",
+        "KERNEL_AICORE",
+    }
+)
 
 
 class TfNpuProfiler(FrameworkProfiler):
@@ -471,13 +478,20 @@ class TfNpuProfiler(FrameworkProfiler):
         return None
 
 
-def get_profiler(api_name: str, backend, config: Optional[ProfilerConfig] = None) -> FrameworkProfiler:
+def get_profiler(
+    api_name: str,
+    backend,
+    config: Optional[ProfilerConfig] = None,
+) -> FrameworkProfiler:
     """Select profiler based on api_name prefix and backend.
 
     Hardware-neutral: routes on is_npu() + profile['profiler'] rather
     than device_name() string compares.
     """
-    config = config or ProfilerConfig()
+    if config is None:
+        config = ProfilerConfig()
+    elif not isinstance(config, ProfilerConfig):
+        raise TypeError(f"config must be ProfilerConfig, got {type(config).__name__}")
     if not config.enabled:
         return DisabledProfiler()
     if api_name.startswith(("tf.", "tensorflow.")):

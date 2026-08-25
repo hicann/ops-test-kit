@@ -1709,6 +1709,7 @@ def profile_process(context: TestcaseAclnn,
                 "aclnn",
                 switches,
                 before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
+                require_goldens=False,
             )
             if manual_case is not None:
                 manual_mode = "replay"
@@ -1747,16 +1748,19 @@ def profile_process(context: TestcaseAclnn,
                 prepared_scalars = snapshot_manual_values(
                     context.flatten_scalars or (), "scalar"
                 )
-                process_ctx.notify_status("OnGenGolden")
-                GoldenGenerator(context).gen()
+                write_goldens = switches.dump_config.is_golden_enabled()
+                if write_goldens:
+                    process_ctx.notify_status("OnGenGolden")
+                    GoldenGenerator(context).gen()
                 process_ctx.notify_status("OnWriteManualData")
                 case_dir = prepare_store.write_case(
                     context,
                     "aclnn",
                     prepared_inputs,
-                    context.golden_tensors,
+                    context.golden_tensors if write_goldens else (),
                     scalars=prepared_scalars,
                     file_format=switches.dump_config.file_format,
+                    write_goldens=write_goldens,
                 )
             except Exception as exc:
                 logging.exception("Manual data preparation failure")
@@ -1872,7 +1876,7 @@ def profile_process(context: TestcaseAclnn,
                     return_structure.construct(context, compare_result)
                     __profiling_end_print(context, compare_result)
                     return return_structure
-            elif manual_case is not None:
+            elif manual_case is not None and manual_case.has_goldens:
                 try:
                     process_ctx.notify_status("OnLoadManualGolden")
                     context.golden_tensors = manual_case.load_goldens(

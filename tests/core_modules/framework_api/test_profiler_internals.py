@@ -15,6 +15,7 @@ _device_acts（非 CPU activities）+ _device_time 三候选纯自身回退，
 覆盖 torch 2.7+（self_device_time_total）和 legacy
 （self_{device}_time_total，如 self_cuda_time_total / self_mlu_time_total）。
 """
+
 from __future__ import annotations
 
 from ttk.core_modules.framework_api.profiler import TorchProfiler, get_profiler

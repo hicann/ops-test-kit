@@ -1052,7 +1052,12 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 testcase.np_storages if testcase.np_storages is not None else raw_inputs,
                 "input",
             )
-            golden_nps = _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
+            write_goldens = switches.dump_config.is_golden_enabled()
+            golden_nps = (
+                _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
+                if write_goldens
+                else []
+            )
             process_ctx.notify_status("OnWriteManualData")
             case_dir = prepare_store.write_case(
                 testcase,
@@ -1060,6 +1065,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 prepared_inputs,
                 golden_nps,
                 file_format=switches.dump_config.file_format,
+                write_goldens=write_goldens,
             )
         except Exception as exc:
             logging.exception(f"[{testcase.testcase_name}] Manual data preparation failure")
@@ -1178,8 +1184,11 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 reference_outputs = graph_dyn_nps
             if reference_outputs is None:
                 reference_outputs = graph_aclgraph_nps
-            golden_nps = manual_case.load_goldens(references=reference_outputs)
-            _dump_goldens(testcase, golden_nps, switches)
+            if manual_case.has_goldens:
+                golden_nps = manual_case.load_goldens(references=reference_outputs)
+                _dump_goldens(testcase, golden_nps, switches)
+            else:
+                golden_nps = _generate_golden_maybe_promote(testcase, raw_inputs, switches, backend, ref_nps)
         except Exception as exc:
             logging.exception(f"[{testcase.testcase_name}] Manual golden loading failure")
             return_struct.construct(f"MANUAL_DATA_READ_FAILURE: {exc}", "FAIL", None)
