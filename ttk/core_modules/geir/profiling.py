@@ -22,12 +22,12 @@ from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_c
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, get_process_context
 from ttk.utilities import (
     dump_to_file,
-    get_global_storage,
     get,
-    resolve_custom_numpy_dtypes,
-    waiting_for_memory,
-    unpack_4bits,
+    get_global_storage,
     is_4bit_dtype,
+    resolve_custom_numpy_dtypes,
+    unpack_4bits,
+    waiting_for_memory,
 )
 
 from .compiler import GeirCompiler
@@ -526,7 +526,7 @@ def _parse_single_output(buf, idx, output_dtypes, output_shapes, case_name):
     is_complex32 = "complex32" in str(dtype_str)
     is_4bit = is_4bit_dtype(dtype_str)
     if is_4bit:
-        np_dtype = numpy.dtype("uint8")
+        np_dtype = np.dtype("uint8")
     else:
         np_dtype = np.dtype("float16") if is_complex32 else np.dtype(resolve_custom_numpy_dtypes([dtype_str])[0])
     try:

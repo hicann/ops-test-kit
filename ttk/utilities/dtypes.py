@@ -11,11 +11,12 @@
 dtype utils
 """
 
-import numpy
-from typing import Union, Optional
+import copy
 import re
 import struct
-import copy
+from typing import Optional, Union
+
+import numpy
 
 BFP16_NEEDS_FP32_FOR_NPY: Optional[bool] = None
 
@@ -188,6 +189,7 @@ DATA_TYPE_DICT = {
     "float8_e5m2": 35,
     "float8_e4m3fn": 36,
     "float8_e8m0": 37,
+    "float8_e8m0fnu": 37,
     "float4_e2m1": 40,
     "float4_e1m2": 41,
     "hifloat4": 42,
@@ -347,7 +349,9 @@ def numpy_int4():
 
         return int4
     except ModuleNotFoundError:
-        raise RuntimeError("ml_dtypes is needed to support int4 dtype!!! Please install with `pip3 install ml-dtypes`")
+        raise RuntimeError(
+            "ml_dtypes is needed to support int4 dtype!!! Please install with `pip3 install ml-dtypes`"
+        ) from None
 
 
 def numpy_bfloat16():
@@ -365,7 +369,7 @@ def numpy_bfloat16():
                 "ml-dtypes or tensorflow is needed to support bfloat16 dtype!!! "
                 "Please install with `pip3 install ml-dtypes` "
                 "or `pip3 install tensorflow`"
-            )
+            ) from None
     # some older TF version (v1.15.0) bfp16 needs to convert to fp32 to calculate in numpy
     global BFP16_NEEDS_FP32_FOR_NPY
     if BFP16_NEEDS_FP32_FOR_NPY is None:
@@ -390,7 +394,7 @@ def numpy_float8_e5m2():
     except ModuleNotFoundError:
         raise RuntimeError(
             "ml_dtypes is needed to support float8_e5m2 dtype!!! Please install with `pip3 install ml-dtypes`"
-        )
+        ) from None
 
 
 def numpy_float8_e4m3fn():
@@ -402,7 +406,7 @@ def numpy_float8_e4m3fn():
     except ModuleNotFoundError:
         raise RuntimeError(
             "ml_dtypes is needed to support float8_e4m3fn dtype!!! Please install with `pip3 install ml-dtypes`"
-        )
+        ) from None
 
 
 def ensure_en_dtypes_version(version):
@@ -426,7 +430,7 @@ def numpy_float8_e8m0():
     except ModuleNotFoundError:
         raise RuntimeError(
             "en_dtypes is needed to support float8_e8m0 dtype!!! Please install with `pip3 install en-dtypes`"
-        )
+        ) from None
 
 
 def numpy_float4_e2m1():
@@ -439,7 +443,7 @@ def numpy_float4_e2m1():
     except ModuleNotFoundError:
         raise RuntimeError(
             "en_dtypes is needed to support float4_e2m1 dtype!!! Please install with `pip3 install en-dtypes`"
-        )
+        ) from None
 
 
 def numpy_float4_e1m2():
@@ -452,7 +456,7 @@ def numpy_float4_e1m2():
     except ModuleNotFoundError:
         raise RuntimeError(
             "en_dtypes is needed to support float4_e1m2 dtype!!! Please install with `pip3 install en-dtypes`"
-        )
+        ) from None
 
 
 def numpy_hifloat4():
@@ -465,7 +469,7 @@ def numpy_hifloat4():
     except ModuleNotFoundError:
         raise RuntimeError(
             "en_dtypes is needed to support hifloat4 dtype!!! Please install with `pip3 install en-dtypes`"
-        )
+        ) from None
 
 
 def IsRoundOne(sign, man, truncLen):
@@ -716,7 +720,6 @@ def trans_np_fp4_e1m2_tensor_to_bfloat16(in_tensor):
 
     shape_tensor = in_tensor.shape
     multi_shape = np.prod(shape_tensor)
-    out_tensor = np.zeros(multi_shape)
     in_tensor = in_tensor.reshape(multi_shape)
 
     # 1个uint8包含两个fp4, 先拆成两个uint8
@@ -739,7 +742,6 @@ def trans_np_fp4_e2m1_tensor_to_bfloat16(in_tensor):
 
     shape_tensor = in_tensor.shape
     multi_shape = np.prod(shape_tensor)
-    out_tensor = np.zeros(multi_shape)
     in_tensor = in_tensor.reshape(multi_shape)
 
     # 1个uint8包含两个fp4, 先拆成两个uint8
@@ -767,12 +769,12 @@ def numpy_hifloat8():
     except ModuleNotFoundError:
         raise RuntimeError(
             "en_dtypes is needed to support hifloat8 dtype!!! Please install with `pip3 install en-dtypes`"
-        )
+        ) from None
     except ImportError:
         raise RuntimeError(
             "Please upgrade en_dtypes to v0.0.4 at least to support hifloat8 dtype!!! "
             "Command is `pip3 install --upgrade en-dtypes`"
-        )
+        ) from None
 
 
 def resolve_custom_numpy_dtypes(container):
@@ -813,7 +815,7 @@ def pack_4bits(src: numpy.ndarray):
     to be continuous bytes stored in uint8
     """
     if not is_4bit_dtype(src.dtype):
-        raise RuntimeError(f"Dtype of source tensor only support int4/float4")
+        raise RuntimeError("Dtype of source tensor only support int4/float4")
     pack_size = 2
     shift = numpy.array([0, 4], dtype=numpy.uint8)
     array = src
@@ -997,10 +999,7 @@ def _mx_calculate_share_exp(fp_array: numpy.ndarray, scale_axis: int, mx_ele_dty
 def _mx_calculate_share_exp_nv(fp_array: numpy.ndarray, scale_axis: int, mx_ele_dtype: str):
     import numpy
 
-    FP32_EXPONENT_BIAS = 127
-    FP32_MIN_NORMAL = 2 ** (-FP32_EXPONENT_BIAS + 1)
     max_norm = get_dtype_range(mx_ele_dtype)[1]
-    ele_emax = int(numpy.log2(max_norm))
     fp_abs_max = numpy.max(numpy.abs(fp_array), axis=scale_axis, keepdims=True).astype(numpy.float32)
     s_fp32 = fp_abs_max / max_norm
     binary_ints = numpy.array(s_fp32.view(numpy.uint32))
@@ -1387,14 +1386,14 @@ def grouped_mx_quantize(
         return numpy.all(diff >= 0)
 
     if not is_non_reverse_order(group_index):
-        raise RuntimeError(f"Input tensor group_index should be non-reverse order.")
+        raise RuntimeError("Input tensor group_index should be non-reverse order.")
 
     axis = len(fp_array.shape) + axis if axis < 0 else axis
     if axis != -2 and axis != 0:
         raise RuntimeError(f"Not support {axis} yet!")
 
     if group_index[-1] != fp_array.shape[axis]:
-        raise RuntimeError(f"The last element of group_index should match the dimension size of the input x axis.")
+        raise RuntimeError("The last element of group_index should match the dimension size of the input x axis.")
 
     # padding & reshape to block_size
     fp_array, padded_group_index, padded_shape = _grouped_mx_reshape_to_blocks(fp_array, group_index, axis, block_size)

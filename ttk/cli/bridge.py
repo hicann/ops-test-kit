@@ -293,9 +293,7 @@ def configure_manual_data(sw, args, command):
         sw.manual_data_dirs = directories
         return
 
-    _configure_manual_data_prepare(
-        sw, command, directories, complete_prepare, is_prepare_dump
-    )
+    _configure_manual_data_prepare(sw, command, directories, complete_prepare, is_prepare_dump)
 
 
 def _default_manual_data_dir(sw):
@@ -339,10 +337,11 @@ def _detect_framework_from_csv(input_files):
     if not input_files:
         return "torch"
     import csv
+
     from ttk.core_modules.framework_api.framework_detector import detect_framework
 
     try:
-        with open(input_files[0], "r", newline="") as f:
+        with open(input_files[0], newline="") as f:
             reader = csv.reader(f)
             header = next(reader, None)
             if not header:
@@ -375,6 +374,34 @@ def _detect_framework_from_csv(input_files):
     return "torch"
 
 
+def _preload_plugin_modules(sw):
+    """Import all .py modules under --plugin dirs before testcase validation.
+
+    golden.py modules call FrameworkApiInfoKeeper().register() at import time
+    to declare API param info for OpOverloadPacket APIs that can't be parsed
+    via __annotations__. Without this preload, validation runs before the
+    plugin is lazily loaded, causing INPUT_COUNT_EXCEEDED false failures.
+    """
+    if not sw.plugin_path:
+        return
+    import importlib.util
+
+    for plugin_dir in sw.plugin_path:
+        plugin_path = pathlib.Path(plugin_dir)
+        if not plugin_path.is_dir():
+            continue
+        for py_file in plugin_path.glob("*.py"):
+            if py_file.name.startswith("_"):
+                continue
+            mod_name = py_file.stem
+            try:
+                spec = importlib.util.spec_from_file_location(mod_name, str(py_file))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception as e:
+                logging.debug(f"Preload plugin module {py_file} skipped: {e}")
+
+
 def run_with_switches(sw):
     from ttk.core_modules.tbe_logging import default_logging_config
     from ttk.utilities import set_global_storage
@@ -389,6 +416,8 @@ def run_with_switches(sw):
     set_thread_name()
 
     logging.info(f"Command: ttk {sw.test_mode} -i {sw.input_files[0] if sw.input_files else ''}")
+
+    _preload_plugin_modules(sw)
 
     if sw.test_mode == "framework-api":
         from ttk.core_modules.framework_api.instance import FrameworkApiInstance
