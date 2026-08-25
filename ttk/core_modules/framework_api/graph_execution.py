@@ -31,7 +31,6 @@ WARMUP_COUNT = 1
 
 @functools.lru_cache(maxsize=1)
 def _get_npu_backend():
-    import torch_npu
     import torchair
     from torchair.configs.compiler_config import CompilerConfig
 
@@ -83,8 +82,7 @@ def _run_compiled(
     inplace_kwargs_keys=None,
 ):
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
-    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
-    run_count = switches.run_time if profiling_enabled or deterministic else 0
+    run_count = switches.run_time
     is_kwargs_mode = inplace_kwargs_keys is not None
 
     result = compiled(*args, **kwargs)
@@ -266,8 +264,8 @@ def _execute_graph(
 
         if is_tensor_method:
 
-            def api_caller(*args, **kwargs):
-                return getattr(args[0], resolved)(*args[1:], **kwargs)
+            def api_caller(*call_args, **call_kwargs):
+                return getattr(call_args[0], resolved)(*call_args[1:], **call_kwargs)
         else:
             api_caller = resolved
 
@@ -280,7 +278,6 @@ def _execute_graph(
             npu_backend = _get_npu_backend()
     except Exception as e:
         logging.error(f"Failed to get TorchAir NPU backend: {e}")
-        del args, kwargs
         return [], None
 
     use_fullgraph = bool(switches.fullgraph)
@@ -306,7 +303,6 @@ def _execute_graph(
 
     except Exception as e:
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)
-        del args, kwargs
         return [], None
 
     if result_nps:
@@ -319,5 +315,4 @@ def _execute_graph(
 
     if inplace_backup is not None:
         del inplace_backup
-    del args, kwargs
     return result_nps, perf

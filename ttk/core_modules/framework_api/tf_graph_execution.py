@@ -32,6 +32,7 @@ def _build_input_signature(testcase, dynamic):
     dynamic (dynamic=True):  None dimensions → corresponds to -d/--dynamic
     """
     import tensorflow as tf
+
     from ttk.utilities.dtypes import str_to_tf_dtype
 
     sig = []
@@ -121,7 +122,7 @@ def _execute_tf_graph(
                 enabled=profiling_enabled,
             ),
         )
-        run_count = switches.run_time if profiling_enabled else 1
+        run_count = switches.run_time
         result = None
         with profiler:
             for _ in range(run_count):

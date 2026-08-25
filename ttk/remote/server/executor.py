@@ -8,12 +8,12 @@ Deployment constraint: MUST NOT import outside ttk.remote.server (no
 ttk.core_modules, no ttk.remote) — the server deploys standalone on the XPU box.
 Only stdlib + numpy + sibling server modules + lazy torch.
 """
+
 import importlib
 import inspect
 import logging
 import os
 import sys
-import time
 from collections.abc import Callable as _Callable
 from functools import partial
 
@@ -26,10 +26,15 @@ except ImportError:
     # package); fall back to absolute (execution_container is standalone).
     import execution_container as _ec
 
-(UnknownParamError, bind_params, format_device,
- has_data, has_perf, match_params_v1, resolve_callable) = (
-    _ec.UnknownParamError, _ec.bind_params, _ec.format_device,
-    _ec.has_data, _ec.has_perf, _ec.match_params_v1, _ec.resolve_callable)
+(UnknownParamError, bind_params, format_device, has_data, has_perf, match_params_v1, resolve_callable) = (
+    _ec.UnknownParamError,
+    _ec.bind_params,
+    _ec.format_device,
+    _ec.has_data,
+    _ec.has_perf,
+    _ec.match_params_v1,
+    _ec.resolve_callable,
+)
 
 
 class _MissingSpecDependency(ImportError):
@@ -60,15 +65,34 @@ def _api_from_kwargs(kwargs):
 
 
 def _ok(output_path, count, shapes, dtypes, perf, api=None, schema=None):
-    return {"ok": True, "http_status": 200, "output_path": output_path,
-            "output_count": count, "shapes": shapes, "dtypes": dtypes,
-            "perf": perf, "missing": None, "error": None, "api": api, "schema": schema}
+    return {
+        "ok": True,
+        "http_status": 200,
+        "output_path": output_path,
+        "output_count": count,
+        "shapes": shapes,
+        "dtypes": dtypes,
+        "perf": perf,
+        "missing": None,
+        "error": None,
+        "api": api,
+        "schema": schema,
+    }
 
 
 def _err(status, error, missing=None, api=None):
-    return {"ok": False, "http_status": status, "output_path": None,
-            "output_count": 0, "shapes": [], "dtypes": [], "perf": None,
-            "missing": missing, "error": error, "api": api}
+    return {
+        "ok": False,
+        "http_status": status,
+        "output_path": None,
+        "output_count": 0,
+        "shapes": [],
+        "dtypes": [],
+        "perf": None,
+        "missing": missing,
+        "error": error,
+        "api": api,
+    }
 
 
 def _client_error(e) -> str:
@@ -107,6 +131,7 @@ def _torch_resolve(name):
     dispatch); a TF request never reaches this import.
     """
     import torch
+
     # === VERBATIM torch_funcs dict (backup __init__.py:2808-2824) ===
     torch_funcs = {
         "kl_div": torch.nn.functional.kl_div,
@@ -114,7 +139,7 @@ def _torch_resolve(name):
         "equal": torch.eq,
         "gelu": torch.nn.GELU(),
         "floor_mod": torch.fmod,
-        "floor_div": partial(torch.div, rounding_mode='floor'),
+        "floor_div": partial(torch.div, rounding_mode="floor"),
         "pows": torch.pow,
         "real_div": torch.div,
         "top_k_v2": torch.topk,
@@ -172,28 +197,49 @@ def _torch_resolve(name):
 def _tf_resolve(name):
     """Port of backup get_tf_func. Single Camel-form arg."""
     import tensorflow as tf
-    from tensorflow.python.ops import gen_nn_ops, gen_state_ops, gen_array_ops
-    from tensorflow.python.ops import gen_math_ops, nn_impl, gen_bitwise_ops, gen_image_ops
     from tensorflow import raw_ops
+    from tensorflow.python.ops import (
+        gen_array_ops,
+        gen_bitwise_ops,
+        gen_image_ops,
+        gen_math_ops,
+        gen_nn_ops,
+        gen_state_ops,
+        nn_impl,
+    )
+
     # === VERBATIM tf_func_map dict (backup platform.py:87-91) ===
     tf_func_map = {
         "batch_norm_v3": nn_impl.fused_batch_norm,
         "spence": tf.math.special.spence,
-        "space_to_batch": gen_array_ops.SpaceToBatch
+        "space_to_batch": gen_array_ops.SpaceToBatch,
     }
     if name in tf_func_map:
         return tf_func_map[name]
-    sources = [tf, tf.math, gen_image_ops, gen_nn_ops, tf.nn, gen_state_ops,
-               gen_array_ops, gen_math_ops, nn_impl, gen_bitwise_ops, raw_ops]
+    sources = [
+        tf,
+        tf.math,
+        gen_image_ops,
+        gen_nn_ops,
+        tf.nn,
+        gen_state_ops,
+        gen_array_ops,
+        gen_math_ops,
+        nn_impl,
+        gen_bitwise_ops,
+        raw_ops,
+    ]
 
     try:
         from tensorflow.python.training import training_ops
+
         sources.append(training_ops)
     except (ModuleNotFoundError, ImportError):
         pass
 
     try:
         from tensorflow.python.ops import gen_stateless_random_ops_v2
+
         sources.append(gen_stateless_random_ops_v2)
     except (ModuleNotFoundError, ImportError):
         pass
@@ -289,15 +335,15 @@ def _find_torch_api(torch_module, snake_name: str):
         return torch_api
     else:
         if snake_name.startswith("inplace_"):
-            return _find_torch_api(torch_module, snake_name[len("inplace_"):])
+            return _find_torch_api(torch_module, snake_name[len("inplace_") :])
         elif snake_name.endswith("_scalar"):
-            return _find_torch_api(torch_module, snake_name[:-len("_scalar")])
+            return _find_torch_api(torch_module, snake_name[: -len("_scalar")])
         elif snake_name.endswith("_tensor"):
-            return _find_torch_api(torch_module, snake_name[:-len("_tensor")])
+            return _find_torch_api(torch_module, snake_name[: -len("_tensor")])
         elif snake_name.endswith("_v2"):
-            return _find_torch_api(torch_module, snake_name[:-len("_v2")])
+            return _find_torch_api(torch_module, snake_name[: -len("_v2")])
         elif snake_name.endswith("s"):
-            return _find_torch_api(torch_module, snake_name[:-len("s")])
+            return _find_torch_api(torch_module, snake_name[: -len("s")])
         elif not snake_name.startswith("_"):  # _add_relu
             return _find_torch_api(torch_module, "_" + snake_name)
         else:
@@ -311,6 +357,7 @@ def _auto_import_from_torch(snake_name: str):
     request never reaches here. Verbatim port of golden_generation.
     """
     import torch
+
     # torch api first
     torch_api = _find_torch_api(torch, snake_name)
     if torch_api is not None:
@@ -359,12 +406,11 @@ def _resolve_3party_api(op_name, op_type, provider):
             continue
         f = resolve(name)
         if f is not None:
-            return f, name           # name = 命中的搜索入参
+            return f, name  # name = 命中的搜索入参
     return None, None
 
 
-def _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module,
-                      spec_class):
+def _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module, spec_class):
     """Resolve the callable to execute. Returns (callable, api_label).
 
     api_label = 实际执行 api 的标识，供 X-API response header 回传：
@@ -380,7 +426,7 @@ def _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module,
         except ImportError as e:
             name = getattr(e, "name", None) or spec_module
             err = _MissingSpecDependency(name)
-            err.name = name              # ImportError.name isn't set by manual construction
+            err.name = name  # ImportError.name isn't set by manual construction
             raise err from e
         cls = _resolve_attr_path(mod, spec_class) if spec_class else mod
         tp = getattr(cls, "third_party", None)
@@ -401,10 +447,8 @@ def _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module,
     # api=None -> KERNEL/ACLNN: server derives via _resolve_3party_api
     f, name = _resolve_3party_api(op_name, op_type, provider)
     if f is None:
-        raise ValueError(
-            f"cannot resolve api for op_name={op_name!r} op_type={op_type!r} "
-            f"provider={provider!r}")
-    return f, f"{provider}.{name}"       # 推导 api_label = provider.命中name
+        raise ValueError(f"cannot resolve api for op_name={op_name!r} op_type={op_type!r} provider={provider!r}")
+    return f, f"{provider}.{name}"  # 推导 api_label = provider.命中name
 
 
 def _bind(func, named, attrs, device, warn_leftover=True, param_order=None):
@@ -412,6 +456,7 @@ def _bind(func, named, attrs, device, warn_leftover=True, param_order=None):
     merged.update(named)
     if param_order:
         from collections import OrderedDict
+
         ordered = OrderedDict()
         for name in param_order:
             if name in merged:
@@ -423,24 +468,20 @@ def _bind(func, named, attrs, device, warn_leftover=True, param_order=None):
     return bind_params(func, merged, device=device, warn_leftover=warn_leftover)
 
 
-def _invoke(callable_fn, named, attrs, provider, device_id, use_device,
-            profile=None, param_order=None):
+def _invoke(callable_fn, named, attrs, provider, device_id, use_device, profile=None, param_order=None):
     """Run the callable once, return RAW outputs (no numpy cast)."""
     if inspect.isclass(callable_fn):
         cls = callable_fn
-        dev = format_device(provider, profile,
-                            "cpu" if not use_device else device_id)
+        dev = format_device(provider, profile, "cpu" if not use_device else device_id)
         # 契约: __init__/__call__ 参数(除kwargs)并集 ⊆ inputs∪attrs; input/attr
         # 喂给声明它的方法(都声明则都喂)。device 保留注入, 有默认值用默认。
         # warn_leftover=False: 一个方法没消耗的可能喂给另一个, 不报 leftover 误报。
-        if cls.__init__ is object.__init__:          # 无自定义 __init__: 直接实例化
+        if cls.__init__ is object.__init__:  # 无自定义 __init__: 直接实例化
             inst = cls()
         else:
-            ia, ik = _bind(cls.__init__, named, attrs, dev, warn_leftover=False,
-                           param_order=param_order)
+            ia, ik = _bind(cls.__init__, named, attrs, dev, warn_leftover=False, param_order=param_order)
             inst = cls(*ia, **ik)
-        ca, ck = _bind(inst.__call__, named, attrs, dev, warn_leftover=False,
-                       param_order=param_order)
+        ca, ck = _bind(inst.__call__, named, attrs, dev, warn_leftover=False, param_order=param_order)
         return inst(*ca, **ck)
     return _invoke_function(callable_fn, named, attrs, param_order)
 
@@ -449,8 +490,7 @@ def _function_param_names(sig):
     """Non-self, non-*args/**kwargs parameter names, in declaration order."""
     names = []
     for p, v in sig.parameters.items():
-        if v.kind not in (inspect.Parameter.VAR_KEYWORD,
-                          inspect.Parameter.VAR_POSITIONAL) and p != "self":
+        if v.kind not in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL) and p != "self":
             names.append(p)
     return names
 
@@ -512,7 +552,8 @@ def _invoke_function(callable_fn, named, attrs, param_order):
         raise TypeError(
             f"{getattr(callable_fn, '__name__', callable_fn)} expects "
             f"{len(param_names)} params {param_names}, "
-            f"got {len(vals)} inputs {list(named.keys())}") from bind_error
+            f"got {len(vals)} inputs {list(named.keys())}"
+        ) from bind_error
     zip_kwargs = {k: v for k, v in (attrs or {}).items() if k != "self"}
     return callable_fn(**dict(zip(param_names, vals), **zip_kwargs))
 
@@ -530,6 +571,7 @@ def _to_numpy_pair(v, provider):
     if provider == "torch":
         try:
             import torch
+
             if isinstance(v, torch.Tensor):
                 if v.dtype == torch.bfloat16:
                     return v.contiguous().view(torch.int16).cpu().numpy(), "bfloat16"
@@ -556,7 +598,7 @@ def _outputs_to_numpy(outputs, provider):
     npz_idx = 0
     for slot in outputs:
         if slot is None:
-            schema.append({"index": None, "dtype": None})   # None 只在顶层 slot（op 输出占位）
+            schema.append({"index": None, "dtype": None})  # None 只在顶层 slot（op 输出占位）
             continue
         if isinstance(slot, (list, tuple)):
             # tensor-list slot：叶子均为实际 tensor（op 输出约束；None 只在顶层 slot 处理）
@@ -567,7 +609,9 @@ def _outputs_to_numpy(outputs, provider):
                 arrays.append(arr)
                 leaves.append(npz_idx)
                 npz_idx += 1
-            schema.append({"indices": leaves, "dtype": dt})   # dt 取末叶子；list 内假设 dtype 同质（op 输出约束；异质 list 未支持）
+            schema.append(
+                {"indices": leaves, "dtype": dt}
+            )  # dt 取末叶子；list 内假设 dtype 同质（op 输出约束；异质 list 未支持）
         else:
             arr, dt = _to_numpy_pair(slot, provider)
             arrays.append(arr)
@@ -588,8 +632,7 @@ def _to_vendor_tensor(value, provider, device_str, dtype_name=None):
     if value is None:
         return None
     if isinstance(value, (list, tuple)):
-        return type(value)(
-            _to_vendor_tensor(v, provider, device_str, dtype_name) for v in value)
+        return type(value)(_to_vendor_tensor(v, provider, device_str, dtype_name) for v in value)
     if provider == "torch":
         try:
             import torch
@@ -601,13 +644,13 @@ def _to_vendor_tensor(value, provider, device_str, dtype_name=None):
             if dtype_name == "bfloat16":
                 # numpy has no native bfloat16 (wire form is raw int16 bits);
                 # reinterpret then view as bfloat16.
-                return torch.from_numpy(
-                    value.view(np.int16)).view(torch.bfloat16).to(device_str)
+                return torch.from_numpy(value.view(np.int16)).view(torch.bfloat16).to(device_str)
             return torch.from_numpy(value).to(device_str)
         return value
     if provider == "tf":
         try:
             import tensorflow as tf
+
             if dtype_name == "bfloat16" and isinstance(value, np.ndarray):
                 # wire form is raw int16 bits; tf ships a numpy bf16 dtype
                 # (tensorflow.bfloat16.as_numpy_dtype) we can view into.
@@ -656,6 +699,7 @@ def device_available(provider, profile) -> bool:
             return False
         try:
             import tensorflow as tf
+
             return bool(tf.config.list_physical_devices(tf_type))
         except ImportError:
             return False
@@ -665,7 +709,7 @@ def device_available(provider, profile) -> bool:
 def _device_time(evt, device) -> float:
     """server inline 2-candidate self_ time. is not None guard
     (not truthiness) so a genuine 0.0 on candidate1 is NOT skipped."""
-    v = getattr(evt, "self_device_time_total", None)      # candidate1: torch 2.7+
+    v = getattr(evt, "self_device_time_total", None)  # candidate1: torch 2.7+
     if v is not None:
         return v
     return getattr(evt, f"self_{device}_time_total", 0.0)  # candidate2: <2.7 (self_<lib>)
@@ -703,7 +747,7 @@ def _is_device_kernel(evt) -> bool:
     if str(getattr(evt, "key", "")).startswith("ProfilerStep"):
         return False
     dev_t = getattr(evt, "device_type", None)
-    if dev_t is None:            # 无该字段的 torch 版本：不过滤，退回旧行为
+    if dev_t is None:  # 无该字段的 torch 版本：不过滤，退回旧行为
         return True
     try:
         from torch.autograd import DeviceType
@@ -712,8 +756,7 @@ def _is_device_kernel(evt) -> bool:
     return dev_t != DeviceType.CPU
 
 
-def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
-              profile=None, runtime=3, param_order=None):
+def _run_perf(callable_fn, named, attrs, provider, device_id, use_device, profile=None, runtime=3, param_order=None):
     """PERF timing via profiler (torch: Self device time; TF: xplane.pb device plane).
 
     Two passes: (1) profiler pass for device_us (no empty_cache); (2) peak pass
@@ -734,19 +777,20 @@ def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
 
     # --- Pass 1: profiler (timing) ---
     outputs = None
-    device_us = 0.0          # init before branch: CPU branch never assigns it
+    device_us = 0.0  # init before branch: CPU branch never assigns it
     if torch_dev:
         outputs, device_us = _torch_profiler_pass(
-            callable_fn, named, attrs, provider, device_id, use_device,
-            profile, runtime, param_order=param_order)
+            callable_fn, named, attrs, provider, device_id, use_device, profile, runtime, param_order=param_order
+        )
     elif tf_dev:
         outputs, device_us = _tf_profiler_pass(
-            callable_fn, named, attrs, provider, device_id, use_device,
-            profile, runtime, param_order=param_order)
+            callable_fn, named, attrs, provider, device_id, use_device, profile, runtime, param_order=param_order
+        )
     else:
         # CPU or no device: single invoke for outputs only
-        outputs = _invoke(callable_fn, named, attrs, provider, device_id,
-                          use_device, profile=profile, param_order=param_order)
+        outputs = _invoke(
+            callable_fn, named, attrs, provider, device_id, use_device, profile=profile, param_order=param_order
+        )
 
     if device_us > 0:
         perf["device_us"] = float(f"{device_us:.3g}")
@@ -759,20 +803,22 @@ def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
         try:
             lib = _TORCH_DEV_MODULE
             lib.reset_peak_memory_stats(device_id)
-            _invoke(callable_fn, named, attrs, provider, device_id, use_device,
-                    profile=profile, param_order=param_order)
+            _invoke(
+                callable_fn, named, attrs, provider, device_id, use_device, profile=profile, param_order=param_order
+            )
             lib.synchronize()
-            perf["peak_memory_mb"] = (
-                lib.max_memory_allocated(device_id) / 1e6)
+            perf["peak_memory_mb"] = lib.max_memory_allocated(device_id) / 1e6
         except Exception:
             logging.exception("torch peak_memory measure failed; peak_memory_mb=NA")
     elif tf_dev:
         try:
             import tensorflow as tf
+
             tf_device = f"{profile['tf_device_type']}:{device_id}"
             tf.config.experimental.reset_memory_stats(tf_device)
-            _invoke(callable_fn, named, attrs, provider, device_id, use_device,
-                    profile=profile, param_order=param_order)
+            _invoke(
+                callable_fn, named, attrs, provider, device_id, use_device, profile=profile, param_order=param_order
+            )
             info = tf.config.experimental.get_memory_info(tf_device)
             perf["peak_memory_mb"] = info.get("peak", 0) / 1e6
         except Exception:
@@ -781,8 +827,9 @@ def _run_perf(callable_fn, named, attrs, provider, device_id, use_device,
     return outputs, perf
 
 
-def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
-                         use_device, profile, runtime, param_order=None):
+def _torch_profiler_pass(
+    callable_fn, named, attrs, provider, device_id, use_device, profile, runtime, param_order=None
+):
     """torch.profiler Self device time. Returns (outputs, device_us).
 
     device_us = per-iteration average (sum of self_device_time_total over the
@@ -800,29 +847,29 @@ def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
     """
     # gated: only called when provider == "torch" and torch_dev (see _run_perf)
     import torch
+
     # device + activities resolved OUTSIDE the try block: a missing/unknown
     # value is a server-side config error -> RuntimeError -> 500 (not an NA
     # degrade). cpu path never reaches here (and-use_device short-circuit).
-    device = profile["torch_lib"]                       # backend lib name, NOT the role
+    device = profile["torch_lib"]  # backend lib name, NOT the role
     try:
         activities_cfg = profile["torch_profiler"]["activities"]
     except KeyError:
-        raise RuntimeError("profile missing torch_profiler/activities")
+        raise RuntimeError("profile missing torch_profiler/activities") from None
     activities = []
     for name in activities_cfg:
         try:
             activities.append(getattr(torch.profiler.ProfilerActivity, name))
         except AttributeError:
-            raise RuntimeError(f"unknown ProfilerActivity: {name}")
+            raise RuntimeError(f"unknown ProfilerActivity: {name}") from None
     device_us = 0.0
     outputs = None
     # Manual ctx (not `with`): start needs its own try-scope (NA+log on failure)
     # separate from the op loop below (whose errors must propagate, not NA).
     try:
         _ctx = torch.profiler.profile(
-            activities=activities,
-            schedule=torch.profiler.schedule(
-                wait=1, warmup=1, active=runtime, repeat=1))
+            activities=activities, schedule=torch.profiler.schedule(wait=1, warmup=1, active=runtime, repeat=1)
+        )
         prof = _ctx.__enter__()
     except Exception:
         logging.exception("torch.profiler start failed; device_us=NA")
@@ -830,9 +877,9 @@ def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
     # OP execution — errors propagate (-> FAIL).
     try:
         for _ in range(runtime + 2):
-            outputs = _invoke(callable_fn, named, attrs, provider,
-                              device_id, use_device, profile=profile,
-                              param_order=param_order)
+            outputs = _invoke(
+                callable_fn, named, attrs, provider, device_id, use_device, profile=profile, param_order=param_order
+            )
             prof.step()
     finally:
         try:
@@ -841,8 +888,7 @@ def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
             logging.exception("torch.profiler stop failed")
     # Profiler machinery — readout. Failure -> NA + log; outputs preserved.
     try:
-        total = sum(_device_time(e, device) for e in prof.key_averages()
-                    if _is_device_kernel(e))
+        total = sum(_device_time(e, device) for e in prof.key_averages() if _is_device_kernel(e))
         if runtime > 0:
             total /= runtime
         device_us = total
@@ -851,8 +897,7 @@ def _torch_profiler_pass(callable_fn, named, attrs, provider, device_id,
     return outputs, device_us
 
 
-def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
-                      use_device, profile, runtime, param_order=None):
+def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id, use_device, profile, runtime, param_order=None):
     """tf.profiler.experimental + xplane.pb. Returns (outputs, device_us).
 
     device_us = per-iteration average (sum of ev.duration_ps/1e6 over the device
@@ -864,8 +909,10 @@ def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
     Only TF profiler machinery (start / stop / xplane parse) degrades to NA, and
     each such failure is logged so it is debuggable server-side.
     """
-    import tempfile, shutil
+    import shutil
+    import tempfile
     from pathlib import Path
+
     try:
         from tensorflow.core.profiler.protobuf import xplane_pb2
     except ImportError:
@@ -877,10 +924,12 @@ def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
     logdir = tempfile.mkdtemp(prefix="tfprof_")
     try:
         import tensorflow as tf
+
         # OP warmup — errors propagate (-> FAIL).
-        for _ in range(2):    # warmup (dropped)
-            _invoke(callable_fn, named, attrs, provider, device_id, use_device,
-                    profile=profile, param_order=param_order)
+        for _ in range(2):  # warmup (dropped)
+            _invoke(
+                callable_fn, named, attrs, provider, device_id, use_device, profile=profile, param_order=param_order
+            )
         # Profiler machinery — start. Failure -> NA + log.
         try:
             tf.profiler.experimental.start(logdir)
@@ -890,8 +939,9 @@ def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
         # OP active window — errors propagate; stop() always runs.
         try:
             for _ in range(runtime):
-                outputs = _invoke(callable_fn, named, attrs, provider, device_id,
-                                  use_device, profile=profile, param_order=param_order)
+                outputs = _invoke(
+                    callable_fn, named, attrs, provider, device_id, use_device, profile=profile, param_order=param_order
+                )
         finally:
             try:
                 tf.profiler.experimental.stop()
@@ -912,11 +962,15 @@ def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
                 _truncated = False
                 for plane in xs.planes:
                     if plane.name.startswith("/device"):
+                        meta = {mid: m.name for mid, m in plane.event_metadata.items()}
                         for line in plane.lines:
                             for ev in line.events:
                                 if _seen >= _TF_XPLANE_EVENT_CAP:
                                     _truncated = True
                                     break
+                                ev_name = meta.get(ev.metadata_id, "").lower()
+                                if "copy" in ev_name or "memcpy" in ev_name:
+                                    continue
                                 total += ev.duration_ps / 1e6
                                 _seen += 1
                             if _truncated:
@@ -924,9 +978,7 @@ def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
                     if _truncated:
                         break
                 if _truncated:
-                    logging.warning(
-                        "TF xplane event count exceeded %d, truncating",
-                        _TF_XPLANE_EVENT_CAP)
+                    logging.warning("TF xplane event count exceeded %d, truncating", _TF_XPLANE_EVENT_CAP)
                 if runtime > 0:
                     total /= runtime
                 device_us = total
@@ -937,11 +989,29 @@ def _tf_profiler_pass(callable_fn, named, attrs, provider, device_id,
     return outputs, device_us
 
 
-def execute_request(*, tenant_sync_dir, exec_type, provider, api, spec_module,
-                    spec_class, mode, input_schema, attrs, tmp_in_path,
-                    input_count, device_id, use_device, output_dir,
-                    profile=None, op_name=None, op_type=None, runtime=3,
-                    param_order=None, **_extra):
+def execute_request(
+    *,
+    tenant_sync_dir,
+    exec_type,
+    provider,
+    api,
+    spec_module,
+    spec_class,
+    mode,
+    input_schema,
+    attrs,
+    tmp_in_path,
+    input_count,
+    device_id,
+    use_device,
+    output_dir,
+    profile=None,
+    op_name=None,
+    op_type=None,
+    runtime=3,
+    param_order=None,
+    **_extra,
+):
     """Run one request. Returns an envelope dict (never raises for 4xx/5xx)."""
     try:
         if tenant_sync_dir and tenant_sync_dir not in sys.path:
@@ -960,11 +1030,12 @@ def execute_request(*, tenant_sync_dir, exec_type, provider, api, spec_module,
             if lib is None:
                 raise RuntimeError("profile missing torch_lib")
             import torch
+
             if not hasattr(torch, lib):
                 try:
                     importlib.import_module(f"torch_{lib}")
                 except ModuleNotFoundError as e:
-                    raise RuntimeError(f"torch backend '{lib}' unavailable: {e}")
+                    raise RuntimeError(f"torch backend '{lib}' unavailable: {e}") from e
             # Cache the resolved backend module (the getattr(torch, lib) object)
             # for the rest of this request (see module-level _TORCH_DEV_MODULE).
             # global statement: child process writes once per request.
@@ -979,45 +1050,55 @@ def execute_request(*, tenant_sync_dir, exec_type, provider, api, spec_module,
         # Framework H2D: numpy inputs -> provider tensors on the target device.
         # dtype is declared per-input in X-Input-Schema (the client's numpy knows
         # the real dtype; the server's may not, e.g. bfloat16).
-        device_str = format_device(provider, profile,
-                                   "cpu" if not use_device else device_id)
+        device_str = format_device(provider, profile, "cpu" if not use_device else device_id)
         _dtypes = {e.get("name"): e.get("dtype") for e in (input_schema or [])}
-        named = {k: _to_vendor_tensor(v, provider, device_str, _dtypes.get(k))
-                 for k, v in named.items()}
+        named = {k: _to_vendor_tensor(v, provider, device_str, _dtypes.get(k)) for k, v in named.items()}
 
-        callable_fn, api_label = _resolve_callable(
-            exec_type, provider, api, op_name, op_type, spec_module, spec_class)
+        callable_fn, api_label = _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module, spec_class)
         if has_perf(mode):
-            raw_outputs, perf = _run_perf(callable_fn, named, attrs or {},
-                                          provider, device_id, use_device,
-                                          profile=profile, runtime=runtime,
-                                          param_order=param_order)
+            raw_outputs, perf = _run_perf(
+                callable_fn,
+                named,
+                attrs or {},
+                provider,
+                device_id,
+                use_device,
+                profile=profile,
+                runtime=runtime,
+                param_order=param_order,
+            )
         else:
-            raw_outputs = _invoke(callable_fn, named, attrs or {},
-                                  provider, device_id, use_device,
-                                  profile=profile, param_order=param_order)
+            raw_outputs = _invoke(
+                callable_fn,
+                named,
+                attrs or {},
+                provider,
+                device_id,
+                use_device,
+                profile=profile,
+                param_order=param_order,
+            )
             perf = None
         schema, outs = _outputs_to_numpy(raw_outputs, provider)
 
         if has_data(mode):
             path = os.path.join(output_dir, "out.npz")
             np.savez_compressed(path, **{f"a{i}": o for i, o in enumerate(outs)})
-            return _ok(path, len(schema), [list(o.shape) for o in outs],
-                       dtypes=None, perf=perf, api=api_label, schema=schema)
+            return _ok(
+                path, len(schema), [list(o.shape) for o in outs], dtypes=None, perf=perf, api=api_label, schema=schema
+            )
         return _ok(None, 0, [], [], perf=perf, api=api_label, schema=[])
 
     except _MissingSpecDependency as e:
         # 424 is syncable: client will _sync_missing_dependency + retry. Not a
         # failure — info, not warning (avoids noise on the expected first miss).
         logging.info("spec dependency missing: %s (awaiting client sync)", e.name)
-        return _err(424, f"missing spec dependency: {e}", missing=e.name,
-                    api=api or spec_class)
+        return _err(424, f"missing spec dependency: {e}", missing=e.name, api=api or spec_class)
     except ImportError as e:
         logging.exception("request failed: import error (api=%s)", api or spec_class)
         return _err(500, f"import failed: {e}", api=api or spec_class)
     except (UnknownParamError, ValueError) as e:
-        logging.warning("request failed: bad params (api=%s): %s",
-                        api or spec_class, e)
+        logging.warning("request failed: bad params (api=%s): %s", api or spec_class, e)
         return _err(400, str(e), api=api or spec_class)
     except Exception as e:
         logging.exception("request failed (api=%s)", api or spec_class)
@@ -1038,8 +1119,7 @@ def child_main(conn, kwargs):
     try:
         conn.send(execute_request(**kwargs))
     except Exception as e:
-        logging.exception("child_main: execute_request raised (api=%s)",
-                          _api_from_kwargs(kwargs))
+        logging.exception("child_main: execute_request raised (api=%s)", _api_from_kwargs(kwargs))
         conn.send(_err(500, _client_error(e), api=_api_from_kwargs(kwargs)))
     finally:
         conn.close()

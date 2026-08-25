@@ -19,13 +19,11 @@ import json
 import logging
 import os
 import shutil
-from pathlib import Path
 import sys
+from pathlib import Path
+
 import numpy as np
 
-from ttk.utilities.container_utils import get_global_storage, apply_as_list, deep_flatten
-from ttk.core_modules.tbe_multiprocessing import get_process_context, DeviceLock, MultiDeviceLock
-from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 from ttk.core_modules.comparison.comparison import compare
 from ttk.core_modules.comparison.custom import apply_pre_compare, try_custom_compare
 from ttk.core_modules.comparison.resolve import resolve_tolerance
@@ -35,15 +33,18 @@ from ttk.core_modules.manual_data import (
     snapshot_manual_values,
 )
 from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
+from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
+from ttk.core_modules.tbe_multiprocessing import DeviceLock, MultiDeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
 from ttk.utilities import dump_to_file, waiting_for_memory
+from ttk.utilities.container_utils import apply_as_list, get_global_storage
+from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
 
 from .api_resolver import resolve_api
 from .backends import get_backend
 from .eager_execution import call_api
 from .input_generation import generate_inputs
-from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
 from .profiler import ProfilerConfig, get_profiler
 from .profiling_utils import prepare_device_args, unpack_4bit_outputs
 from .result import FrameworkApiReturnStructure
@@ -230,8 +231,10 @@ def _e2e_xpu_input_names(testcase):
             real_idx += 1
     return names
 
-def profile_process(testcase, device_grant_events, device_granted_indices, dev_id,
-                    is_multi_device=False, device_ids=None):
+
+def profile_process(
+    testcase, device_grant_events, device_granted_indices, dev_id, is_multi_device=False, device_ids=None
+):
     """
     Framework API profiling process — executed in subprocess.
 
@@ -273,12 +276,11 @@ def profile_process(testcase, device_grant_events, device_granted_indices, dev_i
     try:
         if is_multi_device and device_ids:
             testcase.device_ids = tuple(device_ids)
-            _do_profile_multi_device(testcase, backend, device_grant_events,
-                                     device_granted_indices, device_ids,
-                                     switches, return_struct)
+            _do_profile_multi_device(
+                testcase, backend, device_grant_events, device_granted_indices, device_ids, switches, return_struct
+            )
         else:
-            _do_profile(testcase, backend, device_grant_events, device_granted_indices,
-                        dev_id, switches, return_struct)
+            _do_profile(testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct)
     except Exception as e:
         logging.error(f"[{testcase.testcase_name}] Error: {e}", exc_info=True)
         return_struct.eager_precision = str(e)
@@ -382,8 +384,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         )
 
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
-    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
-    run_count = switches.run_time if profiling_enabled or deterministic else (0 if is_inplace else 1)
+    run_count = switches.run_time
     profiler = get_profiler(
         testcase.api_name,
         backend,
@@ -534,9 +535,7 @@ def _generate_golden_maybe_promote(testcase, raw_inputs, switches, backend, ref_
     except AttributeError:
         # golden_mode_override 已在 TestcaseE2e.__slots__ 中声明,正常不会走到这里;
         # 一旦走到说明 Promote 静默空转,用 warning 让它可见。
-        logging.warning(
-            "[%s] cannot set golden_mode_override, golden Promote skipped", testcase.testcase_name
-        )
+        logging.warning("[%s] cannot set golden_mode_override, golden Promote skipped", testcase.testcase_name)
     try:
         return _generate_golden_data(testcase, raw_inputs, switches, backend)
     finally:
@@ -544,9 +543,7 @@ def _generate_golden_maybe_promote(testcase, raw_inputs, switches, backend, ref_
             try:
                 testcase.golden_mode_override = prev
             except AttributeError:
-                logging.warning(
-                    "[%s] restore golden_mode_override failed", testcase.testcase_name, exc_info=True
-                )
+                logging.warning("[%s] restore golden_mode_override failed", testcase.testcase_name, exc_info=True)
 
 
 def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
@@ -699,9 +696,9 @@ def _collect_sim_report(testcase, switches):
         maybe_generate_sim_report(switches, case_path, case_path)
 
 
-def _do_profile_multi_device(testcase, backend, device_grant_events,
-                             device_granted_indices, device_ids,
-                             switches, return_struct):
+def _do_profile_multi_device(
+    testcase, backend, device_grant_events, device_granted_indices, device_ids, switches, return_struct
+):
     """Multi-device profiling for collective communication operators.
 
     Uses threading + torch.distributed for multi-card execution.
@@ -709,8 +706,6 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
     """
     import subprocess
     import tempfile
-    import torch
-    import torch_npu
 
     ndev = len(device_ids)
     process_ctx = get_process_context()
@@ -739,9 +734,13 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
 
     process_ctx.notify_status("OnAcquireLock")
     use_device = backend.use_device()
-    with MultiDeviceLock(process_ctx, device_ids, use_device=use_device,
-                         grant_events=device_grant_events,
-                         granted_indices=device_granted_indices):
+    with MultiDeviceLock(
+        process_ctx,
+        device_ids,
+        use_device=use_device,
+        grant_events=device_grant_events,
+        granted_indices=device_granted_indices,
+    ):
         process_ctx.notify_status("OnProfilingPrint")
         _profiling_print(testcase, backend, device_ids[0], switches)
 
@@ -750,7 +749,6 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
         tmp_dir = tempfile.mkdtemp(prefix="ttk_e2e_md_")
         input_path = os.path.join(tmp_dir, "inputs.npz")
         api_name = testcase.api_name
-        api_info = testcase.get_api_info()
 
         save_arrays = {}
         # Generate per-rank inputs with rank-specific seed (matching ACLNN multi-device behavior)
@@ -758,19 +756,33 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
         import numpy as _np
 
         # Determine if this op needs shared weight (x1/x2 same across ranks)
-        api_name_str = api_name or ''
-        weight_shared_ops = ("MatmulReduceScatter", "AllGatherMatmul",
-                             "MatmulAllReduce", "MatmulAlltoAll",
-                             "AlltoAllMatmul", "MatmulReduceScatterV2",
-                             "QuantMatmulAllReduce",
-                             "mm_reduce_scatter", "all_gather_mm",
-                             "mm_all_reduce", "mm_all_to_all",
-                             "all_to_all_mm")
-        exclude_ops = ("GroupedMatMul", "AlltoAllvGrouped",
-                       "BatchMatMul", "bmm_reduce_scatter", "bmm_reducescatter",
-                       "all_to_all_all_gather", "alltoall_allgather")
-        needs_shared_weight = (not any(kw in api_name_str for kw in exclude_ops)
-                               and any(kw in api_name_str for kw in weight_shared_ops))
+        api_name_str = api_name or ""
+        weight_shared_ops = (
+            "MatmulReduceScatter",
+            "AllGatherMatmul",
+            "MatmulAllReduce",
+            "MatmulAlltoAll",
+            "AlltoAllMatmul",
+            "MatmulReduceScatterV2",
+            "QuantMatmulAllReduce",
+            "mm_reduce_scatter",
+            "all_gather_mm",
+            "mm_all_reduce",
+            "mm_all_to_all",
+            "all_to_all_mm",
+        )
+        exclude_ops = (
+            "GroupedMatMul",
+            "AlltoAllvGrouped",
+            "BatchMatMul",
+            "bmm_reduce_scatter",
+            "bmm_reducescatter",
+            "all_to_all_all_gather",
+            "alltoall_allgather",
+        )
+        needs_shared_weight = not any(kw in api_name_str for kw in exclude_ops) and any(
+            kw in api_name_str for kw in weight_shared_ops
+        )
 
         for rank_idx in range(ndev):
             per_rank_seed = base_seed + rank_idx * 1000
@@ -801,12 +813,12 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
                     # fp8/hifloat8 dtypes can't round-trip through npz (e5m2 descr '<f1'
                     # fails on load). Save as uint8 view; worker restores via tensor_dtypes.
                     arr_to_save = r
-                    if hasattr(r.dtype, 'itemsize') and r.dtype.itemsize == 1 and r.dtype.kind in ('V', 'f'):
+                    if hasattr(r.dtype, "itemsize") and r.dtype.itemsize == 1 and r.dtype.kind in ("V", "f"):
                         # Could be fp8_e4m3fn (|V1), fp8_e5m2 (<f1), fp8_e8m0, hifloat8
                         dtype_str = str(r.dtype)
-                        if any(k in dtype_str for k in ('float8', 'hifloat8')):
+                        if any(k in dtype_str for k in ("float8", "hifloat8")):
                             arr_to_save = r.view(_np.uint8)
-                    save_arrays[f'inp_{rank_idx}_{i}'] = arr_to_save
+                    save_arrays[f"inp_{rank_idx}_{i}"] = arr_to_save
         np.savez(input_path, **save_arrays)
 
         script_path = os.path.join(os.path.dirname(__file__), "_e2e_multi_device_worker.py")
@@ -814,29 +826,30 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
         error_path = os.path.join(tmp_dir, "error.txt")
 
         plan_info = {
-            'api_name': api_name,
-            'overload_index': plan.overload_index,
-            'output_tensor_indexes': testcase.output_tensor_indexes,
-            'attributes': testcase.attributes or {},
-            'golden_disabled': str(getattr(testcase, 'golden_api', '') or '').lower() == 'disable',
-            'tensor_dtypes': list(testcase.tensor_dtypes) if testcase.tensor_dtypes else [],
-            'remark': testcase.remark or '',
-            'tensor_view_shapes': list(testcase.tensor_view_shapes) if testcase.tensor_view_shapes else [],
-            'testcase_name': getattr(testcase, 'testcase_name', ''),
+            "api_name": api_name,
+            "overload_index": plan.overload_index,
+            "output_tensor_indexes": testcase.output_tensor_indexes,
+            "attributes": testcase.attributes or {},
+            "golden_disabled": str(getattr(testcase, "golden_api", "") or "").lower() == "disable",
+            "tensor_dtypes": list(testcase.tensor_dtypes) if testcase.tensor_dtypes else [],
+            "remark": testcase.remark or "",
+            "tensor_view_shapes": list(testcase.tensor_view_shapes) if testcase.tensor_view_shapes else [],
+            "testcase_name": getattr(testcase, "testcase_name", ""),
         }
 
         plan_path = os.path.join(tmp_dir, "plan.json")
         import json
-        with open(plan_path, 'w') as f:
+
+        with open(plan_path, "w") as f:
             json.dump(plan_info, f)
 
         env = os.environ.copy()
-        env['TTK_E2E_INPUT'] = input_path
-        env['TTK_E2E_PLAN'] = plan_path
-        env['TTK_E2E_RESULT'] = result_path
-        env['TTK_E2E_ERROR'] = error_path
-        env['TTK_E2E_DEVICES'] = ','.join(str(d) for d in device_ids)
-        env['TTK_E2E_NDEV'] = str(ndev)
+        env["TTK_E2E_INPUT"] = input_path
+        env["TTK_E2E_PLAN"] = plan_path
+        env["TTK_E2E_RESULT"] = result_path
+        env["TTK_E2E_ERROR"] = error_path
+        env["TTK_E2E_DEVICES"] = ",".join(str(d) for d in device_ids)
+        env["TTK_E2E_NDEV"] = str(ndev)
         # Pass graph mode to worker: "dynamic"/"static"/"" (multi-device mc2 graph path,
         # mirrors single-device _execute_graph driven by -d/-c switches).
         graph_mode = ""
@@ -844,15 +857,13 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
             graph_mode = "dynamic"
         elif switches.cst_switches.enabled:
             graph_mode = "static"
-        env['TTK_E2E_GRAPH_MODE'] = graph_mode
+        env["TTK_E2E_GRAPH_MODE"] = graph_mode
 
         cmd = [sys.executable, script_path]
         logging.info(f"E2E multi-device: running {cmd} with devices={device_ids} graph_mode={graph_mode or 'none'}")
 
         try:
-            proc = subprocess.run(cmd, env=env,
-                                  capture_output=True, text=True,
-                                  errors="replace")
+            proc = subprocess.run(cmd, env=env, capture_output=True, text=True, errors="replace")
             if proc.returncode != 0:
                 err_msg = proc.stderr[-2000:] if proc.stderr else "unknown"
                 if os.path.exists(error_path):
@@ -865,10 +876,11 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
                 if os.path.exists(result_path):
                     try:
                         _loaded = np.load(result_path, allow_pickle=True)
-                        if 'precision_0' in _loaded.files and 'pass_0' in _loaded.files:
+                        if "precision_0" in _loaded.files and "pass_0" in _loaded.files:
                             logging.warning(
                                 f"E2E worker rc={proc.returncode} but result.npz written; "
-                                f"using fallback result (worker exit crash ignored).")
+                                f"using fallback result (worker exit crash ignored)."
+                            )
                             fallback_used = True
                     except Exception:
                         pass
@@ -881,6 +893,7 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
                     return
         except subprocess.TimeoutExpired:
             import shutil
+
             try:
                 shutil.rmtree(tmp_dir)
             except Exception:
@@ -891,6 +904,7 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
 
         if not os.path.exists(result_path):
             import shutil
+
             try:
                 shutil.rmtree(tmp_dir)
             except Exception:
@@ -902,21 +916,22 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
         loaded = np.load(result_path, allow_pickle=True)
 
         # Check if worker did in-process comparison (torch.isclose for bf16 compat)
-        precision_keys = [k for k in loaded.files if k.startswith('precision_')]
+        precision_keys = [k for k in loaded.files if k.startswith("precision_")]
         if precision_keys:
-            prec = str(loaded['precision_0'])
-            passed = str(loaded['pass_0'])
+            prec = str(loaded["precision_0"])
+            passed = str(loaded["pass_0"])
             import shutil
+
             try:
                 shutil.rmtree(tmp_dir)
             except Exception:
                 pass
             return_struct.construct(prec, passed, None)
             # Multi-device mc2 graph result (dynamic/static) produced by worker
-            if 'graph_precision_0' in loaded.files:
-                gprec = str(loaded['graph_precision_0'])
-                gpass = str(loaded['graph_pass_0'])
-                gmode = str(loaded['graph_mode_0']) if 'graph_mode_0' in loaded.files else None
+            if "graph_precision_0" in loaded.files:
+                gprec = str(loaded["graph_precision_0"])
+                gpass = str(loaded["graph_pass_0"])
+                gmode = str(loaded["graph_mode_0"]) if "graph_mode_0" in loaded.files else None
                 if gmode == "static":
                     return_struct.construct(gprec, gpass, None, mode="static")
                 else:
@@ -925,12 +940,11 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
             del raw_inputs
             return
 
-        primary_result = [loaded[f'out_{i}'] for i in range(len(loaded.files))
-                          if f'out_{i}' in loaded]
-        golden_result = [loaded[f'golden_{i}'] for i in range(len(loaded.files))
-                         if f'golden_{i}' in loaded]
+        primary_result = [loaded[f"out_{i}"] for i in range(len(loaded.files)) if f"out_{i}" in loaded]
+        golden_result = [loaded[f"golden_{i}"] for i in range(len(loaded.files)) if f"golden_{i}" in loaded]
 
         import shutil
+
         try:
             shutil.rmtree(tmp_dir)
         except Exception:
@@ -944,16 +958,20 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
     _apply_pre_compare(testcase, primary_result, golden_nps, switches)
 
     output_dtypes = tuple(str(g.dtype) if g is not None else None for g in primary_result)
-    tol_options = _build_tol_options(testcase)
+    tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
+    standards = resolve_tolerance(
+        tolerance,
+        testcase.flat_precision_tolerances,
+        testcase.flat_absolute_precision,
+        output_dtypes,
+        switches.compare_method,
+    )
     try:
         custom_result = _try_custom_compare(testcase, primary_result, golden_nps, switches)
         if custom_result is not None:
             precision_str, log_str, is_pass = custom_result
         else:
-            precision_str, log_str, is_pass = compare(
-                primary_result, golden_nps, output_dtypes,
-                methods=switches.compare_method, options=tol_options
-            )
+            precision_str, log_str, is_pass, _ = compare(primary_result, golden_nps, output_dtypes, standards=standards)
     except Exception:
         logging.exception(f"[{testcase.testcase_name}] Eager comparison failure")
         return_struct.eager_precision = "COMPARE_FAILURE"
@@ -968,14 +986,14 @@ def _do_profile_multi_device(testcase, backend, device_grant_events,
 
 def _find_free_port():
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
+        s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
 
 
-def _do_profile(testcase, backend, device_grant_events, device_granted_indices,
-                dev_id, switches, return_struct):
+def _do_profile(testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct):
     """Core profiling logic."""
     process_ctx = get_process_context()
     return_struct.batch_consistency_id = getattr(testcase, "batch_consistency_id", None)
