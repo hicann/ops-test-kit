@@ -359,14 +359,16 @@ class AclOpExecutor:
         with self.rts_context():
             self._dvc.warmup(self._switches)
             with self.rts_stream() as stm:
-                output_byte_arrays, output_view_shapes, success, det_status = self._acl_sequence(stm)
+                output_byte_arrays, output_view_shapes, success, det_status, npu_memory = self._acl_sequence(stm)
+            # Cycle Analysis
             if self._dvc.is_model():
                 api_prof = "UNKNOWN"
                 op_prof = "TOTAL_CYCLE_TODO"
             else:
                 api_prof, op_prof = self._process_total_cycles()
             return ApiProfilingResult(
-                success, api_prof, op_prof, output_byte_arrays, output_view_shapes, deterministic_status=det_status
+                success, api_prof, op_prof, output_byte_arrays, output_view_shapes,
+                deterministic_status=det_status, npu_memory=npu_memory,
             )
 
     @staticmethod
@@ -393,6 +395,7 @@ class AclOpExecutor:
         deterministic = self._switches.deterministic_level == 1
         md5_list = []
         det_status = None
+        npu_memory = None
         try:
             prof_start_at = 1 if self._run_time > 1 else 0
             profiler_ctx = MsProfiler(
@@ -415,6 +418,7 @@ class AclOpExecutor:
                     try:
                         # call phase 1 interface
                         workspace_size, c_executor = self._dvc.acl_get_workspace(self._ctx.api_name, phase1_params)
+                        npu_memory = workspace_size
                         # call phase 2 interface
                         status = self._dvc.acl_execute(self._ctx.api_name, workspace_size, c_executor, stream)
                     except Exception as e:
@@ -468,7 +472,7 @@ class AclOpExecutor:
         elif deterministic > 0 and len(md5_list) == 1:
             det_status = "PASS"
 
-        return output_byte_arrays, output_view_shapes, status == "OK", det_status
+        return output_byte_arrays, output_view_shapes, status == "OK", det_status, npu_memory
 
     def _process_total_cycles(self):
         """

@@ -62,6 +62,7 @@ class ApiProfilingResult:
         output_view_shapes=(None,),
         oob: str = "UNKNOWN",
         deterministic_status: Optional[str] = None,
+        npu_memory: Optional[int] = None,
     ):
         self.api_prof: Union[str, List[dict]] = api_prof
         self.op_prof: Union[str, List[dict]] = op_prof
@@ -70,6 +71,8 @@ class ApiProfilingResult:
         self.oob: Optional[str] = oob
         self.success = success
         self.deterministic_status: Optional[str] = deterministic_status
+        # NPU device workspace memory (bytes) requested via aclnn GetWorkspaceSize.
+        self.npu_memory: Optional[int] = npu_memory
 
     @classmethod
     def fail(cls, fail_result: str) -> "ApiProfilingResult":
@@ -120,6 +123,7 @@ class ApiProfilingReturnStructure:
         "op_perf_us",
         "perf_status",
         "xpu_metrics",
+        "npu_memory",
     )
 
     def __init__(self, default_value=None):
@@ -136,6 +140,8 @@ class ApiProfilingReturnStructure:
         self.op_perf_us = default_value
         self.perf_status = default_value
         self.xpu_metrics = {}
+        # NPU device workspace memory (bytes) from aclnn GetWorkspaceSize.
+        self.npu_memory = default_value
 
     # noinspection DuplicatedCode
     def construct(self, context: TestcaseAclnn, compare_result: ApiComparisonResult):
@@ -153,6 +159,7 @@ class ApiProfilingReturnStructure:
         self.api_perf_us = _pick_api_avg_us(api_prof, getattr(context, "api_name", None))
         self.op_perf_us = _sum_op_avg_us(op_prof)
         self.perf_status = "PASS" if self.op_perf_us is not None else "UNKNOWN"
+        self.npu_memory = getattr(prof_result, "npu_memory", None) if prof_result else None
 
     @staticmethod
     def get_titles() -> tuple:
