@@ -70,7 +70,7 @@ _PROTO_ATTR_TYPE_TO_CPP = {
     "ListInt64": "vector_int64",
     "ListFloat": "vector_float",
     "ListDouble": "vector_double",
-    "ListBool": "vector_int64",
+    "ListBool": "vector_bool",
     "ListString": "vector_string",
     "ListType": "vector_int64",
     "Type": "ge_dtype",

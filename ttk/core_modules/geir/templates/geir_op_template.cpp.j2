@@ -410,6 +410,12 @@ int main(int argc, char* argv[]) {
     if (attrs_cfg.has("{{ attr.name }}")) {
         op_inst.set_attr_{{ attr.name }}(attrs_cfg.at("{{ attr.name }}").getString());
     }
+{% elif attr.cpp_type == "vector_bool" %}
+    if (attrs_cfg.has("{{ attr.name }}")) {
+        vector<bool> __av;
+        for (const auto& __e : attrs_cfg.at("{{ attr.name }}").getArray()) __av.push_back((bool)__e.getInt());
+        op_inst.set_attr_{{ attr.name }}(__av);
+    }
 {% elif attr.cpp_type == "vector_int64" %}
     if (attrs_cfg.has("{{ attr.name }}")) {
         vector<int64_t> __av;
@@ -577,19 +583,9 @@ int main(int argc, char* argv[]) {
 {% endfor %}
 
     // ---------- graph outputs ----------
-    // op_inst covers declared output ports. Inplace outputs (data nodes modified
-    // in place) must also be graph outputs so RunGraph returns their data.
 {% if output_names %}
     output_ops.push_back(op_inst);
 {% endif %}
-    for (size_t oi = 0; oi < outputs_cfg.size(); ++oi) {
-        const JsonValue& out = outputs_cfg.at(oi);
-        if (!out.isNull() && out.has("inplace_input_idx")) {
-            int di = (int)out.at("inplace_input_idx").getInt();
-            if (di >= 0 && di < (int)data_ops.size())
-                output_ops.push_back(data_ops[di]);
-        }
-    }
     if (output_ops.empty()) {
         output_ops.push_back(op_inst);
     }
