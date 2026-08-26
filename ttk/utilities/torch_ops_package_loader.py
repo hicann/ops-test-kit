@@ -26,6 +26,7 @@ class TorchOpsPackageLoader:
 
     NAMESPACE_PACKAGES = {
         "cann_ops_transformer": "cann_ops_transformer",
+        "cann_ops_nn": "cann_ops_nn",
     }
     CANN_ROOT_ENV_VARS = (
         "ASCEND_HOME_PATH",
