@@ -85,8 +85,10 @@ def _check_quant_applicable(dtype_str, input_dtypes):
     量化场景成立。若用在索引/计数类输出上，±1 的容忍会放过真缺陷，而且悄无声息。
     【为何报错而非降级】误用是配置错误，应当让作者当场看见并改正；静默换成别的判据
     会让 Spec 声明与实际判定不一致，是更隐蔽的坑。
-    【为何要求输入全为浮点】标准的前提是"浮点型输入"。此处从严：只要有一个输入不是
-    浮点就不认（如整型索引参与的算子，语义可能不是量化）。
+    【为何要求至少一个浮点输入】量化必然存在 float→int 的转换，被量化的数据必为
+    浮点。但量化算子天然带整型量化参数（如 zero_points / antiquant offset），要求
+    "全部输入浮点"会误伤这类合法算子。改为"至少一个浮点输入"——既保留对纯整型算子
+    （索引/计数/掩码，无任何浮点输入）的拦截，又不拒绝带整型量化参数的量化算子。
     """
     if dtype_str not in _QUANT_OUT_DTYPES:
         raise ValueError(
@@ -94,10 +96,11 @@ def _check_quant_applicable(dtype_str, input_dtypes):
             f"{sorted(_QUANT_OUT_DTYPES)} 输出（绝对误差<=1 是量化语义；索引/计数类输出差 1 即错）。")
     if input_dtypes is not None:
         ins = [_dtype_str(d) for d in input_dtypes if d is not None]
-        if ins and not all(_is_float_dtype(i) for i in ins):
+        if ins and not any(_is_float_dtype(i) for i in ins):
             raise ValueError(
                 f"Spec.tolerance 为 [{dtype_str}] 声明了 standard='quant'，但输入 dtype {ins} "
-                f"并非全为浮点。quant 的前提是【浮点型输入 + int4/int8 输出】的量化场景。")
+                f"全为整型。quant 的前提是【浮点型输入 + int4/int8 输出】的量化场景；"
+                f"纯整型算子（索引/计数/掩码）应使用 binary_equal。")
 
 
 def _float_choice(tolerance: Optional[dict], dtype_str: str,
