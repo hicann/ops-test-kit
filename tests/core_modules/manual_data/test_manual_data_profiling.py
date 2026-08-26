@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """manual_data prepare/replay 与 e2e/aclnn profiling 流程的集成测试。"""
+
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -195,7 +196,7 @@ def test_e2e_replay_skips_input_and_golden_generation(monkeypatch, tmp_path):
         MagicMock(side_effect=AssertionError("golden generation must be skipped")),
     )
     monkeypatch.setattr(e2e_profiling, "resolve_api", lambda *_: (lambda *_: None, False))
-    monkeypatch.setattr(e2e_profiling, "_execute_eager", lambda *_: (golden, None))
+    monkeypatch.setattr(e2e_profiling, "_execute_eager", lambda *_: (golden, None, None))
     monkeypatch.setattr(e2e_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(e2e_profiling, "_profiling_print", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_dump_inputs", lambda *_: None)
@@ -248,7 +249,7 @@ def test_e2e_replay_custom_compare_receives_restored_inputs(monkeypatch, tmp_pat
     )
     monkeypatch.setattr(e2e_profiling, "get_spec_attr", spec_attr)
     monkeypatch.setattr(e2e_profiling, "resolve_api", lambda *_: (lambda *_: None, False))
-    monkeypatch.setattr(e2e_profiling, "_execute_eager", lambda *_: ([golden[0].copy()], None))
+    monkeypatch.setattr(e2e_profiling, "_execute_eager", lambda *_: ([golden[0].copy()], None, None))
     monkeypatch.setattr(e2e_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(e2e_profiling, "_profiling_print", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_dump_inputs", lambda *_: None)
@@ -298,7 +299,7 @@ def test_e2e_provider_automatically_selects_replay(monkeypatch, tmp_path):
         MagicMock(side_effect=AssertionError("golden generation must be skipped")),
     )
     monkeypatch.setattr(e2e_profiling, "resolve_api", lambda *_: (lambda *_: None, False))
-    monkeypatch.setattr(e2e_profiling, "_execute_eager", lambda *_: (golden, None))
+    monkeypatch.setattr(e2e_profiling, "_execute_eager", lambda *_: (golden, None, None))
     monkeypatch.setattr(e2e_profiling, "DeviceLock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(e2e_profiling, "_profiling_print", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_dump_inputs", lambda *_: None)

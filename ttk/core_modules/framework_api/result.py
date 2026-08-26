@@ -44,6 +44,7 @@ class FrameworkApiReturnStructure:
         "graph_aclgraph_kernel_details",
         "precision_metrics",
         "batch_consistency_id",
+        "deterministic_status",
         "xpu_metrics",
     )
 
@@ -70,6 +71,7 @@ class FrameworkApiReturnStructure:
         self.graph_aclgraph_kernel_count = None
         self.graph_aclgraph_kernel_details = None
         self.batch_consistency_id = None
+        self.deterministic_status = None
         self.precision_metrics = {}
         self.xpu_metrics = {}
 

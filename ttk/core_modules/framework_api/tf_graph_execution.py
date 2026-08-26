@@ -19,7 +19,7 @@ import logging
 
 from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 
-from .profiling_utils import prepare_device_args
+from .profiling_utils import compute_output_md5, finalize_det_status, prepare_device_args
 from .tf_graph_network import TfGraphWrapper
 
 WARMUP_COUNT = 1
@@ -80,11 +80,11 @@ def _execute_tf_graph(
         dynamic: True for dynamic shape graph, False for static shape graph
 
     Returns:
-        (list of numpy arrays, ProfileResult) on success, or ([], None) on failure
+        (list of numpy arrays, ProfileResult, det_status) on success, or ([], None, None) on failure
     """
     if is_aclgraph:
         logging.warning("aclgraph mode not supported for TF, skipping")
-        return [], None
+        return [], None, None
 
     mode_str = "dynamic" if dynamic else "static"
     logging.info(f"Executing TF graph mode: {mode_str}")
@@ -105,6 +105,8 @@ def _execute_tf_graph(
         wrapper = TfGraphWrapper(resolved, input_signature=input_signature, dynamic=dynamic, api_name=testcase.api_name)
 
         profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
+        deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
+        run_count = switches.run_time
         if switches.warmup and profiling_enabled:
             for _ in range(WARMUP_COUNT):
                 wrapper(*args, **kwargs)
@@ -122,18 +124,23 @@ def _execute_tf_graph(
                 enabled=profiling_enabled,
             ),
         )
-        run_count = switches.run_time
+        md5_list = []
         result = None
         with profiler:
             for _ in range(run_count):
                 result = wrapper(*args, **kwargs)
+                if deterministic:
+                    backend.synchronize(dev_id)
+                    run_nps = backend.result_to_numpy(result)
+                    md5_list.append(compute_output_md5(run_nps))
             backend.synchronize(dev_id)
 
         perf = profiler.result(backend, run_count)
         result_nps = backend.result_to_numpy(result)
+        det_status = finalize_det_status(md5_list, testcase.testcase_name)
     except Exception as e:
         logging.error(f"TF graph {mode_str} execution failed: {e}", exc_info=True)
-        return [], None
+        return [], None, None
 
     del args, kwargs
-    return result_nps, perf
+    return result_nps, perf, det_status

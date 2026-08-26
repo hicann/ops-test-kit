@@ -24,7 +24,7 @@ from ttk.test_spec import get_spec_attr
 
 from .graph_network import GraphNetwork, split_params
 from .profiler import ProfilerConfig, get_profiler
-from .profiling_utils import prepare_device_args
+from .profiling_utils import compute_output_md5, finalize_det_status, prepare_device_args
 
 WARMUP_COUNT = 1
 
@@ -82,6 +82,7 @@ def _run_compiled(
     inplace_kwargs_keys=None,
 ):
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
+    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
     run_count = switches.run_time
     is_kwargs_mode = inplace_kwargs_keys is not None
 
@@ -145,6 +146,7 @@ def _run_compiled(
             enabled=profiling_enabled,
         ),
     )
+    md5_list = []
     with profiler:
         for i in range(run_count):
             if i < run_count - 1:
@@ -164,6 +166,16 @@ def _run_compiled(
             r = compiled(*args, **kwargs)
             if not is_inplace:
                 result = r
+            if deterministic:
+                backend.synchronize(dev_id)
+                run_nps = []
+                if r is not None:
+                    run_nps.extend(backend.result_to_numpy(r))
+                if inplace_backups and not is_kwargs_mode:
+                    for idx in sorted(inplace_backups):
+                        if idx < len(args) and args[idx] is not None:
+                            run_nps.append(backend.to_numpy(args[idx], safe=True))
+                md5_list.append(compute_output_md5(run_nps))
         backend.synchronize(dev_id)
 
     perf = profiler.result(backend, max(run_count, 1))
@@ -171,7 +183,9 @@ def _run_compiled(
     if not is_inplace:
         result_nps = backend.result_to_numpy(result, copy=is_inplace)
 
-    return result_nps, perf
+    det_status = finalize_det_status(md5_list, testcase_name)
+
+    return result_nps, perf, det_status
 
 
 def _execute_graph(
@@ -203,11 +217,11 @@ def _execute_graph(
         dynamic: True for dynamic shape graph, False for static shape graph
 
     Returns:
-        (list of numpy arrays, ProfileResult) on success, or (None, None) on failure
+        (list of numpy arrays, ProfileResult, det_status) on success, or ([], None, None) on failure
     """
     if not backend.is_npu():
         logging.warning("Graph mode only supports NPU backend, skipping")
-        return [], None
+        return [], None, None
 
     import torch_npu
 
@@ -278,7 +292,7 @@ def _execute_graph(
             npu_backend = _get_npu_backend()
     except Exception as e:
         logging.error(f"Failed to get TorchAir NPU backend: {e}")
-        return [], None
+        return [], None, None
 
     use_fullgraph = bool(switches.fullgraph)
     try:
@@ -286,7 +300,7 @@ def _execute_graph(
             compiled = _compile_model_aclgraph(model, npu_backend)
         else:
             compiled = _compile_model(model, npu_backend, dynamic, use_fullgraph)
-        result_nps, perf = _run_compiled(
+        result_nps, perf, det_status = _run_compiled(
             compiled,
             run_args,
             run_kwargs,
@@ -303,7 +317,7 @@ def _execute_graph(
 
     except Exception as e:
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)
-        return [], None
+        return [], None, None
 
     if result_nps:
         if inplace_input_indexes:
@@ -315,4 +329,4 @@ def _execute_graph(
 
     if inplace_backup is not None:
         del inplace_backup
-    return result_nps, perf
+    return result_nps, perf, det_status

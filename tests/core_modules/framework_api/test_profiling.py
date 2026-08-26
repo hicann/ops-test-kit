@@ -28,6 +28,7 @@ from ttk.core_modules.framework_api.input_generation import (
 def _make_switches(**overrides):
     """构造测试用 SWITCHES 对象，默认 input_distribution='uniform'。"""
     from ttk.utilities.classes import SWITCHES
+
     sw = SWITCHES()
     sw.input_distribution = "uniform"
     for k, v in overrides.items():
@@ -35,10 +36,17 @@ def _make_switches(**overrides):
     return sw
 
 
-def _make_testcase(shapes, dtypes, attrs=None, output_tensor_indexes=(),
-                   pure_output_indexes=None, storage_shapes=(),
-                   view_strides=(), view_offsets=(),
-                   input_data_ranges=None):
+def _make_testcase(
+    shapes,
+    dtypes,
+    attrs=None,
+    output_tensor_indexes=(),
+    pure_output_indexes=None,
+    storage_shapes=(),
+    view_strides=(),
+    view_offsets=(),
+    input_data_ranges=None,
+):
     """构造一个 MagicMock 测试用例，模拟 flat_tensor_* 系列接口。"""
     case = MagicMock()
     case.flat_tensor_view_shapes = shapes
@@ -62,6 +70,7 @@ def _make_testcase(shapes, dtypes, attrs=None, output_tensor_indexes=(),
             if s is not None and s != ():
                 return s
         from ttk.utilities.container_utils import shape_stride
+
         v = shapes[idx] if idx < len(shapes) else None
         return shape_stride(v) if v is not None else None
 
@@ -106,9 +115,7 @@ class TestDefaultGenerateInputs:
 
     def test_basic_input_generation(self):
         """基本场景：两个 float32 张量正确生成。"""
-        case = _make_testcase(
-            shapes=((4,), (4,)),
-            dtypes=('float32', 'float32'))
+        case = _make_testcase(shapes=((4,), (4,)), dtypes=("float32", "float32"))
         switches = _make_switches()
         inputs = default_generate_inputs(case, switches)
         assert len(inputs) == 2
@@ -127,28 +134,36 @@ class TestApplyPreCompareSkip:
         return sw
 
     @pytest.mark.parametrize(
-        "api_name, plugin_path, spec_return, result_init, golden_init, "
-        "expected_result, expected_golden",
+        "api_name, plugin_path, spec_return, result_init, golden_init, expected_result, expected_golden",
         [
             pytest.param(
-                "softmax_v2", None, None,
-                [np.array([1, 2])], [np.array([3, 4])],
-                [1, 2], [3, 4],
+                "softmax_v2",
+                None,
+                None,
+                [np.array([1, 2])],
+                [np.array([3, 4])],
+                [1, 2],
+                [3, 4],
                 id="no_plugin_path",
             ),
             pytest.param(
-                "add", "/fake/path", "mock",
-                [np.array([1, 2])], [],
-                [1, 2], None,
+                "add",
+                "/fake/path",
+                "mock",
+                [np.array([1, 2])],
+                [],
+                [1, 2],
+                None,
                 id="empty_golden",
             ),
         ],
     )
-    def test_skip_conditions(self, api_name, plugin_path, spec_return,
-                             result_init, golden_init,
-                             expected_result, expected_golden):
+    def test_skip_conditions(
+        self, api_name, plugin_path, spec_return, result_init, golden_init, expected_result, expected_golden
+    ):
         """验证各跳过条件下 result/golden 保持不变。"""
         from ttk.core_modules.framework_api.profiling import _apply_pre_compare
+
         case = MagicMock()
         case.api_name = api_name
         case.testcase_name = "test_0"
@@ -156,8 +171,7 @@ class TestApplyPreCompareSkip:
         result = list(result_init)
         golden = list(golden_init)
         spec_val = MagicMock() if spec_return == "mock" else spec_return
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr",
-                   return_value=spec_val):
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=spec_val):
             _apply_pre_compare(case, result, golden, sw)
         if expected_result is not None:
             np.testing.assert_array_equal(result[0], expected_result)
@@ -175,6 +189,7 @@ class TestApplyPreCompareInplace:
         def pre_compare(*outputs):
             for arr in outputs:
                 arr[:] = arr * 2
+
         case = MagicMock()
         case.api_name = "add"
         case.testcase_name = "test_0"
@@ -198,6 +213,7 @@ class TestApplyPreCompareReturnMode:
 
         def pre_compare(*outputs):
             return [arr * 2 for arr in outputs]
+
         case = MagicMock()
         case.api_name = "add"
         case.testcase_name = "test_0"
@@ -217,6 +233,7 @@ class TestApplyPreCompareReturnMode:
 
         def pre_compare(*outputs):
             raise RuntimeError("boom")
+
         case = MagicMock()
         case.api_name = "add"
         case.testcase_name = "test_0"
@@ -242,8 +259,9 @@ class TestPreCompareEndToEnd:
 
         captured = {}
 
-        def fake_evaluate_eager_precision(testcase, raw_inputs, result_nps, golden_nps,
-                                     switches, perf, return_struct, third_parties=None):
+        def fake_evaluate_eager_precision(
+            testcase, raw_inputs, result_nps, golden_nps, switches, perf, return_struct, third_parties=None
+        ):
             captured["result"] = list(result_nps)
             captured["golden"] = list(golden_nps)
 
@@ -268,18 +286,18 @@ class TestPreCompareEndToEnd:
         fake_result = [np.array([1.0, 2.0])]
         fake_golden = [np.array([10.0, 20.0])]
 
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr",
-                   side_effect=lambda api, attr, path: pre_compare if attr == "pre_compare" else None), \
-             patch.object(prof_module, "get_process_context"), \
-             patch.object(prof_module, "resolve_api", return_value=(MagicMock(__name__="add"), False)), \
-             patch.object(prof_module, "generate_inputs", return_value=[np.array([1.0])]), \
-             patch.object(prof_module, "_dump_inputs"), \
-             patch.object(prof_module, "DeviceLock"), \
-             patch.object(prof_module, "_profiling_print"), \
-             patch.object(prof_module, "_execute_eager", return_value=(fake_result, MagicMock())), \
-             patch.object(prof_module, "_dump_outputs"), \
-             patch.object(prof_module, "_generate_golden_data", return_value=fake_golden), \
-             patch.object(prof_module, "_evaluate_eager_precision", side_effect=fake_evaluate_eager_precision):
+        with patch(
+            "ttk.core_modules.framework_api.profiling.get_spec_attr",
+            side_effect=lambda api, attr, path: pre_compare if attr == "pre_compare" else None,
+        ), patch.object(prof_module, "get_process_context"), patch.object(
+            prof_module, "resolve_api", return_value=(MagicMock(__name__="add"), False)
+        ), patch.object(prof_module, "generate_inputs", return_value=[np.array([1.0])]), patch.object(
+            prof_module, "_dump_inputs"
+        ), patch.object(prof_module, "DeviceLock"), patch.object(prof_module, "_profiling_print"), patch.object(
+            prof_module, "_execute_eager", return_value=(fake_result, MagicMock(), None)
+        ), patch.object(prof_module, "_dump_outputs"), patch.object(
+            prof_module, "_generate_golden_data", return_value=fake_golden
+        ), patch.object(prof_module, "_evaluate_eager_precision", side_effect=fake_evaluate_eager_precision):
             prof_module._do_profile(case, mock_backend, {}, {}, 0, sw, mock_return_struct)
 
         np.testing.assert_array_equal(captured["result"][0], [2.0, 4.0])
@@ -298,28 +316,33 @@ class TestTryCustomCompareSkip:
         "api_name, plugin_path, spec_return, result_arr, golden_arr",
         [
             pytest.param(
-                "add", None, None,
-                [np.array([1.0, 2.0])], [np.array([3.0, 4.0])],
+                "add",
+                None,
+                None,
+                [np.array([1.0, 2.0])],
+                [np.array([3.0, 4.0])],
                 id="no_plugin_path",
             ),
             pytest.param(
-                "add", "/fake/path", "mock",
-                [], [np.array([2.0])],
+                "add",
+                "/fake/path",
+                "mock",
+                [],
+                [np.array([2.0])],
                 id="empty_result_nps",
             ),
         ],
     )
-    def test_skip_returns_none(self, api_name, plugin_path, spec_return,
-                               result_arr, golden_arr):
+    def test_skip_returns_none(self, api_name, plugin_path, spec_return, result_arr, golden_arr):
         """验证各跳过条件下 _try_custom_compare 返回 None。"""
         from ttk.core_modules.framework_api.profiling import _try_custom_compare
+
         case = MagicMock()
         case.api_name = api_name
         case.testcase_name = "test_0"
         sw = self._make_switches_with_path(plugin_path=plugin_path)
         spec_val = MagicMock() if spec_return == "mock" else spec_return
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr",
-                   return_value=spec_val):
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=spec_val):
             assert _try_custom_compare(case, result_arr, golden_arr, sw) is None
 
 
@@ -342,21 +365,23 @@ class TestTryCustomCompareAdapt:
         "output_dist, compare_fn, result_arr, golden_arr, expected_p, expected_is_pass",
         [
             pytest.param(
-                (), _compare_single_dict,
-                [np.array([1.0, 2.0])], [np.array([1.0, 2.0])],
-                "99.5%", True,
+                (),
+                _compare_single_dict,
+                [np.array([1.0, 2.0])],
+                [np.array([1.0, 2.0])],
+                "99.5%",
+                True,
                 id="single_dict",
             ),
         ],
     )
-    def test_dict_list_return(self, output_dist, compare_fn, result_arr,
-                              golden_arr, expected_p, expected_is_pass):
+    def test_dict_list_return(self, output_dist, compare_fn, result_arr, golden_arr, expected_p, expected_is_pass):
         """compare 返回 dict 时的精度拼接与 pass 判定。"""
         from ttk.core_modules.framework_api.profiling import _try_custom_compare
+
         case = self._make_case(output_dist=output_dist)
         sw = self._make_switches()
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr",
-                   return_value=compare_fn):
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=compare_fn):
             p, log, is_pass = _try_custom_compare(case, result_arr, golden_arr, sw)
         assert p == expected_p
         assert is_pass == expected_is_pass
@@ -365,23 +390,24 @@ class TestTryCustomCompareAdapt:
         "compare_return, match, result_arr, golden_arr",
         [
             pytest.param(
-                {"precision": 99.0}, r"missing required key\(s\): 'pass'",
-                [np.array([1.0])], [np.array([1.0])],
+                {"precision": 99.0},
+                r"missing required key\(s\): 'pass'",
+                [np.array([1.0])],
+                [np.array([1.0])],
                 id="missing_pass",
             ),
         ],
     )
-    def test_invalid_return_raises(self, compare_return, match,
-                                   result_arr, golden_arr):
+    def test_invalid_return_raises(self, compare_return, match, result_arr, golden_arr):
         """compare 返回非法结构时抛出 ValueError。"""
         from ttk.core_modules.framework_api.profiling import _try_custom_compare
 
         def compare(*outputs):
             return compare_return
+
         case = self._make_case()
         sw = self._make_switches()
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr",
-                   return_value=compare):
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=compare):
             with pytest.raises(ValueError, match=match):
                 _try_custom_compare(case, result_arr, golden_arr, sw)
 
@@ -415,8 +441,10 @@ class TestCustomCompareEndToEnd:
         mock_perf.elapsed_us = 10.0
         mock_perf.kernel_details = None
 
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr",
-                   side_effect=lambda *a, **k: custom_compare if a[-2] == "compare" else None):
+        with patch(
+            "ttk.core_modules.framework_api.profiling.get_spec_attr",
+            side_effect=lambda *a, **k: custom_compare if a[-2] == "compare" else None,
+        ):
             prof_module._evaluate_eager_precision(case, [], result, golden, sw, mock_perf, return_struct)
 
         assert return_struct.eager_precision == "100.0%"
@@ -483,8 +511,10 @@ class TestCustomCompareEndToEnd:
         mock_perf.elapsed_us = 10.0
         mock_perf.kernel_details = None
 
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr",
-                   side_effect=lambda *a, **k: custom_compare if a[-2] == "compare" else None):
+        with patch(
+            "ttk.core_modules.framework_api.profiling.get_spec_attr",
+            side_effect=lambda *a, **k: custom_compare if a[-2] == "compare" else None,
+        ):
             prof_module._evaluate_eager_precision(case, [], result, golden, sw, mock_perf, return_struct)
 
         assert return_struct.eager_precision == "COMPARE_FAILURE"

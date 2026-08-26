@@ -13,7 +13,29 @@ Profiling utility functions shared between profiling.py and graph_execution.py.
 Framework-neutral — all framework-specific logic is delegated to backend methods.
 """
 
+import hashlib
+import logging
+
 import numpy as np
+
+
+def compute_output_md5(arrays):
+    """Compute MD5 hash of numpy output arrays for deterministic check."""
+    if not isinstance(arrays, (list, tuple)):
+        arrays = [arrays]
+    return hashlib.md5(b"".join(arr.tobytes() if isinstance(arr, np.ndarray) else b"" for arr in arrays)).hexdigest()
+
+
+def finalize_det_status(md5_list, testcase_name):
+    """Compare MD5 list and return deterministic status string."""
+    if not md5_list:
+        return None
+    if len(md5_list) > 1:
+        if len(set(md5_list)) != 1:
+            logging.error(f"[{testcase_name}] E2E MD5 mismatch across {len(md5_list)} runs: {md5_list}")
+            return "FAIL"
+        logging.info(f"[{testcase_name}] E2E MD5 consistent across {len(md5_list)} runs: {md5_list[0]}")
+    return "PASS"
 
 
 def apply_format_cast(tensors, formats):

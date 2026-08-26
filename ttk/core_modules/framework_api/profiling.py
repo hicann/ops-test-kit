@@ -46,7 +46,7 @@ from .backends import get_backend
 from .eager_execution import call_api
 from .input_generation import generate_inputs
 from .profiler import ProfilerConfig, get_profiler
-from .profiling_utils import prepare_device_args, unpack_4bit_outputs
+from .profiling_utils import compute_output_md5, finalize_det_status, prepare_device_args, unpack_4bit_outputs
 from .result import FrameworkApiReturnStructure
 
 WARMUP_COUNT = 1
@@ -176,6 +176,9 @@ def _profiling_end_print(testcase, return_struct, golden_nps=None, switches=None
         return
 
     lines.append(f"STATUS: {return_struct.precision_status}")
+
+    if return_struct.deterministic_status is not None:
+        lines.append(f"DETERMINISTIC: {return_struct.deterministic_status}")
 
     if has_eager and not has_graph:
         title = "Eager Result Summary"
@@ -365,7 +368,7 @@ def _ensure_deterministic_level_e2e(process_ctx, backend, testcase):
 
 
 def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
-    """Build device tensors, run API in eager mode with profiling, return (result_nps, perf) or raises."""
+    """Build device tensors, run API in eager mode with profiling, return (result_nps, perf, det_status)."""
     if backend.is_npu():
         import torch_npu
 
@@ -384,6 +387,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         )
 
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
+    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
     run_count = switches.run_time
     profiler = get_profiler(
         testcase.api_name,
@@ -450,6 +454,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
             original_tensors[0] = args[0]
             inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
 
+    md5_list = []
     with profiler:
         for i in range(run_count):
             if i < run_count - 1:
@@ -463,8 +468,18 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
                     r = getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
                 else:
                     r = resolved(*args, **kwargs)
-            if not is_inplace:
-                result = r
+                if not is_inplace:
+                    result = r
+            if deterministic:
+                backend.synchronize(dev_id)
+                run_nps = []
+                if r is not None:
+                    run_nps.extend(backend.result_to_numpy(r))
+                if inplace_input_indexes:
+                    for idx in sorted(inplace_input_indexes):
+                        if idx < len(args) and args[idx] is not None:
+                            run_nps.append(backend.to_numpy(args[idx], safe=True))
+                md5_list.append(compute_output_md5(run_nps))
         backend.synchronize(dev_id)
 
     perf = profiler.result(backend, run_count)
@@ -480,9 +495,11 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
                 inplace_np = backend.to_numpy(args[idx], safe=True)
                 result_nps.append(inplace_np)
 
+    det_status = finalize_det_status(md5_list, testcase.testcase_name)
+
     del args, kwargs
     result_nps = unpack_4bit_outputs(testcase, result_nps)
-    return result_nps, perf
+    return result_nps, perf, det_status
 
 
 def _needs_golden_promote(testcase, switches, ref_nps):
@@ -1091,12 +1108,16 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
     use_device = backend.has_device()
     result_nps = None
     perf = None
+    eager_det_status = None
     graph_cst_nps = None
     graph_dyn_nps = None
     graph_cst_perf = None
     graph_dyn_perf = None
     graph_aclgraph_nps = None
     graph_aclgraph_perf = None
+    graph_cst_det = None
+    graph_dyn_det = None
+    graph_aclgraph_det = None
     with DeviceLock(
         process_ctx,
         dev_id,
@@ -1109,7 +1130,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
 
         process_ctx.notify_status("OnEagerProfiling")
         if not getattr(switches, "aclgraph_enabled", False):
-            result_nps, perf = _execute_eager(
+            result_nps, perf, eager_det_status = _execute_eager(
                 testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs
             )
         if graph_enabled:
@@ -1125,7 +1146,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 graph_fn = _execute_graph
             if getattr(switches, "aclgraph_enabled", False):
                 process_ctx.notify_status("OnGraphAclgraph")
-                graph_aclgraph_nps, graph_aclgraph_perf = graph_fn(
+                graph_aclgraph_nps, graph_aclgraph_perf, graph_aclgraph_det = graph_fn(
                     testcase,
                     backend,
                     dev_id,
@@ -1140,7 +1161,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 )
             if switches.cst_switches.enabled:
                 process_ctx.notify_status("OnGraphCst")
-                graph_cst_nps, graph_cst_perf = graph_fn(
+                graph_cst_nps, graph_cst_perf, graph_cst_det = graph_fn(
                     testcase,
                     backend,
                     dev_id,
@@ -1154,7 +1175,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 )
             if switches.dyn_switches.enabled:
                 process_ctx.notify_status("OnGraphDyn")
-                graph_dyn_nps, graph_dyn_perf = graph_fn(
+                graph_dyn_nps, graph_dyn_perf, graph_dyn_det = graph_fn(
                     testcase,
                     backend,
                     dev_id,
@@ -1168,6 +1189,11 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
                 )
     gc.collect()
     _collect_sim_report(testcase, switches)
+
+    det_statuses = [eager_det_status, graph_cst_det, graph_dyn_det, graph_aclgraph_det]
+    det_statuses = [s for s in det_statuses if s is not None]
+    if det_statuses:
+        return_struct.deterministic_status = "FAIL" if "FAIL" in det_statuses else "PASS"
 
     # 被测侧输出(device 结果)。容差按它的 dtype 解析,不能按 golden 的——
     # Promote 会把 golden 抬到 fp64,拿 golden dtype 去 resolve_tolerance 要么查不到该
