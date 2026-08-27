@@ -183,7 +183,11 @@ class RandomData:
             if np_array.size > 10_000_000:
                 return np_array
             if np_array.size <= replace_count:
-                candidate = numpy.concatenate((np_array.reshape([-1]), replace_list))
+                # replace_list 先落成 np_array.dtype：直接 concatenate typed 数组与
+                # Python float 列表会被 numpy 提升成 float64（如 bf16 输入 + range(-0,+0)
+                # 的小 tensor 被静默改成 double）。
+                candidate = numpy.concatenate(
+                    (np_array.reshape([-1]), numpy.array(replace_list, dtype=np_array.dtype)))
                 idx = numpy.random.permutation(candidate.size)
                 # use copy() to discard view of `candidate`
                 np_array = candidate[idx][:np_array.size].reshape(shape).copy()
