@@ -155,11 +155,21 @@ class NpuProfiler(FrameworkProfiler):
         )
 
     def _find_csv(self, filename):
-        """Find a CSV file in the profiler output directory tree."""
+        """Find the latest-mtime CSV file in the profiler output directory tree.
+
+        torch_npu.profiler's tensorboard_trace_handler writes each trace into
+        a new timestamped subdir under _outdir, so multiple runs accumulate
+        multiple copies of kernel_details.csv / operator_details.csv. os.walk
+        yields subdirs in filesystem (os.listdir) order, not by time, so the
+        first match is not necessarily the newest — pick by mtime instead.
+        """
+        matches = []
         for root, _, files in os.walk(self._outdir):
             if filename in files:
-                return os.path.join(root, filename)
-        return None
+                matches.append(os.path.join(root, filename))
+        if not matches:
+            return None
+        return max(matches, key=os.path.getmtime)
 
     @staticmethod
     def _parse_kernel_details(csv_path):

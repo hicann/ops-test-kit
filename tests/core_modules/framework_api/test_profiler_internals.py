@@ -126,3 +126,49 @@ def test_get_profiler_torch_with_npu_builtin_returns_npu_profiler():
     backend = _NpuBackend()
     profiler = get_profiler("torch.add", backend)
     assert isinstance(profiler, NpuProfiler), f"Expected NpuProfiler, got {type(profiler).__name__}"
+
+
+def test_npu_find_csv_picks_latest_mtime(tmp_path):
+    """_find_csv returns the newest-mtime CSV when multiple trace subdirs exist.
+
+    torch_npu.profiler's tensorboard_trace_handler writes each run into a new
+    timestamped subdir under _outdir, so _outdir accumulates multiple copies
+    of kernel_details.csv / operator_details.csv. os.walk yields subdirs in
+    filesystem (os.listdir) order, not by time; _find_csv must pick by mtime to
+    avoid reading a stale trace from a previous run.
+    """
+    import os
+
+    from ttk.core_modules.framework_api.profiler import NpuProfiler
+
+    prof = NpuProfiler.__new__(NpuProfiler)
+    prof._outdir = str(tmp_path)
+
+    older_dir = tmp_path / "trace_older"
+    newer_dir = tmp_path / "trace_newer"
+    older_dir.mkdir()
+    newer_dir.mkdir()
+    older_csv = older_dir / "kernel_details.csv"
+    newer_csv = newer_dir / "kernel_details.csv"
+    older_csv.write_text("Name,Duration(us)\nold,10\n")
+    newer_csv.write_text("Name,Duration(us)\nnew,20\n")
+
+    older_str = str(older_csv)
+    newer_str = str(newer_csv)
+    os.utime(older_str, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(newer_str, ns=(2_000_000_000, 2_000_000_000))
+
+    found = prof._find_csv("kernel_details.csv")
+    assert found == newer_str
+
+
+def test_npu_find_csv_returns_none_when_missing(tmp_path):
+    """_find_csv returns None when no matching CSV exists in the tree."""
+    from ttk.core_modules.framework_api.profiler import NpuProfiler
+
+    prof = NpuProfiler.__new__(NpuProfiler)
+    prof._outdir = str(tmp_path)
+    (tmp_path / "trace").mkdir()
+    (tmp_path / "trace" / "other.csv").write_text("x\n1\n")
+
+    assert prof._find_csv("kernel_details.csv") is None
