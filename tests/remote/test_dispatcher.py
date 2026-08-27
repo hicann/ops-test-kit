@@ -91,8 +91,8 @@ class TestInputSchema:
         a, b, c = np.array([1.0]), np.array([2.0]), np.array([3.0])
         schema = _build_input_schema(inputs=[[a, b], c], input_names=["x", "y"])
         assert schema == [
-            {"name": "x", "indices": [0, 1], "dtype": "float64"},
-            {"name": "y", "index": 2, "dtype": "float64"},
+            {"name": "x", "indices": [0, 1], "dtype": "float64", "format": None},
+            {"name": "y", "index": 2, "dtype": "float64", "format": None},
         ]
 
 

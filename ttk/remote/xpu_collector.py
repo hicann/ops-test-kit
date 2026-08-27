@@ -42,6 +42,7 @@ def _per_spec_mode(spec, priority, xpu_mode):
 
 def collect_xpu_results(specs, *, inputs, input_names, mode,
                         tenant_id, op_name="", op_type=None, attrs=None,
+                        input_formats=None,
                         spec_search_roots=None, tmp_root=None, runtime: int = 3,
                         param_order=None):
     """Dispatch specs to xpu-server, return aggregated results.
@@ -86,6 +87,7 @@ def collect_xpu_results(specs, *, inputs, input_names, mode,
                 inputs=inputs, input_names=input_names,
                 provider=provider,
                 attrs=attrs or {},
+                input_formats=input_formats,
                 endpoint_host=ep.host, endpoint_port=ep.port,
                 tenant_id=tenant_id, mode=spec_mode, return_result=True,
                 execution_type=spec.type, api=spec.api,

@@ -1055,11 +1055,18 @@ def execute_request(
         named = {k: _to_vendor_tensor(v, provider, device_str, _dtypes.get(k)) for k, v in named.items()}
 
         callable_fn, api_label = _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module, spec_class)
+        # 输入 format 已内嵌在 X-Input-Schema 每个条目（name/index/dtype/format）——
+        # 提取逐输入 format 并入 compose 的调用 kwargs，与 op attrs 并列；不混入算子属性。
+        # compose 可用 kwargs.get('input_formats') 读取（广播/归约轴判定用）。
+        compose_kwargs = dict(attrs or {})
+        schema_formats = [e.get("format") for e in (input_schema or []) if e.get("format")]
+        if schema_formats:
+            compose_kwargs["input_formats"] = schema_formats
         if has_perf(mode):
             raw_outputs, perf = _run_perf(
                 callable_fn,
                 named,
-                attrs or {},
+                compose_kwargs,
                 provider,
                 device_id,
                 use_device,
@@ -1071,7 +1078,7 @@ def execute_request(
             raw_outputs = _invoke(
                 callable_fn,
                 named,
-                attrs or {},
+                compose_kwargs,
                 provider,
                 device_id,
                 use_device,

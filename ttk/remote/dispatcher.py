@@ -201,7 +201,7 @@ def _dtype_name(arr):
         return None
 
 
-def _build_input_schema(inputs: list, input_names: list) -> list:
+def _build_input_schema(inputs: list, input_names: list, input_formats: Optional[list] = None) -> list:
     """Build X-Input-Schema from inputs and their names.
 
     嵌套为真相源：顶层 zip(input_names, inputs) 位置对齐，按 slot 类型分派。
@@ -209,6 +209,10 @@ def _build_input_schema(inputs: list, input_names: list) -> list:
     （deep_flatten 取叶子，过滤 None）。deep_flatten 不作用于 ndarray slot
     （其作容器元素时原子保留；裸 ndarray 当 sequence 入参会按行切，故 ndarray
     分支直接用 slot）。
+
+    ``input_formats`` 为逐输入 format（与 input_names 位置对齐，可为空）——
+    嵌入每个 schema 条目（name/index/dtype/**format**），server 侧可据此把
+    format 传给三方 compose（广播/归约轴判定用），不另设独立 header。
 
     注意：tensor-list slot 的 dtype 取自首个叶子（leaves[0]），假设同一 list
     内 dtype 同质；混合 dtype 的 list slot 未完全支持——server 每个 name 只应用
@@ -221,25 +225,28 @@ def _build_input_schema(inputs: list, input_names: list) -> list:
         f"inputs({len(inputs)}) > names({len(input_names)}): " \
         f"slots/names 长度不匹配（caller 构造 bug）"
 
+    fmts = list(input_formats) if input_formats else []
     fi = 0
     schema: list = []
-    for name, slot in zip(input_names, inputs):
+    for i, (name, slot) in enumerate(zip(input_names, inputs)):
+        fmt = fmts[i] if i < len(fmts) else None
         if slot is None:
-            schema.append({"name": name, "index": None, "dtype": None})
+            schema.append({"name": name, "index": None, "dtype": None, "format": fmt})
         elif isinstance(slot, (list, tuple)):
             leaves = [x for x in deep_flatten(slot) if x is not None]
             schema.append({
                 "name": name,
                 "indices": [fi + i for i in range(len(leaves))],
                 "dtype": _dtype_name(leaves[0]) if leaves else None,
+                "format": fmt,
             })
             fi += len(leaves)
         else:  # ndarray（含 0-d）/ numpy 标量 —— 单叶子,直接用 slot
-            schema.append({"name": name, "index": fi, "dtype": _dtype_name(slot)})
+            schema.append({"name": name, "index": fi, "dtype": _dtype_name(slot), "format": fmt})
             fi += 1
     # names 多于 inputs:尾部补 index:null
     for name in input_names[len(inputs):]:
-        schema.append({"name": name, "index": None, "dtype": None})
+        schema.append({"name": name, "index": None, "dtype": None, "format": None})
     return schema
 
 
@@ -389,6 +396,7 @@ def dispatch_to_remote(
     op_type: Optional[str] = None,
     provider: str = "torch",
     attrs: Optional[dict] = None,
+    input_formats: Optional[list] = None,
     endpoint_host: str = "127.0.0.1",
     endpoint_port: int = 9090,
     tenant_id: str = "unknown",
@@ -423,7 +431,7 @@ def dispatch_to_remote(
 
     # KERNEL no-spec (api=None) relies on the server's _resolve_3party_api to
     # derive the API from op_name/op_type — do NOT infer client-side.
-    schema = _build_input_schema(inputs, input_names)
+    schema = _build_input_schema(inputs, input_names, input_formats)
     effective_count = _schema_leaf_count(schema)
     mode_int = _parse_client_mode(mode)
 

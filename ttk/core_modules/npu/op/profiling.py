@@ -194,6 +194,7 @@ def _do_xpu_profiling(context, xpu_mode):
         input_names=input_names,
         op_type=op_type,
         attributes=context.attributes if hasattr(context, "attributes") else {},
+        input_formats=getattr(context, "input_formats", None),
         testcase_name=getattr(context, "testcase_name", context.op_name),
         switches=sw,
         need_data=need_data,
