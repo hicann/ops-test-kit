@@ -2,7 +2,7 @@
 
 适用于 `python3 -m ttk aclnn`，使用 `TestcaseAclnn`，共 27 个字段（含[公共字段](../Test_Case_Generation.md#公共字段所有模式通用)）。
 
-## 身份标识
+## 用例标识
 
 | 字段 | 类型 | 是否必填 | 默认值 | 说明 |
 |------|------|---------|--------|------|
@@ -23,7 +23,7 @@
 
 | 字段 | 类型 | 是否必填 | 默认值 | 说明 |
 |------|------|---------|--------|------|
-| `output_tensor_indexes` | INT_TUPLE | 否 | *(自动)* | 指示哪些张量是输出的索引。未设置时按参数命名规则自动填充：以 `Ref`/`Out`/`Output`/`OutOptional`/`OutputOptional` 结尾或等于 `output` 的张量参数识别为输出；Backward/Grad API 会排除 `gradOutput`/`gradOut`/`grad_output`/`attentionOut`/`dOut` 以及非末位的 `output`；无匹配时回退到最后一个张量 |
+| `output_tensor_indexes` | INT_TUPLE | 否 | *(自动)* | 指示哪些张量是输出的索引。未设置时按参数命名规则自动填充：以 `Ref`/`Out`/`Output`/`OutOptional`/`OutputOptional` 结尾或等于 `output` 的张量参数识别为输出；Backward/Grad API 会排除 `gradOutput`/`gradOut`/`grad_output`/`attentionOut` 以及非末位的 `output`；无匹配时回退到最后一个张量 |
 | `output_inplace_indexes` | INT_TUPLE | 否 | `()` | 原地操作输出索引。无需手动填写：框架自动从算子信息库推断（当输出名称与输入名称相同时，表示输出覆写到该输入内存上） |
 
 ## 属性与标量
@@ -94,3 +94,18 @@ full,aclnnAdd,"((10,8),)",(100,),,,...
 ```
 
 上例中 `slice_0` 取输出轴 0 的 `[0:5]`，`slice_1` 取 `[5:10]`，`full` 不切片取全部。三者 seed 相同，`slice_0` + `slice_1` 的切片长度之和等于 `full`，归入同一比对组。
+
+## 参考用例
+
+`examples/case_store/aclnn/` 目录下的示例：
+
+| 文件 | 验证特性 | 关键列 |
+|------|---------|--------|
+| `aclnn_add.csv` | 基础 aclnn API + 标量参数 | `scalar_dtypes` |
+| `aclnn_cat.csv` | 拼接 `dim` 属性 × 6 dtype | `attributes`（dim）、`output_tensor_indexes` |
+| `aclnn_convolution.csv` | 复杂属性（stride/padding/dilation/groups）解析 | `attributes`、`tensor_formats` |
+| `aclnn_inplace_fill_tensor.csv` | 原地操作（inplace） | `input_data_ranges`、`precision_tolerances` |
+| `aclnn_masked_select.csv` | bool mask 筛选 + 动态输出（elewise/broadcast） | `input_data_ranges`、`precision_tolerances` |
+| `aclnn_nonzero_v2.csv` | `as_tuple` 属性分支 + 动态输出 | `attributes`（as_tuple） |
+| `aclnn_split_tensor.csv` | 拆分为 TensorList 输出 + `splitSections`/`dim` | `attributes`、`output_tensor_indexes` |
+| `aclnn_add.xlsx` | xlsx 多 sheet（T1/T2）输入验证 | — |

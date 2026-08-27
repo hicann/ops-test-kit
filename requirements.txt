@@ -6,3 +6,4 @@ decorator
 six
 clang
 jinja2
+openpyxl>=3.1

@@ -177,6 +177,10 @@ python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --cpu
 
 # 输出结果
 python3 -m ttk e2e -i torch_add.csv -o results.csv
+
+# Excel 多 sheet 用例（默认首个工作表；--sheet 指定工作表）
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.xlsx
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.xlsx --sheet T2
 ```
 
 > 通用参数（用例筛选/设备并行/精度控制/调试/结果输出）见[任务执行](../Task_Execution.md)

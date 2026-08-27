@@ -13,7 +13,7 @@ python3 -m ttk {kernel,aclnn,e2e,geir,info,list} [选项]
 | `aclnn` | aclnn\* C API 调用 + 精度比对 |
 | `e2e` | 框架 API 端到端测试 |
 | `info` | 查询本机 Ascend NPU 设备信息 |
-| `list` | 预览 CSV 中的测试用例列表 |
+| `list` | 预览用例文件中的测试用例列表 |
 
 查看版本：
 
@@ -41,13 +41,17 @@ python3 -m ttk list -i examples/case_store/kernel/add.csv
 
 # 按算子名过滤预览
 python3 -m ttk list -i cases.csv --op add
+
+# 预览 Excel 用例（指定工作表）
+python3 -m ttk list -i cases.xlsx --sheet Sheet2
 ```
 
 # 通用参数
 
 | 参数 | 缩写 | 默认值 | 说明 | 示例 |
 |------|------|--------|------|------|
-| `--input` | `-i` | 无 | CSV 用例文件路径（必填） | `-i add.csv` |
+| `--input` | `-i` | 无 | 用例文件路径，支持 csv/xlsx（必填） | `-i add.csv` 或 `-i cases.xlsx` |
+| `--sheet` | | 首个工作表 | Excel 工作表名；仅 `.xlsx` 生效，csv 忽略。xlsx 默认输出名带实际 sheet 名（如 `cases_T2_result.csv`），多 sheet 互不覆盖 | `--sheet T2` |
 | `--config` | | 无 | ttk 配置 YAML 路径（覆盖 `~/.config/ttk/` 和 `./ttk.conf.yaml`） | `--config ttk.conf.yaml` |
 
 ## 用例筛选

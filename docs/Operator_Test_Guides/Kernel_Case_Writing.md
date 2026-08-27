@@ -11,7 +11,7 @@
   - 自定义算子信息库路径：`{ASCEND_OPP_PATH}/vendors/customize/op_impl/ai_core/tbe/config/{芯片系列号}/aic-{芯片系列号}-ops-info.json`
   - 例如 add 算子在 `ascend910b` 芯片上的 builtin 信息库：`$ASCEND_OPP_PATH/built-in/op_impl/ai_core/tbe/config/ascend910b/ops_math/aic-ascend910b-ops-info-math.json`
 
-## 身份标识
+## 用例标识
 
 | 字段 | 类型 | 是否必填 | 默认值 | 说明 |
 |------|------|---------|--------|------|
@@ -62,13 +62,13 @@
 
 `examples/case_store/kernel/` 目录下提供了各种场景的示例：
 
-| 文件 | 涵盖场景 |
-|------|----------|
-| `abs.csv` | 基本用例，多 dtype |
-| `add.csv` | 多 dtype、广播、input_data_ranges |
-| `concat_d.csv` | TensorList 输入（DYNAMIC） |
-| `mat_mul_v3.csv` | 可选输入（None 占位）、属性 |
-| `non_zero.csv` | 输出 shape 未知（output_shape_unknown_indexes） |
-| `reduce_min.csv` | ValueDepend 张量输入（axes 通过 attributes 指定） |
-| `split.csv` | TensorList 输出、动态参数 |
-| `zeros_like.csv` | 基本用例 |
+| 文件 | 验证特性 | 关键列 |
+|------|---------|--------|
+| `abs.csv` | 一元算子 dtype 全覆盖（int8/16/32/64、fp16/32）+ 精度 | 标准输入/输出列 |
+| `add.csv` | 二元 broadcast：6 dtype × 多 rank/广播模式 | `input_data_ranges` 控制随机数据范围 |
+| `concat_d.csv` | 动态输入个数 + 负 `concat_dim` 拼接 | `attributes`（concat_dim） |
+| `mat_mul_v3.csv` | 矩乘 `transpose_x1/x2` 组合 × 15 组 shape + 可选输入（None 占位） | `attributes`、`network_name` |
+| `non_zero.csv` | 输出 shape 由输入取值决定（数据相关动态输出） | `output_shape_unknown_indexes` 声明动态输出 |
+| `reduce_min.csv` | 规约 `axes`/`keepdims` + ValueDepend 张量输入 | `attributes`（axes/keepdims） |
+| `split.csv` | 拆分为 TensorList 输出 + `split_dim`/`num_split` | `attributes`，输出为多张量 |
+| `zeros_like.csv` | 输出与输入同 shape 的零填充（无输入数据依赖） | `output_shapes` 跟随 `input_shapes` |

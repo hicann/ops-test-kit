@@ -10,18 +10,21 @@
 """
 Precious Utility Functions
 """
-from .platform import *
+
 from .classes import *
-from .string_utils import *
 from .container_utils import *
-from .math import *
-from .format_utils import *
-from .file_utils import *
-from .singleton import Singleton
-from .dtypes import *
 from .data import RandomData
+from .dtypes import *
+from .file_utils import *
+from .format_utils import *
+from .func_dispatch import UnknownParamError, bind_by_name, framework_of, resolve_callable_str
+from .math import *
+from .platform import *
 from .plog_utils import extract_plog_errors
 from .proc import *
-from .func_dispatch import framework_of, bind_by_name, resolve_callable_str, UnknownParamError
+from .singleton import Singleton
+from .string_utils import *
+from .table_reader import *
+
 VERSION = "3.0.0"
 FAQ = ""

@@ -15,12 +15,12 @@ __all__ = ["UniversalTestcaseFactory"]
 
 
 # Standard Packages
-import csv
 import logging
 import random
 from typing import Any, Dict, List, Optional, Set, TextIO
 
 from ...utilities import get_global_storage, set_process_name, set_thread_name
+from ...utilities.table_reader import read_csv_rows, read_table
 
 # Third-Party Packages
 from .testcase_base import TestcaseBase
@@ -45,6 +45,23 @@ class UniversalTestcaseFactory:
         """
         Store the whole Testcases in the csv file into memory
         """
+        self._init_common(skip_validate)
+        header, rows = read_csv_rows(file)
+        self._init_from_rows(header, rows)
+
+    @classmethod
+    def from_path(cls, path: str, sheet: Optional[str] = None, skip_validate=False):
+        """
+        Load testcases from a CSV or XLSX file by path. XLSX uses openpyxl
+        and honors ``sheet`` (default: first worksheet); CSV ignores it.
+        """
+        self = cls.__new__(cls)
+        self._init_common(skip_validate)
+        header, rows = read_table(path, sheet)
+        self._init_from_rows(header, rows)
+        return self
+
+    def _init_common(self, skip_validate=False):
         # Raw rows
         self.raw_data: List[List[str]] = []
         # Headers
@@ -59,8 +76,10 @@ class UniversalTestcaseFactory:
 
         set_process_name("TestcaseManager")
         set_thread_name("Initialization")
-        # read csv file.
-        self._read_csv(file)
+
+    def _init_from_rows(self, header: List[str], rows: List[List[str]]):
+        self.header = list(header)
+        self.raw_data = [list(row) for row in rows]
         self._testcase_hdr_check()
         self._parse_testcase()
         set_process_name()
@@ -81,8 +100,8 @@ class UniversalTestcaseFactory:
             set_thread_name(testcase_struct.testcase_name)
             try:
                 testcase_struct.validate()
-            except:
-                raise RuntimeError(f"Failed parsing testcase {testcase_struct.testcase_name}")
+            except Exception as err:
+                raise RuntimeError(f"Failed parsing testcase {testcase_struct.testcase_name}") from err
 
     @staticmethod
     def set_case_default_value(testcases: List[TestcaseBase]) -> None:
@@ -165,7 +184,7 @@ class UniversalTestcaseFactory:
                     original_result = testcase_struct.original_dict[title]
                     try:
                         float(original_result)
-                    except:
+                    except Exception:
                         if original_result not in ("PASS",):
                             return True
                 else:
@@ -177,7 +196,7 @@ class UniversalTestcaseFactory:
     @staticmethod
     def _check_testcase_enabled(testcase_struct: TestcaseBase) -> bool:
         if not testcase_struct.is_enabled:
-            logging.debug("Testcase %s skipped bcz it's disabled" % testcase_struct.testcase_name)
+            logging.debug(f"Testcase {testcase_struct.testcase_name} skipped bcz it's disabled")
             return False
         # Skip testcase if it is disabled in current soc
         current_soc = get_global_storage().short_soc_version
@@ -253,20 +272,6 @@ class UniversalTestcaseFactory:
                 logging.warning(f"Detected duplicate testcase name: {ori_name}. Rename it to {new_name}")
                 return new_name
 
-    def _read_csv(self, file: TextIO):
-        csv_reader = csv.reader(file)
-        for row in csv_reader:
-            row = [column.strip() for column in row]
-            if row:
-                self.raw_data.append(row)
-        # First line should always be the title
-        try:
-            self.header = self.raw_data[0]
-        except IndexError:
-            logging.error("Testcase initialization received IndexError, csv file might be empty!")
-            raise
-        del self.raw_data[0]
-
     def _testcase_hdr_check(self):
         set_thread_name("HeaderCheckTestcaseName")
         # Testcase name generation
@@ -276,7 +281,7 @@ class UniversalTestcaseFactory:
             )
             self.header.append("testcase_name")
             for idx, row in enumerate(self.raw_data):
-                row.append("auto_testcase_name_%d" % (idx + 1))
+                row.append(f"auto_testcase_name_{idx + 1}")
 
         if "api_name" in self.header:
             # Auto-detect from api_name values: aclnnXxx -> aclnn, others -> framework-api
@@ -317,8 +322,8 @@ class UniversalTestcaseFactory:
         header_check_set = set()
         for actual_header in self.header:
             if actual_header in header_check_set and actual_header not in ignored_headers:
-                logging.error("Detected duplicate header: %s" % actual_header)
-                raise RuntimeError("Detected duplicate header: %s" % actual_header)
+                logging.error(f"Detected duplicate header: {actual_header}")
+                raise RuntimeError(f"Detected duplicate header: {actual_header}")
             header_check_set.add(actual_header)
 
     def _parse_testcase(self):
@@ -489,10 +494,10 @@ class UniversalTestcaseFactory:
                     )
                 testcase_names.add(testcase_struct.testcase_name)
             else:
-                logging.warning("Duplicate testcase: %s" % testcase_struct.testcase_name)
+                logging.warning(f"Duplicate testcase: {testcase_struct.testcase_name}")
         # For testcase_count selector
         if 0 < get_global_storage().selected_testcase_count < len(self.testcases):
-            logging.info("Selecting %d cases from all testcases" % get_global_storage().selected_testcase_count)
+            logging.info(f"Selecting {get_global_storage().selected_testcase_count} cases from all testcases")
             all_indexes = random.sample(
                 tuple(range(len(self.testcases))), k=get_global_storage().selected_testcase_count
             )

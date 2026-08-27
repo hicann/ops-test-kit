@@ -18,7 +18,7 @@ TTK 的四种测试模式对应昇腾技术栈的不同层级，越往上覆盖�
 └──────────────────────────────────────────────────┘
 ```
 
-不同层级使用不同的测试用例结构，模式选错会导致用例解析失败。根据 CSV 表头自动判断模式（详见各 skill）。
+不同层级使用不同的测试用例结构，模式选错会导致用例解析失败。根据表头自动判断模式（详见各 skill）。输入支持 CSV 与 Excel(.xlsx)，详见 [用例生成](./docs/Test_Case_Generation.md)。
 
 ## 使用方式
 
@@ -27,6 +27,8 @@ TTK 的四种测试模式对应昇腾技术栈的不同层级，越往上覆盖�
 - GEIR 模式：`python3 -m ttk geir -i cases.csv`
 - ACLNN 模式：`python3 -m ttk aclnn -i cases.csv`
 - E2E 模式：`python3 -m ttk e2e -i cases.csv`（默认自动探测 NPU；`--cpu` 强制 CPU）
+
+> 输入支持 CSV 与 Excel(.xlsx)；Excel 默认读首个工作表，用 `--sheet` 指定，如 `ttk kernel -i cases.xlsx --sheet T2`。详见 [任务执行](./docs/Task_Execution.md)。
 
 验证 NPU 环境：`python3 -m ttk info`
 

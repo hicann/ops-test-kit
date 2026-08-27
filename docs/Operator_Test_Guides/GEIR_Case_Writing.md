@@ -21,9 +21,10 @@ Kernel 模式的 26 个字段说明详见 [Kernel用例编写](./Kernel_Case_Wri
 
 ## 参考用例
 
-GEIR 复用 Kernel 的 CSV 文件，可直接用 `examples/case_store/kernel/` 下的用例。如需精确控制动态维度，补充 `dyn_input_shapes` 列即可：
+GEIR 复用 Kernel 的 CSV 用例（字段与验证场景见 [Kernel 参考用例](./Kernel_Case_Writing.md)），额外用 `dyn_input_shapes` 列控制图编译时的动态维度。本通路独立示例：
 
-| 场景 | 说明 |
-|------|------|
-| 基本用例 | 直接使用 `examples/case_store/kernel/` 下的 CSV，无需改动 |
-| 精确控制动态维度 | 在 CSV 末尾增加 `dyn_input_shapes` 列，指定各输入维度的动态性 |
+| 文件 | 验证特性 | 关键列 |
+|------|---------|--------|
+| `geir/add.xlsx` | xlsx 多 sheet（T1/T2）输入 + `dyn_input_shapes` 图编译动态 shape | `dyn_input_shapes` |
+
+> 直接使用 `examples/case_store/kernel/` 下的 CSV 跑 GEIR 无需改动；如需精确控制某输入维度的动态性，在末尾追加 `dyn_input_shapes` 列即可。

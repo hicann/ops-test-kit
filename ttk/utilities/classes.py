@@ -19,9 +19,12 @@ import os
 import pathlib
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import numpy
+
+if TYPE_CHECKING:
+    from ..core_modules.testcase_manager.testcase_op import TestcaseOp
 
 # Third-party Packages
 
@@ -104,6 +107,7 @@ class SWITCHES:
         "root_path",
         "mode",
         "input_files",
+        "sheet",
         "output_file_name",
         "append_mode",
         "logging_to_file",
@@ -203,7 +207,7 @@ class SWITCHES:
             hw_info = get_npu_hw_info(self.dev_plat)
             support_bf16 = hw_info.get("support_bf16", False)
             return 1 if support_bf16 else 0
-        except:
+        except Exception:
             return 1
 
     @property
@@ -243,6 +247,7 @@ class SWITCHES:
         self.root_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.mode: MODE = MODE.ASCEND_ONBOARD
         self.input_files: Optional[List[str]] = None
+        self.sheet: Optional[str] = None
         self.output_file_name: Optional[str] = None
         self.append_mode: bool = False
         self.logging_to_file: bool = False
@@ -342,15 +347,11 @@ class OPTestSwitch:
         self.prof = profiling
 
     def __str__(self):
-        return "%s: %s, %s, %s" % (
-            self.name,
-            "ENABLED" if self.enabled else "DISABLED",
-            "MANUAL_COMPILE"
-            if not self.realtime
-            else "RELEASE"
-            if self.realtime == self.REUSE_BINARY_RELEASE_KERNEL
-            else "TE_COMPILE",
-            "ONLINE" if self.prof else "OFFLINE",
+        return (
+            f"{self.name}: "
+            f"{'ENABLED' if self.enabled else 'DISABLED'}, "
+            f"{'MANUAL_COMPILE' if not self.realtime else 'RELEASE' if self.realtime == self.REUSE_BINARY_RELEASE_KERNEL else 'TE_COMPILE'}, "
+            f"{'ONLINE' if self.prof else 'OFFLINE'}"
         )
 
     def use_release_bin(self):
@@ -438,8 +439,8 @@ class KernelJsonInfo:
             # noinspection PyBroadException
             try:
                 json_data = json.loads(raw_json_data)
-            except Exception:
-                raise RuntimeError("Json read failure, received json:\n%s" % raw_json_data)
+            except Exception as err:
+                raise RuntimeError(f"Json read failure, received json:\n{raw_json_data}") from err
         return cls.from_dict(json_data)
 
     @classmethod
@@ -598,7 +599,7 @@ class BaseCompilationResult:
             json_parsed["kernel_dir"] = self.kernel_dir
         return json_parsed
 
-    def apply(self, testcase: "ttk.TestcaseOp"):
+    def apply(self, testcase: "TestcaseOp"):
         pass
 
     def printf_enabled(self) -> bool:
@@ -713,7 +714,7 @@ class DynamicCompilationResult(BaseCompilationResult):
         """Get standard value"""
         return (self.compile_info, self.tiling_op_type, *self.base_standard_get())
 
-    def apply(self, testcase: "ttk.TestcaseOp"):
+    def apply(self, testcase: "TestcaseOp"):
         """Apply dynamic result to testcase"""
         if testcase.dyn_func_params is None:
             testcase.dyn_func_params = self.func_params
@@ -789,20 +790,20 @@ class StaticCompilationResult(BaseCompilationResult):
         """Get standard value"""
         return self.base_standard_get()
 
-    def apply(self, testcase: "ttk.TestcaseOp"):
+    def apply(self, testcase: "TestcaseOp"):
         pass
 
     def write_json(self, path: Optional[str]):
         """Write compile info json"""
         json_parsed = super().get_json()
-        with open(pathlib.Path(path, "%s.ttk" % self.kernel_name), "w+", encoding="UTF-8") as f:
+        with open(pathlib.Path(path, f"{self.kernel_name}.ttk"), "w+", encoding="UTF-8") as f:
             f.write(json.dumps(json_parsed, indent=4))
 
 
 class ConstCompilationResult(StaticCompilationResult):
     """For const Compilation"""
 
-    def apply(self, testcase: "ttk.TestcaseOp"):
+    def apply(self, testcase: "TestcaseOp"):
         """Apply result to testcase"""
         if testcase.dyn_func_params is None:
             testcase.dyn_func_params = self.func_params
@@ -813,7 +814,7 @@ class ConstCompilationResult(StaticCompilationResult):
 class BinaryCompilationResult(DynamicCompilationResult):
     """For Binary Compilation"""
 
-    def apply(self, testcase: "ttk.TestcaseOp"):
+    def apply(self, testcase: "TestcaseOp"):
         """Apply result to testcase"""
         if testcase.dyn_func_params is None:
             testcase.dyn_func_params = self.func_params

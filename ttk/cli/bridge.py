@@ -9,6 +9,8 @@ _FLOAT_CLEAN_VALUE = re.compile(r"[+-]?(?:(?:[0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)(?:[
 
 def _apply_io_args(sw, args):
     sw.input_files = [args.input]
+    if getattr(args, "sheet", None):
+        sw.sheet = args.sheet
     if hasattr(args, "append_file") and args.append_file:
         sw.output_file_name = args.append_file
         sw.append_mode = True
@@ -321,57 +323,57 @@ def _log_manual_data_configuration(sw):
         )
 
 
-def _detect_framework_from_csv(input_files):
-    """Peek at the first CSV to detect framework from api_name column.
+def _detect_framework_from_csv(input_files, sheet=None):
+    """Peek at the first table to detect framework from api_name column.
 
-    Reads the CSV header to find the api_name column, then checks the first
-    data row's api_name value. Returns 'tf' if it starts with 'tf.' or
-    'tensorflow.', otherwise 'torch'.
+    Reads the table header (CSV or XLSX via the unified table reader) to
+    find the api_name column, then checks the first data row's api_name
+    value. Returns 'tf' if it starts with 'tf.' or 'tensorflow.',
+    otherwise 'torch'.
 
-    One CSV must contain only one framework's APIs: torch_npu and npu_device
-    each initialize the NPU runtime exclusively, so mixing frameworks in a
-    single run causes runtime conflicts. This function detects the framework
-    from the first data row and validates that all subsequent rows are
-    consistent.
+    One table must contain only one framework's APIs: torch_npu and
+    npu_device each initialize the NPU runtime exclusively, so mixing
+    frameworks in a single run causes runtime conflicts. This function
+    detects the framework from the first data row and validates that all
+    subsequent rows are consistent.
     """
     if not input_files:
         return "torch"
-    import csv
 
     from ttk.core_modules.framework_api.framework_detector import detect_framework
+    from ttk.utilities.table_reader import read_table
 
     try:
-        with open(input_files[0], newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-            if not header:
-                return "torch"
-            try:
-                api_idx = header.index("api_name")
-            except ValueError:
-                return "torch"
-            row = next(reader, None)
-            if not row or api_idx >= len(row):
-                return "torch"
-            first_api = row[api_idx].strip()
-            first_framework = detect_framework(first_api)
-            for row in reader:
-                if api_idx < len(row):
-                    row_api = row[api_idx].strip()
-                    row_framework = detect_framework(row_api)
-                    if row_framework != first_framework:
-                        raise ValueError(
-                            f"Mixed frameworks in one CSV is not supported: "
-                            f"first row is {first_framework} (api_name='{first_api}'), "
-                            f"but found {row_framework} (api_name='{row_api}') in a later row. "
-                            f"Please split into separate CSV files per framework."
-                        )
-            return first_framework
-    except ValueError:
-        raise
+        header, rows = read_table(input_files[0], sheet)
     except Exception as e:
-        logging.warning(f"Failed to detect framework from CSV, defaulting to torch: {e}")
-    return "torch"
+        logging.warning(f"Failed to detect framework from input, defaulting to torch: {e}")
+        return "torch"
+
+    try:
+        api_idx = header.index("api_name")
+    except ValueError:
+        return "torch"
+
+    first_api = None
+    for row in rows:
+        if api_idx < len(row) and row[api_idx]:
+            first_api = row[api_idx]
+            break
+    if not first_api:
+        return "torch"
+
+    first_framework = detect_framework(first_api)
+    for row in rows:
+        if api_idx < len(row):
+            row_framework = detect_framework(row[api_idx])
+            if row_framework != first_framework:
+                raise ValueError(
+                    f"Mixed frameworks in one table is not supported: "
+                    f"first row is {first_framework} (api_name='{first_api}'), "
+                    f"but found {row_framework} (api_name='{row[api_idx]}') in a later row. "
+                    f"Please split into separate files per framework."
+                )
+    return first_framework
 
 
 def _preload_plugin_modules(sw):
@@ -422,7 +424,7 @@ def run_with_switches(sw):
     if sw.test_mode == "framework-api":
         from ttk.core_modules.framework_api.instance import FrameworkApiInstance
 
-        sw.framework = _detect_framework_from_csv(sw.input_files)
+        sw.framework = _detect_framework_from_csv(sw.input_files, getattr(sw, "sheet", None))
         ins = FrameworkApiInstance()
     elif sw.test_mode == "geir":
         from ttk.core_modules.geir.instance import GeirInstance

@@ -1,32 +1,44 @@
+# IDE / Editor
 .idea/
-*.pyc
-*.log
-test.py
-**/*.log
-tests/**/*.html
-kernel_meta/
-models/
-/geir/
-model_results/
-**/*_result.csv
-*.bin
-*.zip
-*.o
-toml_data/
-model_*/
-models_*/
-lib/
-LLMAnalysisTool/
-settings.local.json
 
-ttk/_build_hash.py
+# Python
+*.pyc
+
+# Build artifacts
+*.o
+*.zip
 csrc/build/
 csrc/*/build/
-msprof/
+ttk/_build_hash.py
+
+# Logs
+**/*.log
 log/
 
-# xpu_server runtime: default sync/tmp dirs (created next to the server package)
+# TTK runtime outputs
+kernel_meta/
+/geir/
+msprof/
+sim_output/
+**/*_result.csv
+
+# Models & data
+*.bin
+models/
+model_*/
+models_*/
+toml_data/
+
+# Remote server runtime (default sync/tmp dirs next to the server package)
 ttk/remote/server/ttk_xpu_sync/
 ttk/remote/server/ttk_tmp_dir/
 
-sim_output/
+# Local config
+settings.local.json
+
+# Misc temp
+test.py
+tests/**/*.html
+lib/
+LLMAnalysisTool/
+examples/case_store/generate_xlsx_examples.py

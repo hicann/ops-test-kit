@@ -1,17 +1,22 @@
-import argparse
-
 from ttk.remote import is_remote_configured
 
 
 def _add_io_args(parser):
-    parser.add_argument("-i", "--input", required=True, help="CSV test case file")
+    parser.add_argument("-i", "--input", required=True, help="Test case file (csv/xlsx)")
+    parser.add_argument(
+        "--sheet", default=None, help="Excel worksheet name (default: first worksheet); ignored for csv"
+    )
     parser.add_argument(
         "--config", default=None, help="Path to ttk config YAML (overrides ~/.config/ttk/ and ./ttk.conf.yaml)"
     )
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument("-o", "--output", help="Output CSV file (overwrite existing)")
-    output_group.add_argument("-a", "--append", dest="append_file", help="Append results to existing CSV file; "
-                               "overwrites if file header does not match")
+    output_group.add_argument(
+        "-a",
+        "--append",
+        dest="append_file",
+        help="Append results to existing CSV file; overwrites if file header does not match",
+    )
 
 
 def _add_case_filter_args(parser):

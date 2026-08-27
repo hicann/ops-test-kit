@@ -11,7 +11,6 @@
 Profiling Instance Base Class
 """
 
-
 __all__ = ["InstanceBase"]
 
 
@@ -20,25 +19,25 @@ import csv
 import io
 import logging
 import multiprocessing
+import os
 import shutil
 import subprocess
-
-import numpy
-import os
 import time
 import zipfile
 from abc import ABCMeta, abstractmethod
 from multiprocessing.context import BaseContext
-from typing import Optional, IO, Any, Dict, List, Tuple
+from typing import IO, Any, Dict, List, Optional, Tuple
+
+import numpy
+
+from ...utilities import VERSION, cpu_count, get_global_storage, list_append_union, table_print
+from ..tbe_multiprocessing import SimpleCommandProcess
+from ..testcase_manager import TestcaseBase, UniversalTestcaseFactory
 
 # Third-Party Packages
 from .process_group import ProcessGroup
-from .task import TaskA, TaskType, TaskKeeper
 from .profile_object import ProfileObject
-from ..tbe_multiprocessing import SimpleCommandProcess
-from ..testcase_manager import UniversalTestcaseFactory, TestcaseBase
-from ...utilities import get_global_storage, VERSION, table_print, list_append_union
-from ...utilities import cpu_count
+from .task import TaskA, TaskKeeper, TaskType
 
 
 class InstanceBase(metaclass=ABCMeta):
@@ -90,7 +89,7 @@ class InstanceBase(metaclass=ABCMeta):
     @staticmethod
     def _read_existing_header(path: str):
         try:
-            with open(path, newline='', encoding='utf-8') as f:
+            with open(path, newline="", encoding="utf-8") as f:
                 reader = csv.reader(f)
                 return next(reader, None)
         except (UnicodeDecodeError, csv.Error, OSError):
@@ -145,9 +144,11 @@ class InstanceBase(metaclass=ABCMeta):
             self._close_idle_processes()
             self._summary_print(self.print_cycle)
             if self.total_case_count == self.completed_case_count:
-                logging.info(f"ttk Profiling complete")
+                logging.info("ttk Profiling complete")
                 break
-            time.sleep(0.01)  # pacing before next iteration; avoids busy-spin 100% CPU on one core. Placed after the break-check so we don't sleep on the exiting iteration.
+            time.sleep(
+                0.01
+            )  # pacing before next iteration; avoids busy-spin 100% CPU on one core. Placed after the break-check so we don't sleep on the exiting iteration.
         # close all processes
         self.close_subprocesses()
         # batch consistency post-processing (level=2)
@@ -160,21 +161,17 @@ class InstanceBase(metaclass=ABCMeta):
         # Create process for every usable device
         if self.switches.process_per_device is None:
             # Use 80% of total cpu cores, not exceed 4
-            self.switches.process_per_device = min(max(int(cpu_count() * 0.8) //
-                                                       len(self.used_device), 1),
-                                                   4)
+            self.switches.process_per_device = min(max(int(cpu_count() * 0.8) // len(self.used_device), 1), 4)
         # Not exceed testcase count
-        self.switches.process_per_device = min(self.switches.process_per_device,
-                                               len(self.flatten_testcases))
-        self.used_device = self.used_device[:len(self.flatten_testcases)]
+        self.switches.process_per_device = min(self.switches.process_per_device, len(self.flatten_testcases))
+        self.used_device = self.used_device[: len(self.flatten_testcases)]
         logging.info(f"Process per device: {self.switches.process_per_device}")
         # Prepare SubProcesses
         logging.info("Preparing Task Executors...")
         for dev_id in self.used_device:
-            self.process_groups[dev_id] = ProcessGroup(dev_id,
-                                                       self.switches.process_per_device,
-                                                       self.mp_context,
-                                                       timeout=self.switches.proc_timeout)
+            self.process_groups[dev_id] = ProcessGroup(
+                dev_id, self.switches.process_per_device, self.mp_context, timeout=self.switches.proc_timeout
+            )
         os.environ["TTK_LOAD_TF"] = "1"
         for pg in self.process_groups.values():
             while not pg.is_ready():
@@ -188,7 +185,7 @@ class InstanceBase(metaclass=ABCMeta):
         configured endpoints; writes health state to TTK_XPU_HEALTH_PATH.
         """
         try:
-            from ttk.remote import is_remote_configured, get_tenant_id
+            from ttk.remote import get_tenant_id, is_remote_configured
             from ttk.remote.config import get_remote_config
             from ttk.remote.heartbeat import heartbeat_loop
             from ttk.remote.heartbeat_manager import HeartbeatManager
@@ -208,6 +205,7 @@ class InstanceBase(metaclass=ABCMeta):
         # NB: tls_from_config call is OUTSIDE the ImportError try/except above so a
         # cert/key mismatch raises as a loud startup failure (not swallowed).
         from ttk.remote.tls import tls_from_config
+
         tls = tls_from_config(config)
         self.heartbeat_manager = HeartbeatManager(
             heartbeat_target=heartbeat_loop,
@@ -258,21 +256,20 @@ class InstanceBase(metaclass=ABCMeta):
             if self.switches.summary_print:
                 self._get_head_commit_id()
                 try:
-                    percentage = int(self.completed_case_count /
-                                     self.total_case_count * 100)
-                except:
+                    percentage = int(self.completed_case_count / self.total_case_count * 100)
+                except Exception:
                     percentage = "?"
-                title = (f"Version: {VERSION} "
-                         f"Summary (Device Total: {self.switches.device_count}) "
-                         f"Progress: {percentage}% "
-                         f"{self.completed_case_count} / {self.total_case_count} "
-                         f"ET: {int(now - self.start_timestamp)}s "
-                         f"Rev: {self._commit_id}",)
+                title = (
+                    f"Version: {VERSION} "
+                    f"Summary (Device Total: {self.switches.device_count}) "
+                    f"Progress: {percentage}% "
+                    f"{self.completed_case_count} / {self.total_case_count} "
+                    f"ET: {int(now - self.start_timestamp)}s "
+                    f"Rev: {self._commit_id}",
+                )
 
-                loop_count = len(self.used_device) // 2 \
-                    if self.used_device else self.switches.device_count // 2
-                remain_count = len(self.used_device) % 2 \
-                    if self.used_device else self.switches.device_count % 2
+                loop_count = len(self.used_device) // 2 if self.used_device else self.switches.device_count // 2
+                remain_count = len(self.used_device) % 2 if self.used_device else self.switches.device_count % 2
                 lines = [title]
                 for loop in range(loop_count):
                     if self.used_device:
@@ -280,22 +277,31 @@ class InstanceBase(metaclass=ABCMeta):
                         dev_id_1 = self.used_device[loop * 2 + 1]
                     else:
                         dev_id_0, dev_id_1 = loop * 2, loop * 2 + 1
-                    lines.append((*(self.device_info(dev_id_0),
-                                    self.process_groups[dev_id_0].info()
-                                    if dev_id_0 in self.process_groups else ''),
-                                  *(self.device_info(dev_id_1),
-                                    self.process_groups[dev_id_1].info()
-                                    if dev_id_1 in self.process_groups else '')
-                                  ))
+                    lines.append(
+                        (
+                            *(
+                                self.device_info(dev_id_0),
+                                self.process_groups[dev_id_0].info() if dev_id_0 in self.process_groups else "",
+                            ),
+                            *(
+                                self.device_info(dev_id_1),
+                                self.process_groups[dev_id_1].info() if dev_id_1 in self.process_groups else "",
+                            ),
+                        )
+                    )
                 if remain_count:
                     if self.used_device:
                         dev_id = self.used_device[-1]
                     else:
                         dev_id = loop_count * 2
-                    lines.append((*(self.device_info(dev_id),
-                                    self.process_groups[dev_id].info()
-                                    if dev_id in self.process_groups else ''),
-                                  ))
+                    lines.append(
+                        (
+                            *(
+                                self.device_info(dev_id),
+                                self.process_groups[dev_id].info() if dev_id in self.process_groups else "",
+                            ),
+                        )
+                    )
                 logging.info("\n" + table_print(lines))
 
     def _pre_exit(self):
@@ -340,8 +346,7 @@ class InstanceBase(metaclass=ABCMeta):
         for r in results:
             status = "PASS" if r["pass"] else "FAIL"
             names = [m["testcase"] for m in r["members"]]
-            logging.info(f"  [{status}] group={r['batch_consistency_id'][:32]}... "
-                         f"members={names}")
+            logging.info(f"  [{status}] group={r['batch_consistency_id'][:32]}... members={names}")
 
     def _prepare_device_locks(self):
         # TODO: device-id not start from 0 to max-count in docker.
@@ -375,7 +380,7 @@ class InstanceBase(metaclass=ABCMeta):
                 valid_count += 1
             else:
                 reason = tc.fail_reason or "UNKNOWN"
-                invalid_cases.append((tc.testcase_name, getattr(tc, 'api_name', ''), reason))
+                invalid_cases.append((tc.testcase_name, getattr(tc, "api_name", ""), reason))
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
         invalid_count = len(invalid_cases)
         total = valid_count + invalid_count
@@ -397,15 +402,14 @@ class InstanceBase(metaclass=ABCMeta):
             logging.info("All testcases passed validation")
 
     def _write_validate_result(self, invalid_cases, valid_count, invalid_count):
-        import pathlib
         result_path = self.switches.output_file_name
-        if not result_path.endswith('.csv'):
-            result_path += '.csv'
-        with open(result_path, 'w', newline='', encoding='utf-8') as f:
+        if not result_path.endswith(".csv"):
+            result_path += ".csv"
+        with open(result_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(("testcase_name", "api_name", "status", "fail_reason"))
             for tc in sorted(self.flatten_testcases, key=lambda t: t.testcase_name):
-                api = getattr(tc, 'api_name', '')
+                api = getattr(tc, "api_name", "")
                 if tc.is_valid:
                     writer.writerow((tc.testcase_name, api, "VALID", ""))
                 else:
@@ -413,15 +417,17 @@ class InstanceBase(metaclass=ABCMeta):
         logging.info(f"Validate result written to {result_path}")
 
     def _load_cases(self, testcase_file: str):
+        if testcase_file.lower().endswith((".xlsx", ".xlsm")):
+            self._load_case_from_table(testcase_file)
+            return
         use_csv_mode = False
         try:
             self._load_case_from_zip(testcase_file)
         except zipfile.BadZipFile:
             use_csv_mode = True
         if use_csv_mode:
-            logging.info("Input testcase file is not a valid zip file, "
-                         "switch to normal csv mode...")
-            self._load_case_from_csv(testcase_file)
+            logging.info("Input testcase file is not a valid zip file, switch to normal csv mode...")
+            self._load_case_from_table(testcase_file)
 
     def _check_duplicate_case(self):
         testcase_names = set()
@@ -441,13 +447,15 @@ class InstanceBase(metaclass=ABCMeta):
         if not self.switches.input_files:
             raise RuntimeError("Please specify input csv files !!!")
         if not self.result_path:
-            split_input_path = self.switches.input_files[0].split(".")
-            split_input_path[-2] += "_result"
-            self.result_path = '.'.join(split_input_path)
-            logging.info(f"Output csv file is not specified. "
-                         f"It will be set as {self.result_path}")
-        if not self.result_path.endswith('.csv'):
-            self.result_path += '.csv'
+            root, _ = os.path.splitext(self.switches.input_files[0])
+            sheet = self._resolved_output_sheet()
+            tag = ""
+            if sheet:
+                tag = "_" + sheet.translate(str.maketrans({c: "_" for c in '\\/:*?"<>| '}))
+            self.result_path = root + tag + "_result.csv"
+            logging.info(f"Output csv file is not specified. It will be set as {self.result_path}")
+        if not self.result_path.endswith(".csv"):
+            self.result_path += ".csv"
         parent_dir = os.path.dirname(self.result_path)
         if parent_dir and not os.path.isdir(parent_dir):
             os.makedirs(parent_dir, exist_ok=True)
@@ -459,43 +467,51 @@ class InstanceBase(metaclass=ABCMeta):
             existing_header = self._read_existing_header(self.result_path)
             header_match = existing_header is not None and tuple(existing_header) == self.case_result_titles
             if header_match:
-                self.result_csv_file = open(self.result_path, newline='', mode='a+')
+                self.result_csv_file = open(self.result_path, newline="", mode="a+")
                 self.result_csv_writer = csv.writer(self.result_csv_file)
                 self._header_flushed = True
                 self._precision_status_idx = self._resolve_precision_status_idx(self.case_result_titles)
                 logging.info(f"Append mode: appending to existing {self.result_path}")
             else:
-                logging.warning(f"Append mode: existing file header does not match "
-                                f"(file has {len(existing_header) if existing_header else 0} columns, "
-                                f"current expects {len(self.case_result_titles)}). "
-                                f"Overwriting {self.result_path}")
-                self.result_csv_file = open(self.result_path, newline='', mode='w+')
+                logging.warning(
+                    f"Append mode: existing file header does not match "
+                    f"(file has {len(existing_header) if existing_header else 0} columns, "
+                    f"current expects {len(self.case_result_titles)}). "
+                    f"Overwriting {self.result_path}"
+                )
+                self.result_csv_file = open(self.result_path, newline="", mode="w+")
                 self.result_csv_writer = csv.writer(self.result_csv_file)
                 self._flush(self.case_result_titles)
         else:
-            self.result_csv_file = open(self.result_path, newline='', mode='w+')
+            self.result_csv_file = open(self.result_path, newline="", mode="w+")
             self.result_csv_writer = csv.writer(self.result_csv_file)
             self._prepare_output_titles()
             self._flush(self.case_result_titles)
 
+    def _resolved_output_sheet(self):
+        """Worksheet name to embed in the default output name (xlsx only)."""
+        src = self.switches.input_files[0] if self.switches.input_files else ""
+        if not src.lower().endswith((".xlsx", ".xlsm")):
+            return None
+        from ...utilities import resolved_sheet
+
+        return resolved_sheet(src, getattr(self.switches, "sheet", None))
+
     def _prepare_output_titles(self):
         first_testcase = next(iter(self.flatten_testcases))
-        self.case_result_titles = self.profile_object.output_titles(first_testcase,
-                                                                    self.case_original_headers)
+        self.case_result_titles = self.profile_object.output_titles(first_testcase, self.case_original_headers)
 
     def _initialize_device_lock(self) -> tuple:
         self.mp_manager = self.mp_context.Manager()
         if self.switches.device_whitelist:
-            blacklist = list(set([i for i in range(self.switches.device_count)]) -
-                             set(self.switches.device_whitelist))
-            self.switches.device_blacklist = list(set(blacklist).union(
-                                                  set(self.switches.device_blacklist)))
+            blacklist = list(set([i for i in range(self.switches.device_count)]) - set(self.switches.device_whitelist))
+            self.switches.device_blacklist = list(set(blacklist).union(set(self.switches.device_blacklist)))
         # Print Device blacklist info
         if self.switches.device_blacklist:
-            logging.info(f"Device {self.switches.device_blacklist} "
-                         f"has been blacklisted, removing...")
-        available = tuple(True if n not in self.switches.device_blacklist else None
-                          for n in range(self.switches.device_count))
+            logging.info(f"Device {self.switches.device_blacklist} has been blacklisted, removing...")
+        available = tuple(
+            True if n not in self.switches.device_blacklist else None for n in range(self.switches.device_count)
+        )
         available_devices = [i for i, v in enumerate(available) if v is not None]
         SimpleCommandProcess.initialize_device_locks(available_devices, self.mp_manager)
         return available
@@ -524,11 +540,13 @@ class InstanceBase(metaclass=ABCMeta):
     def _output_progress(self):
         if self.switches.progress_output:
             now = time.time()
-            with open(self.switches.progress_output, 'w') as f:
-                f.write(f"StartAt:{str(self.start_timestamp)}\n"
-                        f"ElapsedTime:{str(now - self.start_timestamp)}\n"
-                        f"TotalCases:{str(self.total_case_count)}\n"
-                        f"CompletedCases:{str(self.completed_case_count)}")
+            with open(self.switches.progress_output, "w") as f:
+                f.write(
+                    f"StartAt:{str(self.start_timestamp)}\n"
+                    f"ElapsedTime:{str(now - self.start_timestamp)}\n"
+                    f"TotalCases:{str(self.total_case_count)}\n"
+                    f"CompletedCases:{str(self.completed_case_count)}"
+                )
 
     def _push_at_least_one_prof_task_to_process(self):
         if self._multi_device_running:
@@ -597,22 +615,17 @@ class InstanceBase(metaclass=ABCMeta):
                     self.testcase_complete()
 
     def _handle_multi_device_task_result(self, task: TaskA, proc: SimpleCommandProcess):
-        case_name = task.testcase.testcase_name
         result = proc.get_result()
         pid = proc.get_pid()
-        dev_id = None
-        for pg_dev_id, pg in self.process_groups.items():
+        for pg in self.process_groups.values():
             if proc in pg.process_to_task:
-                dev_id = pg_dev_id
                 break
         if isinstance(result, (SystemError, RuntimeError)):
             proc.resurrect()
             if isinstance(result, SystemError):
-                output_data = self.profile_object.handle_task_result_system_error(
-                    task, result, "MultiDevice", pid)
+                output_data = self.profile_object.handle_task_result_system_error(task, result, "MultiDevice", pid)
             else:
-                output_data = self.profile_object.handle_task_result_runtime_error(
-                    task, result, pid)
+                output_data = self.profile_object.handle_task_result_runtime_error(task, result, pid)
         elif result is not None:
             output_data, kill_proc = self.profile_object.handle_task_result_complete(task, result)
             if self.switches.proc_no_reuse or kill_proc or task.is_multi_device():
@@ -631,9 +644,7 @@ class InstanceBase(metaclass=ABCMeta):
             output_data = self.profile_object.handle_task_result_none(task)
         elif isinstance(result, SystemError):
             proc.resurrect()
-            output_data = self.profile_object.handle_task_result_system_error(task, result,
-                                                                              proc.current_stage(),
-                                                                              pid)
+            output_data = self.profile_object.handle_task_result_system_error(task, result, proc.current_stage(), pid)
         elif isinstance(result, RuntimeError):
             proc.resurrect()
             output_data = self.profile_object.handle_task_result_runtime_error(task, result, pid)
@@ -688,32 +699,33 @@ class InstanceBase(metaclass=ABCMeta):
                 logging.info(f"Reading zipped testcase file {file.filename} ...")
                 with zipped_file.open(file) as real_file:
                     testcase_manager = UniversalTestcaseFactory(
-                        io.TextIOWrapper(real_file, encoding="UTF-8", newline=''))
+                        io.TextIOWrapper(real_file, encoding="UTF-8", newline="")
+                    )
                     self.flatten_testcases.extend(testcase_manager.get())
                     list_append_union(self.case_original_headers, testcase_manager.header)
 
-    def _load_case_from_csv(self, testcase_path: str):
-        logging.info("Reading normal csv testcases...")
-        with open(testcase_path, newline='', encoding='utf-8') as file:
-            testcase_manager = UniversalTestcaseFactory(file)
-            self.flatten_testcases.extend(testcase_manager.get())
-            list_append_union(self.case_original_headers, testcase_manager.header)
+    def _load_case_from_table(self, testcase_path: str):
+        sheet = getattr(self.switches, "sheet", None)
+        logging.info(f"Reading testcases from {testcase_path}{f' sheet={sheet}' if sheet else ''} ...")
+        testcase_manager = UniversalTestcaseFactory.from_path(testcase_path, sheet)
+        self.flatten_testcases.extend(testcase_manager.get())
+        list_append_union(self.case_original_headers, testcase_manager.header)
 
     def _get_head_commit_id(self):
         if self._commit_id is not None:
             return
-        if shutil.which('git') is None:
+        if shutil.which("git") is None:
             self._commit_id = "UNKNOWN"
             return
 
         try:
-            result = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                                    capture_output=True, text=True,
-                                    shell=False, check=False)
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, shell=False, check=False
+            )
             if result.returncode != 0:
                 self._commit_id = "UNKNOWN"
             else:
-                self._commit_id = result.stdout.split('\n')[0]
+                self._commit_id = result.stdout.split("\n")[0]
         finally:
             if self._commit_id is None:
                 self._commit_id = "UNKNOWN"

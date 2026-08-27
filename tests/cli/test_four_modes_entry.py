@@ -56,6 +56,7 @@ def _run(argv, captured):
 
 # -- 子命令注册 --------------------------------------------------------------
 
+
 class TestSubcommandRegistration:
     def test_four_modes_registered(self):
         """四个子命令 kernel/geir/aclnn/e2e 均已注册。"""
@@ -72,6 +73,7 @@ class TestSubcommandRegistration:
 
 
 # -- kernel 模式 -------------------------------------------------------------
+
 
 class TestKernelMode:
     def test_sets_test_mode_op(self, captured):
@@ -101,6 +103,7 @@ class TestKernelMode:
 
 # -- geir 模式 --------------------------------------------------------------
 
+
 class TestGeirMode:
     def test_sets_test_mode_geir(self, captured):
         """geir 子命令将 test_mode 设为 'geir'。"""
@@ -126,6 +129,7 @@ class TestGeirMode:
 
 # -- aclnn 模式 -------------------------------------------------------------
 
+
 class TestAclnnMode:
     def test_sets_test_mode_aclnn(self, captured):
         """aclnn 子命令将 test_mode 设为 'aclnn'。"""
@@ -134,6 +138,7 @@ class TestAclnnMode:
 
 
 # -- e2e 模式 ---------------------------------------------------------------
+
 
 class TestE2eMode:
     def test_sets_test_mode_framework_api(self, captured):
@@ -159,6 +164,7 @@ class TestE2eMode:
 
 # -- run_with_switches 分派 --------------------------------------------------
 
+
 class TestRunWithSwitchesDispatch:
     @pytest.mark.parametrize(
         "test_mode, instance_path",
@@ -180,7 +186,7 @@ class TestRunWithSwitchesDispatch:
         monkeypatch.setattr("ttk.core_modules.tbe_logging.default_logging_config", lambda **kw: None)
         monkeypatch.setattr("ttk.utilities.set_process_name", lambda: None)
         monkeypatch.setattr("ttk.utilities.set_thread_name", lambda: None)
-        monkeypatch.setattr("ttk.cli.bridge._detect_framework_from_csv", lambda files: "torch")
+        monkeypatch.setattr("ttk.cli.bridge._detect_framework_from_csv", lambda files, sheet=None: "torch")
 
         with patch(instance_path) as mock_cls:
             run_with_switches(sw)

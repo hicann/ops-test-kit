@@ -12,7 +12,7 @@
 | `torch.nn.functional.relu` | 子模块函数 | 调用子模块中的函数 |
 | `torch.Tensor.relu_` | Tensor方法 | 通过Tensor实例调用（原地操作） |
 
-## 身份标识
+## 用例标识
 
 | 字段 | 类型 | 是否必填 | 默认值 | 说明 |
 |------|------|---------|--------|------|
@@ -79,3 +79,14 @@ full,torch.add,"((10,8),)",(100,),,,...
 ```
 
 上例中 `slice_0` 取输出轴 0 的 `[0:5]`，`slice_1` 取 `[5:10]`，`full` 不切片取全部。三者 seed 相同，`slice_0` + `slice_1` 的切片长度之和等于 `full`，归入同一比对组。
+
+## 参考用例
+
+`examples/case_store/e2e/` 目录下的示例：
+
+| 文件 | 框架 | 验证特性 | 关键列 |
+|------|------|---------|--------|
+| `tf_ops.csv` | TensorFlow | 多 API（tf.raw_ops/nn/math/linalg）+ 多算子 | `tensor_view_shapes`、`attributes` |
+| `torch_add.csv` | torch | add/abs/relu/mm + inplace（`relu_`）/out 变体 + alpha 属性 | `attributes`、`output_tensor_indexes` |
+| `torch_npu_conv2d.csv` | torch_npu | NPU 专属 API + 自定义 golden | `golden_api`、`output_tensor_indexes` |
+| `torch_add.xlsx` | torch | xlsx 多 sheet（T1/T2）输入验证 | — |

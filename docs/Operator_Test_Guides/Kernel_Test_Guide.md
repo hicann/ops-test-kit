@@ -234,6 +234,10 @@ python3 -m ttk kernel -i add.csv --rerun=precision_status
 
 # 使用自定义Golden插件
 python3 -m ttk kernel -i add.csv --plugin /path/to/my_golden.py
+
+# Excel 多 sheet 用例（默认首个工作表；--sheet 指定工作表）
+python3 -m ttk kernel -i examples/case_store/kernel/add.xlsx
+python3 -m ttk kernel -i examples/case_store/kernel/add.xlsx --sheet T2
 ```
 
 > 通用参数（用例筛选/设备并行/精度控制/调试/结果输出）见[任务执行](../Task_Execution.md)

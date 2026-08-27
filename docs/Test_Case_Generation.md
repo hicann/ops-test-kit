@@ -5,13 +5,38 @@
 
 # 简介
 
-TTK使用CSV文件批量定义测试用例。第一行为表头（列名），后续每行代表一个测试用例。不同测试模式使用不同的列定义。
+TTK使用表格文件（CSV 或 Excel .xlsx）批量定义测试用例。第一行为表头（列名），后续每行代表一个测试用例。不同测试模式使用不同的列定义。
 
 **模式自动识别逻辑**（基于CSV表头 + 子命令）：
 - 表头包含 `api_name`：第一个非空 `api_name` 值不以 `aclnn` 开头 → **E2E模式**；以 `aclnn` 开头或全部为空 → **ACLNN模式**
 - 表头不包含 `api_name`：由子命令决定 — `ttk geir` → **GEIR模式**，`ttk kernel` → **Kernel模式**
 
 各模式的执行命令见 [任务执行](./Task_Execution.md)。
+
+---
+
+# 输入文件格式（CSV / Excel）
+
+TTK 支持两种等价的输入文件格式，表头与字段定义完全相同：
+
+| 格式 | 后缀 | 多工作表 | 说明 |
+|------|------|---------|------|
+| CSV | `.csv` | — | 文本表格，逗号分隔；含特殊字符（括号、逗号、引号）的字段须用双引号包裹。 |
+| Excel | `.xlsx` | 支持 | 工作簿，每个工作表（Sheet）是一张表。 |
+
+## Excel（.xlsx）用法
+
+- **默认读取第一个工作表**；用 `--sheet` 指定工作表名，不存在时报错并列出可用工作表：
+  ```shell
+  python3 -m ttk kernel -i cases.xlsx              # 首个工作表
+  python3 -m ttk kernel -i cases.xlsx --sheet T2   # 指定工作表
+  ```
+- **单元格一律按文本处理**：读取时每个单元格被转为字符串并去除首尾空白，与 CSV 单元格行为完全一致，后续字段解析逻辑（`input_shapes`、`attributes` 等的 `eval`）原样复用。因此 **xlsx 与 csv 的用例可互换**，模式自动识别、字段回退、TensorList 嵌套等规则完全相同。
+- **数值列建议设为文本格式**：Excel 会自动推断数字类型（如把 `01` 存为 `1`、`1e-8` 存为浮点）。为保证与 CSV 完全一致，建议把 `input_shapes`/`input_dtypes`/`attributes`/`input_data_ranges`/`output_shapes` 等列的单元格格式预设为「文本」。
+- **空行处理**：整行空白的行会被跳过（与 CSV 空行一致）。
+- **结果文件仍为 CSV**：无论输入是 csv 还是 xlsx，结果输出始终是 CSV，便于 diff 与版本管理。默认命名：csv 为 `{stem}_result.csv`；xlsx 为 `{stem}_{sheet}_result.csv`（`sheet` 为实际读取的工作表名，默认首页时也带上首页名，如 `cases_T1_result.csv`），同一文件多 sheet 跑测互不覆盖。
+
+> CSV 中「含特殊字符的字段须双引号包裹」的规则不适用于 xlsx——Excel 单元格天然支持逗号、引号等字符，无需转义。
 
 ---
 

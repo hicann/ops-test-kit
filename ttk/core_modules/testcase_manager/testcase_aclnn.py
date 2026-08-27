@@ -17,21 +17,15 @@ __all__ = ["TestcaseAclnn", "AclnnParamPlan"]
 # Standard Packages
 import copy
 import logging
-import numpy.random
-from typing import Dict, List, Optional, Tuple, Union, Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-try:
-    from collections.abc import Callable
-except ImportError:
-    from collections import Callable
+import numpy.random
 
 # Third-party Packages
-from .testcase_tensor_api_base import TensorApiTestcaseBase
+from ...utilities import get, get_dtype_width, parse_dtype, shape_product, shape_product_with_strides, shape_stride
+from ..aclnn import OpApiInfo, OpApiInfoKeeper
 from .field_types import FIELD_TYPES
-from ..aclnn import OpApiInfoKeeper, OpApiInfo
-from ...utilities import get, shape_stride, shape_product_with_strides
-from ...utilities import shape_product, parse_dtype, get_dtype_width
-from ...utilities.container_utils import infer_list_distribution_from_nesting
+from .testcase_tensor_api_base import TensorApiTestcaseBase
 
 
 class AclnnParamPlan:
@@ -94,7 +88,7 @@ class AclnnParamPlan:
         tensor_queue = list(tensors)
         scalar_queue = list(scalars)
         param_names = set()
-        for kind, name, acl_type, default in self.param_layout:
+        for kind, name, _acl_type, default in self.param_layout:
             param_names.add(name)
             if kind == self.TENSOR:
                 args.append(tensor_queue.pop(0))
@@ -285,7 +279,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 bytes_lst.append(
                     shape_product(self.flat_storage_shape(idx)) * get_dtype_width(get(self.flat_tensor_dtypes, idx))
                 )
-            except:
+            except Exception:
                 bytes_lst.append(0)
         return sum(bytes_lst)
 
@@ -457,6 +451,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         """Return attrs for XPU dispatch: pure_attrs + scalars (scalars are not in
         X-Input-Schema, which only transports tensors, so they must go via attrs)."""
         from ...utilities.container_utils import deep_flatten
+
         attrs = dict(self.pure_attrs)
         op_api_info = OpApiInfoKeeper().info_of(self.api_name)
         if op_api_info and self.scalars is not None:
@@ -465,7 +460,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 if idx < len(flat_scalars):
                     s = flat_scalars[idx]
                     if s is not None:
-                        attrs[name] = s.item() if hasattr(s, 'item') else s
+                        attrs[name] = s.item() if hasattr(s, "item") else s
         return attrs
 
     @property
@@ -516,7 +511,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if self.device_ids is not None and isinstance(self.device_ids, str):
             raw = self.device_ids.strip()
             if raw:
-                self.device_ids = tuple(int(d.strip()) for d in raw.split(',') if d.strip())
+                self.device_ids = tuple(int(d.strip()) for d in raw.split(",") if d.strip())
             else:
                 self.device_ids = None
         if self.device_ids is not None and not isinstance(self.device_ids, tuple):
@@ -640,12 +635,12 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         return self.device_ids is not None and len(self.device_ids) > 1
 
     def parse_device_ids(self, raw_value):
-        if raw_value is None or raw_value == '':
+        if raw_value is None or raw_value == "":
             self.device_ids = None
             self.my_rank = None
             return
         if isinstance(raw_value, str):
-            self.device_ids = tuple(int(d.strip()) for d in raw_value.split(',') if d.strip())
+            self.device_ids = tuple(int(d.strip()) for d in raw_value.split(",") if d.strip())
         elif isinstance(raw_value, (tuple, list)):
             self.device_ids = tuple(int(d) for d in raw_value)
         else:
@@ -690,7 +685,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if len(view_shape) != len(view_stride):
             logging.error(f"Rank of view_shape/view_strides should be same: {view_shape} vs {view_stride}")
             return False
-        for idx, v in enumerate(view_stride):
+        for _, v in enumerate(view_stride):
             if v < 0:
                 logging.error(f"Negative view_strides are not supported: {view_stride}.")
                 return False
@@ -881,7 +876,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         try:
             if self.tensor_dtypes:
                 self.tensor_dtypes = self._recursively_parse(self.tensor_dtypes, parse_dtype)
-        except:
+        except Exception:
             self.is_valid = False
             self.fail_reason = "TENSOR_DTYPES_INVALID"
             logging.exception(f"Tensor dtypes parse failed: {self.tensor_dtypes}")
@@ -893,7 +888,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         try:
             if self.scalar_dtypes:
                 self.scalar_dtypes = self._recursively_parse(self.scalar_dtypes, parse_dtype)
-        except:
+        except Exception:
             self.is_valid = False
             self.fail_reason = "SCALAR_DTYPES_INVALID"
             logging.exception(f"Scalar dtypes parse failed: {self.scalar_dtypes}")
@@ -1057,9 +1052,6 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         inplace_indices = []
         for idx, element in enumerate(self.tensor_view_shapes):
             param_name = op_api_info.tensors[idx]
-            is_nested = (
-                isinstance(element, (tuple, list)) and len(element) > 0 and isinstance(element[0], (tuple, list))
-            )
             if param_name in ref_lst:
                 if element is None:
                     logging.info(f"Inplace parameter [{param_name}] is None (nullptr), skipping.")
@@ -1074,7 +1066,6 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             "gradOut",
             "grad_output",
             "attentionOut",
-            "dOut",
         }
     )
 
