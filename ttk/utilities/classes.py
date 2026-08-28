@@ -269,7 +269,7 @@ class SWITCHES:
         self.device_blacklist = []
         self.device_whitelist = []
         self.run_timeout = 0
-        self.proc_timeout = 0
+        self.proc_timeout = 3600
         self.tiling_run_time = 3
         self.no_memory_check = False
         self.force_clear_atomic = [None, None, None]

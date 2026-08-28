@@ -63,6 +63,13 @@ from ....utilities import get_global_storage, get, waiting_for_memory, frameless
 from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file, extract_plog_errors
 from ....test_spec import get_spec_attr
 from ..op.profiling_structure import _format_xpu_metrics
+from .mc2_dispatcher import (
+    __golden_multi_device_compare,
+    get_gmm_exp_token_nums,
+    generate_gmm_alltoallv_matrix,
+    patch_gmm_rank_attributes,
+    patch_gmm_weight_transpose,
+)
 
 
 def __profiling_end_print(context: TestcaseAclnn, compare_result: ApiComparisonResult):
@@ -228,13 +235,7 @@ class Phase1ParamBuilder:
                             np_storage = numpy.asarray(np_storage.base)
                             break
                         np_storage = np_storage.base
-                    declared_dtype = get(self._ctx.flat_tensor_dtypes, flat_idx, None)
-                    effective_dtype = (
-                        tensor.dtype
-                        if ("float4" in str(declared_dtype) or "int4" in str(declared_dtype))
-                        else np_storage.dtype
-                    )
-                    byte_size = int(math.ceil(np_storage.size * get_dtype_width(effective_dtype)))
+                    byte_size = int(math.ceil(np_storage.size * get_dtype_width(np_storage.dtype)))
                 else:
                     byte_size = tensor.storage().nbytes()
                 output_byte_arrays.append(self._dvc.get_data_from_hbm(npu_ptr, byte_size))
@@ -352,7 +353,7 @@ class AclOpExecutor:
 
     def do(self, stream: ctypes.c_void_p = None, skip_context_creation: bool = False):
         if skip_context_creation and stream is not None:
-            output_byte_arrays, output_view_shapes, success, _ = self._acl_sequence(
+            output_byte_arrays, output_view_shapes, success, _, _ = self._acl_sequence(
                 stream, skip_profiler=True)
             return ApiProfilingResult(success, "UNKNOWN", "UNKNOWN",
                                       output_byte_arrays, output_view_shapes)
@@ -642,13 +643,6 @@ def __dump_on_fail(context: TestcaseAclnn):
         __dump_output(context, force=True)
     if not switches.dump_config.is_golden_enabled():
         __dump_golden(context, force=True)
-
-
-from .mc2_golden import (__golden_multi_device_compare,
-                          get_gmm_exp_token_nums,
-                          generate_gmm_alltoallv_matrix,
-                           patch_gmm_rank_attributes,
-                           patch_gmm_weight_transpose)
 
 
 def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
@@ -1107,7 +1101,7 @@ def __trans_quant_dequant_scale(thread_ctx, dev_id, ds_slot=4):
     V1/V2/V3 ds_slot=4; V4/V5 x2Scale ds_slot=5。
     转换后同步更新 flatten_tensors / np_storages / flat_tensor_dtypes 为 int64，
     使后续 aclCreateTensor 用 int64 dtype。
-    CPU golden（mc2_golden）仍用原始 fp32 数值计算，不受此转换影响。
+    CPU golden（mc2_dispatcher）仍用原始 fp32 数值计算，不受此转换影响。
     """
     import torch
     import torch_npu  # noqa: F401
@@ -1142,7 +1136,7 @@ def __trans_quant_dequant_scale(thread_ctx, dev_id, ds_slot=4):
     if not isinstance(ds_tensor, torch.Tensor):
         # numpy array → torch
         ds_tensor = torch.from_numpy(numpy.ascontiguousarray(ds_tensor))
-    # 保留 fp32 原值给 CPU golden（mc2_golden 读 attributes['_qm_dequant_scale_fp32']）。
+    # 保留 fp32 原值给 CPU golden（mc2_dispatcher 读 attributes['_qm_dequant_scale_fp32']）。
     # 用 attributes dict 存（TestcaseAclnn 用 __slots__，不能加自定义属性；
     # Phase1ParamBuilder.build 只读 group/reduceOp 等已知 key，多余 key 被忽略）。
     thread_ctx.attributes['_qm_dequant_scale_fp32'] = ds_tensor.float().clone()
@@ -1866,7 +1860,27 @@ def profile_process(context: TestcaseAclnn,
                     compare_result.set("MULTI_DEVICE_EXECUTION_FAILURE", "FAIL")
                 else:
                     __release_retained_multi_device_resources(context, device_ids)
-                    __golden_multi_device_compare(thread_contexts, device_ids, all_precision)
+                    # Plugin-first: check for per-operator golden in TestSpec.
+                    # If the operator's spec.py declares a golden callable,
+                    # delegate to it; otherwise fall back to the built-in mc2_dispatcher dispatcher.
+                    _plugin_golden = get_spec_attr(
+                        context.api_name, "golden",
+                        getattr(switches, "plugin_path", None))
+                    if _plugin_golden is not None:
+                        # Inject proc_timeout into thread_contexts attributes so
+                        # cascade workers can read it via _get_timeout().
+                        _timeout_val = int(
+                            getattr(switches, "proc_timeout", 0) or 3600)
+                        for _did in device_ids:
+                            _tc = thread_contexts.get(_did)
+                            if _tc and hasattr(_tc, "attributes"):
+                                _tc.attributes["proc_timeout"] = _timeout_val
+                        logging.info(
+                            f"Multi-device: cascade timeout = {_timeout_val}s, "
+                            f"using plugin golden for {context.api_name}")
+                        _plugin_golden(thread_contexts, device_ids, all_precision)
+                    else:
+                        __golden_multi_device_compare(thread_contexts, device_ids, all_precision)
                     has_fail = any("FAIL" in p or "EXCEPTION" in p for p in all_precision)
                     compare_result = ApiComparisonResult(None)
                     compare_result.set(",".join(all_precision) if all_precision else "MULTI_DEVICE_COMPARE_FAILURE",

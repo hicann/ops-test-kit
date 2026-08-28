@@ -73,6 +73,28 @@ def get_hardware_config() -> dict:
     return get_config().get("frameworks", {}) or {}
 
 
+# ── CascadeConfig ──
+
+@dataclass
+class CascadeConfig:
+    """MC2 算子级联通信端口配置。"""
+    port_base: int = 30000
+    port_step: int = 13
+    port_max: int = 60000
+    hccl_port_range: str = "50000-50100"
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CascadeConfig":
+        fields = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        return cls(**fields)
+
+
+def get_cascade_config() -> CascadeConfig:
+    """从已加载的 _config 取 cascade 段；无则返回默认。"""
+    raw = get_config().get("cascade", {})
+    return CascadeConfig.from_dict(raw)
+
+
 # ====================================================================
 # 加载逻辑
 # ====================================================================

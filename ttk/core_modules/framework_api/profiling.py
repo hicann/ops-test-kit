@@ -787,6 +787,7 @@ def _do_profile_multi_device(
             "mm_all_reduce",
             "mm_all_to_all",
             "all_to_all_mm",
+            "npu_moe_distribute_combine",
         )
         exclude_ops = (
             "GroupedMatMul",
@@ -800,6 +801,9 @@ def _do_profile_multi_device(
         needs_shared_weight = not any(kw in api_name_str for kw in exclude_ops) and any(
             kw in api_name_str for kw in weight_shared_ops
         )
+        # MoE combine: expand_x (idx 0) and expert_ids (idx 1) must be shared across ranks
+        # so that ep_send_counts are consistent for HCCL alltoallv.
+        moe_combine_shared_all = "npu_moe_distribute_combine" in api_name_str
 
         for rank_idx in range(ndev):
             per_rank_seed = base_seed + rank_idx * 1000
@@ -808,7 +812,24 @@ def _do_profile_multi_device(
             # For MC2 matmul ops, regenerate x2 (weight) with rank-independent seed so
             # all ranks share the same weight (matching ACLNN multi-device behavior).
             # x1 stays per-rank different (each rank has its own input chunk).
-            if needs_shared_weight and len(rank_inputs) > 1 and rank_inputs[1] is not None:
+            if moe_combine_shared_all and len(rank_inputs) > 0:
+                # Share all inputs across ranks for moe combine (idx 0 and 1)
+                for t_idx in range(min(2, len(rank_inputs))):
+                    if rank_inputs[t_idx] is not None:
+                        flat_dtypes = resolve_custom_numpy_dtypes(testcase.flat_tensor_dtypes)
+                        ss = testcase.flat_storage_shape(t_idx)
+                        dtype = flat_dtypes[t_idx] if t_idx < len(flat_dtypes) else None
+                        ranges = testcase.flat_input_data_ranges or ()
+                        data_range = ranges[t_idx] if t_idx < len(ranges) else (None, None)
+                        low = data_range[0] if data_range and data_range[0] is not None else -1.0
+                        high = data_range[1] if data_range and data_range[1] is not None else 1.0
+                        rng = _np.random.RandomState(base_seed + t_idx)
+                        if "int" in str(dtype):
+                            np_arr = rng.randint(int(low), int(high) + 1, ss).astype(dtype, copy=False)
+                        else:
+                            np_arr = rng.uniform(low, high, ss).astype(dtype, copy=False)
+                        rank_inputs[t_idx] = np_arr.reshape(ss)
+            elif needs_shared_weight and len(rank_inputs) > 1 and rank_inputs[1] is not None:
                 flat_dtypes = resolve_custom_numpy_dtypes(testcase.flat_tensor_dtypes)
                 t_idx = 1
                 if t_idx < len(rank_inputs) and rank_inputs[t_idx] is not None:
@@ -821,6 +842,37 @@ def _do_profile_multi_device(
                     rng = _np.random.RandomState(base_seed + t_idx)
                     np_arr = rng.uniform(low, high, ss).astype(dtype, copy=False)
                     rank_inputs[t_idx] = np_arr.reshape(ss)
+            # MoE combine: generate consistent ep_send_counts, expand_idx, expert_scales
+            # from expert_ids (which is shared across ranks).
+            if moe_combine_shared_all and len(rank_inputs) > 1:
+                import numpy as _np2
+
+                eid = rank_inputs[1]
+                if eid is not None:
+                    bs2 = eid.shape[0]
+                    k2 = eid.shape[1] if eid.ndim > 1 else 1
+                    ep_ws2 = int(testcase.attributes.get("ep_world_size", ndev))
+                    moe_exp2 = int(testcase.attributes.get("moe_expert_num", ep_ws2))
+                    local_exp2 = moe_exp2 // ep_ws2 if ep_ws2 > 0 else moe_exp2
+                    send_counts2 = [0] * ep_ws2
+                    for ii in range(bs2):
+                        for jj in range(k2):
+                            e_id = int(eid[ii][jj]) if eid.ndim > 1 else int(eid[ii])
+                            dest2 = e_id // local_exp2 if local_exp2 > 0 else 0
+                            if dest2 >= ep_ws2:
+                                dest2 = ep_ws2 - 1
+                            send_counts2[dest2] += 1
+                    cumsum2 = []
+                    run2 = 0
+                    for ii in range(ep_ws2):
+                        run2 += send_counts2[ii]
+                        cumsum2.append(run2)
+                    if len(rank_inputs) > 3 and rank_inputs[3] is not None:
+                        rank_inputs[3] = _np2.array(cumsum2, dtype=_np2.int32)
+                    if len(rank_inputs) > 2 and rank_inputs[2] is not None:
+                        rank_inputs[2] = _np2.arange(bs2 * k2, dtype=_np2.int32)
+                    if len(rank_inputs) > 4 and rank_inputs[4] is not None:
+                        rank_inputs[4] = _np2.ones((bs2, k2), dtype=_np2.float32)
             for i, r in enumerate(rank_inputs):
                 if r is not None:
                     # For shared weight (idx >= 1 when needs_shared_weight),
@@ -852,6 +904,7 @@ def _do_profile_multi_device(
             "remark": testcase.remark or "",
             "tensor_view_shapes": list(testcase.tensor_view_shapes) if testcase.tensor_view_shapes else [],
             "testcase_name": getattr(testcase, "testcase_name", ""),
+            "proc_timeout": int(getattr(switches, "proc_timeout", 0) or 3600),
         }
 
         plan_path = os.path.join(tmp_dir, "plan.json")
@@ -875,6 +928,9 @@ def _do_profile_multi_device(
         elif switches.cst_switches.enabled:
             graph_mode = "static"
         env["TTK_E2E_GRAPH_MODE"] = graph_mode
+        # Pass plugin path to worker so it can load per-operator golden specs.
+        if switches.plugin_path:
+            env["TTK_E2E_PLUGIN"] = ",".join(str(p_) for p_ in switches.plugin_path)
 
         cmd = [sys.executable, script_path]
         logging.info(f"E2E multi-device: running {cmd} with devices={device_ids} graph_mode={graph_mode or 'none'}")

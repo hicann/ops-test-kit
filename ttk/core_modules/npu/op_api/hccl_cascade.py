@@ -30,12 +30,23 @@ from typing import Dict, List
 import numpy as np
 
 
-def _configure_hccl_env():
-    """Configure the default HCCL listener range when a cascade is launched."""
-    # HCCL cascade workers run concurrently with the TTK process and each other.
-    # The default NPU-side listener port (16666) collides when several cascades
-    # are created in one testcase run, so reserve a configurable range by default.
-    os.environ.setdefault('HCCL_NPU_SOCKET_PORT_RANGE', '50000-50100')
+# Default timeout (seconds) for HCCL communication and subprocess joins.
+def _configure_hccl_env(timeout=3600):
+    """Configure HCCL port range. Timeout is passed directly to workers."""
+    try:
+        from ....config.loader import get_cascade_config
+        _cfg = get_cascade_config()
+        os.environ.setdefault('HCCL_NPU_SOCKET_PORT_RANGE', _cfg.hccl_port_range)
+    except Exception:
+        os.environ.setdefault('HCCL_NPU_SOCKET_PORT_RANGE', '50000-50100')
+
+
+def _get_timeout(thread_contexts, device_ids):
+    """Extract proc_timeout from thread_contexts attributes; default 3600."""
+    first_ctx = thread_contexts.get(device_ids[0]) if device_ids else None
+    if first_ctx and hasattr(first_ctx, 'attributes'):
+        return int(first_ctx.attributes.get('proc_timeout', 3600) or 3600)
+    return 3600
 
 
 def _save_inputs_per_rank(thread_contexts, device_ids, path):
@@ -131,7 +142,7 @@ def _load_inputs_for_rank(input_path, did):
 
 def _worker_matmul_alltoall(rank, world_size, port, input_path, result_path,
                               transpose_x1, transpose_x2, mm_m, chunk_n,
-                              error_path):
+                              error_path, timeout=3600):
     """子进程：单 rank 跑 matmul + 真HCCL all_to_all_single，结果写回文件。
 
     对齐 mc2_test aclnnMatmulAlltoAll.get_hccl_mm 行 96-110：
@@ -147,14 +158,12 @@ def _worker_matmul_alltoall(rank, world_size, port, input_path, result_path,
     import torch.distributed as dist
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         tensors = _load_inputs_for_rank(input_path, rank)
         x1 = tensors[0].npu()
@@ -234,18 +243,30 @@ def _find_free_port():
 
 # 多 case 顺序跑时，前一个 case 的 HCCL 子进程退出后 socket 可能处于 TIME_WAIT，
 # 同一端口会被 HCCL 内部 socket bind 冲突。维护一个递增 base_port 避免复用。
-_next_port_base = [30000]
+# 端口范围从 cascade 配置读取 (default.yaml → ttk.conf.yaml → --config)。
+_next_port_base = [None]  # lazy init from config
 
 
 def _next_port():
     """获取一个递增端口，避免跨 case 端口复用导致 HCCL bind 冲突。"""
     import threading
-    _configure_hccl_env()
+    _configure_hccl_env()  # port range only; timeout set by run_xxx_cascade
     with threading.Lock():
+        # Lazy-init port base/step/max from config on first call
+        if _next_port_base[0] is None:
+            try:
+                from ....config.loader import get_cascade_config
+                _cfg = get_cascade_config()
+            except Exception:
+                _cfg = None
+            _next_port_base[0] = _cfg.port_base if _cfg else 30000
+            _next_port_step = _cfg.port_step if _cfg else 13
+            _next_port_max = _cfg.port_max if _cfg else 60000
+            _next_port_base.extend([_next_port_step, _next_port_max])
         port = _next_port_base[0]
-        _next_port_base[0] += 13  # HCCL 内部会派生多个端口，留间隔
-        if _next_port_base[0] > 60000:
-            _next_port_base[0] = 30000
+        _next_port_base[0] += _next_port_base[1]  # step
+        if _next_port_base[0] > _next_port_base[2]:  # max
+            _next_port_base[0] -= _next_port_base[2] - _next_port_base[1]  # wrap to base
         return port
 
 
@@ -267,6 +288,7 @@ def run_matmul_alltoall_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -296,13 +318,13 @@ def run_matmul_alltoall_cascade(thread_contexts: Dict[int, 'object'],
             p = ctx.Process(
                 target=_worker_matmul_alltoall,
                 args=(rank, n, port, input_path, result_path,
-                      transpose_x1, transpose_x2, mm_m, chunk_n, error_path),
+                      transpose_x1, transpose_x2, mm_m, chunk_n, error_path, timeout),
             )
             p.start()
             procs.append(p)
 
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         # 检查错误
         error_msg = ""
@@ -335,7 +357,7 @@ def run_matmul_alltoall_cascade(thread_contexts: Dict[int, 'object'],
 
 def _worker_alltoall_matmul(rank, world_size, port, input_path, result_path,
                               transpose_x1, transpose_x2, mm_m_chunk, k_dim, n_dim,
-                              is_alltoall_output, error_path):
+                              is_alltoall_output, error_path, timeout=3600):
     """子进程：单 rank 跑 真HCCL all_to_all + matmul。
 
     对齐 mc2_test aclnnAlltoAllMatmul.get_hccl_mm 行 119-136：
@@ -352,14 +374,12 @@ def _worker_alltoall_matmul(rank, world_size, port, input_path, result_path,
     import torch.distributed as dist
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         tensors = _load_inputs_for_rank(input_path, rank)
         x1 = tensors[0].npu()
@@ -454,6 +474,7 @@ def run_alltoall_matmul_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -487,12 +508,12 @@ def run_alltoall_matmul_cascade(thread_contexts: Dict[int, 'object'],
                 target=_worker_alltoall_matmul,
                 args=(rank, n, port, input_path, result_path,
                       transpose_x1, transpose_x2, mm_m_chunk, k_dim, n_dim,
-                      is_alltoall_output, error_path),
+                      is_alltoall_output, error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):
@@ -536,7 +557,7 @@ def run_alltoall_matmul_cascade(thread_contexts: Dict[int, 'object'],
 
 def _worker_allgather_matmul(rank, world_size, port, input_path, result_path,
                               is_trans_b, m_dim, k_dim, n_dim,
-                              is_gather_output, error_path):
+                              is_gather_output, error_path, timeout=3600):
     """子进程：单 rank 跑 真HCCL all_gather + matmul。
 
     对齐 mc2_test aclnnAllGatherMatmul.get_hccl_mm 行 80-87：
@@ -553,14 +574,12 @@ def _worker_allgather_matmul(rank, world_size, port, input_path, result_path,
     import torch.distributed as dist
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         tensors = _load_inputs_for_rank(input_path, rank)
         x1 = tensors[0].npu()
@@ -622,6 +641,7 @@ def run_allgather_matmul_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -649,12 +669,12 @@ def run_allgather_matmul_cascade(thread_contexts: Dict[int, 'object'],
                 target=_worker_allgather_matmul,
                 args=(rank, n, port, input_path, result_path,
                       is_trans_b, m_dim, k_dim, n_dim,
-                      is_gather_output, error_path),
+                      is_gather_output, error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):
@@ -692,7 +712,7 @@ def run_allgather_matmul_cascade(thread_contexts: Dict[int, 'object'],
 
 
 def _worker_matmul_reducescatter(rank, world_size, port, input_path, result_path,
-                                   is_trans_b, m_dim, k_dim, n_dim, error_path):
+                                   is_trans_b, m_dim, k_dim, n_dim, error_path, timeout=3600):
     """子进程：单 rank 跑 matmul + 真HCCL reduce_scatter。
 
     对齐 mc2_test aclnnMatmulReduceScatter.get_hccl_mm 行 60-64：
@@ -711,14 +731,12 @@ def _worker_matmul_reducescatter(rank, world_size, port, input_path, result_path
     from torch.distributed import ReduceOp
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         tensors = _load_inputs_for_rank(input_path, rank)
         x1 = tensors[0].npu()
@@ -771,6 +789,7 @@ def run_matmul_reducescatter_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -799,12 +818,12 @@ def run_matmul_reducescatter_cascade(thread_contexts: Dict[int, 'object'],
             p = ctx.Process(
                 target=_worker_matmul_reducescatter,
                 args=(rank, n, port, input_path, result_path,
-                      is_trans_b, m_dim, k_dim, n_dim, error_path),
+                      is_trans_b, m_dim, k_dim, n_dim, error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):
@@ -834,7 +853,7 @@ def run_matmul_reducescatter_cascade(thread_contexts: Dict[int, 'object'],
 # 参考 mc2_test aclnnAlltoAllvGroupedMatMul.permute_with_npu 和
 #        aclnnGroupedMatMulAlltoAllv.unpermute_npu
 # 这两个操作都是按 expTokenNums 矩阵重排 tokens，逻辑与 CPU golden
-# (mc2_golden.py:__permute_a2a_gmm / __unpermute_mc2) 等价，但在 NPU 上做 index_select
+# (mc2_dispatcher.py:__permute_a2a_gmm / __unpermute_mc2) 等价，但在 NPU 上做 index_select
 
 
 def _permute_a2a_gmm(tokens, exp_per_card, ep_ws, rank_idx, expTokenNums):
@@ -954,7 +973,7 @@ def _load_gmm_meta(meta_path):
 
 def _worker_alltoallv_gmm(rank, world_size, port, input_path, result_path,
                             trans_gmm_weight, trans_mm_weight,
-                            permute_out_flag, mm_out_flag, error_path):
+                            permute_out_flag, mm_out_flag, error_path, timeout=3600):
     """子进程：单 rank 跑 真HCCL all_to_allv + permute + npu_gmm。"""
     import datetime
     import traceback
@@ -964,14 +983,12 @@ def _worker_alltoallv_gmm(rank, world_size, port, input_path, result_path,
     from mindspeed.ops import gmm
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         # 加载元数据
         expTokenNums, ep_ws, exp_per_card = _load_gmm_meta(input_path + '.meta.npz')
@@ -1077,6 +1094,7 @@ def run_alltoallv_gmm_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -1096,12 +1114,12 @@ def run_alltoallv_gmm_cascade(thread_contexts: Dict[int, 'object'],
                 target=_worker_alltoallv_gmm,
                 args=(rank, n, port, input_path, result_path,
                       trans_gmm_weight, trans_mm_weight,
-                      permute_out_flag, mm_out_flag, error_path),
+                      permute_out_flag, mm_out_flag, error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):
@@ -1156,7 +1174,7 @@ def run_alltoallv_gmm_cascade(thread_contexts: Dict[int, 'object'],
 
 def _worker_gmm_alltoallv(rank, world_size, port, input_path, result_path,
                             trans_gmm_weight, trans_mm_weight,
-                            mm_out_flag, error_path):
+                            mm_out_flag, error_path, timeout=3600):
     """子进程：单 rank 跑 npu_gmm + unpermute + 真HCCL all_to_allv。"""
     import datetime
     import traceback
@@ -1166,14 +1184,12 @@ def _worker_gmm_alltoallv(rank, world_size, port, input_path, result_path,
     from mindspeed.ops import gmm
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         expTokenNums, ep_ws, exp_per_card = _load_gmm_meta(input_path + '.meta.npz')
 
@@ -1251,6 +1267,7 @@ def run_gmm_alltoallv_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -1270,12 +1287,12 @@ def run_gmm_alltoallv_cascade(thread_contexts: Dict[int, 'object'],
                 target=_worker_gmm_alltoallv,
                 args=(rank, n, port, input_path, result_path,
                       trans_gmm_weight, trans_mm_weight,
-                      mm_out_flag, error_path),
+                      mm_out_flag, error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):
@@ -1332,7 +1349,7 @@ def run_gmm_alltoallv_cascade(thread_contexts: Dict[int, 'object'],
 
 def _worker_bmm_rs_a2a(rank, world_size, port, input_path, result_path,
                          ep_ws, tp_ws, shard_type, is_trans, is_bias,
-                         error_path):
+                         error_path, timeout=3600):
     """子进程：单 rank 跑 bmm + 真HCCL reduce_scatter(TP) + all_to_all(EP)。"""
     import datetime
     import traceback
@@ -1342,14 +1359,12 @@ def _worker_bmm_rs_a2a(rank, world_size, port, input_path, result_path,
     from torch.distributed import ReduceOp
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         # 建 EP/TP 子通信域（对齐 mc2_test setup_ep_tp）
         # EP 组 i: [x * tp_ws + i for x in range(ep_ws)]
@@ -1476,6 +1491,7 @@ def run_bmm_rs_a2a_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -1496,12 +1512,12 @@ def run_bmm_rs_a2a_cascade(thread_contexts: Dict[int, 'object'],
                 target=_worker_bmm_rs_a2a,
                 args=(rank, n, port, input_path, result_path,
                       ep_ws, tp_ws, shard_type, is_trans, is_bias,
-                      error_path),
+                      error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):
@@ -1565,7 +1581,7 @@ def _activate_npu(x, act_type):
 def _worker_a2a_ag_bmm(rank, world_size, port, input_path, result_path,
                          ep_ws, tp_ws, shard_type, is_trans, is_bias, act_type,
                          need_ag_out, need_act_feat,
-                         error_path):
+                         error_path, timeout=3600):
     """子进程：单 rank 跑 真HCCL all_to_all(EP) + all_gather(TP) + bmm。"""
     import datetime
     import traceback
@@ -1574,14 +1590,12 @@ def _worker_a2a_ag_bmm(rank, world_size, port, input_path, result_path,
     import torch.distributed as dist
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         # 建 EP/TP 子通信域
         ep_group = None
@@ -1700,6 +1714,7 @@ def run_a2a_ag_bmm_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -1720,12 +1735,12 @@ def run_a2a_ag_bmm_cascade(thread_contexts: Dict[int, 'object'],
                 target=_worker_a2a_ag_bmm,
                 args=(rank, n, port, input_path, result_path,
                       ep_ws, tp_ws, shard_type, is_trans, is_bias, act_type,
-                      need_ag_out, need_act_feat, error_path),
+                      need_ag_out, need_act_feat, error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):
@@ -1774,7 +1789,7 @@ def run_a2a_ag_bmm_cascade(thread_contexts: Dict[int, 'object'],
 
 def _worker_matmul_allreduce(rank, world_size, port, input_path, result_path,
                               transpose_x1, transpose_x2, is_bias,
-                              error_path):
+                              error_path, timeout=3600):
     """子进程：单 rank 跑 matmul + 真HCCL all_reduce(SUM)。"""
     import datetime
     import traceback
@@ -1784,14 +1799,12 @@ def _worker_matmul_allreduce(rank, world_size, port, input_path, result_path,
     from torch.distributed import ReduceOp
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         tensors = _load_inputs_for_rank(input_path, rank)
         x1 = tensors[0].npu()
@@ -1843,6 +1856,7 @@ def run_matmul_allreduce_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -1860,12 +1874,12 @@ def run_matmul_allreduce_cascade(thread_contexts: Dict[int, 'object'],
             p = ctx.Process(
                 target=_worker_matmul_allreduce,
                 args=(rank, n, port, input_path, result_path,
-                      transpose_x1, transpose_x2, is_bias, error_path),
+                      transpose_x1, transpose_x2, is_bias, error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):
@@ -1924,7 +1938,7 @@ def _worker_allgather_quant_matmul_v2(rank, world_size, port, input_path, result
                                         x1_dtype_str, x2_dtype_str,
                                         x1scale_dtype_str, x2scale_dtype_str,
                                         out_dtype_str, group_size,
-                                        error_path):
+                                        error_path, timeout=3600):
     """子进程：单 rank 跑 真HCCL all_gather(x1) + [all_gather(x1scale)] + npu_quant_matmul。"""
     import datetime
     import traceback
@@ -1934,14 +1948,12 @@ def _worker_allgather_quant_matmul_v2(rank, world_size, port, input_path, result
     import numpy as np
 
     try:
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
+        _configure_hccl_env(timeout)
 
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=timeout))
 
         tensors = _load_inputs_for_rank(input_path, rank)
         x1 = tensors[0]   # fp8/hif8 torch tensor
@@ -2056,6 +2068,7 @@ def run_allgather_quant_matmul_v2_cascade(thread_contexts: Dict[int, 'object'],
     import torch
     import torch.multiprocessing as mp
 
+    _configure_hccl_env(_get_timeout(thread_contexts, device_ids))
     n = len(device_ids)
     if n < 2:
         return {}
@@ -2088,12 +2101,12 @@ def run_allgather_quant_matmul_v2_cascade(thread_contexts: Dict[int, 'object'],
                       is_trans_b, is_bias, is_mxfp, per_block_flag,
                       x1_dtype_str, x2_dtype_str,
                       x1scale_dtype_str, x2scale_dtype_str,
-                      out_dtype_str, group_size, error_path),
+                      out_dtype_str, group_size, error_path, timeout),
             )
             p.start()
             procs.append(p)
         for p in procs:
-            p.join()
+            p.join(timeout=_get_timeout(thread_contexts, device_ids))
 
         error_msg = ""
         if os.path.exists(error_path):

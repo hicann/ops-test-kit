@@ -12,8 +12,8 @@ def add_device_args(parser):
                         help="Process count per device")
     parser.add_argument("--plat", "--platform", dest="platform",
                         help="SoC version, e.g. --plat=Ascend910B2")
-    parser.add_argument("--proc-timeout", dest="proc_timeout", type=int, default=0,
-                        help="Per-testcase timeout in seconds (default: 0 = no timeout)")
+    parser.add_argument("--proc-timeout", dest="proc_timeout", type=int, default=3600,
+                        help="Per-testcase timeout in seconds (default: 3600)")
     parser.add_argument("--warmup", default=True,
                         type=lambda x: x.lower() != "false",
                         help="Warmup before profiling (default: true)")

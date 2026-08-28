@@ -64,32 +64,19 @@ def _call_torch_npu_moe(api_name, dev_tensors, hcomm, world_size, attrs):
     tensor_count = len(_TORCH_NPU_MOE_TENSOR_PARAMS[api_name])
     tensors = list(dev_tensors[:tensor_count])
     ep_world_size = int(kw.pop("ep_world_size", world_size))
-    ep_rank_id = int(kw.pop("ep_rank_id", kw.pop("_rank", 0)))
+    # In multi-device E2E, _rank is the actual per-rank value set by the
+    # worker. CSV ep_rank_id is only present to satisfy overload validation;
+    # the actual per-rank value must take precedence.
+    if "_rank" in kw:
+        ep_rank_id = int(kw.pop("_rank"))
+        kw.pop("ep_rank_id", None)
+    else:
+        ep_rank_id = int(kw.pop("ep_rank_id", 0))
     moe_expert_num = int(kw.pop("moe_expert_num"))
     kw.pop("group_ep", None)
     kw["group_tp"] = kw.get("group_tp", "")
     return resolved(*tensors, hcomm, ep_world_size, ep_rank_id,
                     moe_expert_num, **kw)
-
-
-def _call_torch_npu_token_exchange(api_name, dev_tensors, hcomm, world_size, attrs):
-    """Call public Attention/FFN token exchange APIs."""
-    resolved = _resolve_api(api_name)
-    kw = dict(attrs)
-    kw.pop("group", None)
-    kw.pop("hcom", None)
-    kw.pop("world_size", None)
-    if api_name == "torch_npu.npu_attention_to_ffn":
-        return resolved(
-            *dev_tensors, hcomm, world_size,
-            tuple(kw.pop("ffn_token_info_table_shape")),
-            tuple(kw.pop("ffn_token_data_shape")),
-            tuple(kw.pop("attn_token_info_table_shape")),
-            int(kw.pop("moe_expert_num")), **kw)
-    return resolved(
-        *dev_tensors, hcomm, world_size,
-        tuple(kw.pop("token_info_table_shape")),
-        tuple(kw.pop("token_data_shape")), **kw)
 
 
 def _get_moe_ccl_buffer_size(world_size, num_tokens, hidden, num_experts, topk,
@@ -124,622 +111,68 @@ def find_free_port():
         return s.getsockname()[1]
 
 
-# ========== Golden functions (CPU simulation of collective ops) ==========
-
-def _golden_mm_all_reduce(cpu_inputs_per_rank):
-    """MatmulAllReduce: each rank local matmul(+bias), then all_reduce(sum).
-
-    Mirrors mc2_test get_cpu (op_class/aclnnMatmulAllReduce.py:105-113):
-    fp32 matmul + bias, then all_reduce SUM. All ranks share weight, so
-    golden = sum of all ranks' local matmul.
-    """
-    import torch
-    world_size = len(cpu_inputs_per_rank)
-    local_results = []
-    for r in range(world_size):
-        x1 = cpu_inputs_per_rank[r][0].float()
-        x2 = cpu_inputs_per_rank[r][1].float()
-        mm_out = torch.matmul(x1, x2)
-        bias = cpu_inputs_per_rank[r][2] if len(cpu_inputs_per_rank[r]) > 2 else None
-        if bias is not None and isinstance(bias, torch.Tensor) and bias.numel() > 0:
-            mm_out = mm_out + bias.float()
-        local_results.append(mm_out)
-    total = torch.zeros_like(local_results[0])
-    for lr in local_results:
-        total = total + lr
-    del local_results
-    return [total.contiguous() for _ in range(world_size)]
+_MIGRATED_E2E_OPS = (
+    'npu_all_gather_base_mm', 'npu_mm_reduce_scatter_base',
+    'npu_matmul_all_to_all', 'npu_all_to_all_matmul',
+    'npu_gmm_alltoallv', 'npu_alltoallv_gmm',
+    'bmm_reducescatter_alltoall', 'alltoall_allgather_bmm',
+    # MoE operators
+    'npu_moe_distribute_dispatch', 'npu_moe_distribute_combine',
+    # A5 operators (E2E APIs)
+    'npu_mm_all_reduce_base', 'npu_quant_all_reduce',
+    'npu_quant_reduce_scatter', 'npu_gmm_all_reduce',
+    'npu_quant_gmm_alltoallv', 'npu_alltoallv_quant_gmm',
+    'npu_inplace_mm_all_reduce_add_rms_norm',
+    'npu_mm_all_reduce_add_rms_norm',
+)
 
 
-def _golden_all_gather_mm(cpu_inputs_per_rank):
-    world_size = len(cpu_inputs_per_rank)
-    all_x1 = [inp[0].float() for inp in cpu_inputs_per_rank]
-    gathered = torch.cat(all_x1, dim=0)
-    del all_x1
-    goldens = []
-    for r in range(world_size):
-        x2 = cpu_inputs_per_rank[r][1].float()
-        g = torch.matmul(gathered, x2)
-        goldens.append(g.contiguous())
-    del gathered
-    return goldens
+class _GoldenContext:
+    """Bundles the golden-relevant parameters to keep function signatures lean."""
+
+    __slots__ = ("cpu_inputs_per_rank", "attrs", "rank", "ws", "dist_avail")
+
+    def __init__(self, cpu_inputs_per_rank, attrs, rank=None, ws=None, dist_avail=True):
+        self.cpu_inputs_per_rank = cpu_inputs_per_rank
+        self.attrs = attrs
+        self.rank = rank
+        self.ws = ws
+        self.dist_avail = dist_avail
 
 
-def _golden_reduce_scatter_mm(cpu_inputs_per_rank, attrs=None):
-    import torch as _torch
-    world_size = len(cpu_inputs_per_rank)
-    # Match ACLNN golden (mc2_golden.py:208-240): CPU fp32 matmul -> bf16 truncation -> CPU bf16 accumulate
-    orig_dtype = _torch.float32
-    if attrs and '_tensor_dtypes' in attrs:
-        dt_str = str(attrs['_tensor_dtypes'][0]) if attrs['_tensor_dtypes'] else 'float32'
-        if dt_str == 'bfloat16':
-            orig_dtype = _torch.bfloat16
-        elif dt_str == 'float16':
-            orig_dtype = _torch.float16
-    local_results = []
-    for r in range(world_size):
-        x1 = cpu_inputs_per_rank[r][0]
-        x2 = cpu_inputs_per_rank[r][1]
-        x1_f = x1.float()
-        x2_f = x2.float()
-        mm_out = _torch.matmul(x1_f, x2_f)
-        mm_out = mm_out.to(orig_dtype).float()
-        local_results.append(mm_out.to(orig_dtype))
-    total = _torch.zeros_like(local_results[0])
-    for lr in local_results:
-        total = total + lr
-    total = total.float()
-    del local_results
-    M = total.shape[0]
-    chunk_m = M // world_size
-    return [total[r * chunk_m:(r + 1) * chunk_m, :].contiguous() for r in range(world_size)]
-
-
-def _golden_matmul_all_to_all(cpu_inputs_per_rank, attrs):
-    """Mirror ACLNN __golden_matmul_allto_all exactly.
-
-    For each target rank, iterate over all source ranks, compute local matmul,
-    chunk along N (permute(1,0,2) + chunk dim=0), and pick the target's chunk.
-    Finally cat + reshape(-1, chunk_n).
-    """
-    world_size = len(cpu_inputs_per_rank)
-    t_x1 = bool(attrs.get('transposeX1', False))
-    t_x2 = bool(attrs.get('transposeX2', False))
-
-    # Precompute each rank's mm_out (float32) with bias if present
-    all_mm_out = []
-    for r in range(world_size):
-        x1 = cpu_inputs_per_rank[r][0]
-        x2 = cpu_inputs_per_rank[r][1]
-        bias = cpu_inputs_per_rank[r][2] if len(cpu_inputs_per_rank[r]) > 2 else None
-        if bias is not None and isinstance(bias, torch.Tensor) and bias.numel() == 0:
-            bias = None
-        input_mat = x1.t().contiguous() if t_x1 else x1
-        weight_mat = x2.t().contiguous() if t_x2 else x2
-        mm_out = torch.matmul(input_mat.float(), weight_mat.float())
-        if bias is not None:
-            mm_out = mm_out + bias.float()
-        all_mm_out.append(mm_out)
-
-    M = all_mm_out[0].shape[0]
-    N = all_mm_out[0].shape[1]
-    chunk_n = N // world_size
-
-    goldens = []
-    for target_r in range(world_size):
-        all_to_all_results = []
-        for src_r in range(world_size):
-            s_mm = all_mm_out[src_r]
-            s_chunks = s_mm.view(M, world_size, chunk_n).permute(1, 0, 2).contiguous()
-            s_chunks = s_chunks.view(world_size, M * chunk_n)
-            send_chunks = s_chunks.chunk(world_size, dim=0)
-            all_to_all_results.append(send_chunks[target_r].clone())
-            del s_chunks, send_chunks
-        received = torch.cat(all_to_all_results, dim=0)
-        received = received.reshape(-1, chunk_n).contiguous()
-        goldens.append(received)
-        del all_to_all_results
-    del all_mm_out
-    return goldens
-
-
-def _golden_all_to_all_matmul(cpu_inputs_per_rank, attrs):
-    """Mirror ACLNN __golden_allto_all_matmul exactly.
-
-    For each target rank: collect each source rank's x1 chunk[target_idx],
-    stack + permute(1,0,2) + reshape(M_chunk, ws*K), then matmul with own weight.
-    """
-    world_size = len(cpu_inputs_per_rank)
-    t_x1 = bool(attrs.get('transposeX1', False))
-    t_x2 = bool(attrs.get('transposeX2', False))
-
-    # Precompute each rank's input_mat and weight_mat (float32)
-    input_mats = []
-    weight_mats = []
-    biases = []
-    for r in range(world_size):
-        x1 = cpu_inputs_per_rank[r][0]
-        x2 = cpu_inputs_per_rank[r][1]
-        bias = cpu_inputs_per_rank[r][2] if len(cpu_inputs_per_rank[r]) > 2 else None
-        if bias is not None and isinstance(bias, torch.Tensor) and bias.numel() == 0:
-            bias = None
-        input_mats.append((x1.t().contiguous() if t_x1 else x1).float())
-        weight_mats.append((x2.t().contiguous() if t_x2 else x2).float())
-        biases.append(bias.float() if bias is not None else None)
-
-    M_total = input_mats[0].shape[0]
-    K = input_mats[0].shape[1]
-    M_chunk = M_total // world_size
-
-    goldens = []
-    for target_r in range(world_size):
-        recv_chunks = []
-        for src_r in range(world_size):
-            s_input = input_mats[src_r]
-            s_reshaped = s_input.view(world_size, M_chunk, K)
-            recv_chunks.append(s_reshaped[target_r])
-
-        recv_tensor = torch.stack(recv_chunks, dim=0)
-        a2a_out = recv_tensor.permute(1, 0, 2).reshape(M_chunk, world_size * K).contiguous()
-
-        weight_mat = weight_mats[target_r]
-        mm_out = torch.matmul(a2a_out, weight_mat)
-        bias = biases[target_r]
-        if bias is not None:
-            mm_out = mm_out + bias
-        goldens.append(mm_out)
-
-    del input_mats, weight_mats, biases
-    return goldens
-
-
-def _generate_gmm_matrix(A_array, m, seed=1):
-    """Replicate ACLNN __generate_gmm_alltoallv_matrix exactly."""
-    n = len(A_array)
-    rng = np.random.default_rng(seed)
-    total = sum(A_array)
-    if total % n != 0:
-        return [[total // n] * (m * n) for _ in range(n)]
-    col_sum = total // n
-    k_values = []
-    for a in A_array:
-        if a % n != 0:
-            return [[col_sum // m] * (m * n) for _ in range(n)]
-        k = a // n
-        k_values.append(max(k, m))
-    blocks = []
-    for k in k_values:
-        block = np.zeros((m, n), dtype=int)
-        for col in range(n):
-            counts = rng.multinomial(k - m, [1.0 / m] * m)
-            block[:, col] = counts + 1
-        blocks.append(block)
-    tmp = np.vstack(blocks)
-    return [list(col) for col in zip(*tmp)]
-
-
-def _golden_a2a_ag_bmm(cpu_inputs_per_rank, attrs, rank, ws, dist_avail=True):
-    x_cpu = cpu_inputs_per_rank[rank][0].float()
-    w_cpu = cpu_inputs_per_rank[rank][1].float()
-    shard_type = int(attrs.get('shard_type', attrs.get('xShardType', 0)))
-    ep_ws = int(attrs.get('epWorldSize', 0))
-    tp_ws = int(attrs.get('tpWorldSize', 0))
-    act_type_val = attrs.get('actType', 0)
-    if isinstance(act_type_val, str):
-        act_map = {'none': 0, 'gelu': 1, 'silu': 2, 'relu': 3, 'fastgelu': 4}
-        act_type = act_map.get(act_type_val.lower(), 0)
-    else:
-        act_type = int(act_type_val)
-    is_bias = bool(attrs.get('isBias', False))
-    need_ag_out = bool(attrs.get('needAllgatherOut', attrs.get('need_allgather_out', False)))
-    need_act_feat = bool(attrs.get('needActivationFeature', attrs.get('need_activation_feature', False)))
-    if not ep_ws or not tp_ws:
+def _try_plugin_golden(api_name, ctx):
+    """Attempt to load golden from plugin spec. Returns list or None."""
+    plugin_path = os.environ.get('TTK_E2E_PLUGIN', '')
+    if not plugin_path:
         return None
-
-    def _apply_act(x, act):
-        if act == 0:
-            return x
-        elif act == 1:
-            return torch.nn.functional.gelu(x, approximate="tanh")
-        elif act == 2:
-            return x * torch.sigmoid(x)
-        elif act == 3:
-            return torch.nn.functional.relu(x)
-        elif act == 4:
-            return x / (1.0 + torch.exp(-1.702 * x))
-        return x
-
-    E_local = x_cpu.shape[0]
-    E_div_ep = E_local // ep_ws
-
-    if shard_type == 0:
-        C = x_cpu.shape[1]
-        H_div_tp = x_cpu.shape[2]
-    else:
-        C_div_tp = x_cpu.shape[1]
-        H = x_cpu.shape[2]
-
-    n_ep_groups = ws // ep_ws
-    n_tp_groups = ws // tp_ws
-    ep_groups = [list(range(g * ep_ws, (g + 1) * ep_ws)) for g in range(n_ep_groups)]
-    tp_groups = [[g + e * ep_ws for e in range(tp_ws)] for g in range(n_tp_groups)]
-
-    all_x_cache = {}
-    for r in range(ws):
-        all_x_cache[r] = cpu_inputs_per_rank[r][0].float()
-
-    a2a_per_rank = {}
-    for group_ranks in ep_groups:
-        chunks_per_rank = {}
-        for local_idx, r in enumerate(group_ranks):
-            chunks_per_rank[local_idx] = all_x_cache[r].chunk(ep_ws, dim=0)
-        for target_local, target_rank in enumerate(group_ranks):
-            result_chunks = [chunks_per_rank[src_local][target_local] for src_local in range(len(group_ranks))]
-            a2a_out = torch.cat(result_chunks, dim=0)
-            if shard_type == 0:
-                a2a_out = a2a_out.reshape(ep_ws, E_div_ep, C, H_div_tp).permute(1, 0, 2, 3).contiguous()
-            else:
-                a2a_out = a2a_out.reshape(ep_ws, E_div_ep, C_div_tp, H).permute(1, 0, 2, 3).contiguous()
-            a2a_per_rank[target_rank] = a2a_out
-
-    for tp_group_ranks in tp_groups:
-        all_parts = [a2a_per_rank[r] for r in tp_group_ranks]
-        gathered = torch.cat(all_parts, dim=0)
-        del all_parts
-        if shard_type == 0:
-            gathered = gathered.reshape(tp_ws, E_div_ep, ep_ws, C, H_div_tp)
-            gathered = gathered.permute(1, 2, 3, 0, 4).contiguous()
-            gathered = gathered.reshape(E_div_ep, ep_ws * C, H_div_tp * tp_ws)
-        else:
-            gathered = gathered.reshape(tp_ws, E_div_ep, ep_ws, C_div_tp, H)
-            gathered = gathered.permute(1, 2, 0, 3, 4).contiguous()
-            gathered = gathered.reshape(E_div_ep, ep_ws * tp_ws * C_div_tp, H)
-
-        for r in tp_group_ranks:
-            if r == rank:
-                w_r = cpu_inputs_per_rank[r][1].float()
-                bmm_out = torch.bmm(gathered, w_r)
-                del w_r
-                if is_bias and len(cpu_inputs_per_rank[r]) > 2:
-                    bias_r = cpu_inputs_per_rank[r][2].float()
-                    if bias_r.numel() > 0:
-                        if bias_r.dim() == 2:
-                            bias_r = bias_r.reshape(bias_r.shape[0], 1, bias_r.shape[1])
-                        bmm_out = bmm_out + bias_r
-                    del bias_r
-                activated = _apply_act(bmm_out, act_type)
-                in_dtype = cpu_inputs_per_rank[r][0].dtype
-                goldens = {'main': activated.to(in_dtype).float()}
-                if need_ag_out:
-                    goldens['allgather'] = gathered.to(in_dtype).float()
-                if need_act_feat:
-                    goldens['bmm'] = bmm_out.to(in_dtype).float()
-                return goldens
-        del gathered
-    return None
-
-
-def _golden_bmm_rs_a2a(cpu_inputs_per_rank, attrs, rank, ws, dist_avail=True):
-    """Pure CPU golden for npu_bmm_reducescatter_alltoall (matching ACLNN
-    __golden_bmm_reduce_scatter_allto_all exactly)."""
-    shard_type = int(attrs.get('shard_type', attrs.get('yShardType', 0)))
-    ep_ws = int(attrs.get('epWorldSize', 0))
-    tp_ws = int(attrs.get('tpWorldSize', 0))
-    if not ep_ws or not tp_ws:
+    try:
+        from ttk.test_spec import get_spec_attr
+        plugin_paths = tuple(p_ for p_ in plugin_path.split(',') if p_)
+        fn = get_spec_attr(api_name, "golden", plugin_paths)
+        if fn is None:
+            return None
+        result = fn(
+            ctx.cpu_inputs_per_rank, ctx.attrs, ctx.rank, ctx.ws, ctx.dist_avail)
+        if result is None:
+            return None
+        return result if isinstance(result, list) else [result]
+    except Exception:
+        import traceback
+        traceback.print_exc()
         return None
-
-    # in_dtype must be the NPU compute dtype (bf16/fp16), not the CPU float32 copy.
-    # cpu_inputs_per_rank tensors are already .float() in worker; recover original dtype.
-    in_dtype = torch.float32
-    if attrs and '_tensor_dtypes' in attrs:
-        dt_str = str(attrs['_tensor_dtypes'][0]) if attrs['_tensor_dtypes'] else 'float32'
-        if 'bfloat16' in dt_str or 'bf16' in dt_str:
-            in_dtype = torch.bfloat16
-        elif 'float16' in dt_str or 'fp16' in dt_str:
-            in_dtype = torch.float16
-    E_div_ep = cpu_inputs_per_rank[0][0].shape[0]
-    x_dim1 = cpu_inputs_per_rank[0][0].shape[1]
-    H = cpu_inputs_per_rank[0][1].shape[2]
-    is_bias = bool(attrs.get('isBias', False))
-
-    if shard_type == 0:
-        C = x_dim1 // ep_ws
-    else:
-        C_div_tp = x_dim1 // ep_ws // tp_ws
-
-    # Step 1: reduce_scatter across TP groups (compute rs for all ranks, matching ACLNN)
-    rs_per_rank = {}
-    n_tp_groups = ws // tp_ws
-    for g in range(n_tp_groups):
-        group_ranks = [g + e * ep_ws for e in range(tp_ws)]
-        all_parts = []
-        for r in group_ranks:
-            x = cpu_inputs_per_rank[r][0].float()
-            weight = cpu_inputs_per_rank[r][1].float()
-            bmm_out = torch.bmm(x, weight)
-            bmm_out = bmm_out.to(in_dtype).float()
-            del weight
-            if shard_type == 0:
-                r1 = bmm_out.reshape(E_div_ep, ep_ws * C, tp_ws, H // tp_ws)
-                r1 = r1.permute(2, 0, 1, 3).contiguous()
-                r1 = r1.reshape(tp_ws * E_div_ep, ep_ws * C, H // tp_ws)
-            else:
-                r1 = bmm_out.reshape(E_div_ep, ep_ws, tp_ws, C_div_tp, H)
-                r1 = r1.permute(2, 0, 1, 3, 4).contiguous()
-                r1 = r1.reshape(tp_ws * E_div_ep, ep_ws * C_div_tp, H)
-            all_parts.append(r1.to(in_dtype))
-            del bmm_out
-        n_tp = len(group_ranks)
-        for local_idx, r in enumerate(group_ranks):
-            start = (local_idx + 1) % n_tp
-            acc = all_parts[start][local_idx * E_div_ep:(local_idx + 1) * E_div_ep].clone().float()
-            for step in range(1, n_tp):
-                src_idx = (start + step) % n_tp
-                src_chunk = all_parts[src_idx][local_idx * E_div_ep:(local_idx + 1) * E_div_ep]
-                acc = acc + src_chunk.float()
-            chunk = acc.to(in_dtype)
-            if is_bias and len(cpu_inputs_per_rank[r]) > 2:
-                bias = cpu_inputs_per_rank[r][2].float()
-                if bias.numel() > 0:
-                    if bias.dim() == 2:
-                        bias = bias.reshape(bias.shape[0], 1, bias.shape[1])
-                    chunk = chunk.to(in_dtype).float() + bias
-                    chunk = chunk.to(in_dtype)
-                del bias
-            rs_per_rank[r] = chunk
-        del all_parts
-
-    # Step 2: all_to_all across EP groups (only compute for own rank)
-    n_ep_groups = ws // ep_ws
-    for g in range(n_ep_groups):
-        group_ranks = list(range(g * ep_ws, (g + 1) * ep_ws))
-        for target_local, target_rank in enumerate(group_ranks):
-            if target_rank != rank:
-                continue
-            if shard_type == 0:
-                all_chunks = []
-                for src_local, src_rank in enumerate(group_ranks):
-                    rs = rs_per_rank[src_rank]
-                    rs_r = rs.reshape(E_div_ep, ep_ws, C, H // tp_ws)
-                    rs_r = rs_r.permute(1, 0, 2, 3).contiguous()
-                    all_chunks.append(rs_r[target_local].clone())
-                gathered = torch.cat(all_chunks, dim=0)
-                out = gathered.reshape(E_div_ep * ep_ws, C, H // tp_ws)
-            else:
-                all_chunks = []
-                for src_local, src_rank in enumerate(group_ranks):
-                    rs = rs_per_rank[src_rank]
-                    rs_r = rs.reshape(E_div_ep, ep_ws, C_div_tp, H)
-                    rs_r = rs_r.permute(1, 0, 2, 3).contiguous()
-                    all_chunks.append(rs_r[target_local].clone())
-                gathered = torch.cat(all_chunks, dim=0)
-                out = gathered.reshape(E_div_ep * ep_ws, C_div_tp, H)
-            del gathered, all_chunks
-            return out
-    return None
-
-
-def _golden_gmm_alltoallv(cpu_inputs_per_rank, attrs, rank, ws, dist_avail=True):
-    """Pure CPU golden for npu_gmm_alltoallv (matching ACLNN __golden_gmm_alltoallv).
-
-    Flow: gmm(x, weight) per rank -> unpermute -> all_to_all (CPU simulated).
-    """
-    import numpy as _np
-    epc = int(attrs.get('expPerCard', 1))
-    seed = int(attrs.get('seed', 1))
-    ep_ws = int(attrs.get('ep_ws', ws))
-    expTokenNums = attrs.get('expTokenNums')
-    if expTokenNums is None:
-        gmm_x_cpu = cpu_inputs_per_rank[0][0].float()
-        A = gmm_x_cpu.shape[0]
-        A_array = [A] * ep_ws
-        expTokenNums = _generate_gmm_matrix(A_array, epc, seed=seed)
-    trans_gmm = bool(attrs.get('transGmmWeight', attrs.get('trans_gmm_weight', False)))
-
-    # Step 1: per-rank grouped matmul (CPU fp32)
-    all_gmm_out = {}
-    all_unpermuted = {}
-    for r in range(ws):
-        gmm_x = cpu_inputs_per_rank[r][0].float()
-        gmm_weight = cpu_inputs_per_rank[r][1].float()
-        if trans_gmm:
-            gmm_weight = gmm_weight.permute(0, 2, 1).contiguous()
-        # recv group list for rank r
-        recv_gl = []
-        for j in range(epc):
-            total = sum(expTokenNums[i][r * epc + j] for i in range(ep_ws))
-            recv_gl.append(total)
-        B_list = list(torch.unbind(gmm_weight, dim=0))
-        A_groups = torch.split(gmm_x, recv_gl, dim=0)
-        gmm_results = []
-        for i in range(len(recv_gl)):
-            a = A_groups[i].numpy()
-            b = B_list[i].numpy()
-            gmm_results.append(torch.from_numpy(np.matmul(a, b)))
-        gmm_out = torch.cat(gmm_results, dim=0).float()
-        all_gmm_out[r] = gmm_out
-        # unpermute (CPU, matching __unpermute_mc2)
-        empty_arr = _np.zeros((ep_ws, epc), dtype=_np.int64)
-        for i in range(ep_ws):
-            for j in range(epc):
-                empty_arr[i][j] = int(expTokenNums[i][r * epc + j])
-        tmp1 = empty_arr.T
-        sum_list1 = _np.sum(tmp1, axis=1)
-        sum_list2 = _np.cumsum(sum_list1, axis=0)
-        offsets = [0] + [int(s) for s in sum_list2[:-1]]
-        sum_list = _np.cumsum(tmp1, axis=1)
-        indices_list = []
-        for i in range(epc):
-            tmp = []
-            for j in range(ep_ws):
-                if j == 0:
-                    tmp.append(list(range(offsets[i], offsets[i] + int(sum_list[i][j]))))
-                else:
-                    tmp.append(list(range(offsets[i] + int(sum_list[i][j-1]),
-                                          offsets[i] + int(sum_list[i][j]))))
-            indices_list.append(tmp)
-        selected = []
-        for i in range(ep_ws):
-            for j in range(epc):
-                indices = torch.tensor(indices_list[j][i], dtype=torch.long)
-                selected.append(gmm_out[indices])
-        all_unpermuted[r] = torch.cat(selected, dim=0).float()
-
-    # Step 2: CPU-simulated all_to_all (matching __simulate_alltoallv)
-    N = all_unpermuted[0].shape[1] if all_unpermuted[0].dim() > 1 else 1
-    output_chunks = []
-    for src_r in range(ws):
-        src_data = all_unpermuted[src_r]
-        # input_splits for src_r
-        input_splits = [sum(expTokenNums[src_r][t * epc:(t + 1) * epc]) for t in range(ep_ws)]
-        offset = 0
-        for t in range(ep_ws):
-            if t == rank:
-                chunk = src_data[offset:offset + input_splits[t]].clone()
-                output_chunks.append(chunk)
-            offset += input_splits[t]
-    main_golden = torch.cat(output_chunks, dim=0) if output_chunks else torch.zeros(0, N)
-
-    # mm_out (optional) - use this rank's own mm_x/mm_weight (matching ACLNN)
-    mm_golden = None
-    if len(cpu_inputs_per_rank[rank]) > 2 and cpu_inputs_per_rank[rank][2] is not None:
-        mm_x = cpu_inputs_per_rank[rank][2].float()
-        mm_weight = cpu_inputs_per_rank[rank][3].float()
-        trans_mm = bool(attrs.get('transMmWeight', attrs.get('trans_mm_weight', False)))
-        if trans_mm:
-            mm_weight = mm_weight.t().contiguous()
-        mm_golden = torch.mm(mm_x, mm_weight)
-
-    del all_gmm_out, all_unpermuted
-    if mm_golden is not None:
-        return (main_golden, mm_golden)
-    return main_golden
-
-
-def _golden_alltoallv_gmm(cpu_inputs_per_rank, attrs, rank, ws, dist_avail=True):
-    """Pure CPU golden for npu_alltoallv_gmm (matching ACLNN __golden_alltoallv_gmm).
-
-    Flow: all_to_all(x) -> permute -> grouped_matmul.
-    """
-    import numpy as _np
-    epc = int(attrs.get('expPerCard', 1))
-    seed = int(attrs.get('seed', 1))
-    ep_ws = int(attrs.get('ep_ws', ws))
-    expTokenNums = attrs.get('expTokenNums')
-    if expTokenNums is None:
-        gmm_x_cpu = cpu_inputs_per_rank[0][0].float()
-        A = gmm_x_cpu.shape[0]
-        A_array = [A] * ep_ws
-        expTokenNums = _generate_gmm_matrix(A_array, epc, seed=seed)
-    trans_gmm = bool(attrs.get('transGmmWeight', attrs.get('trans_gmm_weight', False)))
-    trans_mm = bool(attrs.get('transMmWeight', attrs.get('trans_mm_weight', False)))
-    permute_out_flag = bool(attrs.get('permuteOutFlag', attrs.get('permute_out_flag', False)))
-
-    # Step 1: all_to_all (CPU simulated, matching ACLNN __golden_alltoallv_gmm)
-    all_a2a_inputs = {}
-    all_send_segments = {}
-    for r in range(ws):
-        src_x = cpu_inputs_per_rank[r][0].float()
-        all_a2a_inputs[r] = src_x
-        my_row = expTokenNums[r]
-        segments = []
-        offset = 0
-        for t in range(ep_ws):
-            cs = sum(my_row[t * epc:(t + 1) * epc])
-            segments.append(src_x[offset:offset + cs])
-            offset += cs
-        all_send_segments[r] = segments
-
-    # a2a output for this rank
-    output_splits = [sum(expTokenNums[i][rank * epc:(rank + 1) * epc]) for i in range(ep_ws)]
-    recv_offsets = [0] + list(_np.cumsum(output_splits)[:-1])
-    K = all_a2a_inputs[0].shape[1] if all_a2a_inputs[0].dim() > 1 else 1
-    gathered = torch.zeros(sum(output_splits), K, dtype=torch.float32)
-    for src_r in range(ws):
-        chunk = all_send_segments[src_r][rank]
-        gathered[recv_offsets[src_r]:recv_offsets[src_r] + chunk.shape[0]] = chunk
-
-    # Step 2: permute (CPU, matching __permute_a2a_gmm)
-    indices = torch.zeros(epc, ep_ws, dtype=torch.long)
-    for j in range(epc):
-        for i in range(ep_ws):
-            indices[j][i] = expTokenNums[i][j + epc * rank]
-    trans = indices.permute(1, 0).reshape(-1)
-    cum = torch.cumsum(trans, dim=0)
-    tmp = []
-    for i in range(len(cum)):
-        if i == 0:
-            tmp.append(range(0, int(cum[i].item())))
-        else:
-            tmp.append(range(int(cum[i-1].item()), int(cum[i].item())))
-    parts = []
-    expert_sizes = []
-    for e in range(epc):
-        exp_token = []
-        for r in range(ep_ws):
-            exp_token += list(tmp[e + r * epc])
-        combined = torch.tensor(exp_token, dtype=torch.long)
-        parts.append(gathered.index_select(0, combined))
-        expert_sizes.append(len(exp_token))
-    permuted = torch.zeros(sum(expert_sizes), K, dtype=torch.float32)
-    offset = 0
-    for e in range(epc):
-        permuted[offset:offset + expert_sizes[e]] = parts[e]
-        offset += expert_sizes[e]
-
-    # Step 3: grouped matmul (CPU, matching __grouped_matmul_cpu)
-    gmm_weight = cpu_inputs_per_rank[rank][1].float()
-    if trans_gmm:
-        gmm_weight = gmm_weight.permute(0, 2, 1).contiguous()
-    B_list = list(torch.unbind(gmm_weight, dim=0))
-    A_groups = torch.split(permuted, expert_sizes, dim=0)
-    gmm_results = []
-    for i in range(len(expert_sizes)):
-        a = A_groups[i].numpy()
-        b = B_list[i].numpy()
-        gmm_results.append(torch.from_numpy(np.matmul(a, b)))
-    main_golden = torch.cat(gmm_results, dim=0).float()
-
-    permute_ret = permuted.contiguous() if permute_out_flag else None
-
-    # mm_out (optional) - use this rank's own mm_x/mm_weight (matching ACLNN)
-    mm_golden = None
-    if len(cpu_inputs_per_rank[rank]) > 2 and cpu_inputs_per_rank[rank][2] is not None:
-        mm_x = cpu_inputs_per_rank[rank][2].float()
-        mm_weight = cpu_inputs_per_rank[rank][3].float()
-        if trans_mm:
-            mm_weight = mm_weight.t().contiguous()
-        mm_golden = torch.mm(mm_x, mm_weight)
-
-    del all_a2a_inputs, all_send_segments
-    return main_golden, mm_golden, permute_ret
-
 
 
 def _compute_golden(api_name, cpu_inputs_per_rank, attrs, rank=None, ws=None, dist_avail=True):
-    if 'npu_all_gather_base_mm' in api_name:
-        return _golden_all_gather_mm(cpu_inputs_per_rank)
-    elif 'npu_mm_reduce_scatter_base' in api_name:
-        return _golden_reduce_scatter_mm(cpu_inputs_per_rank, attrs)
-    elif 'npu_mm_all_reduce_base' in api_name:
-        return _golden_mm_all_reduce(cpu_inputs_per_rank)
-    elif 'npu_matmul_all_to_all' in api_name:
-        return _golden_matmul_all_to_all(cpu_inputs_per_rank, attrs)
-    elif 'npu_all_to_all_matmul' in api_name:
-        return _golden_all_to_all_matmul(cpu_inputs_per_rank, attrs)
-    elif 'npu_gmm_alltoallv' in api_name:
-        golden = _golden_gmm_alltoallv(cpu_inputs_per_rank, attrs, rank, ws, dist_avail)
-        return [golden]
-    elif 'npu_alltoallv_gmm' in api_name:
-        gmm_out, mm_out, permute_out = _golden_alltoallv_gmm(
-            cpu_inputs_per_rank, attrs, rank, ws, dist_avail)
-        return [gmm_out, mm_out, permute_out]
-    elif 'bmm_reducescatter_alltoall' in api_name:
-        golden = _golden_bmm_rs_a2a(cpu_inputs_per_rank, attrs, rank, ws, dist_avail)
-        return [golden]
-    elif 'alltoall_allgather_bmm' in api_name:
-        golden = _golden_a2a_ag_bmm(cpu_inputs_per_rank, attrs, rank, ws, dist_avail)
-        return [golden]
+    # Plugin-first: if the operator has a golden spec,
+    # delegate to it. Falls back to built-in dispatchers below.
+    ctx = _GoldenContext(cpu_inputs_per_rank, attrs, rank, ws, dist_avail)
+    plugin_result = _try_plugin_golden(api_name, ctx)
+    if plugin_result is not None:
+        return plugin_result
+    # Migrated operators: golden now lives in ops-transformer per-operator
+    # tests/assets/ directories. Use --plugin to activate them.
+    if any(m in api_name for m in _MIGRATED_E2E_OPS):
+        return [None] * len(cpu_inputs_per_rank)
     return [None] * len(cpu_inputs_per_rank)
 
 
@@ -868,9 +301,6 @@ def _call_api(api_name, dev_tensors, hcomm, world_size, attrs):
 
     if api_name in _TORCH_NPU_MOE_TENSOR_PARAMS:
         return _call_torch_npu_moe(api_name, dev_tensors, hcomm, world_size, attrs)
-    if api_name in ("torch_npu.npu_attention_to_ffn", "torch_npu.npu_ffn_to_attention"):
-        return _call_torch_npu_token_exchange(
-            api_name, dev_tensors, hcomm, world_size, attrs)
     if api_name == "torch_npu._npu_distribute_barrier":
         resolved = _resolve_api(api_name)
         return resolved(dev_tensors[0], hcomm, world_size)
@@ -915,7 +345,7 @@ def _call_api(api_name, dev_tensors, hcomm, world_size, attrs):
               'groupEp', 'groupTp', '_tensor_dtypes',
               'alltoAllAxesOptional', 'all2all_axes_optional',
               'isTrans', 'is_transX', 'is_transX2', 'is_transY',
-              'expTokenNums', 'ep_ws']:
+              'exp_token_nums', 'ep_ws']:
         kw.pop(k, None)
 
     # Convert string bool values to actual bool
@@ -1138,20 +568,18 @@ def _build_a2av_gmm_invoke(dev_tensors, hcomm, world_size, attrs):
 
 
 def worker(rank, world_size, port, input_path, plan_path, result_path, error_path, graph_mode=''):
+    with open(plan_path) as _pf:
+        _plan = json.load(_pf)
+    _timeout = int(_plan.get('proc_timeout', 3600))
     try:
-        # Set longer HCCL timeouts for large BMM golden computation (CPU-side ~100s)
-        os.environ['HCCL_EXEC_TIMEOUT'] = '3600'
-        os.environ['HCCL_LINK_TIMEOUT'] = '3600'
-        os.environ['HCCL_CONNECT_TIMEOUT'] = '3600'
         torch.npu.set_device(rank)
         dist.init_process_group(backend="hccl", rank=rank, world_size=world_size,
                                 init_method=f"tcp://127.0.0.1:{port}",
-                                timeout=datetime.timedelta(seconds=3600))
+                                timeout=datetime.timedelta(seconds=_timeout))
         hcomm = str(dist.group.WORLD._get_backend(
             torch.device("npu")).get_hccl_comm_name(rank))
 
-        with open(plan_path) as f:
-            plan_info = json.load(f)
+        plan_info = _plan
         api_name = plan_info['api_name']
         attrs = plan_info.get('attributes', {})
         golden_disabled = bool(plan_info.get('golden_disabled', False))
@@ -1305,23 +733,22 @@ def worker(rank, world_size, port, input_path, plan_path, result_path, error_pat
             epc = int(dev_tensors[1].shape[0]) if len(dev_tensors) > 1 else 1
             M_per_rank = int(dev_tensors[0].shape[0]) if len(dev_tensors) > 0 else 0
             A_array = [M_per_rank] * ep_ws
-            expTokenNums = _generate_gmm_matrix(A_array, epc, seed=seed_val)
+            from ttk.core_modules.npu.op_api.mc2_dispatcher import _generate_gmm_alltoallv_matrix
+            exp_token_nums = _generate_gmm_alltoallv_matrix(A_array, epc, seed=seed_val)
             attrs = dict(attrs)
             if 'npu_gmm_alltoallv' in api_name:
-                # gmm_alltoallv: recv = expTokenNums[rank], send = collected from all ranks
-                recv_counts = list(expTokenNums[rank])
+                recv_counts = list(exp_token_nums[rank])
                 send_counts = []
                 for i in range(ep_ws):
-                    send_counts.extend(expTokenNums[i][rank * epc:(rank + 1) * epc])
+                    send_counts.extend(exp_token_nums[i][rank * epc:(rank + 1) * epc])
             else:
-                # alltoallv_gmm: send = expTokenNums[rank], recv = collected from all ranks
-                send_counts = list(expTokenNums[rank])
+                send_counts = list(exp_token_nums[rank])
                 recv_counts = []
                 for i in range(ep_ws):
-                    recv_counts.extend(expTokenNums[i][rank * epc:(rank + 1) * epc])
+                    recv_counts.extend(exp_token_nums[i][rank * epc:(rank + 1) * epc])
             attrs['sendCounts'] = send_counts
             attrs['recvCounts'] = recv_counts
-            attrs['expTokenNums'] = expTokenNums
+            attrs['exp_token_nums'] = exp_token_nums
             attrs['expPerCard'] = epc
             attrs['ep_ws'] = ep_ws
             attrs['seed'] = seed_val
@@ -1370,6 +797,12 @@ def worker(rank, world_size, port, input_path, plan_path, result_path, error_pat
         # Determine which tensors need cross-rank gather.
         # Default: only x (idx 0), weight is shared (own copy suffices).
         needs_cross_rank = [True] + [False] * (len(cpu_inputs_for_rank) - 1)
+        if 'npu_moe_distribute_dispatch' in api_name:
+            # MoE dispatch golden needs all ranks' x AND expert_ids (both per-rank)
+            needs_cross_rank = [True] * min(len(cpu_inputs_for_rank), 2)
+        if 'npu_moe_distribute_combine' in api_name:
+            # MoE combine golden needs all ranks' expand_x AND expert_ids (both per-rank)
+            needs_cross_rank = [True] * len(cpu_inputs_for_rank)
         if 'npu_gmm_alltoallv' in api_name or 'npu_alltoallv_gmm' in api_name:
             # GMM golden needs all ranks' gmm_x AND gmm_weight
             needs_cross_rank = [True] * len(cpu_inputs_for_rank)
@@ -1430,7 +863,7 @@ def worker(rank, world_size, port, input_path, plan_path, result_path, error_pat
                         if cpu_inputs_per_rank[r][idx] is None:
                             cpu_inputs_per_rank[r][idx] = cpu_inputs_for_rank[idx]
 
-        # Pure CPU golden (each golden function references ACLNN mc2_golden.py logic)
+        # Pure CPU golden (each golden function references ACLNN mc2_dispatcher.py logic)
         goldens = _compute_golden(api_name, cpu_inputs_per_rank, attrs,
                                   rank=rank, ws=world_size, dist_avail=(is_gmm or is_dual))
         golden = goldens[0] if (is_gmm or is_dual) else goldens[rank]

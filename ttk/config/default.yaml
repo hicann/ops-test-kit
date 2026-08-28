@@ -43,3 +43,15 @@ frameworks:
     #   profiler:
     #     module: torch.profiler
     #     activities: [CPU, MLU]
+
+# ---------------------------------------------------------------------------
+# cascade — MC2 算子级联通信配置
+# ---------------------------------------------------------------------------
+# 多卡 cascade worker 子进程的 TCP/HCCL 端口配置。
+# 多 case 顺序跑时，前一个 case 的子进程退出后 socket 可能处于 TIME_WAIT，
+# 维护一个递增 base_port 避免端口复用导致 bind 冲突。
+cascade:
+  port_base: 30000              # TCP 通信起始端口（dist.init_process_group）
+  port_step: 13                 # 每次 cascade 递增步长（HCCL 内部派生多个端口，留间隔）
+  port_max: 60000               # 端口上限，超过后回绕到 port_base
+  hccl_port_range: "50000-50100" # HCCL listener 端口范围（避免默认 16666 冲突）
