@@ -29,6 +29,8 @@ description: 编写/定义算子测试规范（TestSpec，尚未跑或要新增 
 
 > 注册名即 `get_spec_attr` 的查找 key：Kernel/GEIR 用 `op_name`，ACLNN/E2E 用 `api_name`。GEIR 复用 Kernel 的 spec，无需额外编写。
 
+> **torch.ops 自定义算子（torch extension 包，如 `cann_ops_transformer`）**：E2E 的 `api_name` 写 4 段 `torch.ops.<ns>.<op>`，参数来自算子自带 schema（非 torch API 签名），**无需手写签名**。详见 `ttk-how-write-case` 的 E2E 引用「torch.ops 自定义算子」。
+
 ```python
 __spec__ = {"abs": "AbsTestSpec"}
 
@@ -199,6 +201,7 @@ python3 -m ttk aclnn -i cases.csv --plugin /path/to/assets_a/,/path/to/assets_b/
 2. **参数顺序**：函数参数名和顺序与算子定义文件（def.cpp / aclnn*.h）中的输入参数一致
 3. **kwargs 始终接收**：通过 `**kwargs` 接收元信息（dtypes、shapes、formats、soc_version 等，完整字段见 `references/kernel-plugin.md` / `aclnn-plugin.md`）
 4. **返回类型**：`golden` 返回列表（每个输出一个元素）；`customize_inputs` 返回与输入结构一致的 tuple
+5. **禁止 `register()` 手写签名**：不要在 golden 文件里 `from ttk...import ParamInfo/APIParamInfo/FrameworkApiInfoKeeper` 再调 `register()` 声明算子签名——签名应来自算子自身（E2E 的 `torch.ops` 算子从 `_schemas` 自动解析；Kernel/GEIR 从 `def.cpp`；ACLNN 从 `aclnn*.h`）。手写 `register()` 会把 golden 耦合到 ttk 内部类（ttk 改内部类时所有此类 golden 失效），且与算子真实签名漂移。`register()` 仅在算子**无 schema**（裸 `impl`、未 `define`）时作兜底。
 
 ## 调试
 

@@ -93,10 +93,10 @@ E2E 模式由统一的 Backend 抽象层（`ttk.core_modules.framework_api.backe
 
 ```shell
 # 自动按配置 hardware segment 选择可用后端
-python3 -m ttk e2e -i torch_add.csv
+python3 -m ttk e2e -i torch_ops.csv
 
-# 强制 CPU 后端（常用于Golden生成）
-python3 -m ttk e2e -i torch_add.csv --cpu
+# 强制 CPU 后端（常用于Golden生成；选 CPU 可跑的用例）
+python3 -m ttk e2e -i torch_ops.csv -t add_f32_01 --cpu
 ```
 
 ## 执行流程
@@ -115,13 +115,13 @@ E2E 模式默认会采集Profiling性能数据：
 
 ```shell
 # 默认执行（含Profiling）
-python3 -m ttk e2e -i torch_add.csv
+python3 -m ttk e2e -i torch_ops.csv
 
 # 禁用Profiling
-python3 -m ttk e2e -i torch_add.csv --no-prof
+python3 -m ttk e2e -i torch_ops.csv --no-prof
 
 # 设置执行次数（默认板端3次）
-python3 -m ttk e2e -i torch_add.csv --run=5
+python3 -m ttk e2e -i torch_ops.csv --run=5
 ```
 
 ## 性能相关参数
@@ -136,29 +136,29 @@ python3 -m ttk e2e -i torch_add.csv --run=5
 
 ```shell
 # 使用全部可用NPU卡
-python3 -m ttk e2e -i torch_add.csv
+python3 -m ttk e2e -i torch_ops.csv
 
 # 使用2张卡
-python3 -m ttk e2e -i torch_add.csv --dev=2
+python3 -m ttk e2e -i torch_ops.csv --dev=2
 
 # 每张卡2个进程
-python3 -m ttk e2e -i torch_add.csv --pc=2
+python3 -m ttk e2e -i torch_ops.csv --pc=2
 
 # 指定使用卡0
-python3 -m ttk e2e -i torch_add.csv --device-whitelist=0
+python3 -m ttk e2e -i torch_ops.csv --device-whitelist=0
 ```
 
 # 调试
 
 ```shell
 # 调试单个用例
-python3 -m ttk e2e -i torch_add.csv -t add_f32_01 --single-log
+python3 -m ttk e2e -i torch_ops.csv -t add_f32_01 --single-log
 
 # 固定随机种子（可复现）
-python3 -m ttk e2e -i torch_add.csv --seed 42
+python3 -m ttk e2e -i torch_ops.csv --seed 42
 
 # 仅校验CSV用例格式（不下设备）
-python3 -m ttk e2e -i torch_add.csv --validate
+python3 -m ttk e2e -i torch_ops.csv --validate
 ```
 
 Dump 调试详见[Dump 数据调试](../Dump_Debug.md)。
@@ -167,16 +167,16 @@ Dump 调试详见[Dump 数据调试](../Dump_Debug.md)。
 
 ```shell
 # torch.add 基础测试（自动选择可用后端）
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_ops.csv -t add_f32_01
 
-# torch_npu.npu_conv2d（使用golden_api）
-python3 -m ttk e2e -i examples/case_store/e2e/torch_npu_conv2d.csv
+# torch_npu.npu_conv2d（使用golden_api，需设备支持该算子）
+python3 -m ttk e2e -i examples/case_store/e2e/torch_ops.csv -t npu_conv2d_f16
 
-# 强制 CPU 后端
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv --cpu
+# 强制 CPU 后端（选 CPU 可跑的用例）
+python3 -m ttk e2e -i examples/case_store/e2e/torch_ops.csv -t add_f32_01 --cpu
 
 # 输出结果
-python3 -m ttk e2e -i torch_add.csv -o results.csv
+python3 -m ttk e2e -i torch_ops.csv -o results.csv
 
 # Excel 多 sheet 用例（默认首个工作表；--sheet 指定工作表）
 python3 -m ttk e2e -i examples/case_store/e2e/torch_add.xlsx

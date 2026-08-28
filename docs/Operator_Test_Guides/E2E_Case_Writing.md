@@ -11,6 +11,7 @@
 | `torch.add` | 模块函数 | 直接调用 |
 | `torch.nn.functional.relu` | 子模块函数 | 调用子模块中的函数 |
 | `torch.Tensor.relu_` | Tensor方法 | 通过Tensor实例调用（原地操作） |
+| `torch.ops.cann_ops_transformer.causal_conv1d_fn` | torch.ops 自定义算子 | torch extension 包注册的算子 |
 
 ## 用例标识
 
@@ -36,16 +37,6 @@
 | `output_tensor_indexes` | INT_TUPLE | 否 | *(自动)* | 输出张量索引。Inplace Tensor方法（`torch.Tensor.xxx_`）自动填充 `(0,)`；带 `out` 参数的API需手动指定输出位置索引 |
 | `attributes` | DICT | 否 | `{}` | 框架API关键字参数。如 `{'alpha': 1.0}`。API签名中的必选非张量参数**必须**提供 |
 | `golden_api` | STRING | 否 | `""` | 替代Golden计算的API。如 `torch.nn.functional.conv2d`。设为 `"disable"` 可禁用Golden生成 |
-
-## 参考用例
-
-`examples/case_store/e2e/` 目录下提供了各种场景的示例：
-
-| 文件 | 涵盖场景 |
-|------|----------|
-| `torch_add.csv` | 基本用例、`torch.add` |
-| `torch_npu_conv2d.csv` | `torch_npu.npu_conv2d`、`golden_api` |
-| `tf_ops.csv` | TensorFlow API |
 
 ## 批一致性字段
 
@@ -82,11 +73,16 @@ full,torch.add,"((10,8),)",(100,),,,...
 
 ## 参考用例
 
-`examples/case_store/e2e/` 目录下的示例：
+`examples/case_store/e2e/` 目录下的示例（torch 用例均在 `torch_ops.csv`，按场景分行）：
 
-| 文件 | 框架 | 验证特性 | 关键列 |
+| 用例 | 框架 | 验证特性 | 关键列 |
 |------|------|---------|--------|
-| `tf_ops.csv` | TensorFlow | 多 API（tf.raw_ops/nn/math/linalg）+ 多算子 | `tensor_view_shapes`、`attributes` |
-| `torch_add.csv` | torch | add/abs/relu/mm + inplace（`relu_`）/out 变体 + alpha 属性 | `attributes`、`output_tensor_indexes` |
-| `torch_npu_conv2d.csv` | torch_npu | NPU 专属 API + 自定义 golden | `golden_api`、`output_tensor_indexes` |
+| `tf_ops.csv`（多行） | TensorFlow | 多 API（tf.raw_ops/nn/math/linalg）+ 多算子 | `tensor_view_shapes`、`attributes` |
+| `torch_ops.csv` — `add_f32_01`/`add_f16_01`/`add_broadcast` | torch | `torch.add` 基本变体（f32/f16/broadcast） | `attributes`（alpha） |
+| `torch_ops.csv` — `abs_01` | torch | `torch.abs` 单输入 | — |
+| `torch_ops.csv` — `relu_01` | torch | `torch.nn.functional.relu` | `attributes`（inplace） |
+| `torch_ops.csv` — `relu_inp` | torch | `torch.Tensor.relu_` 原地（自动 `output_tensor_indexes=(0,)`） | `output_tensor_indexes` |
+| `torch_ops.csv` — `add_out`/`mm_out` | torch | `torch.add`/`torch.mm` 带 `out` 输出 | `output_tensor_indexes` |
+| `torch_ops.csv` — `npu_conv2d_f16`/`npu_conv2d_f32` | torch_npu | `torch_npu.npu_conv2d` + `golden_api` 替代 golden（需设备支持） | `golden_api` |
+| `torch_ops.csv` — `causal_conv1d_fn_basic` | torch.ops | `torch.ops` 自定义算子，torchops-自定义算子torch-extension-包），需 `--plugin` golden | `api_name` |
 | `torch_add.xlsx` | torch | xlsx 多 sheet（T1/T2）输入验证 | — |

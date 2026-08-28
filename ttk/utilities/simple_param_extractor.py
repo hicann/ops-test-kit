@@ -13,12 +13,10 @@ Returns APIParamInfo with typed parameter list including Tensor/List[Tensor]/Sca
 """
 
 import ast
-import re
 import logging
+import re
 from dataclasses import dataclass, field
-from typing import Any, Optional, List, Dict, Tuple
-
-from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -33,26 +31,24 @@ class ParamInfo:
     @property
     def is_tensor(self):
         """True if any member type is a single Tensor."""
-        return any(t in ("Tensor", "tensor") for t in self.type.split('|'))
+        return any(t in ("Tensor", "tensor") for t in self.type.split("|"))
 
     @property
     def is_tensor_list(self):
         """True if any member type is a sequence of Tensors."""
-        return any(t in ("tuple of Tensors", "list of Tensors",
-                         "Tensor[]", "List[Tensor]")
-                   for t in self.type.split('|'))
+        return any(
+            t in ("tuple of Tensors", "list of Tensors", "Tensor[]", "List[Tensor]") for t in self.type.split("|")
+        )
 
     @property
     def is_scalar(self):
         """True if any member type is a scalar (Number, int, float, bool, str)."""
-        return any(t in ("Number", "Scalar", "int", "float", "bool", "str")
-                   for t in self.type.split('|'))
+        return any(t in ("Number", "Scalar", "int", "float", "bool", "str") for t in self.type.split("|"))
 
     @property
     def is_scalar_list(self):
         """True if any member type is a list of scalars."""
-        return any(t in ("Scalar[]", "List[Scalar]", "list of Numbers")
-                   for t in self.type.split('|'))
+        return any(t in ("Scalar[]", "List[Scalar]", "list of Numbers") for t in self.type.split("|"))
 
     @property
     def is_tensor_like(self):
@@ -63,6 +59,7 @@ class ParamInfo:
 @dataclass
 class OverloadTensorLayout:
     """Tensor parameter layout for a single overload, split by input/out role."""
+
     input_params: List[ParamInfo]
     required_input_count: int
     input_count: int
@@ -73,16 +70,14 @@ class OverloadTensorLayout:
     out_expected_count: int
 
     @staticmethod
-    def build(overload_params: List[ParamInfo], return_count: int = 0) -> 'OverloadTensorLayout':
-        input_params = [p for p in overload_params
-                        if p.is_tensor_like and p.name != 'out']
-        has_var_input = any(getattr(p, 'is_var_positional', False) for p in input_params)
+    def build(overload_params: List[ParamInfo], return_count: int = 0) -> "OverloadTensorLayout":
+        input_params = [p for p in overload_params if p.is_tensor_like and p.name != "out"]
+        has_var_input = any(getattr(p, "is_var_positional", False) for p in input_params)
         required_input_count = sum(
-            1 for p in input_params
-            if not p.is_optional and not getattr(p, 'is_var_positional', False))
+            1 for p in input_params if not p.is_optional and not getattr(p, "is_var_positional", False)
+        )
 
-        out_param = next(
-            (p for p in overload_params if p.name == 'out' and p.is_tensor_like), None)
+        out_param = next((p for p in overload_params if p.name == "out" and p.is_tensor_like), None)
         is_out_required = out_param is not None and not out_param.is_optional
         is_out_tensor_list = out_param.is_tensor_list if out_param else False
 
@@ -101,12 +96,14 @@ class OverloadTensorLayout:
             out_param=out_param,
             is_out_required=is_out_required,
             is_out_tensor_list=is_out_tensor_list,
-            out_expected_count=out_expected_count)
+            out_expected_count=out_expected_count,
+        )
 
 
 @dataclass
 class OverloadInfo:
     """Single overload: its parameter list and pre-computed tensor layout."""
+
     params: List[ParamInfo]
     return_count: int = 0
     layout: OverloadTensorLayout = field(init=False, repr=False)
@@ -142,20 +139,17 @@ class APIParamInfo:
 
     def __post_init__(self):
         if self.overloads:
-            self.overloads = _normalize_to_overload_infos(
-                self.overloads, self._return_counts)
-            best = max(self.overloads,
-                       key=lambda oi: sum(1 for p in oi.params if p.is_optional))
+            self.overloads = _normalize_to_overload_infos(self.overloads, self._return_counts)
+            best = max(self.overloads, key=lambda oi: sum(1 for p in oi.params if p.is_optional))
             self.params = best.params
         elif self.params and not self.overloads:
-            self.overloads = _normalize_to_overload_infos(
-                [self.params], self._return_counts)
+            self.overloads = _normalize_to_overload_infos([self.params], self._return_counts)
 
     def _resolve_api_flags(self):
-        parts = self.api_name.split('.') if self.api_name else []
-        self.is_tensor_method = len(parts) >= 3 and parts[0] == 'torch' and parts[1] == 'Tensor'
-        func_name = parts[-1] if parts else ''
-        is_inplace_name = func_name.endswith('_') and not func_name.startswith('_')
+        parts = self.api_name.split(".") if self.api_name else []
+        self.is_tensor_method = len(parts) >= 3 and parts[0] == "torch" and parts[1] == "Tensor"
+        func_name = parts[-1] if parts else ""
+        is_inplace_name = func_name.endswith("_") and not func_name.startswith("_")
         if is_inplace_name:
             try:
                 self._detect_inplace_from_schema()
@@ -172,7 +166,7 @@ class APIParamInfo:
         if obj is None:
             return
         schema = None
-        if hasattr(obj, 'default') and hasattr(obj.default, '_schema'):
+        if hasattr(obj, "default") and hasattr(obj.default, "_schema"):
             schema = obj.default._schema
         if schema is None:
             return
@@ -185,11 +179,11 @@ class APIParamInfo:
             return
         self.is_inplace = True
         tensor_idx = 0
-        for i, arg in enumerate(schema.arguments):
+        for arg in schema.arguments:
             ai = arg.alias_info
             if ai and ai.is_write and (ai.before_set & return_aliases):
                 self.inplace_param_indexes.append(tensor_idx)
-            if ai is not None or (arg.type and str(arg.type) == 'Tensor'):
+            if ai is not None or (arg.type and str(arg.type) == "Tensor"):
                 tensor_idx += 1
 
     @property
@@ -240,8 +234,7 @@ class APIParamInfo:
                     continue
             if nested_flags is not None:
                 type_ok = True
-                non_var = [p for p in layout.input_params
-                           if not getattr(p, 'is_var_positional', False)]
+                non_var = [p for p in layout.input_params if not getattr(p, "is_var_positional", False)]
                 for idx in range(tensor_count):
                     if skip_flags and idx < len(skip_flags) and skip_flags[idx]:
                         continue
@@ -267,19 +260,19 @@ def _split_by_comma(s: str) -> List[str]:
     current = []
     depth = 0
     for char in s:
-        if char in '([{':
+        if char in "([{":
             depth += 1
             current.append(char)
-        elif char in ')]}':
+        elif char in ")]}":
             depth -= 1
             current.append(char)
-        elif char == ',' and depth == 0:
-            parts.append(''.join(current).strip())
+        elif char == "," and depth == 0:
+            parts.append("".join(current).strip())
             current = []
         else:
             current.append(char)
     if current:
-        parts.append(''.join(current).strip())
+        parts.append("".join(current).strip())
     return parts
 
 
@@ -287,48 +280,48 @@ def _parse_params_from_signature(sig: str) -> Optional[List[ParamInfo]]:
     if not sig or sig.isspace():
         return None
     sig = sig.strip()
-    if sig.startswith('(') and sig.endswith(')'):
+    if sig.startswith("(") and sig.endswith(")"):
         sig = sig[1:-1]
     params = []
     parts = _split_by_comma(sig)
     keyword_only = False
     for part in parts:
         part = part.strip()
-        if not part or part == '/':
+        if not part or part == "/":
             continue
-        if part in ('*', '\\*'):
+        if part in ("*", "\\*"):
             keyword_only = True
             continue
         default = None
         is_optional = keyword_only
         is_var_positional = False
-        if '=' in part:
-            main_part, default = part.split('=', 1)
+        if "=" in part:
+            main_part, default = part.split("=", 1)
             main_part = main_part.strip()
             default = default.strip()
             is_optional = True
         else:
             main_part = part
         # Detect *args (VAR_POSITIONAL) prefix, e.g. "*operands" or "*tensors"
-        if main_part.startswith('*') and not main_part.startswith('**'):
+        if main_part.startswith("*") and not main_part.startswith("**"):
             is_var_positional = True
             main_part = main_part[1:].strip()
         tokens = main_part.split()
         if len(tokens) >= 2 and not tokens[0].startswith('"'):
             first = tokens[0]
-            if ':' in first:
-                name = first.split(':')[0]
-                type_hint = first.split(':', 1)[1].strip() or tokens[1]
+            if ":" in first:
+                name = first.split(":")[0]
+                type_hint = first.split(":", 1)[1].strip() or tokens[1]
                 type_hint = _normalize_doc_type(type_hint)
             else:
                 type_hint = tokens[0]
-                name = tokens[-1].rstrip('?)')
-                if type_hint in ('tuple', 'list') and len(tokens) >= 3:
+                name = tokens[-1].rstrip("?)")
+                if type_hint in ("tuple", "list") and len(tokens) >= 3:
                     type_hint = f"{tokens[0]} of {tokens[2]}"
         elif len(tokens) == 1:
-            tok = tokens[0].strip('"\'')
-            if ':' in tok:
-                name, type_hint = tok.split(':', 1)
+            tok = tokens[0].strip("\"'")
+            if ":" in tok:
+                name, type_hint = tok.split(":", 1)
                 name = name.strip()
                 type_hint = type_hint.strip()
                 type_hint = _normalize_doc_type(type_hint)
@@ -337,39 +330,44 @@ def _parse_params_from_signature(sig: str) -> Optional[List[ParamInfo]]:
                     # _infer_type_from_value returns empty string for unrecognizable
                     # values (e.g., 'torch.xxx') and 'Optional[Tensor]' for None —
                     # in both cases, fall back to name-based inference.
-                    type_hint = ''
+                    type_hint = ""
                     if default is not None:
                         type_hint = _infer_type_from_value(default)
-                    if not type_hint or type_hint == 'Optional[Tensor]':
+                    if not type_hint or type_hint == "Optional[Tensor]":
                         type_hint = _infer_type_from_name(name)
             else:
                 name = tok
                 # Priority: default value inference > name inference
-                type_hint = ''
+                type_hint = ""
                 if default is not None:
                     type_hint = _infer_type_from_value(default)
-                if not type_hint or type_hint == 'Optional[Tensor]':
+                if not type_hint or type_hint == "Optional[Tensor]":
                     type_hint = _infer_type_from_name(name)
         else:
             continue
         if default is not None and isinstance(default, str):
             value_type = _infer_type_from_value(default)
-            if type_hint == 'Tensor' and value_type not in ('Tensor', 'Optional[Tensor]', 'tuple of Tensors'):
+            if type_hint == "Tensor" and value_type not in ("Tensor", "Optional[Tensor]", "tuple of Tensors"):
                 type_hint = value_type
             default = _coerce_default_value(default, type_hint)
         # Strip trailing '?' from type — it indicates optional in some
         # docstring formats (e.g., 'str?', 'int[]?'). Mark as optional
         # and keep the default value if present, otherwise default to None.
-        if type_hint.endswith('?'):
+        if type_hint.endswith("?"):
             type_hint = type_hint[:-1]
             is_optional = True
             if default is None:
                 default = None
-        params.append(ParamInfo(
-            name=name, type=type_hint,
-            default=default, is_optional=is_optional,
-            is_keyword_only=keyword_only,
-            is_var_positional=is_var_positional))
+        params.append(
+            ParamInfo(
+                name=name,
+                type=type_hint,
+                default=default,
+                is_optional=is_optional,
+                is_keyword_only=keyword_only,
+                is_var_positional=is_var_positional,
+            )
+        )
     return params if params else None
 
 
@@ -381,13 +379,13 @@ def _normalize_doc_type(type_str: str) -> str:
     type_str = type_str.strip()
     if not type_str:
         return ""
-    if type_str.startswith('Optional['):
-        inner = type_str[len('Optional['):-1]
+    if type_str.startswith("Optional["):
+        inner = type_str[len("Optional[") : -1]
         return inner
-    if type_str.startswith('List['):
-        inner = type_str[len('List['):-1]
-        if inner == 'Tensor':
-            return 'List[Tensor]'
+    if type_str.startswith("List["):
+        inner = type_str[len("List[") : -1]
+        if inner == "Tensor":
+            return "List[Tensor]"
     return type_str
 
 
@@ -406,21 +404,37 @@ def _parse_docstring_args_section(doc: str) -> Dict[str, Tuple[str, bool]]:
     type_map = {}
     in_args = False
     args_indent = 0
-    args_terminators = {'Returns:', 'Example::', 'Examples::', 'Raises:', 'Note:', 'Notes:',
-                        'Warning:', 'Warnings:', 'See Also:', 'References::', 'References:', 'Todo:'}
-    for line in doc.split('\n'):
+    args_terminators = {
+        "Returns:",
+        "Example::",
+        "Examples::",
+        "Raises:",
+        "Note:",
+        "Notes:",
+        "Warning:",
+        "Warnings:",
+        "See Also:",
+        "References::",
+        "References:",
+        "Todo:",
+    }
+    for line in doc.split("\n"):
         stripped = line.strip()
-        if stripped in ('Args:', 'Arguments:', 'Keyword arguments:', 'Keyword Args:', 'Keyword args:', 'Kwargs:'):
+        if stripped in ("Args:", "Arguments:", "Keyword arguments:", "Keyword Args:", "Keyword args:", "Kwargs:"):
             in_args = True
             args_indent = len(line) - len(line.lstrip())
             continue
         if not in_args:
             continue
-        if stripped in args_terminators or stripped.startswith(tuple(args_terminators)) or (not stripped.startswith((' ', '\t', '*', '.')) and stripped.endswith(':') and stripped == line.rstrip()):
+        if (
+            stripped in args_terminators
+            or stripped.startswith(tuple(args_terminators))
+            or (not stripped.startswith((" ", "\t", "*", ".")) and stripped.endswith(":") and stripped == line.rstrip())
+        ):
             break
         # Sphinx directives like ".. versionchanged::" appear inside Args
         # sections but should not terminate parsing — just skip them.
-        if stripped.startswith('..'):
+        if stripped.startswith(".."):
             continue
         if not stripped:
             continue
@@ -431,22 +445,21 @@ def _parse_docstring_args_section(doc: str) -> Dict[str, Tuple[str, bool]]:
         # correctness for deeply-indented docstrings (e.g. torch.meshgrid).
         if line_indent > args_indent + 4:
             continue
-        m = re.match(r'\*{0,2}(\w+)\s*\(([^)]+)\).*:', stripped)
+        m = re.match(r"\*{0,2}(\w+)\s*\(([^)]+)\).*:", stripped)
         if m:
             name = m.group(1)
             type_str = m.group(2).strip()
-            is_opt = 'optional' in type_str.lower()
-            type_str = re.sub(r',\s*optional\s*$', '', type_str, flags=re.IGNORECASE)
-            type_str = re.sub(r',\s*required\s*$', '', type_str, flags=re.IGNORECASE)
+            is_opt = "optional" in type_str.lower()
+            type_str = re.sub(r",\s*optional\s*$", "", type_str, flags=re.IGNORECASE)
+            type_str = re.sub(r",\s*required\s*$", "", type_str, flags=re.IGNORECASE)
             if type_str:
                 type_map[name] = (type_str, is_opt)
             continue
-        m = re.match(r'\*{0,2}(\w+)\s*:\s*(.+)', stripped)
+        m = re.match(r"\*{0,2}(\w+)\s*:\s*(.+)", stripped)
         if m:
             name = m.group(1)
             desc = m.group(2).strip()
-            if name.lower().startswith(('default', 'attr', 'note', 'example', 'deprecated', 'version',
-                                    'see', 'if')):
+            if name.lower().startswith(("default", "attr", "note", "example", "deprecated", "version", "see", "if")):
                 continue
             if desc:
                 type_map.setdefault(name, (desc, False))
@@ -465,73 +478,73 @@ def _parse_return_count_from_first_line(first_line: str) -> int:
         "func(...) -> torch.return_types.sort"          → 0  (unresolvable custom type)
         "func(...)"                                     → 0  (no annotation)
     """
-    m = re.search(r'\)\s*->\s*(.+)$', first_line)
+    m = re.search(r"\)\s*->\s*(.+)$", first_line)
     if not m:
         return 0
     ret = m.group(1).strip()
-    if ret.startswith('(') and ret.endswith(')'):
-        parts = [p.strip() for p in ret[1:-1].split(',') if p.strip()]
+    if ret.startswith("(") and ret.endswith(")"):
+        parts = [p.strip() for p in ret[1:-1].split(",") if p.strip()]
         return len(parts)
-    if ret.lower() in ('none', ''):
+    if ret.lower() in ("none", ""):
         return 0
     # Single named type like "Tensor" → 1; unresolvable types like
     # "torch.return_types.sort" → 0 (we cannot count fields).
-    if re.match(r'^[A-Za-z_]\w*$', ret):
+    if re.match(r"^[A-Za-z_]\w*$", ret):
         return 1
     return 0
 
 
 _ARGS_TYPE_NORMALIZE = {
-    'Tensor': 'Tensor',
-    'tensor': 'Tensor',
-    '``Tensor``': 'Tensor',
-    'Number': 'Number',
-    'Scalar': 'Number',
-    '``scalar``': 'Number',
-    'bool': 'bool',
-    ':class:`bool`': 'bool',
-    'SymBool or bool': 'bool',
-    'SymInt or int': 'int',
-    'int': 'int',
-    '``int``': 'int',
-    'integer': 'int',
-    'int32': 'int',
-    'int64': 'int',
-    'float': 'float',
-    'str': 'str',
-    'dtype': 'Dtype',
-    ':class:`torch.dtype`': 'Dtype',
-    'torch.dtype': 'Dtype',
-    'device': 'Device',
-    ':class:`torch.device`': 'Device',
-    'torch.device': 'Device',
-    'layout': 'Layout',
-    ':class:`torch.layout`': 'Layout',
-    'torch.layout': 'Layout',
-    'torch.Size': 'tuple of ints',
-    ':class:`torch.Size`': 'tuple of ints',
-    ':class:`torch.Generator`': 'Generator',
-    'torch.Generator': 'Generator',
-    'Generator': 'Generator',
-    ':class:`torch.memory_format`': 'MemoryFormat',
-    'torch.memory_format': 'MemoryFormat',
-    'memory_format': 'MemoryFormat',
-    'BoolTensor': 'Tensor',
-    'IntTensor or LongTensor': 'Tensor',
-    'LongTensor': 'Tensor',
-    'torch.ByteTensor': 'Tensor',
-    'Tensors...': 'tuple of Tensors',
-    'Tensor[]': 'tuple of Tensors',
-    'List[Tensor]': 'tuple of Tensors',
-    'list of Tensor': 'tuple of Tensors',
-    'sequence of Tensors': 'tuple of Tensors',
-    'sequence of float': 'list of Numbers',
-    'torch.Tensor': 'Tensor',
-    'torch.BoolTensor': 'Tensor',
-    'torch.IntTensor': 'Tensor',
-    'torch.LongTensor': 'Tensor',
-    'torch.FloatTensor': 'Tensor',
-    'torch.DoubleTensor': 'Tensor',
+    "Tensor": "Tensor",
+    "tensor": "Tensor",
+    "``Tensor``": "Tensor",
+    "Number": "Number",
+    "Scalar": "Number",
+    "``scalar``": "Number",
+    "bool": "bool",
+    ":class:`bool`": "bool",
+    "SymBool or bool": "bool",
+    "SymInt or int": "int",
+    "int": "int",
+    "``int``": "int",
+    "integer": "int",
+    "int32": "int",
+    "int64": "int",
+    "float": "float",
+    "str": "str",
+    "dtype": "Dtype",
+    ":class:`torch.dtype`": "Dtype",
+    "torch.dtype": "Dtype",
+    "device": "Device",
+    ":class:`torch.device`": "Device",
+    "torch.device": "Device",
+    "layout": "Layout",
+    ":class:`torch.layout`": "Layout",
+    "torch.layout": "Layout",
+    "torch.Size": "tuple of ints",
+    ":class:`torch.Size`": "tuple of ints",
+    ":class:`torch.Generator`": "Generator",
+    "torch.Generator": "Generator",
+    "Generator": "Generator",
+    ":class:`torch.memory_format`": "MemoryFormat",
+    "torch.memory_format": "MemoryFormat",
+    "memory_format": "MemoryFormat",
+    "BoolTensor": "Tensor",
+    "IntTensor or LongTensor": "Tensor",
+    "LongTensor": "Tensor",
+    "torch.ByteTensor": "Tensor",
+    "Tensors...": "tuple of Tensors",
+    "Tensor[]": "tuple of Tensors",
+    "List[Tensor]": "tuple of Tensors",
+    "list of Tensor": "tuple of Tensors",
+    "sequence of Tensors": "tuple of Tensors",
+    "sequence of float": "list of Numbers",
+    "torch.Tensor": "Tensor",
+    "torch.BoolTensor": "Tensor",
+    "torch.IntTensor": "Tensor",
+    "torch.LongTensor": "Tensor",
+    "torch.FloatTensor": "Tensor",
+    "torch.DoubleTensor": "Tensor",
 }
 
 
@@ -558,28 +571,27 @@ def _normalize_args_type(type_str: str) -> str:
     if not type_str:
         return ""
     # Handle Optional[X] — strip the wrapper and normalize the inner type
-    opt_match = re.match(r'Optional\[(.+)\]$', type_str)
+    opt_match = re.match(r"Optional\[(.+)\]$", type_str)
     if opt_match:
         return _normalize_args_type(opt_match.group(1))
     if type_str in _ARGS_TYPE_NORMALIZE:
         return _ARGS_TYPE_NORMALIZE[type_str]
     # Handle backtick-quoted types: ``int``, ``list of int``
-    if type_str.startswith('``') and type_str.endswith('``'):
+    if type_str.startswith("``") and type_str.endswith("``"):
         inner = type_str[2:-2]
         if inner in _ARGS_TYPE_NORMALIZE:
             return _ARGS_TYPE_NORMALIZE[inner]
         return ""
     # Handle :class:`...` pattern
-    cm = re.match(r':class:`([^`]+)`', type_str)
+    cm = re.match(r":class:`([^`]+)`", type_str)
     if cm:
         return _normalize_args_type(cm.group(1))
     # Union types: "int or Tuple[int]", "Tensor or Number", etc.
     # Tensor-containing members are excluded (handled by overload resolution).
     # Scalar-level members are joined with '|' for _coerce_value to try in order.
-    if ' or ' in type_str:
-        parts = [p.strip() for p in type_str.split(' or ')]
-        _TENSOR_TYPES = frozenset({'Tensor', 'tuple of Tensors', 'list of Tensors',
-                                    'List[Tensor]', 'Tensor[]'})
+    if " or " in type_str:
+        parts = [p.strip() for p in type_str.split(" or ")]
+        _TENSOR_TYPES = frozenset({"Tensor", "tuple of Tensors", "list of Tensors", "List[Tensor]", "Tensor[]"})
         normalized_parts = []
         for part in parts:
             n = _normalize_args_type(part)
@@ -593,7 +605,7 @@ def _normalize_args_type(type_str: str) -> str:
                 seen.add(n)
                 unique.append(n)
         if len(unique) >= 2:
-            return '|'.join(unique)
+            return "|".join(unique)
         elif len(unique) == 1:
             return unique[0]
         return ""
@@ -601,16 +613,14 @@ def _normalize_args_type(type_str: str) -> str:
     # Treated as union types (same as "X or Y"), each member normalized
     # and joined with '|'. Quoted values like 'fro' are recognized as 'str'.
     # Skipped for types that genuinely contain commas (e.g., "tuple of ints").
-    if ',' in type_str and not type_str.startswith(('tuple', 'list', 'Tuple', 'List')):
-        parts = [p.strip() for p in type_str.split(',')]
-        _TENSOR_TYPES = frozenset({'Tensor', 'tuple of Tensors', 'list of Tensors',
-                                    'List[Tensor]', 'Tensor[]'})
+    if "," in type_str and not type_str.startswith(("tuple", "list", "Tuple", "List")):
+        parts = [p.strip() for p in type_str.split(",")]
+        _TENSOR_TYPES = frozenset({"Tensor", "tuple of Tensors", "list of Tensors", "List[Tensor]", "Tensor[]"})
         normalized_parts = []
         for part in parts:
             # Quoted string values like 'fro', 'nuc' → 'str'
-            if (part.startswith("'") and part.endswith("'")) or \
-               (part.startswith('"') and part.endswith('"')):
-                normalized_parts.append('str')
+            if (part.startswith("'") and part.endswith("'")) or (part.startswith('"') and part.endswith('"')):
+                normalized_parts.append("str")
                 continue
             n = _normalize_args_type(part)
             if n and n not in _TENSOR_TYPES:
@@ -623,44 +633,58 @@ def _normalize_args_type(type_str: str) -> str:
                 seen.add(n)
                 unique.append(n)
         if len(unique) >= 2:
-            return '|'.join(unique)
+            return "|".join(unique)
         elif len(unique) == 1:
             return unique[0]
         return ""
     # Handle "tuple of ints", "list of Tensors"
-    if type_str.startswith('tuple of ') or type_str.startswith('list of '):
-        inner = type_str.split(' of ')[1].strip()
-        if inner in ('ints', 'int'):
-            return 'tuple of ints'
-        if inner in ('floats', 'float'):
-            return 'tuple of floats'
-        if inner in ('Tensors', 'Tensor'):
-            return 'tuple of Tensors'
-        if inner in ('Scalars', 'Scalar', 'numbers', 'Number'):
-            return 'list of Numbers'
+    if type_str.startswith("tuple of ") or type_str.startswith("list of "):
+        inner = type_str.split(" of ")[1].strip()
+        if inner in ("ints", "int"):
+            return "tuple of ints"
+        if inner in ("floats", "float"):
+            return "tuple of floats"
+        if inner in ("Tensors", "Tensor"):
+            return "tuple of Tensors"
+        if inner in ("Scalars", "Scalar", "numbers", "Number"):
+            return "list of Numbers"
     # Handle "Tuple[int]", "Tuple[int, int]", "List[float]", etc.
     # Extract element type from generic bracket syntax and map to our type system.
-    bracket_match = re.match(r'(Tuple|List)\[([^\]]+)\]', type_str)
+    bracket_match = re.match(r"(Tuple|List)\[([^\]]+)\]", type_str)
     if bracket_match:
         container = bracket_match.group(1)
         inner = bracket_match.group(2).strip()
-        parts = [p.strip() for p in inner.split(',')]
+        parts = [p.strip() for p in inner.split(",")]
         unique = set(parts)
-        if unique <= {'int', 'int64', 'int32'}:
-            return 'tuple of ints'
-        if unique <= {'float', 'double'}:
-            return 'tuple of floats'
-        if unique == {'bool'}:
-            return 'tuple of bools'
-        if unique == {'Tensor'}:
-            return 'tuple of Tensors'
-        if len(unique) == 1 and parts[0] in ('float', 'int', 'bool', 'str'):
-            return f'tuple of {parts[0]}s'
-        return 'tuple of ints' if container == 'Tuple' else 'list of Numbers'
+        if unique <= {"int", "int64", "int32"}:
+            return "tuple of ints"
+        if unique <= {"float", "double"}:
+            return "tuple of floats"
+        if unique == {"bool"}:
+            return "tuple of bools"
+        if unique == {"Tensor"}:
+            return "tuple of Tensors"
+        if len(unique) == 1 and parts[0] in ("float", "int", "bool", "str"):
+            return f"tuple of {parts[0]}s"
+        return "tuple of ints" if container == "Tuple" else "list of Numbers"
     # If it's a known simple type, return it
-    known_simple = {'Tensor', 'tensor', 'Number', 'Scalar', 'bool', 'int',
-                    'float', 'str', 'int64', 'int32', 'object', 'Object',
-                    'Generator', 'function', 'callable'}
+    known_simple = {
+        "Tensor",
+        "tensor",
+        "Number",
+        "Scalar",
+        "bool",
+        "int",
+        "float",
+        "str",
+        "int64",
+        "int32",
+        "object",
+        "Object",
+        "Generator",
+        "function",
+        "callable",
+    }
     if type_str in known_simple:
         return _ARGS_TYPE_NORMALIZE.get(type_str, type_str)
     # Descriptive text — return empty, let caller fall back to name inference
@@ -669,47 +693,127 @@ def _normalize_args_type(type_str: str) -> str:
 
 def _infer_type_from_name(name: str) -> str:
     tensor_names = {
-        'input', 'output', 'other', 'self', 'tensor', 'weight', 'bias',
-        'mat1', 'mat2', 'x', 'y', 'src', 'dst',
-        'query', 'key', 'mask', 'grad', 'indices', 'values',
-        'h_0', 'c_0', 'hidden', 'cell', 'source', 'target',
+        "input",
+        "output",
+        "other",
+        "self",
+        "tensor",
+        "weight",
+        "bias",
+        "mat1",
+        "mat2",
+        "x",
+        "y",
+        "src",
+        "dst",
+        "query",
+        "key",
+        "mask",
+        "grad",
+        "indices",
+        "values",
+        "h_0",
+        "c_0",
+        "hidden",
+        "cell",
+        "source",
+        "target",
     }
     tensor_list_names = {
-        'tensors', 'inputs', 'targets', 'features', 'labels', 'boxes',
+        "tensors",
+        "inputs",
+        "targets",
+        "features",
+        "labels",
+        "boxes",
     }
     scalar_names = {
-        'dim', 'dims', 'axis', 'size', 'sizes', 'shape', 'shapes',
-        'stride', 'strides', 'padding', 'dilation',
-        'alpha', 'beta', 'gamma', 'epsilon', 'momentum',
-        'p', 'dropout', 'training', 'inplace',
+        "dim",
+        "dims",
+        "axis",
+        "size",
+        "sizes",
+        "shape",
+        "shapes",
+        "stride",
+        "strides",
+        "padding",
+        "dilation",
+        "alpha",
+        "beta",
+        "gamma",
+        "epsilon",
+        "momentum",
+        "p",
+        "dropout",
+        "training",
+        "inplace",
     }
     special_types = {
-        'dtype': 'Dtype', 'layout': 'Layout', 'device': 'Device',
-        'memory_format': 'MemoryFormat', 'requires_grad': 'bool',
-        'pin_memory': 'bool', 'inplace': 'bool', 'training': 'bool',
-        'keepdim': 'bool', 'keepdims': 'bool',
-        'approximate': 'str', 'ceil_mode': 'bool', 'return_indices': 'bool',
-        'kernel_size': 'int', 'output_size': 'int',
-        'eps': 'float', 'epsilon': 'float', 'exponential_average_factor': 'float',
-        'align_corners': 'bool', 'transposed': 'bool', 'groups': 'int',
-        'numel': 'int', 'n_bins': 'int', 'ratio': 'float', 'bit_width': 'int',
-        'count': 'int', 'counts': 'int',
-        'mode': 'int', 'hidden_size': 'int', 'num_layers': 'int',
-        'batch_first': 'bool', 'bidirectional': 'bool', 'has_biases': 'bool',
-        'reverse': 'bool', 'bias_defined': 'bool',
-        'n': 'int', 'c': 'int', 'h': 'int', 'w': 'int', 'hxw': 'int',
-        'group': 'int', 'full': 'bool', 'reduction': 'str',
-        'log_input': 'bool', 'observer_on': 'bool', 'fake_quant_on': 'bool',
-        'averaging_const': 'float', 'quant_min': 'int', 'quant_max': 'int',
-        'ch_axis': 'int', 'interpolation_mode': 'int', 'padding_mode': 'int',
-        'benchmark': 'bool', 'deterministic': 'bool', 'allow_tf32': 'bool',
-        'weight_stride0': 'int', 'dropout_state': 'bool',
-        'use_input_stats': 'bool', 'cudnn_enabled': 'bool',
-        'train': 'bool',
-        'reduce': 'str',
-        'include_self': 'bool',
+        "dtype": "Dtype",
+        "layout": "Layout",
+        "device": "Device",
+        "memory_format": "MemoryFormat",
+        "requires_grad": "bool",
+        "pin_memory": "bool",
+        "inplace": "bool",
+        "training": "bool",
+        "keepdim": "bool",
+        "keepdims": "bool",
+        "approximate": "str",
+        "ceil_mode": "bool",
+        "return_indices": "bool",
+        "kernel_size": "int",
+        "output_size": "int",
+        "eps": "float",
+        "epsilon": "float",
+        "exponential_average_factor": "float",
+        "align_corners": "bool",
+        "transposed": "bool",
+        "groups": "int",
+        "numel": "int",
+        "n_bins": "int",
+        "ratio": "float",
+        "bit_width": "int",
+        "count": "int",
+        "counts": "int",
+        "mode": "int",
+        "hidden_size": "int",
+        "num_layers": "int",
+        "batch_first": "bool",
+        "bidirectional": "bool",
+        "has_biases": "bool",
+        "reverse": "bool",
+        "bias_defined": "bool",
+        "n": "int",
+        "c": "int",
+        "h": "int",
+        "w": "int",
+        "hxw": "int",
+        "group": "int",
+        "full": "bool",
+        "reduction": "str",
+        "log_input": "bool",
+        "observer_on": "bool",
+        "fake_quant_on": "bool",
+        "averaging_const": "float",
+        "quant_min": "int",
+        "quant_max": "int",
+        "ch_axis": "int",
+        "interpolation_mode": "int",
+        "padding_mode": "int",
+        "benchmark": "bool",
+        "deterministic": "bool",
+        "allow_tf32": "bool",
+        "weight_stride0": "int",
+        "dropout_state": "bool",
+        "use_input_stats": "bool",
+        "cudnn_enabled": "bool",
+        "train": "bool",
+        "reduce": "str",
+        "include_self": "bool",
     }
-    name_lower = name.lower().strip('"\'')
+    name_lower = name.lower().strip("\"'")
     if name_lower in special_types:
         return special_types[name_lower]
     if name_lower in tensor_list_names:
@@ -717,28 +821,37 @@ def _infer_type_from_name(name: str) -> str:
     if name_lower in tensor_names:
         return "Tensor"
     if name_lower in scalar_names:
-        if name_lower in ('p', 'alpha', 'beta', 'gamma', 'epsilon', 'dropout'):
+        if name_lower in ("p", "alpha", "beta", "gamma", "epsilon", "dropout"):
             return "float"
         return "int"
     # Pattern-based inference for parameter names not in exact lists
     # dim0/dim1/axis0/axis1 etc.
-    if name_lower.startswith(('dim', 'axis')):
+    if name_lower.startswith(("dim", "axis")):
         return "int"
     # chunks/split_size/chunk_size etc.
-    if 'chunk' in name_lower or 'split' in name_lower:
+    if "chunk" in name_lower or "split" in name_lower:
         return "int"
     # threshold/lambd/tol/tolerance
-    if any(k in name_lower for k in ('threshold', 'lambd', 'tol')):
+    if any(k in name_lower for k in ("threshold", "lambd", "tol")):
         return "float"
     # pad/padding_mode (but 'padding' already in scalar_names)
-    if name_lower.startswith('pad') and name_lower not in tensor_names:
+    if name_lower.startswith("pad") and name_lower not in tensor_names:
         return "int"
     # scale/scale_value
-    if name_lower.startswith('scale'):
+    if name_lower.startswith("scale"):
         return "float"
     # negative_slope/lower/upper/min_val/max_val
-    if name_lower in ('negative_slope', 'lower', 'upper', 'min_val', 'max_val',
-                       'correction', 'fill_value', 'margin', 'value'):
+    if name_lower in (
+        "negative_slope",
+        "lower",
+        "upper",
+        "min_val",
+        "max_val",
+        "correction",
+        "fill_value",
+        "margin",
+        "value",
+    ):
         return "float"
     return "Tensor"
 
@@ -759,7 +872,7 @@ def _infer_type_from_value(value: str) -> str:
     if value.startswith(("'", '"')):
         return "str"
     # Try list/tuple literal: [1, 2], (0, 0) → tuple of ints/floats
-    if value.startswith(('[', '(')) and value.endswith((']', ')')):
+    if value.startswith(("[", "(")) and value.endswith(("]", ")")):
         try:
             parsed = ast.literal_eval(value)
             if isinstance(parsed, (list, tuple)) and len(parsed) > 0:
@@ -775,7 +888,7 @@ def _infer_type_from_value(value: str) -> str:
     # or 'fro' will fail numeric parsing and fall through to return "".
     try:
         float(value)
-        if '.' in value or 'e' in value.lower():
+        if "." in value or "e" in value.lower():
             return "float"
         return "int"
     except (ValueError, OverflowError):
@@ -793,20 +906,20 @@ def _extract_params_from_type_error(obj) -> Optional[Tuple[List[ParamInfo], str,
         obj()
     except TypeError as e:
         error_msg = str(e)
-        if 'expected one of:' in error_msg:
+        if "expected one of:" in error_msg:
             all_overloads = []
-            for line in error_msg.split('\n'):
+            for line in error_msg.split("\n"):
                 line = line.strip()
-                if line.startswith('*'):
+                if line.startswith("*"):
                     sig = line[1:].strip()
-                    if sig.startswith('(') and sig.endswith(')'):
+                    if sig.startswith("(") and sig.endswith(")"):
                         sig = sig[1:-1]
                     parsed = _parse_params_from_signature(sig)
                     if parsed:
                         all_overloads.append(parsed)
             if all_overloads:
                 return all_overloads[0], f"TypeError(multi-overload, {len(all_overloads)} signatures)", all_overloads
-        m = re.search(r'expected\s*\(([^)]+(?:\([^)]*\))*[^)]*)\)', error_msg)
+        m = re.search(r"expected\s*\(([^)]+(?:\([^)]*\))*[^)]*)\)", error_msg)
         if m:
             sig = m.group(1)
             params = _parse_params_from_signature(sig)
@@ -826,6 +939,7 @@ def _extract_params_from_tensor_call(obj) -> Optional[Tuple[List[ParamInfo], str
     """
     try:
         import torch
+
         x = torch.randn(1)
     except ImportError:
         return None
@@ -838,13 +952,15 @@ def _extract_params_from_tensor_call(obj) -> Optional[Tuple[List[ParamInfo], str
     return None
 
 
-def _parse_simple_type_error(error_msg: str, source: str = "TypeError(simple)") -> Optional[Tuple[List[ParamInfo], str]]:
+def _parse_simple_type_error(
+    error_msg: str, source: str = "TypeError(simple)"
+) -> Optional[Tuple[List[ParamInfo], str]]:
     """Parse 'missing N required positional argument(s): "name1", "name2"' format."""
-    m = re.search(r'missing \d+ required positional arguments?[=:] (.+)', error_msg)
+    m = re.search(r"missing \d+ required positional arguments?[=:] (.+)", error_msg)
     if not m:
         return None
     param_str = m.group(1)
-    names = [p.strip().strip('"\'') for p in param_str.split(',')]
+    names = [p.strip().strip("\"'") for p in param_str.split(",")]
     params = [ParamInfo(name=n, type=_infer_type_from_name(n)) for n in names]
     if not params:
         return None
@@ -852,8 +968,8 @@ def _parse_simple_type_error(error_msg: str, source: str = "TypeError(simple)") 
 
 
 def _resolve_alias_from_docstring(api_name: str) -> Optional[str]:
-    doc = getattr(_resolve_function(api_name), '__doc__', '') or ''
-    m = re.search(r'Alias for :func:`([^`]+)`', doc)
+    doc = getattr(_resolve_function(api_name), "__doc__", "") or ""
+    m = re.search(r"Alias for :func:`([^`]+)`", doc)
     if m:
         return m.group(1)
     return None
@@ -872,13 +988,13 @@ def _extract_params_from_docstring(obj, api_name: str) -> Optional[Tuple[List[Pa
     Returns (params, source, return_count) where return_count is the number of return
     tensors parsed from the ``->`` annotation (0 when absent or unresolvable).
     """
-    doc = getattr(obj, '__doc__', None)
+    doc = getattr(obj, "__doc__", None)
     if not doc:
         return None
 
     args_types = _parse_docstring_args_section(doc)
-    first_line = doc.strip().split('\n')[0].strip()
-    m = re.match(r'[\w.]+\((.+?)\)\s*(?:->.*)?$', first_line)
+    first_line = doc.strip().split("\n")[0].strip()
+    m = re.match(r"[\w.]+\((.+?)\)\s*(?:->.*)?$", first_line)
 
     if m:
         # Format 1 or 3: first line contains a signature
@@ -893,7 +1009,7 @@ def _extract_params_from_docstring(obj, api_name: str) -> Optional[Tuple[List[Pa
                         normalized = _normalize_args_type(raw_type)
                         if normalized:
                             p.type = normalized
-                        elif any(kw in raw_type.lower() for kw in ('list', 'tuple')):
+                        elif any(kw in raw_type.lower() for kw in ("list", "tuple")):
                             elem_type = _infer_type_from_name(p.name)
                             p.type = f"tuple of {elem_type}s"
                         if is_opt:
@@ -907,26 +1023,33 @@ def _extract_params_from_docstring(obj, api_name: str) -> Optional[Tuple[List[Pa
                     for p in params:
                         if p.name in alias_map and _is_inferred_type(p.type):
                             p.type = alias_map[p.name].type
-            return params, "docstring(first-line+Args)" if args_types else "docstring(first-line)", _parse_return_count_from_first_line(first_line)
+            return (
+                params,
+                "docstring(first-line+Args)" if args_types else "docstring(first-line)",
+                _parse_return_count_from_first_line(first_line),
+            )
 
     # Format 2: no signature in first line, but Args section has typed params
     # Only use Args-only if at least some params had (Type) bracket format.
     # If all params were parsed from "name: description" fallback (no brackets),
     # the types are unreliable — let inspect.signature take priority.
     if args_types:
-        has_bracket_types = any(_normalize_args_type(raw_type) not in (None, '') 
-                                for _, (raw_type, _) in args_types.items())
+        has_bracket_types = any(
+            _normalize_args_type(raw_type) not in (None, "") for _, (raw_type, _) in args_types.items()
+        )
         if not has_bracket_types:
             return None
         params = []
         for name, (raw_type, is_opt) in args_types.items():
             normalized = _normalize_args_type(raw_type)
-            params.append(ParamInfo(
-                name=name,
-                type=normalized or _infer_type_from_name(name),
-                default=None,
-                is_optional=is_opt or normalized in ('Layout', 'Device', 'Dtype'),
-            ))
+            params.append(
+                ParamInfo(
+                    name=name,
+                    type=normalized or _infer_type_from_name(name),
+                    default=None,
+                    is_optional=is_opt or normalized in ("Layout", "Device", "Dtype"),
+                )
+            )
         if params:
             # Format 2 has no signature line, so is_optional and default come
             # only from the Args section's ", optional" marker.  Many params
@@ -942,21 +1065,25 @@ def _extract_params_from_docstring(obj, api_name: str) -> Optional[Tuple[List[Pa
 
 
 def _coerce_default_value(raw: str, type_hint: str):
-    if raw == 'None':
+    if raw == "None":
         return None
-    if type_hint == 'str':
+    if type_hint == "str":
         if len(raw) >= 2 and ((raw[0] == '"' and raw[-1] == '"') or (raw[0] == "'" and raw[-1] == "'")):
             return raw[1:-1]
         return raw
-    if type_hint == 'bool':
+    if type_hint == "bool":
         if isinstance(raw, bool):
             return raw
-        return raw.lower() in ('true', '1')
-    if type_hint == 'int':
+        return raw.lower() in ("true", "1")
+    if type_hint == "int":
         if isinstance(raw, str):
             _REDUCTION_CPP = {
-                'at::Reduction::None': 0, 'at::Reduction::Mean': 1, 'at::Reduction::Sum': 2,
-                'Reduction::None': 0, 'Reduction::Mean': 1, 'Reduction::Sum': 2,
+                "at::Reduction::None": 0,
+                "at::Reduction::Mean": 1,
+                "at::Reduction::Sum": 2,
+                "Reduction::None": 0,
+                "Reduction::Mean": 1,
+                "Reduction::Sum": 2,
             }
             if raw in _REDUCTION_CPP:
                 return _REDUCTION_CPP[raw]
@@ -964,7 +1091,7 @@ def _coerce_default_value(raw: str, type_hint: str):
             return int(raw)
         except (ValueError, TypeError):
             return raw
-    if type_hint == 'float':
+    if type_hint == "float":
         try:
             return float(raw)
         except (ValueError, TypeError):
@@ -983,8 +1110,7 @@ def _extract_params_from_op_declaration(api_name: str) -> Optional[Tuple[List[Pa
         (params, source, return_count) or None
     """
     # Only handle NPU APIs: torch_npu.xxx or torch.npu_xxx
-    if not (api_name.startswith('torch_npu.') or
-            api_name.startswith('torch.npu_')):
+    if not (api_name.startswith("torch_npu.") or api_name.startswith("torch.npu_")):
         return None
     obj = _resolve_function(api_name)
     if obj is None:
@@ -999,18 +1125,19 @@ def _extract_params_from_op_declaration(api_name: str) -> Optional[Tuple[List[Pa
         error_msg = str(e)
     if not error_msg:
         return None
-    decl_match = re.search(r'Declaration:\s*[\w:]+::([\w.]+)\(', error_msg)
+    decl_match = re.search(r"Declaration:\s*[\w:]+::([\w.]+)\(", error_msg)
     if not decl_match:
         return None
-    rest = error_msg[decl_match.end():]
+    rest = error_msg[decl_match.end() :]
     depth = 1
-    end = 0
-    for end, ch in enumerate(rest):
-        if ch == '(':
+    end = len(rest) - 1
+    for i, ch in enumerate(rest):
+        if ch == "(":
             depth += 1
-        elif ch == ')':
+        elif ch == ")":
             depth -= 1
             if depth == 0:
+                end = i
                 break
     sig = rest[:end]
     params = _parse_npu_declaration(sig)
@@ -1028,19 +1155,19 @@ def _parse_return_count_from_error(rest, paren_end, error_msg):
       -> Tensor(a!) → 1
       -> Tensor → 1
     """
-    after_paren = rest[paren_end + 1:].strip()
-    arrow_match = re.match(r'\s*->\s*(.+)', after_paren)
+    after_paren = rest[paren_end + 1 :].strip()
+    arrow_match = re.match(r"\s*->\s*(.+)", after_paren)
     if not arrow_match:
         return 0
     ret_str = arrow_match.group(1).strip()
-    if ret_str.startswith('('):
+    if ret_str.startswith("("):
         inner = ret_str[1:]
-        close = inner.find(')')
+        close = inner.find(")")
         if close >= 0:
             inner = inner[:close]
         parts = [p.strip() for p in _split_by_comma(inner)]
-        return sum(1 for p in parts if 'Tensor' in p)
-    if 'Tensor' in ret_str:
+        return sum(1 for p in parts if "Tensor" in p)
+    if "Tensor" in ret_str:
         return 1
     return 0
 
@@ -1053,105 +1180,107 @@ def _parse_npu_declaration(sig: str) -> Optional[List[ParamInfo]]:
     parts = _split_by_comma(sig)
     for part in parts:
         part = part.strip()
-        if not part or part.startswith('->'):
+        if not part or part.startswith("->"):
             continue
-        if part == '*':
+        if part == "*":
             saw_star = True
             continue
-        m = re.match(r'(\w+(?:\([^)]*\))?(?:\[\d*\])?)\??\s+(\w+)(?:=(.+))?', part)
+        m = re.match(r"(\w+(?:\([^)]*\))?(?:\[\d*\])?)\??\s+(\w+)(?:=(.+))?", part)
         if m:
             type_hint = m.group(1)
-            type_hint = re.sub(r'\([^)]*\)', '', type_hint)
+            type_hint = re.sub(r"\([^)]*\)", "", type_hint)
             name = m.group(2)
             default = m.group(3) or None
             type_hint = _normalize_npu_type(type_hint)
-            is_optional = default is not None or '?' in part.split()[0]
+            is_optional = default is not None or "?" in part.split()[0]
             if default is not None:
                 default = _coerce_default_value(default, type_hint)
-            params.append(ParamInfo(
-                name=name, type=type_hint,
-                default=default, is_optional=is_optional,
-                is_keyword_only=saw_star))
+            params.append(
+                ParamInfo(name=name, type=type_hint, default=default, is_optional=is_optional, is_keyword_only=saw_star)
+            )
     return params if params else None
 
 
 def _normalize_npu_type(t: str) -> str:
-    if t.startswith('Optional[') and t.endswith(']'):
-        inner = t[len('Optional['):-1]
+    if t.startswith("Optional[") and t.endswith("]"):
+        inner = t[len("Optional[") : -1]
         return _normalize_npu_type(inner)
-    if t.startswith('List[') and t.endswith(']'):
-        inner = t[len('List['):-1]
+    if t.startswith("List[") and t.endswith("]"):
+        inner = t[len("List[") : -1]
         inner_mapped = _normalize_npu_type(inner)
-        if inner_mapped == 'Tensor':
-            return 'tuple of Tensors'
-        if inner_mapped == 'Number':
-            return 'tuple of Numbers'
-        return f'tuple of {inner_mapped}s'
+        if inner_mapped == "Tensor":
+            return "tuple of Tensors"
+        if inner_mapped == "Number":
+            return "tuple of Numbers"
+        return f"tuple of {inner_mapped}s"
     mapping = {
-        'Tensor': 'Tensor',
-        'TensorList': 'tuple of Tensors',
-        'Tensor[]': 'tuple of Tensors',
-        'Scalar': 'Number',
-        'ScalarList': 'list of Numbers',
-        'Scalar[]': 'list of Numbers',
-        'number': 'Number',
-        'int': 'int',
-        'float': 'float',
-        'bool': 'bool',
-        'str': 'str',
-        'complex': 'Number',
-        'int?': 'int',
-        'float?': 'float',
-        'bool?': 'bool',
-        'str?': 'str',
-        'int[]': 'tuple of ints',
-        'float[]': 'tuple of floats',
-        'bool[]': 'tuple of bools',
-        'str[]': 'tuple of strs',
-        'int64[]': 'tuple of ints',
-        'int32[]': 'tuple of ints',
-        'SymInt': 'int',
-        'SymInt?': 'int',
-        'SymInt[]': 'tuple of ints',
-        'SymBool': 'bool',
-        'ScalarType': 'torch.dtype',
-        'ScalarType?': 'torch.dtype',
-        'Device': 'str',
-        'Device?': 'str',
-        'Layout': 'int',
-        'Layout?': 'int',
-        'MemoryFormat': 'int',
-        'MemoryFormat?': 'int',
-        'Generator': 'None',
-        'Generator?': 'None',
-        'AnyEnumType': 'int',
-        'Storage': 'None',
-        'Storage?': 'None',
+        "Tensor": "Tensor",
+        "TensorList": "tuple of Tensors",
+        "Tensor[]": "tuple of Tensors",
+        "Scalar": "Number",
+        "ScalarList": "list of Numbers",
+        "Scalar[]": "list of Numbers",
+        "number": "Number",
+        "int": "int",
+        "float": "float",
+        "bool": "bool",
+        "str": "str",
+        "complex": "Number",
+        "int?": "int",
+        "float?": "float",
+        "bool?": "bool",
+        "str?": "str",
+        "int[]": "tuple of ints",
+        "float[]": "tuple of floats",
+        "bool[]": "tuple of bools",
+        "str[]": "tuple of strs",
+        "int64[]": "tuple of ints",
+        "int32[]": "tuple of ints",
+        "SymInt": "int",
+        "SymInt?": "int",
+        "SymInt[]": "tuple of ints",
+        "SymBool": "bool",
+        "ScalarType": "torch.dtype",
+        "ScalarType?": "torch.dtype",
+        "Device": "str",
+        "Device?": "str",
+        "Layout": "int",
+        "Layout?": "int",
+        "MemoryFormat": "int",
+        "MemoryFormat?": "int",
+        "Generator": "None",
+        "Generator?": "None",
+        "AnyEnumType": "int",
+        "Storage": "None",
+        "Storage?": "None",
     }
     return mapping.get(t, t)
 
 
-def _extract_params_from_aten_schemas(api_name: str) -> Optional[Tuple[List[ParamInfo], str, List[List[ParamInfo]], List[int]]]:
+def _extract_params_from_aten_schemas(
+    api_name: str,
+) -> Optional[Tuple[List[ParamInfo], str, List[List[ParamInfo]], List[int]]]:
     obj = _resolve_function(api_name)
-    if obj is None or not hasattr(obj, '_schemas'):
+    if obj is None or not hasattr(obj, "_schemas"):
         return None
     schemas = obj._schemas
     if not schemas:
         return None
     all_overloads = []
     return_counts = []
-    for ov_name, schema in schemas.items():
+    for schema in schemas.values():
         params = _parse_aten_schema_arguments(schema)
         if params:
             all_overloads.append(params)
-            return_counts.append(len(schema.returns) if hasattr(schema, 'returns') else 0)
+            return_counts.append(len(schema.returns) if hasattr(schema, "returns") else 0)
     if not all_overloads:
         return None
     primary = max(all_overloads, key=lambda ov: sum(1 for p in ov if p.is_optional))
-    primary_rc = return_counts[all_overloads.index(primary)]
-    namespace = api_name.split('.')[2]
-    source = (f"{namespace}._schemas({len(all_overloads)} overloads)"
-              if len(all_overloads) > 1 else f"{namespace}._schemas")
+    _first_schema = next(iter(schemas.values()))
+    namespace = getattr(_first_schema, "name", api_name.rsplit(".", 1)[0]).split("::")[0]
+    source = (
+        f"{namespace}._schemas({len(all_overloads)} overloads)" if len(all_overloads) > 1 else f"{namespace}._schemas"
+    )
     return primary, source, all_overloads, return_counts
 
 
@@ -1169,26 +1298,27 @@ def _parse_aten_schema_arguments(schema) -> Optional[List[ParamInfo]]:
             is_optional = True
             if isinstance(default, (list, tuple)):
                 default = list(default)
-        elif str(arg.type).startswith('Optional['):
+        elif str(arg.type).startswith("Optional["):
             is_optional = True
-        is_keyword_only = arg.kwarg_only if hasattr(arg, 'kwarg_only') else False
-        params.append(ParamInfo(
-            name=name, type=type_str,
-            default=default, is_optional=is_optional,
-            is_keyword_only=is_keyword_only))
+        is_keyword_only = arg.kwarg_only if hasattr(arg, "kwarg_only") else False
+        params.append(
+            ParamInfo(
+                name=name, type=type_str, default=default, is_optional=is_optional, is_keyword_only=is_keyword_only
+            )
+        )
     return params if params else None
 
 
 def _normalize_aten_schema_type(t: str) -> str:
-    if t.startswith('Optional[') and t.endswith(']'):
-        inner = t[len('Optional['):-1]
+    if t.startswith("Optional[") and t.endswith("]"):
+        inner = t[len("Optional[") : -1]
         return _normalize_aten_schema_type(inner)
-    if t.startswith('List[') and t.endswith(']'):
-        inner = t[len('List['):-1]
+    if t.startswith("List[") and t.endswith("]"):
+        inner = t[len("List[") : -1]
         inner_mapped = _normalize_aten_schema_type(inner)
-        if inner_mapped == 'Tensor':
-            return 'tuple of Tensors'
-        return f'tuple of {inner_mapped}s'
+        if inner_mapped == "Tensor":
+            return "tuple of Tensors"
+        return f"tuple of {inner_mapped}s"
     return _normalize_npu_type(t)
 
 
@@ -1201,6 +1331,7 @@ def _torch_tensor_type():
     """torch.Tensor;torch 不可用时返回一个不会与任何注解相等的哨兵。"""
     try:
         import torch
+
         return torch.Tensor
     except ImportError:
         return object()
@@ -1210,6 +1341,7 @@ def _torch_dtype_type():
     """torch.dtype;torch 不可用时返回一个不会与任何注解相等的哨兵。"""
     try:
         import torch
+
         return torch.dtype
     except ImportError:
         return object()
@@ -1217,7 +1349,7 @@ def _torch_dtype_type():
 
 def _sequence_annotation_to_type(annotation) -> str:
     """list/tuple/Sequence[...] 按其元素类型归一成 tuple of xxx。"""
-    args = getattr(annotation, '__args__', ())
+    args = getattr(annotation, "__args__", ())
     if not args:
         return "int"
     return _SEQUENCE_INNER_TYPES.get(_annotation_to_type(args[0]), "int")
@@ -1232,16 +1364,15 @@ def _annotation_to_type(annotation) -> str:
         return ""
     import types as _types
     import typing
+
     # PEP 604 的 `str | None` 是 types.UnionType,没有 __origin__(torch>=2.6 的
     # .pyi/源码普遍改用这种写法),故 __origin__ 取不到时用 get_origin 兜底。
-    origin = getattr(annotation, '__origin__', None) or typing.get_origin(annotation)
+    origin = getattr(annotation, "__origin__", None) or typing.get_origin(annotation)
     # 不能写成 origin in (..., getattr(_types, 'UnionType', None)):Python < 3.10 无 UnionType,
     # getattr 返回 None,而无 origin 的注解(int/float/str/bool)其 origin 恰为 None,
     # 会整片落进 Union 分支、args 为空后误返回 "Tensor"。
-    if origin in (typing.Optional, typing.Union) or (
-        hasattr(_types, 'UnionType') and origin is _types.UnionType
-    ):
-        args = getattr(annotation, '__args__', ())
+    if origin in (typing.Optional, typing.Union) or (hasattr(_types, "UnionType") and origin is _types.UnionType):
+        args = getattr(annotation, "__args__", ())
         non_none = [a for a in args if a is not type(None)]
         return _annotation_to_type(non_none[0]) if non_none else "Tensor"
     if origin in (list, tuple, typing.List, typing.Tuple, typing.Sequence):
@@ -1268,15 +1399,16 @@ def _extract_params_from_annotations(obj) -> Optional[Tuple[List[ParamInfo], str
     Does NOT require inspect.signature — safe to call on any object.
     Default values are obtained from inspect.signature if available, otherwise None.
     """
-    ann = getattr(obj, '__annotations__', None)
+    ann = getattr(obj, "__annotations__", None)
     if not ann:
         return None
 
-    param_names = [k for k in ann if k != 'return']
+    param_names = [k for k in ann if k != "return"]
     if not param_names:
         return None
 
     import inspect as _inspect
+
     defaults_map = {}
     kw_only_set = set()
     try:
@@ -1297,9 +1429,15 @@ def _extract_params_from_annotations(obj) -> Optional[Tuple[List[ParamInfo], str
         default_raw = defaults_map.get(pname)
         is_optional = pname in defaults_map
         default = _coerce_default_value(str(default_raw), type_hint) if is_optional else None
-        params.append(ParamInfo(name=pname, type=type_hint,
-                                default=default, is_optional=is_optional,
-                                is_keyword_only=pname in kw_only_set))
+        params.append(
+            ParamInfo(
+                name=pname,
+                type=type_hint,
+                default=default,
+                is_optional=is_optional,
+                is_keyword_only=pname in kw_only_set,
+            )
+        )
 
     return (params, "__annotations__") if params else None
 
@@ -1307,23 +1445,23 @@ def _extract_params_from_annotations(obj) -> Optional[Tuple[List[ParamInfo], str
 def _extract_params_from_inspect(obj) -> Optional[Tuple[List[ParamInfo], str]]:
     """Try inspect.signature for Python-callable functions."""
     import inspect as _inspect
+
     try:
         sig = _inspect.signature(obj)
     except (ValueError, TypeError):
         return None
 
-    ann = getattr(obj, '__annotations__', None) or {}
+    ann = getattr(obj, "__annotations__", None) or {}
     params = []
     for pname, param in sig.parameters.items():
         if param.kind == _inspect.Parameter.VAR_KEYWORD:
             continue
         if param.kind == _inspect.Parameter.VAR_POSITIONAL:
             type_hint = _infer_type_from_name(pname)
-            if type_hint in ('Tensor', 'list of Tensors', 'tuple of Tensors',
-                             'Tensor[]', 'List[Tensor]'):
-                params.append(ParamInfo(name=pname, type='Tensor',
-                                        default=None, is_optional=False,
-                                        is_var_positional=True))
+            if type_hint in ("Tensor", "list of Tensors", "tuple of Tensors", "Tensor[]", "List[Tensor]"):
+                params.append(
+                    ParamInfo(name=pname, type="Tensor", default=None, is_optional=False, is_var_positional=True)
+                )
             continue
 
         if pname in ann:
@@ -1334,22 +1472,22 @@ def _extract_params_from_inspect(obj) -> Optional[Tuple[List[ParamInfo], str]]:
             type_hint = _infer_type_from_name(pname)
         if _is_inferred_type(type_hint) and param.default != _inspect.Parameter.empty:
             if isinstance(param.default, bool):
-                type_hint = 'bool'
+                type_hint = "bool"
             elif isinstance(param.default, int):
-                type_hint = 'int'
+                type_hint = "int"
             elif isinstance(param.default, float):
-                type_hint = 'float'
+                type_hint = "float"
             elif isinstance(param.default, str):
-                type_hint = 'str'
+                type_hint = "str"
         is_optional = param.default != _inspect.Parameter.empty
         default = None if not is_optional else _coerce_default_value(str(param.default), type_hint)
         # In Python, parameters after *args are implicitly keyword-only
         # (e.g. meshgrid(*tensors, indexing=None)).  Mapping this correctly
         # ensures build_args() routes such params to kwargs instead of args.
         is_kw_only = param.kind == _inspect.Parameter.KEYWORD_ONLY
-        params.append(ParamInfo(name=pname, type=type_hint,
-                                default=default, is_optional=is_optional,
-                                is_keyword_only=is_kw_only))
+        params.append(
+            ParamInfo(name=pname, type=type_hint, default=default, is_optional=is_optional, is_keyword_only=is_kw_only)
+        )
     return (params, "inspect.signature") if params else None
 
 
@@ -1360,14 +1498,27 @@ def _is_inferred_type(type_str: str) -> bool:
     are inferred types. If any member comes from an authoritative source (e.g.,
     Args section), the whole type is considered non-inferred.
     """
-    _INFERRED = frozenset({'Tensor', 'float', 'int', 'bool', 'str',
-                           'tuple of Tensors', 'tuple of ints', 'tuple of floats',
-                           'list of Numbers', 'Number', 'Dtype', 'Device', 'Layout'})
-    return all(t in _INFERRED for t in type_str.split('|'))
+    _INFERRED = frozenset(
+        {
+            "Tensor",
+            "float",
+            "int",
+            "bool",
+            "str",
+            "tuple of Tensors",
+            "tuple of ints",
+            "tuple of floats",
+            "list of Numbers",
+            "Number",
+            "Dtype",
+            "Device",
+            "Layout",
+        }
+    )
+    return all(t in _INFERRED for t in type_str.split("|"))
 
 
-def _enrich_types_from_annotations(params: List[ParamInfo],
-                                   ann_params: List[ParamInfo]) -> List[ParamInfo]:
+def _enrich_types_from_annotations(params: List[ParamInfo], ann_params: List[ParamInfo]) -> List[ParamInfo]:
     """Replace inferred types with real types from __annotations__.
 
     Only overwrites types that came from _infer_type_from_name.
@@ -1384,7 +1535,7 @@ def _enrich_types_from_annotations(params: List[ParamInfo],
         if ann_p is None:
             continue
         # Union types from Args section are authoritative — don't overwrite
-        if _is_inferred_type(p.type) and '|' not in p.type and ann_p.type:
+        if _is_inferred_type(p.type) and "|" not in p.type and ann_p.type:
             p.type = ann_p.type
         if p.default is None and ann_p.default is not None:
             p.default = ann_p.default
@@ -1393,18 +1544,17 @@ def _enrich_types_from_annotations(params: List[ParamInfo],
     return params
 
 
-def _strip_inplace_if_separate_exists(api_name: str,
-                                      params: List[ParamInfo]) -> List[ParamInfo]:
-    if not api_name.startswith('torch.') or api_name.startswith('torch.nn.'):
+def _strip_inplace_if_separate_exists(api_name: str, params: List[ParamInfo]) -> List[ParamInfo]:
+    if not api_name.startswith("torch.") or api_name.startswith("torch.nn."):
         return params
-    if api_name.endswith('_'):
-        params[:] = [p for p in params if p.name != 'inplace']
+    if api_name.endswith("_"):
+        params[:] = [p for p in params if p.name != "inplace"]
         return params
-    inplace_name = api_name + '_'
+    inplace_name = api_name + "_"
     inplace_obj = _resolve_function(inplace_name)
     if inplace_obj is None:
         return params
-    params[:] = [p for p in params if p.name != 'inplace']
+    params[:] = [p for p in params if p.name != "inplace"]
     return params
 
 
@@ -1424,10 +1574,14 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
         return
 
     _PROBE_MAP = {
-        'int': 0, 'float': 1.0, 'Number': 1.0,
-        'bool': False, 'str': 'mean',
-        'torch.dtype': _torch.float32, 'Dtype': _torch.float32,
-        'torch.memory_format': _torch.contiguous_format,
+        "int": 0,
+        "float": 1.0,
+        "Number": 1.0,
+        "bool": False,
+        "str": "mean",
+        "torch.dtype": _torch.float32,
+        "Dtype": _torch.float32,
+        "torch.memory_format": _torch.contiguous_format,
     }
 
     dummy = _torch.zeros(2, 3)
@@ -1447,9 +1601,9 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
         obj()
     except TypeError as e:
         msg = str(e)
-        m = re.search(r'missing \d+ required positional arguments?: (.+)', msg)
+        m = re.search(r"missing \d+ required positional arguments?: (.+)", msg)
         if m:
-            cpp_param_set = set(n.strip().strip('"\'') for n in m.group(1).split(','))
+            cpp_param_set = set(n.strip().strip("\"'") for n in m.group(1).split(","))
         else:
             cpp_param_set = None
     except Exception:
@@ -1459,43 +1613,45 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
     def _classify(n):
         try:
             obj(*probes[:n])
-            return 'ok'
+            return "ok"
         except TypeError as e:
             msg = str(e).lower()
-            if 'too many' in msg or ('takes' in msg and 'positional' in msg):
-                return 'too_many'
-            if 'invalid combination' in msg:
-                return 'too_many'
-            if 'missing' in msg:
-                return 'missing'
-            return 'error'
+            if "too many" in msg or ("takes" in msg and "positional" in msg):
+                return "too_many"
+            if "invalid combination" in msg:
+                return "too_many"
+            if "missing" in msg:
+                return "missing"
+            return "error"
         except Exception:
-            return 'error'
+            return "error"
 
     max_pos = 0
     found_valid = False
     for n in range(len(params) + 1):
         result = _classify(n)
-        if result in ('ok', 'error'):
+        if result in ("ok", "error"):
             max_pos = n
             found_valid = True
-        elif result == 'missing':
+        elif result == "missing":
             continue
-        elif result == 'too_many' and found_valid:
+        elif result == "too_many" and found_valid:
             break
 
     for i in range(max_pos, len(params)):
         params[i].is_keyword_only = True
 
     # Step 3: Remove deprecated params not in C++ signature (if we have ground truth)
-    _DEPRECATED_LOSS_PARAMS = {'size_average': 'bool', 'reduce': 'bool'}
+    _DEPRECATED_LOSS_PARAMS = {"size_average": "bool", "reduce": "bool"}
     if cpp_param_set is not None:
         to_remove = []
         removed_names = set()
         for i, p in enumerate(params):
-            if (p.name in _DEPRECATED_LOSS_PARAMS
-                    and _DEPRECATED_LOSS_PARAMS[p.name] == p.type
-                    and p.name not in cpp_param_set):
+            if (
+                p.name in _DEPRECATED_LOSS_PARAMS
+                and _DEPRECATED_LOSS_PARAMS[p.name] == p.type
+                and p.name not in cpp_param_set
+            ):
                 to_remove.append(i)
                 removed_names.add(p.name)
         for idx in reversed(to_remove):
@@ -1532,14 +1688,14 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
             obj(*base, **{p.name: val})
         except TypeError as _te:
             _te_msg = str(_te).lower()
-            if 'unexpected keyword' not in _te_msg:
+            if "unexpected keyword" not in _te_msg:
                 continue
             _ALT_PROBES = {
-                'str': [('int', 1)],
-                'int': [('str', 'mean')],
-                'Dtype': [('int', 0)],
-                'torch.dtype': [('int', 0)],
-                'bool': [('str', 'mean')],
+                "str": [("int", 1)],
+                "int": [("str", "mean")],
+                "Dtype": [("int", 0)],
+                "torch.dtype": [("int", 0)],
+                "bool": [("str", "mean")],
             }
             fixed = False
             for alt_type, alt_val in _ALT_PROBES.get(p.type, []):
@@ -1579,22 +1735,22 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
                 obj(*test_pos, **{p.name: val})
             except TypeError as _te:
                 _te_msg = str(_te).lower()
-                if 'missing' in _te_msg and 'required positional' in _te_msg:
+                if "missing" in _te_msg and "required positional" in _te_msg:
                     continue
-                if 'unexpected keyword' not in _te_msg and 'got an unexpected keyword' not in _te_msg:
+                if "unexpected keyword" not in _te_msg and "got an unexpected keyword" not in _te_msg:
                     continue
                 _ALT_PROBES = {
-                    'str': [('int', 1)],
-                    'int': [('str', 'mean')],
-                    'Dtype': [('int', 0)],
-                    'torch.dtype': [('int', 0)],
-                    'bool': [('str', 'mean')],
-                    'torch.Tensor': 'Tensor',
-                    'torch.BoolTensor': 'Tensor',
-                    'torch.IntTensor': 'Tensor',
-                    'torch.LongTensor': 'Tensor',
-                    'torch.FloatTensor': 'Tensor',
-                    'torch.DoubleTensor': 'Tensor',
+                    "str": [("int", 1)],
+                    "int": [("str", "mean")],
+                    "Dtype": [("int", 0)],
+                    "torch.dtype": [("int", 0)],
+                    "bool": [("str", "mean")],
+                    "torch.Tensor": "Tensor",
+                    "torch.BoolTensor": "Tensor",
+                    "torch.IntTensor": "Tensor",
+                    "torch.LongTensor": "Tensor",
+                    "torch.FloatTensor": "Tensor",
+                    "torch.DoubleTensor": "Tensor",
                 }
                 fixed = False
                 for alt_type, alt_val in _ALT_PROBES.get(p.type, []):
@@ -1625,14 +1781,14 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
 
 
 def _try_recover_removal(obj, pos_probes, params, removed_names):
-    try:
-        import torch as _torch
-    except ImportError:
+    import importlib.util
+
+    if importlib.util.find_spec("torch") is None:
         return
 
     _DEPRECATED_TO_MODERN = {
-        'size_average': ('reduction', 'int', 1),
-        'reduce': ('reduction', 'int', 1),
+        "size_average": ("reduction", "int", 1),
+        "reduce": ("reduction", "int", 1),
     }
 
     for old_name in removed_names:
@@ -1655,10 +1811,10 @@ def _try_recover_removal(obj, pos_probes, params, removed_names):
         insert_idx = len(params)
         if existing_kw:
             insert_idx = params.index(existing_kw[0])
-        params.insert(insert_idx, ParamInfo(
-            name=new_name, type=new_type,
-            default=new_default, is_optional=True,
-            is_keyword_only=True))
+        params.insert(
+            insert_idx,
+            ParamInfo(name=new_name, type=new_type, default=new_default, is_optional=True, is_keyword_only=True),
+        )
 
 
 def _strip_alias_extra_params(api_name: str, params: List[ParamInfo]) -> List[ParamInfo]:
@@ -1671,13 +1827,13 @@ def _strip_alias_extra_params(api_name: str, params: List[ParamInfo]) -> List[Pa
     """
     _strip_inplace_if_separate_exists(api_name, params)
 
-    if not api_name.startswith('torch.'):
+    if not api_name.startswith("torch."):
         return params
 
-    params[:] = [p for p in params if p.type != 'name']
+    params[:] = [p for p in params if p.type != "name"]
 
     obj = _resolve_function(api_name)
-    is_cpp = obj is not None and type(obj).__name__ == 'builtin_function_or_method'
+    is_cpp = obj is not None and type(obj).__name__ == "builtin_function_or_method"
 
     if is_cpp:
         _detect_keyword_only_by_probing(obj, params)
@@ -1690,16 +1846,16 @@ def _extract_params_from_functional_alias(api_name: str) -> Optional[Tuple[List[
 
     Also handles inplace APIs (torch.abs_ → torch.abs) by stripping the trailing '_'.
     """
-    if not api_name.startswith('torch.'):
+    if not api_name.startswith("torch."):
         return None
-    func_name = api_name.split('.')[-1]
+    func_name = api_name.split(".")[-1]
 
     candidates = [f"torch.nn.functional.{func_name}"]
 
-    if func_name.startswith('npu_'):
+    if func_name.startswith("npu_"):
         candidates.append(f"torch_npu.{func_name}")
 
-    if func_name.endswith('_') and not func_name.startswith('_'):
+    if func_name.endswith("_") and not func_name.startswith("_"):
         base_name = func_name[:-1]
         candidates.append(f"torch.{base_name}")
         candidates.append(f"torch.nn.functional.{base_name}")
@@ -1759,8 +1915,9 @@ def _extract_params_from_functional_alias(api_name: str) -> Optional[Tuple[List[
     return None
 
 
-def _merge_docstring_and_type_error(doc_params: List[ParamInfo],
-                                     te_params: List[ParamInfo]) -> Optional[List[ParamInfo]]:
+def _merge_docstring_and_type_error(
+    doc_params: List[ParamInfo], te_params: List[ParamInfo]
+) -> Optional[List[ParamInfo]]:
     """Merge docstring and TypeError results as equal-priority sources.
 
     Rules:
@@ -1807,8 +1964,7 @@ def _merge_docstring_and_type_error(doc_params: List[ParamInfo],
         # Pick keyword_only: TypeError is authoritative for positional/keyword boundary
         is_kw = op.is_keyword_only if other is te_params else bp.is_keyword_only
 
-        merged.append(ParamInfo(name=name, type=ptype, default=default,
-                                is_optional=is_optional, is_keyword_only=is_kw))
+        merged.append(ParamInfo(name=name, type=ptype, default=default, is_optional=is_optional, is_keyword_only=is_kw))
 
     # Add params only in 'other' that aren't in 'base'
     base_names = {p.name for p in base}
@@ -1841,25 +1997,46 @@ def _try_upgrade_to_inspect_if_var_pos(obj, params, api_name, ann_result=None):
         APIParamInfo built from inspect params if an upgrade was performed,
         otherwise None.
     """
-    has_var_pos = any(getattr(p, 'is_var_positional', False) for p in params)
+    has_var_pos = any(getattr(p, "is_var_positional", False) for p in params)
     if has_var_pos:
         return None
     inspect_result = _extract_params_from_inspect(obj)
     if not inspect_result:
         return None
-    inspect_has_var_pos = any(getattr(p, 'is_var_positional', False)
-                              for p in inspect_result[0])
+    inspect_has_var_pos = any(getattr(p, "is_var_positional", False) for p in inspect_result[0])
     if not inspect_has_var_pos:
         return None
     inspect_params = inspect_result[0]
     inspect_names = {p.name for p in inspect_params}
-    if inspect_names <= {'args', 'kwargs'}:
+    if inspect_names <= {"args", "kwargs"}:
         return None
     if ann_result:
         _enrich_types_from_annotations(inspect_result[0], ann_result[0])
     _strip_alias_extra_params(api_name, inspect_result[0])
-    return APIParamInfo(api_name=api_name, params=inspect_result[0],
-                        source="inspect.signature")
+    return APIParamInfo(api_name=api_name, params=inspect_result[0], source="inspect.signature")
+
+
+def _try_upgrade_to_inspect_if_kw_mismatch(obj, params, api_name):
+    """Upgrade to inspect.signature when keyword-only params are missing.
+
+    Docstring-based extraction cannot detect keyword-only boundaries (the ``*``
+    separator is not preserved).  If inspect.signature reports KEYWORD_ONLY
+    params but the current params have none, inspect is strictly more accurate.
+    """
+    has_kw = any(getattr(p, "is_keyword_only", False) for p in params)
+    if has_kw:
+        return None
+    inspect_result = _extract_params_from_inspect(obj)
+    if not inspect_result:
+        return None
+    inspect_has_kw = any(getattr(p, "is_keyword_only", False) for p in inspect_result[0])
+    if not inspect_has_kw:
+        return None
+    inspect_names = {p.name for p in inspect_result[0]}
+    if inspect_names <= {"args", "kwargs"}:
+        return None
+    _strip_alias_extra_params(api_name, inspect_result[0])
+    return APIParamInfo(api_name=api_name, params=inspect_result[0], source="inspect.signature")
 
 
 def extract_api_params(api_name: str) -> Optional[APIParamInfo]:
@@ -1871,38 +2048,42 @@ def extract_api_params(api_name: str) -> Optional[APIParamInfo]:
 
 
 def _extract_api_params_impl(api_name: str) -> Optional[APIParamInfo]:
-    TorchOpsPackageLoader.ensure_registered(api_name)
+    # The extension package is imported by FrameworkApiInfoKeeper.get before
+    # this is reached; no import here.
 
-    # Registered torch.ops APIs expose an authoritative FunctionSchema.
-    if api_name.startswith('torch.ops.'):
-        result = _extract_params_from_aten_schemas(api_name)
-        if result:
-            params, source, overloads, return_counts = result
-            return APIParamInfo(api_name=api_name, params=params, source=source,
-                                overloads=overloads, _return_counts=return_counts)
+    # Any API whose resolved object carries _schemas (an OpOverloadPacket)
+    # has an authoritative FunctionSchema; parse it regardless of api_name form.
+    result = _extract_params_from_aten_schemas(api_name)
+    if result:
+        params, source, overloads, return_counts = result
+        return APIParamInfo(
+            api_name=api_name, params=params, source=source, overloads=overloads, _return_counts=return_counts
+        )
 
     # NPU APIs (torch_npu.xxx, torch.npu_xxx, torch.ops.*):
     # Declaration is authoritative
-    if (api_name.startswith('torch.ops.') or
-            api_name.startswith('torch_npu.') or
-            (api_name.startswith('torch.npu_') and 'torch_npu' not in api_name)):
+    if (
+        api_name.startswith("torch.ops.")
+        or api_name.startswith("torch_npu.")
+        or (api_name.startswith("torch.npu_") and "torch_npu" not in api_name)
+    ):
         result = _extract_params_from_op_declaration(api_name)
         if result:
             params, source, return_count = result
-            return APIParamInfo(api_name=api_name, params=params, source=source,
-                                _return_counts=[return_count])
+            return APIParamInfo(api_name=api_name, params=params, source=source, _return_counts=[return_count])
 
     obj = _resolve_function(api_name)
     if obj is None:
         return None
 
     # torch_npu APIs: fallback to docstring/inspect
-    if api_name.startswith('torch_npu.'):
+    if api_name.startswith("torch_npu."):
         doc_result = _extract_params_from_docstring(obj, api_name)
         if doc_result:
             params, source, doc_rc = doc_result
-            return APIParamInfo(api_name=api_name, params=params, source=source,
-                                _return_counts=[doc_rc] if doc_rc else [])
+            return APIParamInfo(
+                api_name=api_name, params=params, source=source, _return_counts=[doc_rc] if doc_rc else []
+            )
         result = _extract_params_from_inspect(obj)
         if result:
             params, source = result
@@ -1920,8 +2101,7 @@ def _extract_api_params_impl(api_name: str) -> Optional[APIParamInfo]:
             if ann_result:
                 _enrich_types_from_annotations(overloads[0], ann_result[0])
             _strip_alias_extra_params(api_name, overloads[0])
-            return APIParamInfo(api_name=api_name, params=overloads[0], source=source,
-                                overloads=overloads)
+            return APIParamInfo(api_name=api_name, params=overloads[0], source=source, overloads=overloads)
 
     # docstring and TypeError single-signature are equal-priority sources.
     # Merge when both succeed: use longer param list as base, enrich types from the other.
@@ -1930,31 +2110,35 @@ def _extract_api_params_impl(api_name: str) -> Optional[APIParamInfo]:
         te_params, te_source, _ = te_result
         merged = _merge_docstring_and_type_error(doc_params, te_params)
         if merged:
-                if ann_result:
-                    _enrich_types_from_annotations(merged, ann_result[0])
-                _strip_alias_extra_params(api_name, merged)
-                return APIParamInfo(api_name=api_name, params=merged,
-                                    source=f"merge({doc_source}, {te_source})",
-                                    _return_counts=[doc_rc] if doc_rc else [])
+            if ann_result:
+                _enrich_types_from_annotations(merged, ann_result[0])
+            _strip_alias_extra_params(api_name, merged)
+            return APIParamInfo(
+                api_name=api_name,
+                params=merged,
+                source=f"merge({doc_source}, {te_source})",
+                _return_counts=[doc_rc] if doc_rc else [],
+            )
 
     if doc_result:
         params, source, doc_rc = doc_result
+        upgraded = _try_upgrade_to_inspect_if_kw_mismatch(obj, params, api_name)
+        if upgraded:
+            return upgraded
         upgraded = _try_upgrade_to_inspect_if_var_pos(obj, params, api_name, ann_result)
         if upgraded:
             return upgraded
         if ann_result:
             _enrich_types_from_annotations(params, ann_result[0])
         _strip_alias_extra_params(api_name, params)
-        return APIParamInfo(api_name=api_name, params=params, source=source,
-                            _return_counts=[doc_rc] if doc_rc else [])
+        return APIParamInfo(api_name=api_name, params=params, source=source, _return_counts=[doc_rc] if doc_rc else [])
 
     if te_result:
         params, source, overloads = te_result
         if ann_result:
             _enrich_types_from_annotations(params, ann_result[0])
         _strip_alias_extra_params(api_name, params)
-        return APIParamInfo(api_name=api_name, params=params, source=source,
-                            overloads=[params])
+        return APIParamInfo(api_name=api_name, params=params, source=source, overloads=[params])
 
     if ann_result:
         params, source = ann_result
@@ -1986,72 +2170,70 @@ def _extract_api_params_impl(api_name: str) -> Optional[APIParamInfo]:
         params, source, overloads = result
         if overloads and len(overloads) > 1:
             _strip_alias_extra_params(api_name, overloads[0])
-            return APIParamInfo(api_name=api_name, params=overloads[0], source=source,
-                                overloads=overloads)
+            return APIParamInfo(api_name=api_name, params=overloads[0], source=source, overloads=overloads)
         _strip_alias_extra_params(api_name, params)
-        return APIParamInfo(api_name=api_name, params=params, source=source,
-                            overloads=[params])
+        return APIParamInfo(api_name=api_name, params=params, source=source, overloads=[params])
 
     return None
 
 
 def _normalize_pyi_type(t: str) -> str:
     t = t.strip()
-    if t.startswith('Optional[') and t.endswith(']'):
-        inner = t[len('Optional['):-1]
+    if t.startswith("Optional[") and t.endswith("]"):
+        inner = t[len("Optional[") : -1]
         return _normalize_pyi_type(inner)
-    if t.startswith('Union[') and t.endswith(']'):
-        inner = t[len('Union['):-1]
-        parts = [p.strip() for p in inner.split(',')]
+    if t.startswith("Union[") and t.endswith("]"):
+        inner = t[len("Union[") : -1]
+        parts = [p.strip() for p in inner.split(",")]
         for p in parts:
-            if p == 'None':
+            if p == "None":
                 continue
             return _normalize_pyi_type(p)
-        return 'Tensor'
-    if t == 'Tensor':
-        return 'Tensor'
-    if t in ('_int', 'SymInt', 'int'):
-        return 'int'
-    if t in ('_float', 'float'):
-        return 'float'
-    if t in ('_bool', 'bool'):
-        return 'bool'
-    if t in ('str',):
-        return 'str'
-    if t in ('Number', '_complex'):
-        return 'Number'
-    if t in ('_dtype', 'torch.dtype'):
-        return 'Dtype'
-    if t in ('_layout', 'torch.layout'):
-        return 'Layout'
-    if t in ('_device', 'DeviceLikeType', 'torch.device'):
-        return 'Device'
-    if t in ('MemoryFormat', 'torch.memory_format'):
-        return 'MemoryFormat'
-    if t.startswith('Sequence['):
-        inner = t[len('Sequence['):-1]
+        return "Tensor"
+    if t == "Tensor":
+        return "Tensor"
+    if t in ("_int", "SymInt", "int"):
+        return "int"
+    if t in ("_float", "float"):
+        return "float"
+    if t in ("_bool", "bool"):
+        return "bool"
+    if t in ("str",):
+        return "str"
+    if t in ("Number", "_complex"):
+        return "Number"
+    if t in ("_dtype", "torch.dtype"):
+        return "Dtype"
+    if t in ("_layout", "torch.layout"):
+        return "Layout"
+    if t in ("_device", "DeviceLikeType", "torch.device"):
+        return "Device"
+    if t in ("MemoryFormat", "torch.memory_format"):
+        return "MemoryFormat"
+    if t.startswith("Sequence["):
+        inner = t[len("Sequence[") : -1]
         inner_type = _normalize_pyi_type(inner)
-        if inner_type == 'int':
-            return 'tuple of ints'
-        if inner_type == 'float':
-            return 'tuple of floats'
-        if inner_type == 'Tensor':
-            return 'tuple of Tensors'
-        return f'tuple of {inner_type}s'
-    if t.startswith('tuple[') or t.startswith('Tuple['):
-        inner = t.split('[', 1)[1].rstrip(']')
-        inner_type = _normalize_pyi_type(inner.split(',')[0].strip())
-        if inner_type == 'Tensor':
-            return 'tuple of Tensors'
-        if inner_type == 'int':
-            return 'tuple of ints'
-        return f'tuple of {inner_type}s'
-    if t.startswith('list[') or t.startswith('List['):
-        inner = t.split('[', 1)[1].rstrip(']')
+        if inner_type == "int":
+            return "tuple of ints"
+        if inner_type == "float":
+            return "tuple of floats"
+        if inner_type == "Tensor":
+            return "tuple of Tensors"
+        return f"tuple of {inner_type}s"
+    if t.startswith("tuple[") or t.startswith("Tuple["):
+        inner = t.split("[", 1)[1].rstrip("]")
+        inner_type = _normalize_pyi_type(inner.split(",")[0].strip())
+        if inner_type == "Tensor":
+            return "tuple of Tensors"
+        if inner_type == "int":
+            return "tuple of ints"
+        return f"tuple of {inner_type}s"
+    if t.startswith("list[") or t.startswith("List["):
+        inner = t.split("[", 1)[1].rstrip("]")
         inner_type = _normalize_pyi_type(inner)
-        if inner_type == 'Tensor':
-            return 'tuple of Tensors'
-        return f'list of {inner_type}s'
+        if inner_type == "Tensor":
+            return "tuple of Tensors"
+        return f"list of {inner_type}s"
     return t
 
 
@@ -2061,23 +2243,23 @@ def _parse_pyi_param_str(param_str: str) -> Optional[List[ParamInfo]]:
     kw_only = False
     for part in parts:
         part = part.strip()
-        if not part or part == '/':
+        if not part or part == "/":
             continue
-        if part == '*':
+        if part == "*":
             kw_only = True
             continue
         default = None
         is_optional = kw_only
-        if '=' in part:
-            main_part, default_str = part.split('=', 1)
+        if "=" in part:
+            main_part, default_str = part.split("=", 1)
             main_part = main_part.strip()
             default_str = default_str.strip()
             is_optional = True
         else:
             main_part = part
             default_str = None
-        if ':' in main_part:
-            name, type_hint = main_part.split(':', 1)
+        if ":" in main_part:
+            name, type_hint = main_part.split(":", 1)
             name = name.strip()
             type_hint = _normalize_pyi_type(type_hint.strip())
         else:
@@ -2085,10 +2267,9 @@ def _parse_pyi_param_str(param_str: str) -> Optional[List[ParamInfo]]:
             type_hint = _infer_type_from_name(name)
         if not type_hint:
             type_hint = _infer_type_from_name(name)
-        params.append(ParamInfo(
-            name=name, type=type_hint,
-            default=default, is_optional=is_optional,
-            is_keyword_only=kw_only))
+        params.append(
+            ParamInfo(name=name, type=type_hint, default=default, is_optional=is_optional, is_keyword_only=kw_only)
+        )
     return params if params else None
 
 
@@ -2101,16 +2282,17 @@ def _load_pyi_signatures():
         return _PYI_CACHE
     _PYI_CACHE = {}
     try:
-        import torch
         import os
-        pyi_path = os.path.join(os.path.dirname(torch.__file__),
-                                '_C', '_VariableFunctions.pyi')
+
+        import torch
+
+        pyi_path = os.path.join(os.path.dirname(torch.__file__), "_C", "_VariableFunctions.pyi")
         if not os.path.exists(pyi_path):
             return _PYI_CACHE
         with open(pyi_path) as f:
             lines = f.readlines()
         for func_name, param_str in _iter_pyi_defs(lines):
-            full_name = f'torch.{func_name}'
+            full_name = f"torch.{func_name}"
             parsed = _parse_pyi_param_str(param_str)
             if parsed:
                 if full_name not in _PYI_CACHE:
@@ -2139,16 +2321,16 @@ def _iter_pyi_defs(lines):
     for line in lines:
         stripped = line.strip()
         if buf is None:
-            if not stripped.startswith('def '):
+            if not stripped.startswith("def "):
                 continue
             buf = stripped
-            depth = stripped.count('(') - stripped.count(')')
+            depth = stripped.count("(") - stripped.count(")")
         else:
-            buf += ' ' + stripped
-            depth += stripped.count('(') - stripped.count(')')
+            buf += " " + stripped
+            depth += stripped.count("(") - stripped.count(")")
         if depth > 0:
             continue
-        m = re.match(r'def\s+(\w+)\s*\((.*)\)\s*(?:->.*?)?:', buf)
+        m = re.match(r"def\s+(\w+)\s*\((.*)\)\s*(?:->.*?)?:", buf)
         buf = None
         if m:
             yield m.group(1), m.group(2)
@@ -2161,14 +2343,14 @@ def _iter_pyi_reexports(lines):
     多行块,每行一个 "X as Y"。只认单行形式会把整块漏掉,torch.nn.functional.*
     全部取不到签名。
     """
-    single = re.compile(r'from\s+torch\s+import\s+(\w+)\s+as\s+(\w+)')
-    block_open = re.compile(r'from\s+torch\s+import\s*\(\s*$')
-    block_item = re.compile(r'(\w+)\s+as\s+(\w+)\s*,?\s*$')
+    single = re.compile(r"from\s+torch\s+import\s+(\w+)\s+as\s+(\w+)")
+    block_open = re.compile(r"from\s+torch\s+import\s*\(\s*$")
+    block_item = re.compile(r"(\w+)\s+as\s+(\w+)\s*,?\s*$")
     in_block = False
     for line in lines:
         stripped = line.strip()
         if in_block:
-            in_block = not stripped.startswith(')')
+            in_block = not stripped.startswith(")")
             m = block_item.match(stripped)
         elif block_open.match(stripped):
             in_block = True
@@ -2181,23 +2363,24 @@ def _iter_pyi_reexports(lines):
 
 def _load_nn_functional_pyi(cache):
     try:
-        import torch
         import os
-        pyi_path = os.path.join(os.path.dirname(torch.__file__),
-                                'nn', 'functional.pyi')
+
+        import torch
+
+        pyi_path = os.path.join(os.path.dirname(torch.__file__), "nn", "functional.pyi")
         if not os.path.exists(pyi_path):
             return
         with open(pyi_path) as f:
             lines = f.readlines()
 
         for torch_name, local_name in _iter_pyi_reexports(lines):
-            full_name = f'torch.nn.functional.{local_name}'
-            torch_full = f'torch.{torch_name}'
+            full_name = f"torch.nn.functional.{local_name}"
+            torch_full = f"torch.{torch_name}"
             if torch_full in cache and full_name not in cache:
                 cache[full_name] = cache[torch_full]
 
         for func_name, param_str in _iter_pyi_defs(lines):
-            full_name = f'torch.nn.functional.{func_name}'
+            full_name = f"torch.nn.functional.{func_name}"
             parsed = _parse_pyi_param_str(param_str)
             if parsed:
                 if full_name not in cache:
@@ -2208,7 +2391,7 @@ def _load_nn_functional_pyi(cache):
 
 
 def _extract_params_from_pyi(api_name: str):
-    if not api_name.startswith('torch.'):
+    if not api_name.startswith("torch."):
         return None
     sigs = _load_pyi_signatures().get(api_name)
     if not sigs:
@@ -2223,22 +2406,25 @@ def _extract_params_from_pyi(api_name: str):
 
 def _resolve_function(api_name: str):
     try:
-        parts = api_name.split('.')
+        parts = api_name.split(".")
         if len(parts) < 2:
             return None
-        if api_name.startswith('torch.ops.'):
+        if api_name.startswith("torch.ops."):
             import torch
+
             if len(parts) >= 4:
                 namespace = parts[2]
                 op_name = parts[3]
                 return getattr(torch.ops, namespace).__getattr__(op_name)
-        if len(parts) >= 3 and parts[0] == 'torch' and parts[1] == 'Tensor':
+        if len(parts) >= 3 and parts[0] == "torch" and parts[1] == "Tensor":
             import torch
-            method_name = '.'.join(parts[2:])
+
+            method_name = ".".join(parts[2:])
             return getattr(torch.Tensor, method_name, None)
-        mod_name = '.'.join(parts[:-1])
+        mod_name = ".".join(parts[:-1])
         func_name = parts[-1]
         import importlib
+
         mod = importlib.import_module(mod_name)
         return getattr(mod, func_name, None)
     except (ImportError, AttributeError):
@@ -2249,13 +2435,12 @@ _MANUAL_OVERRIDES: Dict[str, APIParamInfo] = {}
 
 
 def register_api_params(api_name: str, params: List[ParamInfo], source: str = "manual"):
-    _MANUAL_OVERRIDES[api_name] = APIParamInfo(
-        api_name=api_name, params=params, source=source)
+    _MANUAL_OVERRIDES[api_name] = APIParamInfo(api_name=api_name, params=params, source=source)
 
 
 def _is_tensor_method(api_name: str) -> bool:
-    parts = api_name.split('.')
-    return len(parts) >= 3 and parts[0] == 'torch' and parts[1] == 'Tensor'
+    parts = api_name.split(".")
+    return len(parts) >= 3 and parts[0] == "torch" and parts[1] == "Tensor"
 
 
 def get_api_params(api_name: str) -> Optional[APIParamInfo]:
@@ -2265,15 +2450,14 @@ def get_api_params(api_name: str) -> Optional[APIParamInfo]:
     if result is not None and _is_tensor_method(api_name):
         # Functional alias params already include the self-equivalent tensor
         # (e.g. 'input' from torch.nn.functional.relu_), so skip insertion.
-        is_alias = 'alias(' in (result.source or '')
+        is_alias = "alias(" in (result.source or "")
         if not is_alias:
-            self_param = ParamInfo(name='self', type='Tensor')
+            self_param = ParamInfo(name="self", type="Tensor")
             if result.overloads:
                 for ov in result.overloads:
                     ov.params.insert(0, self_param)
                     ov.layout = OverloadTensorLayout.build(ov.params, ov.return_count)
-                best = max(result.overloads,
-                           key=lambda oi: sum(1 for p in oi.params if p.is_optional))
+                best = max(result.overloads, key=lambda oi: sum(1 for p in oi.params if p.is_optional))
                 result.params = best.params
             else:
                 result.params.insert(0, self_param)

@@ -153,7 +153,7 @@ python3 -m ttk e2e    --backend npusim -i cases.csv -t add_f32_01
 python3 -m ttk kernel -i examples/case_store/kernel/add.csv
 python3 -m ttk geir -i examples/case_store/kernel/add.csv
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_ops.csv
 
 # 调试单个失败用例
 python3 -m ttk kernel -i cases.csv -t case_name --dump-on-fail --single-log

@@ -19,6 +19,7 @@ E2E 用例的参数（张量数量/顺序/dtype、关键字参数等）来自框
 | `torch.add` | 模块函数 | 直接调用 |
 | `torch.nn.functional.relu` | 子模块函数 | 调用子模块中的函数 |
 | `torch.Tensor.relu_` | Tensor 方法 | 通过 Tensor 实例调用（原地操作） |
+| `torch.ops.cann_ops_transformer.causal_conv1d_fn` | torch.ops 自定义算子 | torch extension 包注册的算子 |
 
 ## 必填字段
 

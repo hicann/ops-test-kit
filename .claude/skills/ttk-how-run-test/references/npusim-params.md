@@ -38,7 +38,7 @@ python3 -m ttk kernel --backend npusim -i cases.csv -t add_01 --sim-cores 0 --si
 python3 -m ttk aclnn --backend npusim -i examples/case_store/aclnn/aclnn_add.csv --sim-cores 0
 
 # E2E（eager）额外出流水图
-python3 -m ttk e2e --backend npusim -i examples/case_store/e2e/torch_add.csv -t add_f32_01 --sim-report
+python3 -m ttk e2e --backend npusim -i examples/case_store/e2e/torch_ops.csv -t add_f32_01 --sim-report
 ```
 
 ## 产物

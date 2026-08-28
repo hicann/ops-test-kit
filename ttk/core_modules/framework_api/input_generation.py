@@ -22,7 +22,6 @@ from ttk.core_modules.plugin_loader import get_plugin_function
 from ttk.utilities import get
 from ttk.utilities.container_utils import apply_as_list
 from ttk.utilities.data import RandomData, resolve_custom_numpy_dtypes
-from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
 
 def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
@@ -36,9 +35,6 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
     Plugin has no return value, modifies tensor arrays in-place via x[:] = value.
     Called with same ParamPlan arg order as profiling execution and golden generation.
     """
-    # Custom input runs before API resolution in worker processes. Register the
-    # installed torch.ops package before a callback calls a companion metadata op.
-    TorchOpsPackageLoader.ensure_registered(testcase.api_name)
     if stored_inputs is not None:
         testcase.np_storages = list(stored_inputs)
         raw_inputs = build_views_from_storages(testcase)
@@ -108,6 +104,7 @@ def np_to_torch_inputs(testcase, raw_inputs):
     same approach as aclnn input_generation.
     """
     import torch
+
     from ttk.utilities.dtypes import numpy_to_torch_tensor
 
     np_storages = getattr(testcase, "np_storages", None)
@@ -141,6 +138,7 @@ def np_to_tf_inputs(testcase, raw_inputs):
     Tensors sourced from attributes use tf.constant for graph-mode const folding.
     """
     import tensorflow as tf
+
     from ttk.utilities.dtypes import normalize_to_tf_dtype
 
     const_indexes = getattr(testcase, "const_input_indexes", None) or set()
@@ -169,7 +167,7 @@ def assign_tensor_value(arr, val, label):
         else:
             arr[:] = spec
     except ValueError as e:
-        raise ValueError(f"Specify tensor [{label}] from `attributes` fail: {e}")
+        raise ValueError(f"Specify tensor [{label}] from `attributes` fail: {e}") from e
 
 
 def override_tensors_from_attributes(testcase, raw_inputs):

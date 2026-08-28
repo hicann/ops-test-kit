@@ -10,10 +10,10 @@ Validates testcase parameters against API signatures.
 """
 
 import logging
-from typing import Optional, Dict
+from typing import Dict, Optional
 
 from ttk.utilities import Singleton
-from ttk.utilities.simple_param_extractor import APIParamInfo, get_api_params, register_api_params, ParamInfo
+from ttk.utilities.simple_param_extractor import APIParamInfo, get_api_params, register_api_params
 from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
 
@@ -62,6 +62,12 @@ class FrameworkApiInfoKeeper(metaclass=Singleton):
             return (
                 f"API [{api_name}] has {api_tensor_count} tensor parameters, "
                 f"but testcase configured {tensor_count}. "
+                f"(source: {info.source})"
+            )
+        if scalar_count != api_scalar_count:
+            return (
+                f"API [{api_name}] has {api_scalar_count} scalar parameters, "
+                f"but testcase configured {scalar_count}. "
                 f"(source: {info.source})"
             )
         return None
