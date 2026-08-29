@@ -84,11 +84,54 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "FA"]
-ignore = ["E501", "FA100"]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "W",      # pycodestyle warnings
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "PIE",    # flake8-pie
+    "PT",     # flake8-pytest-style
+    "RET",    # flake8-return
+    "S",      # flake8-bandit
+    "FA",     # flake8-future-annotations
+    "PL",     # pylint
+]
+ignore = [
+    # 基础
+    "E501",       # 行长度交给 format 控制
+
+    # 中文项目适配
+    "RUF001",     # 字符串中的歧义 Unicode（中文误报）
+    "RUF002",     # 文档字符串中的歧义 Unicode（中文误报）
+    "RUF003",     # 注释中的歧义 Unicode（中文误报）
+
+    # 项目架构适配
+    "PLC0415",    # 允许延迟导入（torch/tf 为可选依赖）
+    "PLW0603",    # 允许 global 语句
+    "PLR0913",    # 允许超过 5 个参数（算子接口天然多参数）
+    "PLR0912",    # 允许过多分支
+    "PLR0915",    # 允许过多语句
+
+    # 安全规则白名单
+    "S603",       # subprocess 调用允许（工具属性决定）
+    "S607",       # 允许 PATH 中查找可执行文件
+    "S101",       # 允许 assert（测试代码大量使用）
+    "S108",       # 允许 /tmp 路径
+
+    # 渐进式忽略
+    "FA100",      # 不强制要求 from __future__ import annotations
+    "PLR2004",    # 允许魔法数字
+    "RET504",     # 允许 return 前赋值
+]
 
 [tool.ruff.lint.per-file-ignores]
 "ttk/utilities/__init__.py" = ["F401", "F403"]
+"ttk/core_modules/**/__init__.py" = ["F401", "F403"]
+"tests/**" = ["S101", "S108"]
 
 [tool.mypy]
 python_version = "3.8"
