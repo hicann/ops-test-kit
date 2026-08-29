@@ -29,17 +29,27 @@ from ttk.core_modules.infershape.format_transformation import (
 )
 
 
-@pytest.mark.parametrize("dtype,expected", [
-    ("float16", 16), ("int8", 32), ("int64", 4), ("bogus", 16),
-])
+@pytest.mark.parametrize(
+    "dtype,expected",
+    [
+        ("float16", 16),
+        ("int8", 32),
+        ("int64", 4),
+        ("bogus", 16),
+    ],
+)
 def test_align_factor(dtype, expected):
     assert align_factor(dtype) == expected
 
 
-@pytest.mark.parametrize("dtype,target,expected", [
-    ("float16", [1, 2, 8, 8, 24], 24),
-    ("int8", None, 32),
-], ids=["target-shape", "fallback"])
+@pytest.mark.parametrize(
+    "dtype,target,expected",
+    [
+        ("float16", [1, 2, 8, 8, 24], 24),
+        ("int8", None, 32),
+    ],
+    ids=["target-shape", "fallback"],
+)
 def test_determine_c0(dtype, target, expected):
     assert determine_c0(dtype, target) == expected
 
@@ -48,26 +58,37 @@ def test_determine_c0_accepts_numpy_dtype():
     assert determine_c0(np.dtype("float16")) == 16
 
 
-@pytest.mark.parametrize("shape,fmt,expected", [
-    ((1, 32, 8, 8), "NCHW", True),
-    ((1, 32, 8), "NCHW", False),
-], ids=["ok", "bad-rank"])
+@pytest.mark.parametrize(
+    "shape,fmt,expected",
+    [
+        ((1, 32, 8, 8), "NCHW", True),
+        ((1, 32, 8), "NCHW", False),
+    ],
+    ids=["ok", "bad-rank"],
+)
 def test_is_nchw_like(shape, fmt, expected):
     assert is_nchw_like(shape, fmt) is expected
 
 
-@pytest.mark.parametrize("shape,fmt,expected", [
-    ((1, 2, 32, 8, 8), "NCDHW", True),
-    ((1, 32, 8, 8), "NCDHW", False),
-], ids=["ok", "bad-rank"])
+@pytest.mark.parametrize(
+    "shape,fmt,expected",
+    [
+        ((1, 2, 32, 8, 8), "NCDHW", True),
+        ((1, 32, 8, 8), "NCDHW", False),
+    ],
+    ids=["ok", "bad-rank"],
+)
 def test_is_ndchw_like(shape, fmt, expected):
     assert is_ndchw_like(shape, fmt) is expected
 
 
-@pytest.mark.parametrize("shape,fmt,expected", [
-    ((1, 32, 8, 8), "NCHW", (1, 2, 8, 8, 16)),
-    ((1, 8, 8, 32), "NHWC", (1, 2, 8, 8, 16)),
-])
+@pytest.mark.parametrize(
+    "shape,fmt,expected",
+    [
+        ((1, 32, 8, 8), "NCHW", (1, 2, 8, 8, 16)),
+        ((1, 8, 8, 32), "NHWC", (1, 2, 8, 8, 16)),
+    ],
+)
 def test_nd_shape2fhd_shape(shape, fmt, expected):
     assert nd_shape2fhd_shape(shape, fmt) == expected
 
@@ -101,12 +122,15 @@ def test_nd_to_fractal_nz_4d_and_back():
     np.testing.assert_array_equal(nz2nd(fractal, (2, 5, 4, 7)), data)
 
 
-@pytest.mark.parametrize("ori,target,expected", [
-    ("NCHW", "NC1HWC0", True),
-    ("ND", "FRACTAL_NZ", True),
-    ("BOGUS", "NC1HWC0", False),
-    ("NCHW", "BOGUS", False),
-])
+@pytest.mark.parametrize(
+    "ori,target,expected",
+    [
+        ("NCHW", "NC1HWC0", True),
+        ("ND", "FRACTAL_NZ", True),
+        ("BOGUS", "NC1HWC0", False),
+        ("NCHW", "BOGUS", False),
+    ],
+)
 def test_is_transformable(ori, target, expected):
     assert is_transformable(ori, target) is expected
 

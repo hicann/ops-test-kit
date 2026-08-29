@@ -1,6 +1,7 @@
 # ttk/core_modules/comparison/cross_check.py
 import numpy as np
-from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
+
+from .registry import FAIL_REASONS, ComparisonBase, EachCompareResult, register_comparison
 
 
 def safe_div(num, den, err):
@@ -13,7 +14,7 @@ def safe_div(num, den, err):
     if np.isnan(den) or np.isinf(den):
         return float("inf")
     if num == 0 and den == 0:
-        return 1.0   # both perfect match -> ratio=1 (consistent)
+        return 1.0  # both perfect match -> ratio=1 (consistent)
     return float(num / max(den, err))
 
 
@@ -24,16 +25,22 @@ class CrossCheckComparison(ComparisonBase):
     def compare_impl(self) -> EachCompareResult:
         t, g, b = self.output, self.golden, self.third_party
         if b is None:
-            return EachCompareResult("GOLDEN_FAILURE", is_pass=False, standard="cross_check",
-                                     metrics={"standard": "cross_check", "pass": False,
-                                              "level": self.tol_options.get("level"),
-                                              "reason": FAIL_REASONS["third_party_unavailable"]})
+            return EachCompareResult(
+                "GOLDEN_FAILURE",
+                is_pass=False,
+                standard="cross_check",
+                metrics={
+                    "standard": "cross_check",
+                    "pass": False,
+                    "level": self.tol_options.get("level"),
+                    "reason": FAIL_REASONS["third_party_unavailable"],
+                },
+            )
 
         T = np.promote_types(np.float32, np.promote_types(t.dtype, np.promote_types(g.dtype, b.dtype)))
         t, g, b = t.astype(T), g.astype(T), b.astype(T)
 
-        sv = {"small_value": self.tol_options["small_value"],
-              "small_value_atol": self.tol_options["small_value_atol"]}
+        sv = {"small_value": self.tol_options["small_value"], "small_value_atol": self.tol_options["small_value_atol"]}
         mare_limit = self.tol_options["mare_ratio"]
         mere_limit = self.tol_options["mere_ratio"]
         rmse_limit = self.tol_options["rmse_ratio"]
@@ -48,12 +55,14 @@ class CrossCheckComparison(ComparisonBase):
         # third_party (b) 的 NaN/Inf 是已知算子行为（如 npu_quant_matmul 负 scale 溢出）。
         # b 有 inf/nan 的位置不参与 special_ok 判定（third_party 已不可用），
         # 只对 t/g 自身的 NaN/Inf 做类型匹配判定。
-        b_bad = np.isnan(b) | np.isinf(b)
         t_g_special = np.isnan(t) | np.isinf(t) | np.isnan(g) | np.isinf(g)
         check_special = t_g_special
-        t_nan = np.isnan(t); g_nan = np.isnan(g)
-        t_pinf = np.isposinf(t); g_pinf = np.isposinf(g)
-        t_ninf = np.isneginf(t); g_ninf = np.isneginf(g)
+        t_nan = np.isnan(t)
+        g_nan = np.isnan(g)
+        t_pinf = np.isposinf(t)
+        g_pinf = np.isposinf(g)
+        t_ninf = np.isneginf(t)
+        g_ninf = np.isneginf(g)
         nan_match = t_nan & g_nan
         pinf_match = t_pinf & g_pinf
         ninf_match = t_ninf & g_ninf
@@ -89,7 +98,7 @@ class CrossCheckComparison(ComparisonBase):
                 diff_idx = self._top_diff(t, g, large)
             else:
                 exceeded = []
-                mare_ratio = mere_ratio = rmse_ratio = None   # 无大值域：未算 ratio（None 表 N/A，非 0.0 误导）
+                mare_ratio = mere_ratio = rmse_ratio = None  # 无大值域：未算 ratio（None 表 N/A，非 0.0 误导）
                 ratio_ok = True
                 diff_idx = []
 
@@ -116,21 +125,36 @@ class CrossCheckComparison(ComparisonBase):
         else:
             reason = None
 
-        metrics = {"standard": "cross_check", "level": self.tol_options.get("level"),
-                   "config": {"mare": mare_limit, "mere": mere_limit, "rmse": rmse_limit,
-                              "small_value": sv["small_value"], "small_value_atol": sv["small_value_atol"]},
-                   "result": {"mare": float(mare_ratio) if mare_ratio is not None else None,
-                              "mere": float(mere_ratio) if mere_ratio is not None else None,
-                              "rmse": float(rmse_ratio) if rmse_ratio is not None else None,
-                              "small_err_cnt_target": err_target, "small_err_cnt_third": err_third,
-                              "small_err_ratio": float(small_ratio)},
-                   "pass": passed}
+        metrics = {
+            "standard": "cross_check",
+            "level": self.tol_options.get("level"),
+            "config": {
+                "mare": mare_limit,
+                "mere": mere_limit,
+                "rmse": rmse_limit,
+                "small_value": sv["small_value"],
+                "small_value_atol": sv["small_value_atol"],
+            },
+            "result": {
+                "mare": float(mare_ratio) if mare_ratio is not None else None,
+                "mere": float(mere_ratio) if mere_ratio is not None else None,
+                "rmse": float(rmse_ratio) if rmse_ratio is not None else None,
+                "small_err_cnt_target": err_target,
+                "small_err_cnt_third": err_third,
+                "small_err_ratio": float(small_ratio),
+            },
+            "pass": passed,
+        }
         if reason:
             metrics["reason"] = reason
         _diff_arr = np.array(diff_idx, dtype=int) if diff_idx else None
-        return EachCompareResult("PASS" if passed else "FAIL", is_pass=passed,
-                                 diff_index=_diff_arr if not passed else None,
-                                 standard="cross_check", metrics=metrics)
+        return EachCompareResult(
+            "PASS" if passed else "FAIL",
+            is_pass=passed,
+            diff_index=_diff_arr if not passed else None,
+            standard="cross_check",
+            metrics=metrics,
+        )
 
     def _top_diff(self, t, g, mask):
         """top MAX_DIFF_OUTPUT |t-g|>0 positions (worst-first) under mask. Returns list."""
@@ -156,13 +180,14 @@ class CrossCheckComparison(ComparisonBase):
         t, g, b = self.output, self.golden, self.third_party
         small_value = self.tol_options.get("small_value", 1e-7)
         n = len(diff_index)
-        log += "Output %d Compare Difference length %d (worst-first)\n" % (self.output_idx, n)
+        log += f"Output {self.output_idx} Compare Difference length {n} (worst-first)\n"
         for idx in range(n):
             i = int(diff_index[idx])
             is_small = abs(float(g[i])) < small_value
             fmt = "%.10e" if is_small else "%.6e"
             tag = "S" if is_small else "L"
-            log += ("Index: %03d RealIndex: %06d [%s] t=%s g=%s b=%s |t-g|=%s |b-g|=%s\n"
-                    % (idx, i, tag, fmt % float(t[i]), fmt % float(g[i]), fmt % float(b[i]),
-                       fmt % float(abs(t[i] - g[i])), fmt % float(abs(b[i] - g[i]))))
+            log += (
+                f"Index: {idx:03d} RealIndex: {i:06d} [{tag}] t={fmt % float(t[i])} g={fmt % float(g[i])} "
+                f"b={fmt % float(b[i])} |t-g|={fmt % float(abs(t[i] - g[i]))} |b-g|={fmt % float(abs(b[i] - g[i]))}\n"
+            )
         return log

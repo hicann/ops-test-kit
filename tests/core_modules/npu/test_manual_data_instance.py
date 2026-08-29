@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Tests for manual-data mode NpuInstance."""
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -31,9 +32,7 @@ def _instance():
 def test_prepare_uses_one_logical_worker_without_querying_devices(monkeypatch):
     instance = _instance()
     dsmi = MagicMock(side_effect=AssertionError("DSMI must not be queried"))
-    monkeypatch.setattr(
-        "ttk.core_modules.npu.instance_refactor.DSMIInterface", dsmi
-    )
+    monkeypatch.setattr("ttk.core_modules.npu.instance_refactor.DSMIInterface", dsmi)
 
     instance.get_device_count()
 

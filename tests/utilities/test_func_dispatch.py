@@ -23,11 +23,11 @@ def test_framework_of_identifies_numpy_torch_and_custom():
     自定义函数、type、instance 返回 None。"""
     import torch
 
-    assert framework_of(numpy.add) == "numpy"        # ufunc
-    assert framework_of(numpy.isposinf) == "numpy"    # 非 ufunc
-    assert framework_of(torch.add) == "torch"         # 顶层 builtin
+    assert framework_of(numpy.add) == "numpy"  # ufunc
+    assert framework_of(numpy.isposinf) == "numpy"  # 非 ufunc
+    assert framework_of(torch.add) == "torch"  # 顶层 builtin
     assert framework_of(torch.ops.aten.amax) == "torch"  # OpOverloadPacket
-    assert framework_of(lambda x: x) is None          # 自定义 lambda
+    assert framework_of(lambda x: x) is None  # 自定义 lambda
 
     def g(x, **kw):
         return x
@@ -38,12 +38,13 @@ def test_framework_of_identifies_numpy_torch_and_custom():
         def __call__(self, x):
             return x
 
-    assert framework_of(C) is None     # type(class)
-    assert framework_of(C()) is None   # instance
+    assert framework_of(C) is None  # type(class)
+    assert framework_of(C()) is None  # instance
 
 
 def test_bind_by_name_partial_split_init_and_call():
     """__init__ 和 __call__ 分阶段绑定：init 从 pool 取 x/axis，call 从 pool 取 y。"""
+
     class G:
         def __init__(self, x, *, axis):
             self.x, self.axis = x, axis

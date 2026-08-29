@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Tests for /v1/sync endpoint."""
+
 import base64
 import hashlib
 import http.client
@@ -33,6 +34,7 @@ def xpu_server():
 
     # Create a config file for the server
     import yaml
+
     tmp_dir = tempfile.mkdtemp(prefix="ttk_sync_tmp_test_")
     config_file = os.path.join(tempfile.gettempdir(), "xpu_server_sync_test.yaml")
     config_data = {
@@ -45,10 +47,11 @@ def xpu_server():
         yaml.dump(config_data, f)
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "server.xpu_server",
-         "--port", "19091", "--dry-run", "--config", config_file],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        env=os.environ.copy())
+        [sys.executable, "-m", "server.xpu_server", "--port", "19091", "--dry-run", "--config", config_file],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=os.environ.copy(),
+    )
     # Wait for server ready
     for _ in range(20):
         time.sleep(0.5)
@@ -78,14 +81,10 @@ class TestSyncEndpoint:
     def test_sync_single_file(self, xpu_server, http_conn):
         content = base64.b64encode(b"print('hello')").decode()
         h = hashlib.sha256(b"print('hello')").hexdigest()
-        body = json.dumps({
-            "files": {
-                "nn/demo.py": {"content": content, "hash": f"sha256:{h}"}
-            }
-        })
-        http_conn.request("POST", "/v1/sync", body=body,
-                          headers={"Content-Type": "application/json",
-                                   "X-Tenant-ID": "sync_test_001"})
+        body = json.dumps({"files": {"nn/demo.py": {"content": content, "hash": f"sha256:{h}"}}})
+        http_conn.request(
+            "POST", "/v1/sync", body=body, headers={"Content-Type": "application/json", "X-Tenant-ID": "sync_test_001"}
+        )
         resp = http_conn.getresponse()
         assert resp.status == 200
         data = json.loads(resp.read())

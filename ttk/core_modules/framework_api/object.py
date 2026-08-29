@@ -12,17 +12,18 @@
 """
 FrameworkApiProfileObject — ProfileObject implementation for framework_api tests.
 """
-from typing import Iterable, Any, Optional
 
-from ttk.core_modules.infra.profile_object import ProfileObject
-from ttk.core_modules.infra.task import TaskA, TaskType
-from ttk.core_modules.testcase_manager.testcase_base import TestcaseBase
-from ttk.core_modules.tbe_multiprocessing import SimpleCommandProcess
+from typing import Any, Iterable, Optional
+
 from ttk.core_modules.comparison.compare_log import (
     compare_log_size,
-    read_compare_log_failures,
     print_compare_log_failures,
+    read_compare_log_failures,
 )
+from ttk.core_modules.infra.profile_object import ProfileObject
+from ttk.core_modules.infra.task import TaskA, TaskType
+from ttk.core_modules.tbe_multiprocessing import SimpleCommandProcess
+from ttk.core_modules.testcase_manager.testcase_base import TestcaseBase
 
 from .profiling import profile_process
 from .result import FrameworkApiReturnStructure
@@ -47,7 +48,7 @@ class FrameworkApiProfileObject(ProfileObject):
     def init_tasks(self, testcases: Iterable[TestcaseBase]):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
-        sorted_cases = sorted(testcases, key=lambda t: getattr(t, '_csv_row_index', -1))
+        sorted_cases = sorted(testcases, key=lambda t: getattr(t, "_csv_row_index", -1))
         for testcase in sorted_cases:
             device_ids = list(testcase.device_ids) if testcase.is_multi_device() else None
             task = TaskA(

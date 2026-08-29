@@ -23,10 +23,10 @@ from ....test_spec import get_spec_attr
 from ....utilities import (
     get,
     get_global_storage,
+    is_4bit_dtype,
     numpy_to_torch_tensor,
     resolve_custom_numpy_dtypes,
     unpack_4bits,
-    is_4bit_dtype,
 )
 from ....utilities.dtypes import np_as_strided_safe
 
@@ -111,8 +111,10 @@ class Comparator:
         for idx, o in enumerate(outputs):
             if isinstance(o, str) or o is None:
                 continue
-            if not isinstance(o, (bytes, bytearray)) and not hasattr(o, 'raw') and not (
-                hasattr(o, '__class__') and 'c_char' in o.__class__.__name__
+            if (
+                not isinstance(o, (bytes, bytearray))
+                and not hasattr(o, "raw")
+                and not (hasattr(o, "__class__") and "c_char" in o.__class__.__name__)
             ):
                 continue
             dtype = get(dtypes, idx)

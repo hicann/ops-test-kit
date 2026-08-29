@@ -24,78 +24,90 @@ class TestAclnnParamPlanInit:
 
     def test_tensor_only(self):
         """纯 aclTensor* 参数 → tensor_count == len(params)，scalar_count == 0。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("y", {"type": "aclTensor*", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("y", {"type": "aclTensor*", "default": None}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnAdd", info)
         assert plan.tensor_count == 2
         assert plan.scalar_count == 0
         assert len(plan.param_layout) == 2
-        assert plan.param_layout[0][0] == 'tensor'
-        assert plan.param_layout[1][0] == 'tensor'
+        assert plan.param_layout[0][0] == "tensor"
+        assert plan.param_layout[1][0] == "tensor"
 
     def test_tensor_and_scalar(self):
         """aclTensor* 与 aclScalar* 交错 → layout 保留声明顺序。"""
-        info = _make_op_api_info([
-            ("self", {"type": "aclTensor*", "default": None}),
-            ("dim", {"type": "aclScalar*", "default": None}),
-            ("out", {"type": "aclTensor*", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("self", {"type": "aclTensor*", "default": None}),
+                ("dim", {"type": "aclScalar*", "default": None}),
+                ("out", {"type": "aclTensor*", "default": None}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnSoftmax", info)
         assert plan.tensor_count == 2
         assert plan.scalar_count == 1
-        assert plan.param_layout[0] == ('tensor', 'self', 'aclTensor*', None)
-        assert plan.param_layout[1] == ('scalar', 'dim', 'aclScalar*', None)
-        assert plan.param_layout[2] == ('tensor', 'out', 'aclTensor*', None)
+        assert plan.param_layout[0] == ("tensor", "self", "aclTensor*", None)
+        assert plan.param_layout[1] == ("scalar", "dim", "aclScalar*", None)
+        assert plan.param_layout[2] == ("tensor", "out", "aclTensor*", None)
 
     def test_with_attributes(self):
         """非 Tensor/Scalar 类型（如 float/aclDataType）→ 归入 'other' (attribute) 桶。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("alpha", {"type": "float", "default": "1.0"}),
-            ("dtype", {"type": "aclDataType", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("alpha", {"type": "float", "default": "1.0"}),
+                ("dtype", {"type": "aclDataType", "default": None}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnCast", info)
         assert plan.tensor_count == 1
         assert plan.scalar_count == 0
         assert len(plan.param_layout) == 3
-        assert plan.param_layout[1][0] == 'other'
-        assert plan.param_layout[1][1] == 'alpha'
-        assert plan.param_layout[2][0] == 'other'
-        assert plan.param_layout[2][1] == 'dtype'
+        assert plan.param_layout[1][0] == "other"
+        assert plan.param_layout[1][1] == "alpha"
+        assert plan.param_layout[2][0] == "other"
+        assert plan.param_layout[2][1] == "dtype"
 
     def test_tensor_list(self):
         """aclTensorList* → 计入 tensor_count，layout 保留 TensorList 类型。"""
-        info = _make_op_api_info([
-            ("tensors", {"type": "aclTensorList*", "default": None}),
-            ("dim", {"type": "int64_t", "default": "0"}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("tensors", {"type": "aclTensorList*", "default": None}),
+                ("dim", {"type": "int64_t", "default": "0"}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnCat", info)
         assert plan.tensor_count == 1
-        assert plan.param_layout[0] == ('tensor', 'tensors', 'aclTensorList*', None)
+        assert plan.param_layout[0] == ("tensor", "tensors", "aclTensorList*", None)
 
     def test_scalar_list(self):
         """aclScalarList* → 计入 scalar_count。"""
-        info = _make_op_api_info([
-            ("self", {"type": "aclTensor*", "default": None}),
-            ("scalarList", {"type": "aclScalarList*", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("self", {"type": "aclTensor*", "default": None}),
+                ("scalarList", {"type": "aclScalarList*", "default": None}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnAddScalarList", info)
         assert plan.tensor_count == 1
         assert plan.scalar_count == 1
-        assert plan.param_layout[1][0] == 'scalar'
+        assert plan.param_layout[1][0] == "scalar"
 
     def test_full_signature(self):
         """混合 Tensor/Scalar/attribute 的完整 Conv2d-like 签名。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("weight", {"type": "aclTensor*", "default": None}),
-            ("bias", {"type": "aclTensor*", "default": None}),
-            ("scale", {"type": "aclScalar*", "default": None}),
-            ("groups", {"type": "int64_t", "default": "1"}),
-            ("format", {"type": "aclDataType", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("weight", {"type": "aclTensor*", "default": None}),
+                ("bias", {"type": "aclTensor*", "default": None}),
+                ("scale", {"type": "aclScalar*", "default": None}),
+                ("groups", {"type": "int64_t", "default": "1"}),
+                ("format", {"type": "aclDataType", "default": None}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnConv2d", info)
         assert plan.tensor_count == 3
         assert plan.scalar_count == 1
@@ -107,10 +119,12 @@ class TestAclnnParamPlanBuildArgs:
 
     def test_tensor_only_args(self):
         """纯 Tensor 参数 → args 即输入 tensors，extra 为空。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("y", {"type": "aclTensor*", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("y", {"type": "aclTensor*", "default": None}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnAdd", info)
         tensors = ["T_X", "T_Y"]
         args, extra = plan.build_args(tensors, [], {})
@@ -119,11 +133,13 @@ class TestAclnnParamPlanBuildArgs:
 
     def test_interleaved_tensor_scalar_attr(self):
         """Tensor 与 Scalar 交错 → args 按声明顺序插入 scalar。"""
-        info = _make_op_api_info([
-            ("self", {"type": "aclTensor*", "default": None}),
-            ("dim", {"type": "aclScalar*", "default": None}),
-            ("out", {"type": "aclTensor*", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("self", {"type": "aclTensor*", "default": None}),
+                ("dim", {"type": "aclScalar*", "default": None}),
+                ("out", {"type": "aclTensor*", "default": None}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnSoftmax", info)
         tensors = ["T_SELF", "T_OUT"]
         scalars = ["S_DIM"]
@@ -133,10 +149,12 @@ class TestAclnnParamPlanBuildArgs:
 
     def test_attribute_from_dict(self):
         """attribute 从 attrs dict 取值，按声明顺序追加到 args。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("alpha", {"type": "float", "default": "1.0"}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("alpha", {"type": "float", "default": "1.0"}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnAddAlpha", info)
         args, extra = plan.build_args(["T_X"], [], {"alpha": 2.5})
         assert args == ["T_X", 2.5]
@@ -144,10 +162,12 @@ class TestAclnnParamPlanBuildArgs:
 
     def test_attribute_default_fallback(self):
         """attribute 未在 attrs 提供 → 使用 default。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("alpha", {"type": "float", "default": "1.0"}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("alpha", {"type": "float", "default": "1.0"}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnAddAlpha", info)
         args, extra = plan.build_args(["T_X"], [], {})
         assert args == ["T_X", "1.0"]
@@ -155,10 +175,12 @@ class TestAclnnParamPlanBuildArgs:
 
     def test_attribute_missing_no_default(self):
         """attribute 无 default 且未提供 → None。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("dtype", {"type": "aclDataType", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("dtype", {"type": "aclDataType", "default": None}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnCast", info)
         args, extra = plan.build_args(["T_X"], [], {})
         assert args == ["T_X", None]
@@ -166,13 +188,15 @@ class TestAclnnParamPlanBuildArgs:
 
     def test_full_conv2d_like(self):
         """完整 Conv2d-like 签名：Tensor + Scalar + attribute 混合。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("weight", {"type": "aclTensor*", "default": None}),
-            ("bias", {"type": "aclTensor*", "default": None}),
-            ("scale", {"type": "aclScalar*", "default": None}),
-            ("groups", {"type": "int64_t", "default": "1"}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("weight", {"type": "aclTensor*", "default": None}),
+                ("bias", {"type": "aclTensor*", "default": None}),
+                ("scale", {"type": "aclScalar*", "default": None}),
+                ("groups", {"type": "int64_t", "default": "1"}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnConv2d", info)
         tensors = ["T_X", "T_W", "T_B"]
         scalars = ["S_SCALE"]
@@ -183,10 +207,12 @@ class TestAclnnParamPlanBuildArgs:
 
     def test_tensor_list_preserved(self):
         """TensorList 作为单一位置参数保留列表结构。"""
-        info = _make_op_api_info([
-            ("tensors", {"type": "aclTensorList*", "default": None}),
-            ("dim", {"type": "int64_t", "default": "0"}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("tensors", {"type": "aclTensorList*", "default": None}),
+                ("dim", {"type": "int64_t", "default": "0"}),
+            ]
+        )
         plan = AclnnParamPlan("aclnnCat", info)
         tensor_list = [["T_A", "T_B", "T_C"]]
         args, extra = plan.build_args(tensor_list, [], {"dim": 1})
@@ -200,10 +226,13 @@ class TestGetParamPlan:
 
     def test_plan_cached(self):
         """已缓存的 _param_plan_cache → 直接返回，不重新构建。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+            ]
+        )
         from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+
         case = TestcaseAclnn()
         case.api_name = "aclnnAdd"
         plan = AclnnParamPlan("aclnnAdd", info)
@@ -214,17 +243,21 @@ class TestGetParamPlan:
     def test_plan_none_for_no_api(self):
         """api_name 为 None → get_param_plan 返回 None。"""
         from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+
         case = TestcaseAclnn()
         case.api_name = None
         assert case.get_param_plan() is None
 
     def test_plan_build_args_integration(self):
         """get_param_plan + build_args 端到端集成。"""
-        info = _make_op_api_info([
-            ("x", {"type": "aclTensor*", "default": None}),
-            ("alpha", {"type": "float", "default": "1.0"}),
-        ])
+        info = _make_op_api_info(
+            [
+                ("x", {"type": "aclTensor*", "default": None}),
+                ("alpha", {"type": "float", "default": "1.0"}),
+            ]
+        )
         from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+
         case = TestcaseAclnn()
         case.api_name = "aclnnAddAlpha"
         plan = AclnnParamPlan("aclnnAddAlpha", info)

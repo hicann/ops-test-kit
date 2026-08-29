@@ -24,7 +24,7 @@ from ttk.core_modules.npu.op import output_generation as _mod
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 # Access module-level private functions via getattr to dodge class-style name mangling.
-_generate_golden = getattr(_mod, '__generate_golden')
+_generate_golden = getattr(_mod, "__generate_golden")
 
 
 # --------------------------------------------------------------------------- #
@@ -32,18 +32,18 @@ _generate_golden = getattr(_mod, '__generate_golden')
 # --------------------------------------------------------------------------- #
 class _NegScale:
     """Partial split: ``__init__`` takes a config attr, ``__call__`` takes the input."""
+
     def __init__(self, *, scale):
         self.scale = scale
 
-    def __call__(self, x):                 # noqa: N803 (short param mirrors real plugins)
+    def __call__(self, x):  # noqa: N803 (short param mirrors real plugins)
         return [x * self.scale]
 
 
 # --------------------------------------------------------------------------- #
 # Helpers — mirror tests/test_kernel_builtin_golden.py::_make_testcase.
 # --------------------------------------------------------------------------- #
-def _make_testcase(op_name, input_shapes, input_dtypes, output_shapes, output_dtypes,
-                   attributes):
+def _make_testcase(op_name, input_shapes, input_dtypes, output_shapes, output_dtypes, attributes):
     case = TestcaseOp()
     case.testcase_name = f"test_{op_name}_class_golden"
     case.op_name = op_name
@@ -70,7 +70,7 @@ def _mock_switches():
     sw = MagicMock()
     sw.dev_plat = "Ascend910B2"
     sw.short_soc_version = "Ascend910B"
-    sw.golden_mode = "Enable"      # not Promote → __golden_mode is a no-op
+    sw.golden_mode = "Enable"  # not Promote → __golden_mode is a no-op
     sw.plugin_path = None
     sw.overflow_mode = 0
     return sw
@@ -91,14 +91,13 @@ def _mock_env(monkeypatch):
     monkeypatch.delenv("ASCEND_OPP_PATH", raising=False)
 
 
-@patch('ttk.core_modules.npu.op.output_generation.OpInfoKeeper')
-@patch('ttk.core_modules.npu.op.output_generation.get_global_storage')
-@patch('ttk.core_modules.npu.op.output_generation.get_plugin_function')
+@patch("ttk.core_modules.npu.op.output_generation.OpInfoKeeper")
+@patch("ttk.core_modules.npu.op.output_generation.get_global_storage")
+@patch("ttk.core_modules.npu.op.output_generation.get_plugin_function")
 class TestKernelClassGoldenDispatch:
     """class-form golden (isinstance(golden_func, type)) → __invoke_class end-to-end."""
 
-    def test_dispatch_routes_class_to_invoke_class_not_callable_path(self, mock_get_plugin,
-                                                                     mock_sw, mock_op_info):
+    def test_dispatch_routes_class_to_invoke_class_not_callable_path(self, mock_get_plugin, mock_sw, mock_op_info):
         """A class is a ``Callable`` but MUST route to ``__invoke_class`` (not the custom-callable
         path that would do ``golden_func(*input_arrays)``). Guards the ``isinstance(type)`` check
         ordering in ``__invoke_golden``: if a class leaked to the custom branch it would be called
@@ -108,16 +107,21 @@ class TestKernelClassGoldenDispatch:
         mock_op_info.return_value.info_of.return_value = {"inputs": [{"name": "x"}]}
 
         inp = np.array([1.0, 2.0, 3.0], dtype="float32")
-        case = _make_testcase(op_name="neg_scale",
-                              input_shapes=((3,),), input_dtypes=("float32",),
-                              output_shapes=((3,),), output_dtypes=("float32",),
-                              attributes={"scale": 5})
+        case = _make_testcase(
+            op_name="neg_scale",
+            input_shapes=((3,),),
+            input_dtypes=("float32",),
+            output_shapes=((3,),),
+            output_dtypes=("float32",),
+            attributes={"scale": 5},
+        )
         case.input_arrays = (inp,)
 
         golden = _generate_golden(case, ["float32"])
 
         # If mis-routed to the custom-callable branch, golden[0] would be the
         # string "GOLDEN_FAILURE"; the class path yields a numeric ndarray.
-        assert isinstance(golden[0], np.ndarray), \
+        assert isinstance(golden[0], np.ndarray), (
             f"class golden must hit __invoke_class, not the custom-callable branch: {golden[0]!r}"
+        )
         np.testing.assert_array_equal(golden[0], np.array([5.0, 10.0, 15.0], dtype="float32"))

@@ -13,6 +13,7 @@
 不构造完整 kwargs——避免 BaseHTTPRequestHandler mock）+ get_framework provider 归一化。
 spec §4.3.1 / §7。
 """
+
 from types import SimpleNamespace
 
 from ttk.remote.server.xpu_server import _build_device_opts
@@ -20,13 +21,13 @@ from ttk.remote.server.xpu_server import _build_device_opts
 
 def _h(**ov):
     """造一个类 handler 的 SimpleNamespace（_build_device_opts 只读 3 属性）。"""
-    d = dict(use_device=True, sandbox="none",
-             profile={"torch_lib": "cuda", "torch_profiler": {"activities": ["CPU"]}})
+    d = dict(use_device=True, sandbox="none", profile={"torch_lib": "cuda", "torch_profiler": {"activities": ["CPU"]}})
     d.update(ov)
     return SimpleNamespace(**d)
 
 
 # ---- _build_device_opts（spec §4.3.1 执行隔离 + §7 执行隔离单测①-⑤）----
+
 
 def test_device_id_zero():
     """非cpu 分支 device_id 固定 0（容器内域，executor 见 cuda:0）。"""

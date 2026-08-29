@@ -58,19 +58,41 @@ def _prepare_switches(file_format="bin"):
 
 # -- 参数暴露 ----------------------------------------------------------------
 
+
 def test_manual_data_dirs_exposed_on_three_commands():
     """e2e/aclnn/kernel 三个子命令都暴露 --manual-data-dirs 和 --no-prof。"""
     parser = _parser()
-    e2e = parser.parse_args([
-        "e2e", "-i", "case.csv", "--no-prof", "--dump", "in,golden",
-        "--manual-data-dirs", "prepared",
-    ])
-    aclnn = parser.parse_args([
-        "aclnn", "-i", "case.csv", "--manual-data-dirs", "first", "second",
-    ])
-    kernel = parser.parse_args([
-        "kernel", "-i", "case.csv", "--manual-data-dirs", "prepared",
-    ])
+    e2e = parser.parse_args(
+        [
+            "e2e",
+            "-i",
+            "case.csv",
+            "--no-prof",
+            "--dump",
+            "in,golden",
+            "--manual-data-dirs",
+            "prepared",
+        ]
+    )
+    aclnn = parser.parse_args(
+        [
+            "aclnn",
+            "-i",
+            "case.csv",
+            "--manual-data-dirs",
+            "first",
+            "second",
+        ]
+    )
+    kernel = parser.parse_args(
+        [
+            "kernel",
+            "-i",
+            "case.csv",
+            "--manual-data-dirs",
+            "prepared",
+        ]
+    )
 
     assert e2e.no_prof is True
     assert e2e.manual_data_dirs == ["prepared"]
@@ -79,6 +101,7 @@ def test_manual_data_dirs_exposed_on_three_commands():
 
 
 # -- prepare 模式 ------------------------------------------------------------
+
 
 def test_prepare_defaults_to_plugin_manual_data_dir(tmp_path):
     """prepare 默认输出目录 = <plugin_path>/manual_data。"""
@@ -168,6 +191,7 @@ def test_e2e_prepare_accepts_input_only_dump():
 
 # -- replay 模式 -------------------------------------------------------------
 
+
 def test_replay_preserves_directory_order(tmp_path):
     """replay 模式按 --manual-data-dirs 指定顺序搜索（顺序敏感）。"""
     switches = SWITCHES()
@@ -176,9 +200,7 @@ def test_replay_preserves_directory_order(tmp_path):
     configure_manual_data(switches, _args(manual_data_dirs=directories), "aclnn")
 
     assert switches.manual_data_mode == "replay"
-    assert switches.manual_data_dirs == tuple(
-        str((tmp_path / name).resolve()) for name in ("one", "two")
-    )
+    assert switches.manual_data_dirs == tuple(str((tmp_path / name).resolve()) for name in ("one", "two"))
 
 
 def test_e2e_replay_rejects_cpu_backend(tmp_path):
@@ -191,6 +213,7 @@ def test_e2e_replay_rejects_cpu_backend(tmp_path):
 
 
 # -- kernel 特有语义 ---------------------------------------------------------
+
 
 def test_kernel_no_prof_without_dump_pair_keeps_legacy():
     """kernel --no-prof 但无 --dump in,golden → 不进入 prepare，保持旧 dry-run 语义。"""
@@ -239,6 +262,7 @@ def test_kernel_manual_data_rejects_compile_only(tmp_path):
 
 # -- pickle 往返 -------------------------------------------------------------
 
+
 def test_manual_data_fields_survive_worker_pickle(tmp_path):
     """manual_data_mode / manual_data_dirs 经 pickle 往返不丢（worker 传递保障）。"""
     switches = SWITCHES()
@@ -252,6 +276,7 @@ def test_manual_data_fields_survive_worker_pickle(tmp_path):
 
 
 # -- --clear-ub / --clear-l1 数值解析 ----------------------------------------
+
 
 @pytest.mark.parametrize(
     "value, expected_type, expected",

@@ -10,27 +10,28 @@
 """
 RTS Profiling Sequence for Universal testcases
 """
+
 # Standard Packages
 import contextlib
 import ctypes
-import os
-import json
-import math
 import logging
-
-import numpy
+import math
+import os
 import pathlib
 import re
 import subprocess
-from typing import Tuple, Union, List, Optional, Dict
+from typing import Dict, List, Optional
+
+import numpy
+
+from ....utilities import extract_csv_cells, get_dtype_width, get_global_storage
+from ...adump import AdxInterface
+from ...msprof import MsProfiler, MsProfOpDfx, TtkMsProfType
+from ...runtime import LaunchKernelArgs, RTSInterface, RTSInterfaceBase, rts_info
+from .mc2_hccl_helper import init_hccl, is_mc2_op
 
 # Third-party Packages
 from .profiling_structure import RTSProfilingParam, RTSProfilingResult
-from ...runtime import RTSInterface, RTSInterfaceBase, rts_info, LaunchKernelArgs
-from ...adump import AdxInterface
-from ...msprof import MsProfiler, TtkMsProfType, MsProfOpDfx
-from ....utilities import get_global_storage, get_dtype_width, extract_csv_cells
-from .mc2_hccl_helper import is_mc2_op, init_hccl
 
 
 def _process_total_cycles(results: list):
@@ -67,12 +68,10 @@ class OnlineRtsProfiling:
         self._run_time = self._switches.run_time
         self._rts_task_fail_cb_set: bool = False
         self._task_fail_cb_invoked: ctypes.c_uint64 = ctypes.c_uint64(0)
-        self._prof_type = TtkMsProfType.OP if self._switches.TASK_PROFILING \
-                            else TtkMsProfType.NONE
-        self._prof_result_path = os.path.join(self._switches.root_path,
-                                              "msprof", "op",
-                                              self._param.testcase_name,
-                                              self._param.run_mode)
+        self._prof_type = TtkMsProfType.OP if self._switches.TASK_PROFILING else TtkMsProfType.NONE
+        self._prof_result_path = os.path.join(
+            self._switches.root_path, "msprof", "op", self._param.testcase_name, self._param.run_mode
+        )
         # IN / OUT / WS / DFX
         self._dvc_mem: List[List[Optional[int, list, ctypes.c_void_p]]] = [[], [], [], []]
         # id(np.ndarray) -> device memory
@@ -85,9 +84,11 @@ class OnlineRtsProfiling:
         self._device.create_context()
         try:
             if self._switches.reserve_hbm:
-                reserved_mem_addr = self._device.malloc(self._switches.reserve_hbm * 1024 * 1024,
-                                                        rts_info.RTS_MEMORY_TYPE.RT_MEMORY_HBM,
-                                                        "RT_MEMORY_POLICY_HUGE_PAGE_ONLY")
+                reserved_mem_addr = self._device.malloc(
+                    self._switches.reserve_hbm * 1024 * 1024,
+                    rts_info.RTS_MEMORY_TYPE.RT_MEMORY_HBM,
+                    "RT_MEMORY_POLICY_HUGE_PAGE_ONLY",
+                )
                 logging.debug(f"HBM {self._switches.reserve_hbm}MB is reserved.")
             yield
         finally:
@@ -110,7 +111,7 @@ class OnlineRtsProfiling:
 
     @contextlib.contextmanager
     def rts_stream(self):
-        op_name = getattr(self._param, 'op_name', '') or ''
+        op_name = getattr(self._param, "op_name", "") or ""
         if self._device.is_model() or is_mc2_op(op_name):
             yield None
         else:
@@ -136,55 +137,65 @@ class OnlineRtsProfiling:
                 total_cycle = self._process_model_cycles()
             else:
                 total_cycle = _process_total_cycles(profiling_data["TASK"])
-            return RTSProfilingResult(total_cycle, actual_result_byte_arrays,
-                                      profiling_data["OOB"])
+            return RTSProfilingResult(total_cycle, actual_result_byte_arrays, profiling_data["OOB"])
 
     def _register_kernel(self) -> Optional[RTSProfilingResult]:
         magic = self._param.kernel_json_info.magic
         if isinstance(magic, str):
             magic = self._device.int_magic(magic)
-        kernel_full_path = str(pathlib.Path(self._param.kernel_dir, "%s.o" % self._param.kernel_name))
+        kernel_full_path = str(pathlib.Path(self._param.kernel_dir, f"{self._param.kernel_name}.o"))
         if not self._kernel_symbol_exists():
-            logging.error(f"Kernel register failed. "
-                          f"Expected symbol {self._param.kernel_main_func_name} does not exist "
-                          f"in {kernel_full_path}. "
-                          f"This is usually caused by wrong tiling key.")
+            logging.error(
+                f"Kernel register failed. "
+                f"Expected symbol {self._param.kernel_main_func_name} does not exist "
+                f"in {kernel_full_path}. "
+                f"This is usually caused by wrong tiling key."
+            )
             return RTSProfilingResult.fail("RTS_BINARY_FAILURE")
         try:
             if self._param.kernel_json_info.is_fat_bin:
                 self._registered_binary = self._device.register_all_kernel(kernel_full_path, magic)
             else:
                 self._registered_binary = self._device.register_device_binary_kernel(kernel_full_path, magic)
-                self._registered_func = self._device.register_function(self._registered_binary,
-                                                                       self._param.kernel_main_func_name)
+                self._registered_func = self._device.register_function(
+                    self._registered_binary, self._param.kernel_main_func_name
+                )
             return None
-        except:
+        except Exception:
             if self._registered_binary is None:
-                logging.exception(f"RTS Register Binary failed, "
-                                  f"kernel object {kernel_full_path} does not exist or is invalid.")
+                logging.exception(
+                    f"RTS Register Binary failed, kernel object {kernel_full_path} does not exist or is invalid."
+                )
                 return RTSProfilingResult.fail("RTS_BINARY_FAILURE")
             else:
-                logging.error(f"RTS Register Function failed, "
-                              f"Expect symbol {self._param.kernel_main_func_name} does not exist "
-                              f"in {kernel_full_path}. "
-                              f"this is usually caused by wrong tiling key")
+                logging.error(
+                    f"RTS Register Function failed, "
+                    f"Expect symbol {self._param.kernel_main_func_name} does not exist "
+                    f"in {kernel_full_path}. "
+                    f"this is usually caused by wrong tiling key"
+                )
                 return RTSProfilingResult.fail("RTS_FUNCTION_FAILURE")
 
     def _rts_kernel_sequence_v2(self, stream: Optional[ctypes.c_void_p] = None):
         # Profiling Preparation
         actual_result_byte_arrays = ["NO_OUTPUT"]
-        profiling_data = {"TASK": [],
-                          "OOB": "UNKNOWN"}
+        profiling_data = {"TASK": [], "OOB": "UNKNOWN"}
         status = "OK"
         # Profiling Main Sequence
         try:
-            op_dfx = MsProfOpDfx(self._param.kernel_name, self._param.block_dim,
-                                 self._param.kernel_json_info.core_type,
-                                 self._param.kernel_json_info.task_ration)
-            with MsProfiler(self._device.device_id, result_path=self._prof_result_path,
-                            ttk_prof_type=self._prof_type, start_step=0,
-                            is_model=(self._device.is_model())
-                            ) as profiler:
+            op_dfx = MsProfOpDfx(
+                self._param.kernel_name,
+                self._param.block_dim,
+                self._param.kernel_json_info.core_type,
+                self._param.kernel_json_info.task_ration,
+            )
+            with MsProfiler(
+                self._device.device_id,
+                result_path=self._prof_result_path,
+                ttk_prof_type=self._prof_type,
+                start_step=0,
+                is_model=(self._device.is_model()),
+            ) as profiler:
                 for repeat_idx in range(self._run_time):
                     profiler.step()
                     self._device.clear_l1(self._switches)
@@ -198,12 +209,13 @@ class OnlineRtsProfiling:
                     try:
                         self._launch_kernel(stream)
                         profiler.report_op_dfx(op_dfx)
-                    except:
-                        logging.exception("RTSProfilingCall encountered an unknown rts error "
-                                          "during kernel launch stage:")
+                    except Exception:
+                        logging.exception(
+                            "RTSProfilingCall encountered an unknown rts error during kernel launch stage:"
+                        )
                         status = "LAUNCH_FAILED"
                     else:
-                        op_name = getattr(self._param, 'op_name', '') or ''
+                        op_name = getattr(self._param, "op_name", "") or ""
                         if not is_mc2_op(op_name):
                             try:
                                 rts_timeout = 0 if self._device.is_model() else self._switches.run_timeout
@@ -242,8 +254,7 @@ class OnlineRtsProfiling:
             self._reuse_hbm()
 
     def _get_inplace_array_ipt_ids(self) -> list:
-        ipt_ids = [id(i) for i in self._param.flatten_input_arrays
-                   if isinstance(i, numpy.ndarray)]
+        ipt_ids = [id(i) for i in self._param.flatten_input_arrays if isinstance(i, numpy.ndarray)]
         inplace_ids = []
         for o in self._param.flatten_output_arrays:
             if isinstance(o, numpy.ndarray):
@@ -293,7 +304,7 @@ class OnlineRtsProfiling:
                 if refs:
                     # inplace dynamic tensor-list
                     if len(refs) != len(oa):
-                        raise RuntimeError(f"Dynamic output with partial inplace inputs.")
+                        raise RuntimeError("Dynamic output with partial inplace inputs.")
                     # find the inplace-ed input tensor list with address.
                     mem = None
                     for ipt_idx, ipt in enumerate(self._param.input_arrays):
@@ -303,7 +314,7 @@ class OnlineRtsProfiling:
                                 mem = self._dvc_mem[self.INPUT_MEM][ipt_idx]
                                 break
                     if mem is None:
-                        raise RuntimeError(f"Dynamic output inplace-ed dynamic input is not found.")
+                        raise RuntimeError("Dynamic output inplace-ed dynamic input is not found.")
                 else:
                     # non-inplace dynamic tensor-list
                     mem = []
@@ -365,7 +376,7 @@ class OnlineRtsProfiling:
                 self._device.copy_nparray_to_hbm_ptr(a, mem)
 
     def _free_device_memory(self):
-        for nd_array_id, dev_address in self._nd_array_maps.items():
+        for _, dev_address in self._nd_array_maps.items():
             if not isinstance(dev_address, ctypes.c_void_p):
                 continue
             if not dev_address.value:  # nullptr: None or 0
@@ -407,22 +418,18 @@ class OnlineRtsProfiling:
                 oob_results.append("FAIL")
                 log_idx = idx if idx < output_count else idx - output_count
                 log_info = "output" if idx < output_count else "workspace"
-                logging.error(f"The {log_idx}th (count from 0) {log_info} "
-                              f"memory out of bound !! "
-                              f"All data in the list below should all be "
-                              f"{self._device.OOB_SENTINEL} (uint8), "
-                              f"but got:\n{oob_sentinels}")
-        return ','.join(oob_results)
+                logging.error(
+                    f"The {log_idx}th (count from 0) {log_info} "
+                    f"memory out of bound !! "
+                    f"All data in the list below should all be "
+                    f"{self._device.OOB_SENTINEL} (uint8), "
+                    f"but got:\n{oob_sentinels}"
+                )
+        return ",".join(oob_results)
 
     def _pack_launch_op_args(self):
-        mem_group = [
-            self._dvc_mem[self.INPUT_MEM],
-            self._dvc_mem[self.WS_MEM]
-        ]
-        arr_group = [
-            self._param.input_arrays,
-            self._param.workspace_arrays
-        ]
+        mem_group = [self._dvc_mem[self.INPUT_MEM], self._dvc_mem[self.WS_MEM]]
+        arr_group = [self._param.input_arrays, self._param.workspace_arrays]
 
         if self._param.output_placeholder:  # likely
             mem_group.insert(1, self._dvc_mem[self.OUTPUT_MEM])
@@ -433,8 +440,7 @@ class OnlineRtsProfiling:
 
         for idx, arg in enumerate(op_args):
             if isinstance(arg, (list, tuple)):
-                tensor_list = self._device.prepare_tensor_list_info(
-                    arg, nd_arrays[idx])
+                tensor_list = self._device.prepare_tensor_list_info(arg, nd_arrays[idx])
                 op_args[idx] = tensor_list
 
         return op_args
@@ -442,15 +448,17 @@ class OnlineRtsProfiling:
     def _launch_kernel_fwk(self, stream: Optional[ctypes.c_void_p] = None):
         """mc2 operators: execute via aclnn API with multi-rank threading."""
         import threading
-        op_name = getattr(self._param, 'op_name', '') or ''
-        api_name = 'aclnn' + ''.join(p.capitalize() for p in op_name.split('_'))
+
+        op_name = getattr(self._param, "op_name", "") or ""
+        api_name = "aclnn" + "".join(p.capitalize() for p in op_name.split("_"))
         logging.info(f"mc2_hccl: launching via aclnn API '{api_name}'")
-        from ...aclnn.acl_interface import AclInterface, DATA_TYPE_DICT, FORMAT_DICT
+        from ...aclnn.acl_interface import DATA_TYPE_DICT, FORMAT_DICT, AclInterface
+
         input_arrays = self._param.flatten_input_arrays
         input_hbm = self._dvc_mem[self.INPUT_MEM]
         output_hbm = self._dvc_mem[self.OUTPUT_MEM]
         hccl_device_ids, group_name, rank_size = init_hccl()
-        group_name = group_name or 'ep'
+        group_name = group_name or "ep"
         rank0_dev = self._device.device_id
         rank1_dev = hccl_device_ids[1] if rank_size > 1 else rank0_dev
         thread_errors = {}
@@ -465,24 +473,42 @@ class OnlineRtsProfiling:
                 x1, x2 = input_arrays[0], input_arrays[1]
                 out_dim0 = x1.shape[0] * rank_size
                 c_dtype = ctypes.c_int32(DATA_TYPE_DICT.get(x1.dtype.name, 1))
-                c_fmt = ctypes.c_int32(FORMAT_DICT.get('ND', 2))
+                c_fmt = ctypes.c_int32(FORMAT_DICT.get("ND", 2))
+
                 def mk_tensor(shape, hbm):
                     if isinstance(hbm, ctypes.c_void_p):
                         hbm = hbm.value
                     dims = (ctypes.c_int64 * len(shape))(*shape)
                     return acl_iface._opbase_api_call_with_ptr_return(
-                        "aclCreateTensor", f"shape={shape}",
-                        dims, ctypes.c_uint64(len(shape)), c_dtype,
-                        None, ctypes.c_int64(0), c_fmt,
-                        dims, ctypes.c_uint64(len(shape)), ctypes.c_void_p(hbm))
+                        "aclCreateTensor",
+                        f"shape={shape}",
+                        dims,
+                        ctypes.c_uint64(len(shape)),
+                        c_dtype,
+                        None,
+                        ctypes.c_int64(0),
+                        c_fmt,
+                        dims,
+                        ctypes.c_uint64(len(shape)),
+                        ctypes.c_void_p(hbm),
+                    )
+
                 tx1 = mk_tensor(x1.shape, input_hbm[0])
                 tx2 = mk_tensor(x2.shape, input_hbm[1])
                 tout0 = mk_tensor((out_dim0, x2.shape[1]), output_hbm[0])
                 tout1 = mk_tensor((out_dim0, x1.shape[1]), output_hbm[1])
                 c_group = ctypes.c_char_p(group_name.encode())
-                args = [tx1, tx2, ctypes.c_void_p(0), c_group,
-                        ctypes.c_int64(0), ctypes.c_int64(0), ctypes.c_int64(1),
-                        tout0, tout1]
+                args = [
+                    tx1,
+                    tx2,
+                    ctypes.c_void_p(0),
+                    c_group,
+                    ctypes.c_int64(0),
+                    ctypes.c_int64(0),
+                    ctypes.c_int64(1),
+                    tout0,
+                    tout1,
+                ]
                 if pre_barrier:
                     pre_barrier.wait(timeout=60)
                 ws_size, executor = acl_iface.acl_get_workspace(api_name, args)
@@ -512,7 +538,7 @@ class OnlineRtsProfiling:
         logging.info(f"mc2_hccl: aclnn launch complete, status={thread_result['status']}")
 
     def _launch_kernel(self, stream: Optional[ctypes.c_void_p] = None):
-        op_name = getattr(self._param, 'op_name', '') or ''
+        op_name = getattr(self._param, "op_name", "") or ""
         if is_mc2_op(op_name):
             self._launch_kernel_fwk(stream)
             return
@@ -520,36 +546,45 @@ class OnlineRtsProfiling:
         mix_kernel = self._param.kernel_json_info.is_mix_kernel
         if self._param.kernel_json_info.is_fat_bin:
             launch_args = LaunchKernelArgs(
-                                func_or_binary_hdl=self._registered_binary,
-                                op_args=op_args, dfx_args=self._dvc_mem[self.DFX_MEM],
-                                block_dim=self._param.block_dim,
-                                tiling_key=self._param.tiling_key,
-                                tiling_data=self._param.tiling_data,
-                                mix_kernel=mix_kernel,
-                                schedule_mode=self._param.kernel_json_info.schedule_mode,
-                                simt_share_memory_size=self._param.simt_share_memory_size,
-                            )
+                func_or_binary_hdl=self._registered_binary,
+                op_args=op_args,
+                dfx_args=self._dvc_mem[self.DFX_MEM],
+                block_dim=self._param.block_dim,
+                tiling_key=self._param.tiling_key,
+                tiling_data=self._param.tiling_data,
+                mix_kernel=mix_kernel,
+                schedule_mode=self._param.kernel_json_info.schedule_mode,
+                simt_share_memory_size=self._param.simt_share_memory_size,
+            )
             self._device.launch_kernel_with_handle(launch_args, stream)
         else:
             launch_args = LaunchKernelArgs(
-                                func_or_binary_hdl=self._registered_func,
-                                op_args=op_args, dfx_args=self._dvc_mem[self.DFX_MEM],
-                                block_dim=self._param.block_dim,
-                                mix_kernel=mix_kernel,
-                                tiling_data=self._param.tiling_data,
-                                schedule_mode=self._param.kernel_json_info.schedule_mode,
-                                simt_share_memory_size=self._param.simt_share_memory_size
-                            )
+                func_or_binary_hdl=self._registered_func,
+                op_args=op_args,
+                dfx_args=self._dvc_mem[self.DFX_MEM],
+                block_dim=self._param.block_dim,
+                mix_kernel=mix_kernel,
+                tiling_data=self._param.tiling_data,
+                schedule_mode=self._param.kernel_json_info.schedule_mode,
+                simt_share_memory_size=self._param.simt_share_memory_size,
+            )
             self._device.launch_kernel_with_flag(launch_args, stream)
 
     def _process_model_cycles(self):
         return "UNKNOWN"
 
     def _process_msprof_cycles(self):
-        KERNEL_TYPE = ("AI_CORE", "AIV_SQE", "AI_VECTOR_CORE",
-                       "MIX_AIC", "MIX_AIV",
-                       "KERNEL_MIX_AIC", "KERNEL_MIX_AIV",
-                       "KERNEL_AIVEC", "KERNEL_AICORE")
+        KERNEL_TYPE = (
+            "AI_CORE",
+            "AIV_SQE",
+            "AI_VECTOR_CORE",
+            "MIX_AIC",
+            "MIX_AIV",
+            "KERNEL_MIX_AIC",
+            "KERNEL_MIX_AIV",
+            "KERNEL_AIVEC",
+            "KERNEL_AICORE",
+        )
         total_cycle = "UNKNOWN"
         prof_result_path = pathlib.Path(self._prof_result_path)
         if not prof_result_path.is_dir():
@@ -563,18 +598,24 @@ class OnlineRtsProfiling:
             if op_prof:
                 break
             if item.name.startswith("op_summary_"):
-                op_prof = extract_csv_cells(item, ('Task Duration(us)',),
-                                            col_name_mapping={'Task Duration(us)': 'duration'},
-                                            cmp=lambda row: row["Task Type"] in KERNEL_TYPE)
+                op_prof = extract_csv_cells(
+                    item,
+                    ("Task Duration(us)",),
+                    col_name_mapping={"Task Duration(us)": "duration"},
+                    cmp=lambda row: row["Task Type"] in KERNEL_TYPE,
+                )
             elif item.name.startswith("task_time_"):
-                op_prof = extract_csv_cells(item, ('task_time(us)',),
-                                            col_name_mapping={'task_time(us)': 'duration'},
-                                            cmp=lambda row: row["kernel_type"] in KERNEL_TYPE)
+                op_prof = extract_csv_cells(
+                    item,
+                    ("task_time(us)",),
+                    col_name_mapping={"task_time(us)": "duration"},
+                    cmp=lambda row: row["kernel_type"] in KERNEL_TYPE,
+                )
             else:
                 pass
 
         if op_prof:
-            op_prof = list(x['duration'] for x in op_prof)
+            op_prof = list(x["duration"] for x in op_prof)
             results = [op_prof[0]]
             if len(op_prof) > 1:
                 results = op_prof[1:]
@@ -584,19 +625,21 @@ class OnlineRtsProfiling:
         return total_cycle
 
     def _kernel_symbol_exists(self):
-        kernel_full_path = str(pathlib.Path(self._param.kernel_dir, "%s.o" % self._param.kernel_name))
+        kernel_full_path = str(pathlib.Path(self._param.kernel_dir, f"{self._param.kernel_name}.o"))
         cmds = ["nm", kernel_full_path]
         try:
-            out = subprocess.check_output(cmds).decode('utf-8')
-        except:
+            out = subprocess.check_output(cmds).decode("utf-8")
+        except Exception:
             pass
         else:
             if out:
-                splits = re.split(r'[ \n]', out)
+                splits = re.split(r"[ \n]", out)
                 exist = self._param.kernel_main_func_name in splits
                 if not exist and self._param.kernel_json_info.is_mix_kernel:
-                    exist = f"{self._param.kernel_main_func_name}_mix_aic" in splits \
-                            or f"{self._param.kernel_main_func_name}_mix_aiv" in splits
+                    exist = (
+                        f"{self._param.kernel_main_func_name}_mix_aic" in splits
+                        or f"{self._param.kernel_main_func_name}_mix_aiv" in splits
+                    )
                 return exist
         return True
 
@@ -605,15 +648,15 @@ class OnlineRtsProfiling:
             return
         first_workspace_addr = self._dvc_mem[self.WS_MEM][0]
 
-        if self._param.kernel_json_info.printf_enabled() or \
-                (self._param.kernel_json_info.assert_enabled() and
-                 self._task_fail_cb_invoked.value == 1):
+        if self._param.kernel_json_info.printf_enabled() or (
+            self._param.kernel_json_info.assert_enabled() and self._task_fail_cb_invoked.value == 1
+        ):
             try:
                 debug_buf_size = self._param.kernel_json_info.debug_buf_size
                 c_buffer = self._device.get_data_from_hbm(first_workspace_addr, debug_buf_size)
-                AdxInterface.print_dump_info(ctypes.c_void_p(ctypes.addressof(c_buffer)),
-                                             debug_buf_size,
-                                             self._switches.short_soc_version)
+                AdxInterface.print_dump_info(
+                    ctypes.c_void_p(ctypes.addressof(c_buffer)), debug_buf_size, self._switches.short_soc_version
+                )
             except RuntimeError:
                 return
 
@@ -628,8 +671,7 @@ class OnlineRtsProfiling:
             self._rts_task_fail_cb_set = True
         # rtSetExceptionExtInfo
         try:
-            self._device.set_exception_extend_info(
-                ctypes.c_void_p(ctypes.addressof(self._task_fail_cb_invoked)))
+            self._device.set_exception_extend_info(ctypes.c_void_p(ctypes.addressof(self._task_fail_cb_invoked)))
         except RuntimeError:
             # if fail, just pass.
             pass

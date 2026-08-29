@@ -13,6 +13,7 @@
 """
 Tests for attributes1~attributes9 extension columns merged into attributes.
 """
+
 import pytest
 
 from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
@@ -72,8 +73,7 @@ def test_override_across_extended_columns(cls):
 @pytest.mark.parametrize("cls", CLS_LIST)
 def test_override_chain_last_wins(cls):
     """多列同键链式覆盖 → 最后一列（attributes9）胜出。"""
-    case = _make(cls, attributes={"k": 0}, attributes1={"k": 1},
-                 attributes5={"k": 5}, attributes9={"k": 9})
+    case = _make(cls, attributes={"k": 0}, attributes1={"k": 1}, attributes5={"k": 5}, attributes9={"k": 9})
     case._merge_extended_attributes()
     assert case.attributes == {"k": 9}
     assert case.is_valid is True
@@ -82,8 +82,7 @@ def test_override_chain_last_wins(cls):
 @pytest.mark.parametrize("cls", CLS_LIST)
 def test_multi_column_merge(cls):
     """多列无冲突键 → 全部合并。"""
-    case = _make(cls, attributes={"a": 1}, attributes1={"b": 2},
-                 attributes2={"c": 3}, attributes3={"d": 4})
+    case = _make(cls, attributes={"a": 1}, attributes1={"b": 2}, attributes2={"c": 3}, attributes3={"d": 4})
     case._merge_extended_attributes()
     assert case.attributes == {"a": 1, "b": 2, "c": 3, "d": 4}
 
@@ -117,6 +116,7 @@ def test_skip_when_invalid(cls):
 def test_validate_invokes_merge():
     """validate() 内部应触发 _merge_extended_attributes。"""
     from ttk.core_modules.testcase_manager.testcase_base import TestcaseBase
+
     case = TestcaseOp()
     case.is_valid = True
     case.attributes = {"a": 1}

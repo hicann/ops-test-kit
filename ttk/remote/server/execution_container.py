@@ -3,6 +3,7 @@ ExecutionContainer - Dual-mode dispatch and parameter matching.
 
 Deployment constraint: This file MUST NOT import ttk.*.
 """
+
 import importlib
 import inspect
 import logging
@@ -35,8 +36,7 @@ class UnknownParamError(ValueError):
     """
 
 
-def bind_params(func, name_to_value: dict, device: Optional[str] = None,
-                warn_leftover: bool = True) -> tuple:
+def bind_params(func, name_to_value: dict, device: Optional[str] = None, warn_leftover: bool = True) -> tuple:
     """Bind a name->value map onto ``func``'s signature BY PARAMETER NAME.
 
     Returns ``(args, kwargs)``. Each declared param (except self / VAR) is resolved by:
@@ -87,8 +87,7 @@ def bind_params(func, name_to_value: dict, device: Optional[str] = None,
             # unrelated unconsumed entry) so an input/attr name typo fails
             # loudly instead of silently binding the wrong value.
             qual = getattr(func, "__qualname__", getattr(func, "__name__", func))
-            raise UnknownParamError(
-                f"parameter '{name}' of {qual} is not a known input or attribute name")
+            raise UnknownParamError(f"parameter '{name}' of {qual} is not a known input or attribute name")
         # has a default: leave it to Python (skip, use the default)
     leftover = {k: v for k, v in name_to_value.items() if k not in consumed}
     if has_var_positional:
@@ -96,8 +95,7 @@ def bind_params(func, name_to_value: dict, device: Optional[str] = None,
     if has_var_keyword:
         kwargs.update({k: v for k, v in leftover.items() if k != "self"})
     elif not has_var_positional and leftover and warn_leftover:
-        logging.warning("dispatch: inputs/attrs not consumed by signature: %s",
-                        sorted(leftover))
+        logging.warning("dispatch: inputs/attrs not consumed by signature: %s", sorted(leftover))
     return args, kwargs
 
 
@@ -111,7 +109,7 @@ def format_device(provider, profile, device_id):
     if provider == "tf":
         tf_type = profile.get("tf_device_type")
         if tf_type is None:
-            raise ValueError(f"hardware has no tf_device_type, tf provider unavailable")
+            raise ValueError("hardware has no tf_device_type, tf provider unavailable")
         return f"/device:{tf_type}:{device_id}"
     raise ValueError(f"unknown provider: {provider}")
 

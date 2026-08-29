@@ -10,18 +10,20 @@
 """
 ttk entry point
 """
+
 # Import all modules
 # noinspection PyBroadException
 try:
     import os
+
     if os.getenv("TTK_LOAD_TF") == "1":
         print("Loading tensorflow...")
         __import__("tensorflow")
-except:
+except Exception:
     print("Tensorflow load failed")
-from . import utilities
-from . import core_modules
-from .core_modules import runtime
-from .core_modules.runtime import RTSInterface
-from .core_modules.testcase_manager import TestcaseOp
-from .core_modules.testcase_manager import TestcaseAclnn
+from . import core_modules as core_modules  # noqa: F401
+from . import utilities as utilities
+from .core_modules import runtime as runtime  # noqa: F401
+from .core_modules.runtime import RTSInterface as RTSInterface  # noqa: F401
+from .core_modules.testcase_manager import TestcaseAclnn as TestcaseAclnn  # noqa: F401
+from .core_modules.testcase_manager import TestcaseOp as TestcaseOp

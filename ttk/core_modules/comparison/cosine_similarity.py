@@ -16,7 +16,7 @@ import numpy as np
 
 # Third-party Packages
 from ...utilities import get
-from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
+from .registry import FAIL_REASONS, ComparisonBase, EachCompareResult, register_comparison
 
 
 @register_comparison("cosine")
@@ -33,7 +33,7 @@ class CosineSimilarityComparison(ComparisonBase):
     def _normalize_dtype(arr: np.ndarray) -> np.ndarray:
         # convert int4 -> int8, bcz np.dot will be wrong with int4
         if hasattr(arr, "dtype") and hasattr(arr.dtype, "name"):
-            if arr.dtype.name == 'int4':
+            if arr.dtype.name == "int4":
                 return arr.astype("int8", copy=False)
         return arr
 
@@ -43,6 +43,7 @@ class CosineSimilarityComparison(ComparisonBase):
         golden = self._normalize_dtype(self.golden)
         if self.is_torch:
             from torch import cosine_similarity
+
             precision = cosine_similarity(output.view([-1]), golden.view([-1]), dim=0)
         else:
             common_dtype = np.promote_types(output.dtype, golden.dtype)
@@ -53,21 +54,22 @@ class CosineSimilarityComparison(ComparisonBase):
             # fp16 max 65504). Promote to float32 for the dot product and norms
             # so the cosine similarity is computed in fp32 precision regardless
             # of the input dtype.
-            compute_dtype = np.float32 if common_dtype in (np.float16,) or \
-                (hasattr(common_dtype, 'name') and common_dtype.name in ('float16', 'bfloat16')) \
+            compute_dtype = (
+                np.float32
+                if common_dtype in (np.float16,)
+                or (hasattr(common_dtype, "name") and common_dtype.name in ("float16", "bfloat16"))
                 else common_dtype
+            )
             _output = _output.astype(compute_dtype, copy=False)
             _golden = _golden.astype(compute_dtype, copy=False)
             output_norm = np.linalg.norm(_output)
             golden_norm = np.linalg.norm(_golden)
             precision = np.dot(_output, _golden.T) / (output_norm * golden_norm)
         is_pass = (1 - precision) <= rtol
-        metrics = {"standard": "cosine", "precision": float(precision),
-                   "pass": bool(is_pass)}
+        metrics = {"standard": "cosine", "precision": float(precision), "pass": bool(is_pass)}
         if not is_pass:
             metrics["reason"] = FAIL_REASONS["similarity_below_threshold"]
-        return EachCompareResult(precision, is_pass=is_pass, standard="cosine",
-                                 metrics=metrics)
+        return EachCompareResult(precision, is_pass=is_pass, standard="cosine", metrics=metrics)
 
     def _get_rtol(self, dtype):
         rtol = get(self.rtol, self.output_idx)

@@ -11,25 +11,25 @@
 OP API profile object
 """
 
-
 __all__ = ["ApiProfileObject"]
 
 
 # Standard Packages
 from multiprocessing.context import BaseContext
-from typing import Iterable, Any, Optional
+from typing import Any, Iterable, Optional
+
+from ...comparison.compare_log import (
+    compare_log_size,
+    print_compare_log_failures,
+    read_compare_log_failures,
+)
+from ...infra import ProfileObject, TaskA, TaskKeeper, TaskType
+from ...tbe_multiprocessing import SimpleCommandProcess
+from ...testcase_manager import TestcaseAclnn, TestcaseBase
+from .profiling import profile_process
 
 # Third-Party Packages
 from .profiling_structure import ApiProfilingReturnStructure
-from .profiling import profile_process
-from ...testcase_manager import TestcaseBase, TestcaseAclnn
-from ...tbe_multiprocessing import SimpleCommandProcess
-from ...infra import TaskA, TaskType, TaskKeeper, ProfileObject
-from ...comparison.compare_log import (
-    compare_log_size,
-    read_compare_log_failures,
-    print_compare_log_failures,
-)
 
 
 class ApiProfileObject(ProfileObject):
@@ -56,23 +56,21 @@ class ApiProfileObject(ProfileObject):
         self._print_new_compare_failures()
 
     def possible_result_titles(self) -> tuple:
-        """ return all possible result titles """
+        """return all possible result titles"""
         return ApiProfilingReturnStructure.get_titles()
 
     def init_tasks(self, testcases: Iterable[TestcaseBase]):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
-        sorted_cases = sorted(testcases, key=lambda t: getattr(t, '_csv_row_index', -1))
+        sorted_cases = sorted(testcases, key=lambda t: getattr(t, "_csv_row_index", -1))
         for t in sorted_cases:
-            device_ids = list(t.device_ids) if hasattr(t, 'device_ids') and t.device_ids else None
-            self.task_keeper.append(TaskA(t, profile_process,
-                                          (t, grant_events, granted_indices),
-                                          TaskType.PROFILE,
-                                          device_ids=device_ids))
+            device_ids = list(t.device_ids) if hasattr(t, "device_ids") and t.device_ids else None
+            self.task_keeper.append(
+                TaskA(t, profile_process, (t, grant_events, granted_indices), TaskType.PROFILE, device_ids=device_ids)
+            )
 
     def apply_profile_success_result(self, testcase: TestcaseAclnn, result: Any) -> tuple:
         if not isinstance(result, ApiProfilingReturnStructure):
-            raise RuntimeError(f"Only ApiProfilingReturnStructure is valid. "
-                               f"But got {type(result)}")
+            raise RuntimeError(f"Only ApiProfilingReturnStructure is valid. But got {type(result)}")
         self._print_new_compare_failures(testcase.testcase_name)
         return result.pick_data(self.case_result_title), False

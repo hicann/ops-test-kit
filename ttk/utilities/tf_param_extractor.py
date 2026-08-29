@@ -18,9 +18,8 @@ import inspect
 import logging
 from typing import Optional
 
-from ttk.utilities.simple_param_extractor import APIParamInfo, OverloadInfo, ParamInfo
 from ttk.utilities.func_dispatch import resolve_callable_str
-
+from ttk.utilities.simple_param_extractor import APIParamInfo, OverloadInfo, ParamInfo
 
 _TF_SCALAR_TYPES = {"int", "float", "bool", "str", "Number", "Scalar"}
 
@@ -42,8 +41,8 @@ def _is_tensor_param(p: inspect.Parameter, api_name: str) -> bool:
     4. tf.raw_ops.* convention: all params except 'name' are tensors.
     5. If annotation is Annotated/Any/empty → treat positional params as tensors.
     """
+
     import tensorflow as tf
-    import typing
 
     ann = p.annotation
     if ann is not inspect.Parameter.empty:

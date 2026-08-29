@@ -13,23 +13,27 @@ RTS Interface
 
 # Standard Packages
 import atexit
+import ctypes
 import json
+import logging
+import math
 import os
 import shutil
 import time
-import ctypes
-import logging
-import math
-import numpy
 from pathlib import Path
-from typing import Any, List, NoReturn, Optional, Union
+from typing import TYPE_CHECKING, Any, List, NoReturn, Optional, Union
+
+import numpy
+
+from ...utilities import align, get_dtype_width, get_loaded_so_path, is_4bit_dtype, pack_4bits, read_file
+from ...utilities.proc import msdebug_runtime_injection_enabled
 
 # Third-Party Packages
-from . import rts_info
-from . import rts_structures
+from . import rts_info, rts_structures
 from .rts_interface_base import RTSInterfaceBase
-from ...utilities import align, get_loaded_so_path, pack_4bits, read_file, get_dtype_width, is_4bit_dtype
-from ...utilities.proc import msdebug_runtime_injection_enabled
+
+if TYPE_CHECKING:
+    import ttk.utilities
 
 
 # noinspection PyPep8Naming,PyUnusedLocal
@@ -122,7 +126,7 @@ class RTSInterface(RTSInterfaceBase):
         """
         Print a debug message for libruntime.so path
         """
-        logging.debug("Using libruntime.so from %s" % get_loaded_so_path(self.rtsdll))
+        logging.debug(f"Using libruntime.so from {get_loaded_so_path(self.rtsdll)}")
 
     def api_call(self, rt_api_name: str, extra_log: Optional[str], *api_args):
         if extra_log is None:
@@ -283,7 +287,7 @@ class RTSInterface(RTSInterfaceBase):
         Copy raw binaries into device hbm
         """
         if not isinstance(_bin, bytes):
-            raise TypeError("Copy binary to hbm supports bytes only, received %s" % str(type(_bin)))
+            raise TypeError(f"Copy binary to hbm supports bytes only, received {str(type(_bin))}")
         aligned_size = self.get_npu_aligned_size(len(_bin))
         c_memory_p = self.malloc(
             aligned_size,
@@ -320,7 +324,7 @@ class RTSInterface(RTSInterfaceBase):
         Copy raw binaries into device hbm with memory allocated.
         """
         if not isinstance(_bin, bytes):
-            raise TypeError("Copy binary to hbm supports bytes only, received %s" % str(type(_bin)))
+            raise TypeError(f"Copy binary to hbm supports bytes only, received {str(type(_bin))}")
         self.memcpy(hbm_ptr, len(_bin), _bin, len(_bin), "RT_MEMCPY_HOST_TO_DEVICE")
 
     def copy_nparray_to_hbm_ptr(self, _nparray: numpy.ndarray, hbm_ptr: ctypes.c_void_p):
@@ -499,7 +503,7 @@ class RTSInterface(RTSInterfaceBase):
         # noinspection PyBroadException
         try:
             self.api_call("rtSetMsprofReporterCallback", None, MsprofReporterCallbackPlaceholder)
-        except:
+        except Exception:
             logging.warning("Set MsprofReporterCallback failed")
         c_device_ids_type: Any = ctypes.c_uint32 * rts_info.RT_PROF_MAX_DEV_NUM
         c_device_ids = c_device_ids_type(device_id)
@@ -511,13 +515,13 @@ class RTSInterface(RTSInterfaceBase):
                     rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
                 )
                 self.prof_switch_version = 2
-            except:
+            except Exception:
                 try:
                     self.set_prof_switch(
                         rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
                     )
                     self.prof_switch_version = 1
-                except:
+                except Exception:
                     self.api_call(
                         "rtProfilerStart",
                         None,
@@ -691,8 +695,8 @@ class RTSInterface(RTSInterfaceBase):
             self.launch_kernel(
                 stubfunc_p, json_data["blockDim"], tuple(dev_mem_addrs), len(dev_mem_addrs), None, stream
             )
-        except:
-            raise RuntimeError(f"launch kernel {kernel_name} failed.")
+        except Exception as e:
+            raise RuntimeError(f"launch kernel {kernel_name} failed.") from e
         else:
             try:
                 self.synchronize_with_stream(stream)
@@ -755,10 +759,10 @@ class RTSInterface(RTSInterfaceBase):
         # Read kernel
         kernel = read_file(kernel_path)
         kernel_size = len(kernel)
-        logging.debug("Read %d bytes from kernel" % kernel_size)
+        logging.debug(f"Read {kernel_size} bytes from kernel")
         # Check kernel size
         if kernel_size <= 0:
-            raise IOError(f"RTS Interface received kernel of invalid size {kernel_size} with path {kernel_path}")
+            raise OSError(f"RTS Interface received kernel of invalid size {kernel_size} with path {kernel_path}")
         c_kernel_p = ctypes.c_char_p(kernel)
         # Construct device binary structure
         rts_device_binary = rts_structures.RtDevBinary(
@@ -871,7 +875,7 @@ class RTSInterface(RTSInterfaceBase):
         if self.short_soc_version not in ("Ascend950",):
             return
         if not hasattr(self.rtsdll, "rtDeviceSetLimit"):
-            logging.warning(f"Current RTS do not support rtDeviceSetLimit.")
+            logging.warning("Current RTS do not support rtDeviceSetLimit.")
             return
         device_id = self.device_id if device_id is None else device_id
         self.api_call("rtDeviceSetLimit", None, ctypes.c_int(device_id), ctypes.c_int(typ), ctypes.c_uint32(stack_size))
@@ -892,10 +896,10 @@ class RTSInterface(RTSInterfaceBase):
             logging.error("Reached AICORE Trap Exception")
             return "TRAP"
         elif "AICORE_EXCEPTION" in exception:
-            logging.error(f"AIC_ERROR encountered")
+            logging.error("AIC_ERROR encountered")
             return "AIC_ERROR"
         elif "VECTOR_CORE_EXCEPTION" in exception:
-            logging.error(f"VEC_ERROR encountered")
+            logging.error("VEC_ERROR encountered")
             return "VEC_ERROR"
         elif "AICORE_TIMEOUT" in exception or "RT_STREAM_SYNC_TIMEOUT" in exception:
             logging.error("AIC Task TIMEOUT")
@@ -946,7 +950,7 @@ class RTSInterface(RTSInterfaceBase):
         elif isinstance(rt_error, int):
             pass
         else:
-            raise TypeError("Invalid rt_error type %s for %s" % (str(type(rt_error)), str(rt_error)))
+            raise TypeError(f"Invalid rt_error type {str(type(rt_error))} for {str(rt_error)}")
         # RT Success
         if rt_error == 0x0:
             logging.debug(f"Runtime API Call {rt_api_name}() Success, {extra_info}")
@@ -991,4 +995,4 @@ class RTSInterface(RTSInterfaceBase):
         elif core_type == "AiCpu":
             return rts_info.rt_binary_magic_dict["RT_DEV_BINARY_MAGIC_ELF_AICPU"]
         else:
-            raise RuntimeError("Unknown core type: %s" % core_type)
+            raise RuntimeError(f"Unknown core type: {core_type}")

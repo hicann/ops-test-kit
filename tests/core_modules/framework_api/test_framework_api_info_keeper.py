@@ -22,7 +22,6 @@ def _keeper():
 
 
 class TestFrameworkApiInfoKeeperCache:
-
     def setup_method(self):
         _keeper().clear_cache()
         _MANUAL_OVERRIDES.clear()

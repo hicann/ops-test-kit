@@ -12,4 +12,4 @@
 __all__ = ["get_process_context", "SimpleCommandProcess", "DeviceLock", "MultiDeviceLock"]
 
 
-from .pool import SimpleCommandProcess, get_process_context, DeviceLock, MultiDeviceLock
+from .pool import DeviceLock, MultiDeviceLock, SimpleCommandProcess, get_process_context

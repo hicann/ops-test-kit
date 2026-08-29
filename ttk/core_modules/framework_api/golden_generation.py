@@ -21,14 +21,14 @@ with profiling.py — same plan, same (*args, **kwargs) layout.
 
 import logging
 
-from ttk.core_modules.testcase_manager.param_plan import build_positional_args
 from ttk.core_modules.plugin_loader import get_plugin_function
+from ttk.core_modules.testcase_manager.param_plan import build_positional_args
 from ttk.utilities import DTYPE_PROMOTE_MAP
-from ttk.utilities.container_utils import apply_as_list, flatten_nested_sequence
+from ttk.utilities.container_utils import apply_as_list
 
 from .api_resolver import resolve_api
-from .framework_detector import detect_framework
 from .framework_api_info_keeper import FrameworkApiInfoKeeper
+from .framework_detector import detect_framework
 
 _cpu_backend_cache = {}
 

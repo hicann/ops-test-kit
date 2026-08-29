@@ -15,6 +15,7 @@ ImportError / RuntimeError / AttributeError) returning False + warning.
 get_backend(force_cpu=True) -> CpuTorchBackend; else iterate _hw_profiles
 in order, _probe each non-cpu profile, build first hit; cpu fallback.
 """
+
 from __future__ import annotations
 
 from ttk.core_modules.framework_api.backends import _probe, get_backend

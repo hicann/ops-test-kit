@@ -2,6 +2,7 @@
 
 Deployment constraint: stdlib + PyYAML only. No ttk.* imports.
 """
+
 import logging
 import os
 import re
@@ -9,13 +10,14 @@ import re
 
 def _load_yaml(path):
     try:
-        import yaml                               # lazy（与现状一致，防 PyYAML 未装）
-        with open(path, "r") as f:
+        import yaml  # lazy（与现状一致，防 PyYAML 未装）
+
+        with open(path) as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
-        return {}                            # 首次部署无 yaml 合法，静默（启动期）
+        return {}  # 首次部署无 yaml 合法，静默（启动期）
     except Exception as e:
-        logging.warning(f"_load_yaml: parse failed {path}: {e}")   # yaml 语法错/权限
+        logging.warning(f"_load_yaml: parse failed {path}: {e}")  # yaml 语法错/权限
         return {}
 
 
@@ -91,27 +93,25 @@ def load_server_config(yaml_path=None):
         return d if d not in ("", {}, None) else default
 
     cfg = {
-        "bind":            _get(("server", "bind"),           "127.0.0.1"),
-        "port":            _get(("server", "port"),           9090),
-        "max_concurrent":  _get(("server", "max_concurrent"), 16),
-        "run_deadline_s":  _get(("server", "run_deadline_s"), 300),
-        "sandbox":         _get(("execution", "sandbox"),     "none"),
-        "gate_wait_s":     _get(("execution", "gate_wait_s"), 1.0),
+        "bind": _get(("server", "bind"), "127.0.0.1"),
+        "port": _get(("server", "port"), 9090),
+        "max_concurrent": _get(("server", "max_concurrent"), 16),
+        "run_deadline_s": _get(("server", "run_deadline_s"), 300),
+        "sandbox": _get(("execution", "sandbox"), "none"),
+        "gate_wait_s": _get(("execution", "gate_wait_s"), 1.0),
         "device_lost_retries": _get(("execution", "device_lost_retries"), 3),
         "device_lost_wait_s": _get(("execution", "device_lost_wait_s"), 5.0),
-        "providers":       _get(("providers",),               None),
-        "provider_framework": _get(("provider_framework",),   {}),
-        "sync_dir":        _get(("storage", "sync_dir"),
-                                 os.path.join(os.path.dirname(__file__), "ttk_xpu_sync")),
-        "tmp_dir":         _get(("storage", "tmp_dir"),
-                                 os.path.join(os.path.dirname(__file__), "ttk_tmp_dir")),
-        "tls_enabled":     _get(("tls", "enabled"),           False),
-        "tls_ca_cert":     _get(("tls", "ca_cert"),           ""),
-        "tls_server_cert": _get(("tls", "server_cert"),       ""),
-        "tls_server_key":  _get(("tls", "server_key"),        ""),
-        "docker_images":   _get(("docker", "images"),         {}),
-        "docker_memory":   _get(("docker", "memory"),         "8g"),
-        "docker_network":  _get(("docker", "network"),        "none"),
+        "providers": _get(("providers",), None),
+        "provider_framework": _get(("provider_framework",), {}),
+        "sync_dir": _get(("storage", "sync_dir"), os.path.join(os.path.dirname(__file__), "ttk_xpu_sync")),
+        "tmp_dir": _get(("storage", "tmp_dir"), os.path.join(os.path.dirname(__file__), "ttk_tmp_dir")),
+        "tls_enabled": _get(("tls", "enabled"), False),
+        "tls_ca_cert": _get(("tls", "ca_cert"), ""),
+        "tls_server_cert": _get(("tls", "server_cert"), ""),
+        "tls_server_key": _get(("tls", "server_key"), ""),
+        "docker_images": _get(("docker", "images"), {}),
+        "docker_memory": _get(("docker", "memory"), "8g"),
+        "docker_network": _get(("docker", "network"), "none"),
     }
 
     hw = _get(("hardware",), {})

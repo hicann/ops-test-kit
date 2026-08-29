@@ -88,8 +88,8 @@ def bind_by_name(func, pool: dict) -> Tuple[list, dict]:
             # unrelated unconsumed entry) so a golden/input name typo fails
             # loudly instead of silently computing against the wrong value.
             raise UnknownParamError(
-                f"parameter '{name}' of {getattr(func, '__qualname__', func)} "
-                f"is not a known input or attribute name")
+                f"parameter '{name}' of {getattr(func, '__qualname__', func)} is not a known input or attribute name"
+            )
         # has a default: leave it to Python (skip, use the default)
     leftover = [(k, v) for k, v in pool.items() if k not in consumed]
     if has_var_pos:
@@ -108,9 +108,11 @@ def resolve_callable_str(s: str):
     ns = {"numpy": numpy, "np": numpy}
     if s == "torch" or s.startswith("torch."):
         import torch
+
         ns["torch"] = torch
     elif s == "tf" or s == "tensorflow" or s.startswith("tf.") or s.startswith("tensorflow."):
         import tensorflow as tf
+
         ns["tf"] = tf
         ns["tensorflow"] = tf
     try:

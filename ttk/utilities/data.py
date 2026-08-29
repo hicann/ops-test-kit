@@ -11,19 +11,18 @@
 data generator
 """
 
-
 __all__ = ["RandomData", "fixed_np_array"]
 
 
 # Standard Packages
-import numpy
 from typing import Union
+
+import numpy
 
 # Third-party Packages
 from .container_utils import get
 from .dtypes import get_dtype_range, resolve_custom_numpy_dtypes
-from .math import is_positive_zero, is_negative_zero
-
+from .math import is_negative_zero, is_positive_zero
 
 DEFAULT_LOW = -2
 DEFAULT_HIGH = 2
@@ -44,8 +43,7 @@ def fixed_np_array(dtype, shape, init_value=1):
 
 
 class RandomData:
-    def __init__(self, dtype: str, shape: Union[list, tuple],
-                 data_range: Union[list, tuple]):
+    def __init__(self, dtype: str, shape: Union[list, tuple], data_range: Union[list, tuple]):
         self._dtype = resolve_custom_numpy_dtypes([dtype])[0]
         self._shape = list(shape)
         self._data_range = self._replace_none_in_data_range(data_range)
@@ -54,35 +52,34 @@ class RandomData:
     def data_range(self):
         return self._data_range
 
-    def generate(self, distribution: str = 'uniform'):
+    def generate(self, distribution: str = "uniform"):
         if self._dtype == "uint1":
-            np_uint8 = self._random('uint8', self._shape, distribution=distribution)
-            np_bool = np_uint8.astype('bool', copy=False)
+            np_uint8 = self._random("uint8", self._shape, distribution=distribution)
+            np_bool = np_uint8.astype("bool", copy=False)
             np_array = numpy.packbits(np_bool)
         elif "complex" in str(self._dtype):
             if self._dtype == "complex32":
                 shape = list(self._shape) + [1]
-                real = self._random('float16', shape, distribution=distribution)
-                imag = self._random('float16', shape, distribution=distribution,
-                                    is_complex_imag=True)
+                real = self._random("float16", shape, distribution=distribution)
+                imag = self._random("float16", shape, distribution=distribution, is_complex_imag=True)
                 np_array = numpy.concatenate((real, imag), axis=-1)
             else:  # complex64 / complex128
                 bits = eval(str(self._dtype)[7:])
                 fp_dtype = f"float{bits // 2}"
                 real = self._random(fp_dtype, self._shape, distribution=distribution)
-                imag = self._random(fp_dtype, self._shape, distribution=distribution,
-                                    is_complex_imag=True)
+                imag = self._random(fp_dtype, self._shape, distribution=distribution, is_complex_imag=True)
                 np_array = numpy.array(real + imag * 1j)
         elif "e8m0" in str(self._dtype):
             # float8_e8m0 only represents positive scale powers; generate a positive range.
             low = float(self._data_range[0])
             high = float(self._data_range[1])
             if not numpy.isfinite(low) or low <= 0:
-                low = 2 ** -3
+                low = 2**-3
             if not numpy.isfinite(high) or high <= low:
-                high = 2 ** 7
-            f32 = numpy.random.uniform(low, high, self._shape).astype('float32')
+                high = 2**7
+            f32 = numpy.random.uniform(low, high, self._shape).astype("float32")
             from .dtypes import numpy_float8_e8m0
+
             np_array = f32.astype(numpy_float8_e8m0())
         else:
             np_array = self._random(self._dtype, self._shape, distribution=distribution)
@@ -126,8 +123,9 @@ class RandomData:
             replace_list = [x for x in replace_list if numpy.isfinite(x)]
         return tuple(replace_list)
 
-    def _random(self, dtype, shape: Union[list, tuple], is_complex_imag: bool = False,
-                distribution: str = 'uniform') -> numpy.ndarray:
+    def _random(
+        self, dtype, shape: Union[list, tuple], is_complex_imag: bool = False, distribution: str = "uniform"
+    ) -> numpy.ndarray:
         low, high = self._data_range[:2]
         tmp = numpy.array([low, high], dtype="float64")
         if low == high or all(numpy.isnan(tmp)):
@@ -141,15 +139,15 @@ class RandomData:
             high = self._digitize_inf_nan(high, dtype)
             if distribution == "normal":
                 from scipy.stats import truncnorm
+
                 mean = (high + low) / 2
                 sigma = (high - mean) / 3
-                gen = truncnorm((low - mean) / sigma, (high - mean) / sigma,
-                                loc=mean, scale=sigma)
+                gen = truncnorm((low - mean) / sigma, (high - mean) / sigma, loc=mean, scale=sigma)
                 array = gen.rvs(shape).astype(dtype, copy=False)
             elif dtype == "hifloat4":
                 dtype = "float4_e1m2"
                 array = numpy.random.uniform(low, high, shape).astype(dtype, copy=False)
-            elif dtype in ('float64', 'double'):
+            elif dtype in ("float64", "double"):
                 finfo = numpy.finfo(numpy.float64)
                 # to escape `OverflowError: Range exceeds valid bounds`
                 low = max(low, finfo.min / 2)
@@ -159,24 +157,26 @@ class RandomData:
                 elem_count = 1
                 for d in shape:
                     elem_count *= d
-                if elem_count > 10_000_000 and dtype in ('float16', 'bfloat16'):
+                if elem_count > 10_000_000 and dtype in ("float16", "bfloat16"):
                     import torch
-                    torch_dtype = torch.float16 if dtype == 'float16' else torch.bfloat16
+
+                    torch_dtype = torch.float16 if dtype == "float16" else torch.bfloat16
                     scale = high - low
                     offset = low
                     t = torch.rand(shape, dtype=torch_dtype)
                     t.mul_(scale).add_(offset)
-                    array = t.numpy() if dtype == 'float16' else None
-                    if dtype == 'bfloat16':
+                    array = t.numpy() if dtype == "float16" else None
+                    if dtype == "bfloat16":
                         from ml_dtypes import bfloat16 as np_bf16
+
                         array = t.view(torch.uint16).numpy().view(np_bf16).reshape(shape)
                 else:
                     array = numpy.random.uniform(low, high, shape).astype(dtype, copy=False)
         return self._mix_expect_data(array, dtype, shape, is_complex_imag)
 
-    def _mix_expect_data(self, np_array: numpy.ndarray,
-                         dtype, shape: Union[list, tuple],
-                         is_complex_imag: bool) -> numpy.ndarray:
+    def _mix_expect_data(
+        self, np_array: numpy.ndarray, dtype, shape: Union[list, tuple], is_complex_imag: bool
+    ) -> numpy.ndarray:
         replace_list = self._get_must_contain_dataset(dtype, is_complex_imag)
         replace_count = len(replace_list)
         if replace_count > 1 and np_array.size > 0:  # not only low == high
@@ -186,17 +186,13 @@ class RandomData:
                 # replace_list 先落成 np_array.dtype：直接 concatenate typed 数组与
                 # Python float 列表会被 numpy 提升成 float64（如 bf16 输入 + range(-0,+0)
                 # 的小 tensor 被静默改成 double）。
-                candidate = numpy.concatenate(
-                    (np_array.reshape([-1]), numpy.array(replace_list, dtype=np_array.dtype)))
+                candidate = numpy.concatenate((np_array.reshape([-1]), numpy.array(replace_list, dtype=np_array.dtype)))
                 idx = numpy.random.permutation(candidate.size)
                 # use copy() to discard view of `candidate`
-                np_array = candidate[idx][:np_array.size].reshape(shape).copy()
+                np_array = candidate[idx][: np_array.size].reshape(shape).copy()
             else:
-                per_count = 1 if np_array.size <= 4 * replace_count \
-                    else int(0.25 * np_array.size / replace_count)
-                replace_idx = numpy.random.choice(np_array.size,
-                                                  per_count * replace_count,
-                                                  replace=False)
+                per_count = 1 if np_array.size <= 4 * replace_count else int(0.25 * np_array.size / replace_count)
+                replace_idx = numpy.random.choice(np_array.size, per_count * replace_count, replace=False)
                 for idx, x in enumerate(replace_list):
                     start, end = idx * per_count, (idx + 1) * per_count
                     np_array.flat[replace_idx[start:end]] = x

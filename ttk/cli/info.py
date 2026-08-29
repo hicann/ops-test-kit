@@ -5,10 +5,12 @@ def register_info_command(subparsers):
 
 def _handle_info(args):
     import logging
+
     _prev_level = logging.getLogger().level
     logging.getLogger().setLevel(logging.WARNING)
     try:
         from ttk.core_modules.dsmi import DSMIInterface
+
         dsmi = DSMIInterface()
         count = dsmi.get_device_count()
         if count == 0:

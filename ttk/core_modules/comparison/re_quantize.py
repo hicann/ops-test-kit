@@ -15,19 +15,19 @@ re-quantize comparison
 import numpy as np
 
 # Third-party Packages
-from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
+from .registry import FAIL_REASONS, ComparisonBase, EachCompareResult, register_comparison
 
 
-@register_comparison('requant')
+@register_comparison("requant")
 class ReQuantizeComparison(ComparisonBase):
     STANDARD_NAME = "requant"
 
     def compare_impl(self) -> EachCompareResult:
-        dtype_str = str(self.output.dtype).split('.')[-1]
+        dtype_str = str(self.output.dtype).split(".")[-1]
         ptol = self._get_ptol(dtype_str)
         output = self.output
         golden = self.golden
-        if dtype_str in ('float8_e5m2', 'float8_e4m3fn', 'hifloat8'):
+        if dtype_str in ("float8_e5m2", "float8_e4m3fn", "hifloat8"):
             # compare ULP for FP8, so view as int8.
             output = output.view(np.int8)
             golden = golden.view(np.int8)
@@ -43,14 +43,11 @@ class ReQuantizeComparison(ComparisonBase):
         golden_size, diff_size = golden.size, diff_indices.size
         precision = (golden_size - diff_size) / golden_size
         is_pass = (1 - precision) <= ptol
-        metrics = {"standard": "requant",
-                   "precision": f"{precision * 100}%",
-                   "pass": bool(is_pass)}
+        metrics = {"standard": "requant", "precision": f"{precision * 100}%", "pass": bool(is_pass)}
         if not is_pass:
             metrics["reason"] = FAIL_REASONS["precision_exceeded"]
-        return EachCompareResult(precision, diff_indices, is_pass=is_pass, standard="requant",
-                                 metrics=metrics)
+        return EachCompareResult(precision, diff_indices, is_pass=is_pass, standard="requant", metrics=metrics)
 
     @staticmethod
     def _get_ptol(dtype: str):
-        return 0.001 if dtype in ('float8_e5m2', 'float8_e4m3fn', 'hifloat8') else 0
+        return 0.001 if dtype in ("float8_e5m2", "float8_e4m3fn", "hifloat8") else 0

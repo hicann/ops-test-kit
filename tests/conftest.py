@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Shared pytest fixtures for the test suite."""
+
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ def isolate_ttk_environment(monkeypatch):
     # endpoints),使断言"未配 endpoints"的测试随环境红。只保留 cwd 相对路径,
     # 测试用 tmp_path + chdir 自己铺配置。
     import ttk.config.loader as _loader
+
     monkeypatch.setattr(_loader, "_CONFIG_PATHS", [Path("ttk.conf.yaml")])
 
 
@@ -31,8 +33,10 @@ def isolate_ttk_environment(monkeypatch):
 def make_testcase():
     """Factory: TestcaseAclnn instances (shared global; test_testcase_e2e.py
     overrides locally with TestcaseE2e)."""
+
     def _make(api_name="aclnnDummy", **kwargs):
         from ttk.core_modules.testcase_manager.testcase_aclnn import TestcaseAclnn
+
         case = TestcaseAclnn()
         case.api_name = api_name
         case.is_valid = True
@@ -41,6 +45,7 @@ def make_testcase():
         for k, v in kwargs.items():
             setattr(case, k, v)
         return case
+
     return _make
 
 
@@ -54,5 +59,6 @@ def _load_default_config():
     load_config(yaml)，测完 load_config() 恢复默认。
     """
     from ttk.config.loader import load_config
+
     load_config()
     yield

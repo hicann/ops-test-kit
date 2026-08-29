@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """_handle_run 设备锁集成测试：验证非 dry_run 时调 _assign_device、dry_run 跳过分配、CPU 模式无 KeyError。"""
+
 import os
 import threading
 from unittest.mock import MagicMock
@@ -18,8 +19,7 @@ from ttk.remote.server.xpu_server import XpuRequestHandler
 FAKE_IN = "/tmp/fake"
 
 
-def _setup_handler(h, device_ids, gpu_locks, dry_run, use_device=False,
-                   hardware="gpu", profile=None):
+def _setup_handler(h, device_ids, gpu_locks, dry_run, use_device=False, hardware="gpu", profile=None):
     """Configure a minimal XpuRequestHandler instance for _handle_run tests.
 
     The real _handle_run reads tenant_id via self._get_header; we stub it to
@@ -58,16 +58,21 @@ def _setup_handler(h, device_ids, gpu_locks, dry_run, use_device=False,
 def _patch_run_env(monkeypatch):
     """Stub body receive, subprocess, and rmtree so _handle_run walks the path
     without touching the filesystem (except the getsize on FAKE_IN)."""
-    monkeypatch.setattr("ttk.remote.server.xpu_server._run_in_subprocess",
-                        lambda kw, deadline: {"ok": True, "http_status": 200,
-                                              "output_path": None,
-                                              "output_count": 0, "shapes": [],
-                                              "dtypes": [], "perf": None,
-                                              "api": None})
-    monkeypatch.setattr("ttk.remote.server.xpu_server._receive_body_to_file",
-                        lambda handler, dir=None: FAKE_IN)
-    monkeypatch.setattr("ttk.remote.server.xpu_server.shutil.rmtree",
-                        lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "ttk.remote.server.xpu_server._run_in_subprocess",
+        lambda kw, deadline: {
+            "ok": True,
+            "http_status": 200,
+            "output_path": None,
+            "output_count": 0,
+            "shapes": [],
+            "dtypes": [],
+            "perf": None,
+            "api": None,
+        },
+    )
+    monkeypatch.setattr("ttk.remote.server.xpu_server._receive_body_to_file", lambda handler, dir=None: FAKE_IN)
+    monkeypatch.setattr("ttk.remote.server.xpu_server.shutil.rmtree", lambda *a, **kw: None)
 
 
 def test_handle_run_uses_assign_device(monkeypatch):
@@ -77,8 +82,7 @@ def test_handle_run_uses_assign_device(monkeypatch):
         pass
     try:
         h = XpuRequestHandler.__new__(XpuRequestHandler)
-        _setup_handler(h, [0, 1], {0: threading.Lock(), 1: threading.Lock()},
-                       dry_run=False, use_device=True)
+        _setup_handler(h, [0, 1], {0: threading.Lock(), 1: threading.Lock()}, dry_run=False, use_device=True)
 
         captured = {}
 
@@ -88,6 +92,7 @@ def test_handle_run_uses_assign_device(monkeypatch):
             # so the caller's finally can release it.
             assert xpu_server._device_locks[0].acquire(blocking=False) is True
             return 0
+
         h._assign_device = fake_assign
 
         h._handle_run()
@@ -99,4 +104,3 @@ def test_handle_run_uses_assign_device(monkeypatch):
     finally:
         if os.path.exists(FAKE_IN):
             os.remove(FAKE_IN)
-

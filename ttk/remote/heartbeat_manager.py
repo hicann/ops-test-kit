@@ -3,12 +3,12 @@
 Owns the health file path and the heartbeat Process. Called from
 InstanceBase.prepare_subprocesss() / close_subprocesss().
 """
+
 import atexit
 import logging
 import multiprocessing
 import os
 from typing import Callable, List, Optional
-
 
 log = logging.getLogger(__name__)
 
@@ -34,8 +34,14 @@ class HeartbeatManager:
     removes health file, clears env var.
     """
 
-    def __init__(self, heartbeat_target: HeartbeatTarget, root_path: str,
-                 tenant_id: str, endpoints: List, tls: Optional[dict] = None):
+    def __init__(
+        self,
+        heartbeat_target: HeartbeatTarget,
+        root_path: str,
+        tenant_id: str,
+        endpoints: List,
+        tls: Optional[dict] = None,
+    ):
         self._target = heartbeat_target
         self._root_path = root_path
         self._tenant_id = tenant_id
@@ -77,8 +83,7 @@ class HeartbeatManager:
             daemon=True,
         )
         self._process.start()
-        log.info(f"Heartbeat subprocess started: pid={self._process.pid}, "
-                 f"health_path={self.health_path}")
+        log.info(f"Heartbeat subprocess started: pid={self._process.pid}, health_path={self.health_path}")
 
         if not self._atexit_registered:
             atexit.register(self._atexit_cleanup)
@@ -94,23 +99,34 @@ class HeartbeatManager:
         if self._process is None:
             return
         if self._process.is_alive():
-            self._respawn_count = 0   # reset on success
+            self._respawn_count = 0  # reset on success
             return
 
         self._respawn_count += 1
         if self._respawn_count > self._MAX_RESPAWN_ATTEMPTS:
-            log.error("HB subprocess died %d consecutive times (last exitcode=%s), "
-                      "giving up respawn — remote health will be stale",
-                      self._respawn_count - 1, self._process.exitcode)
+            log.error(
+                "HB subprocess died %d consecutive times (last exitcode=%s), "
+                "giving up respawn — remote health will be stale",
+                self._respawn_count - 1,
+                self._process.exitcode,
+            )
             self._process = None
             return
-        log.warning("HB subprocess died (exitcode=%s), respawning (attempt %d/%d)",
-                    self._process.exitcode, self._respawn_count, self._MAX_RESPAWN_ATTEMPTS)
+        log.warning(
+            "HB subprocess died (exitcode=%s), respawning (attempt %d/%d)",
+            self._process.exitcode,
+            self._respawn_count,
+            self._MAX_RESPAWN_ATTEMPTS,
+        )
         self._process = multiprocessing.Process(
             name="HB",
             target=self._target,
-            kwargs={"endpoints": self._endpoints, "tenant_id": self._tenant_id,
-                    "health_path": self.health_path, "tls": self._tls},
+            kwargs={
+                "endpoints": self._endpoints,
+                "tenant_id": self._tenant_id,
+                "health_path": self.health_path,
+                "tls": self._tls,
+            },
             daemon=True,
         )
         self._process.start()
@@ -128,6 +144,7 @@ class HeartbeatManager:
         if not self._endpoints or not self._tenant_id:
             return
         from ttk.remote.tls import build_tls_connection
+
         for ep in self._endpoints:
             host = port = None
             try:

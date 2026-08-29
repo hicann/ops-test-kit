@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -15,24 +14,24 @@ __all__ = ["OpInfoKeeper"]
 
 
 # Standard Packages
-from collections import defaultdict
-from configparser import ConfigParser
 import glob
 import json
 import logging
 import os
-from typing import Dict, Union, Callable, List, Optional, Any
+from collections import defaultdict
+from configparser import ConfigParser
+from typing import Any, Callable, Dict, List, Optional, Union
 
 # Third-Party Packages
 from ...utilities import Singleton, camel_to_snake, is_main_process
-from ...utilities.platform import (get_impl_base_paths, get_op_info_paths,
-                                   get_npu_hw_info)
+from ...utilities.platform import get_impl_base_paths, get_npu_hw_info, get_op_info_paths
 
 
 class OpInfoKeeper(metaclass=Singleton):
     """
     Singleton Class to keep ops info
     """
+
     def __init__(self):
         self._ops_info = None
         self._op_func_cache = {}
@@ -138,7 +137,7 @@ class OpInfoKeeper(metaclass=Singleton):
             func_name = info["opInterface.value"] or op_file
             func = getattr(module, func_name, None)
             self._op_func_cache[op_name] = func
-            info["_impl_type"] = "asc" if getattr(module, '__version__', '1.0.0') == '2.0.0' else "tbe"
+            info["_impl_type"] = "asc" if getattr(module, "__version__", "1.0.0") == "2.0.0" else "tbe"
             return func
         except (ImportError, AttributeError) as e:
             logging.error(f"Failed to load operator function for {op_name}: {e}")
@@ -176,12 +175,10 @@ class OpInfoKeeper(metaclass=Singleton):
         for search_name in (op_type_snake, op_file):
             if not search_name:
                 continue
-            candidates = glob.glob(os.path.join(config_dir, "**", f"{search_name}.json"),
-                                   recursive=True)
+            candidates = glob.glob(os.path.join(config_dir, "**", f"{search_name}.json"), recursive=True)
             if not candidates:
                 continue
-            sorted_candidates = sorted(candidates,
-                                       key=lambda x: 0 if 'legacy' in x.lower() else 1)
+            sorted_candidates = sorted(candidates, key=lambda x: 0 if "legacy" in x.lower() else 1)
             full_path = sorted_candidates[-1]
             with open(full_path, encoding="UTF-8") as f:
                 data = json.load(f)
@@ -206,8 +203,7 @@ class OpInfoKeeper(metaclass=Singleton):
         config_dir = ki["binary_config_dir"]
         op_type = self.op_type_of(op_name)
 
-        config_files = sorted(glob.glob(os.path.join(config_dir, "**", "binary_info_config.json"),
-                                        recursive=True))
+        config_files = sorted(glob.glob(os.path.join(config_dir, "**", "binary_info_config.json"), recursive=True))
         if not config_files:
             self._binary_info_cache[op_name] = None
             return None
@@ -226,9 +222,17 @@ class OpInfoKeeper(metaclass=Singleton):
         return None
 
     def _load_op_info_cfg(self) -> dict:
-        keys = ("coreType.value", "opInterface.value", "opFile.value", "op.pattern",
-                "dynamicShapeSupport.flag", "dynamicCompileStatic.flag", "dynamicRankSupport.flag",
-                "needCheckSupport.flag", "dynamicFormat.flag")
+        keys = (
+            "coreType.value",
+            "opInterface.value",
+            "opFile.value",
+            "op.pattern",
+            "dynamicShapeSupport.flag",
+            "dynamicCompileStatic.flag",
+            "dynamicRankSupport.flag",
+            "needCheckSupport.flag",
+            "dynamicFormat.flag",
+        )
         full_soc = os.environ.get("TTK_FULL_SOC_VERSION")
         hw_info = get_npu_hw_info(full_soc)
         soc_lower = (hw_info.get("short_soc_version") or "").lower()
@@ -253,8 +257,7 @@ class OpInfoKeeper(metaclass=Singleton):
         # ASCEND_CUSTOM_OPP_PATH supports colon-separated multi-path; each path
         # may carry its own vendor (e.g. .../vendors/<vendor>/...), extracted per-file.
         custom_op_info_paths = self._find_ext_op_info_paths("custom", soc_lower)
-        all_op_info_paths.extend([(f, "custom", self._extract_vendor_name(f))
-                                  for f in reversed(custom_op_info_paths)])
+        all_op_info_paths.extend([(f, "custom", self._extract_vendor_name(f)) for f in reversed(custom_op_info_paths)])
 
         if not all_op_info_paths:
             logging.warning("No op info config found (built-in or custom).")
@@ -271,14 +274,15 @@ class OpInfoKeeper(metaclass=Singleton):
             source_info = self._derive_op_source(f, source_type, vendor_name)
 
             for op in op_info.keys():
-                op_interface = op_info[op]["opInterface.value"] \
-                    if op_info[op]["opInterface.value"] else camel_to_snake(op)
+                op_interface = (
+                    op_info[op]["opInterface.value"] if op_info[op]["opInterface.value"] else camel_to_snake(op)
+                )
                 if not op_info[op]["coreType.value"]:
                     op_info[op]["coreType.value"] = "VectorCore" if cv_split else "AiCore"
-                elif len(op_info[op]["coreType.value"].split(',')) > 1:
+                elif len(op_info[op]["coreType.value"].split(",")) > 1:
                     #  AiCore,VectorCore or AiCore,AIV
                     op_info[op]["coreType.value"] = "AiCore"  # do not know exactly, consider it as AiCore
-                if op_interface.replace('_', '').lower() != op.lower():
+                if op_interface.replace("_", "").lower() != op.lower():
                     # Add & AddV2 use add as interface...
                     continue
                 if op_info[op].get("opFile.value") is None:
@@ -294,24 +298,24 @@ class OpInfoKeeper(metaclass=Singleton):
         base = get_impl_base_paths("builtin")[0]
         # ini
         op_info_path = os.path.abspath(
-            os.path.join(base, "op_info_cfg", "ai_core", soc_lower,
-                         "aic-" + soc_lower + "-ops-info.ini")
+            os.path.join(base, "op_info_cfg", "ai_core", soc_lower, "aic-" + soc_lower + "-ops-info.ini")
         )
         if os.path.exists(op_info_path):
             return [op_info_path]
         # json (single file or all in config dir)
         config_dir = get_op_info_paths("builtin", soc_lower)[0]
-        single_json = os.path.abspath(
-            os.path.join(config_dir, "aic-" + soc_lower + "-ops-info.json")
-        )
+        single_json = os.path.abspath(os.path.join(config_dir, "aic-" + soc_lower + "-ops-info.json"))
         if os.path.exists(single_json):
             return [single_json]
         if os.path.isdir(config_dir):
-            paths = [os.path.join(config_dir, f) for f in os.listdir(config_dir)
-                     if f.endswith(".json") and os.path.isfile(os.path.join(config_dir, f))]
+            paths = [
+                os.path.join(config_dir, f)
+                for f in os.listdir(config_dir)
+                if f.endswith(".json") and os.path.isfile(os.path.join(config_dir, f))
+            ]
             if paths:
-                return sorted(paths, key=lambda x: 0 if 'legacy' in x.lower() else 1)
-        logging.warning("Built-in op info config path does not exist for soc: %s" % soc_lower)
+                return sorted(paths, key=lambda x: 0 if "legacy" in x.lower() else 1)
+        logging.warning(f"Built-in op info config path does not exist for soc: {soc_lower}")
         return []
 
     @staticmethod
@@ -354,8 +358,7 @@ class OpInfoKeeper(metaclass=Singleton):
         config_parent = os.path.dirname(config_dir)
         impl_base_path = os.path.dirname(config_parent)
 
-        return {"_impl_prefix": impl_prefix, "_ops_group": ops_group,
-                "_impl_base_path": impl_base_path}
+        return {"_impl_prefix": impl_prefix, "_ops_group": ops_group, "_impl_base_path": impl_base_path}
 
     def _eval_attr_str(self, attrs: List[dict], op_name: str):
         for attr in attrs:
@@ -377,9 +380,11 @@ class OpInfoKeeper(metaclass=Singleton):
                 # some operator may configure wrong value,
                 # like  attr_spatial_scale  in RoiExtractor. SHIT...
                 if is_main_process():
-                    logging.warning(f"Try to parse [defaultValue: {attr_default}] "
-                                    f"of attribute [{attr['name']}] "
-                                    f"for operator [{op_name}] failed: {e}")
+                    logging.warning(
+                        f"Try to parse [defaultValue: {attr_default}] "
+                        f"of attribute [{attr['name']}] "
+                        f"for operator [{op_name}] failed: {e}"
+                    )
             finally:
                 attr["defaultValue"] = attr_default
 
@@ -421,28 +426,33 @@ def _get_op_info_from_json_file(file_path: str, keys: Union[list, tuple] = ("cor
 
 
 def _pre_normalize_dtype(xput: dict):
-    if xput['dtype']:
-        xput['dtype'] = xput['dtype'].split(',')
-        xput['dtype'] = ["float32" if d == "float" else d for d in xput['dtype']]
+    if xput["dtype"]:
+        xput["dtype"] = xput["dtype"].split(",")
+        xput["dtype"] = ["float32" if d == "float" else d for d in xput["dtype"]]
 
 
 def _pre_normalize_format(xpt: dict):
-    if not xpt['unknownshape_format']:
-        xpt['unknownshape_format'] = xpt['format']
-    if xpt['unknownshape_format']:
-        xpt['unknownshape_format'] = xpt['unknownshape_format'].split(',')
+    if not xpt["unknownshape_format"]:
+        xpt["unknownshape_format"] = xpt["format"]
+    if xpt["unknownshape_format"]:
+        xpt["unknownshape_format"] = xpt["unknownshape_format"].split(",")
     else:
-        xpt['unknownshape_format'] = []
-    if xpt['format']:
-        xpt['format'] = xpt['format'].split(',')
+        xpt["unknownshape_format"] = []
+    if xpt["format"]:
+        xpt["format"] = xpt["format"].split(",")
     else:
-        xpt['format'] = []
+        xpt["format"] = []
 
 
 def _extract_op_info(all_info, ops, keys: Union[list, tuple], get_val_func: Callable) -> dict:
     op_info: Dict[str, dict] = defaultdict(dict)
-    xput_key_defaults = {"paramType": "required", "valueDepend": "ignore", "dtype": None,
-                         "unknownshape_format": None, "format": None}
+    xput_key_defaults = {
+        "paramType": "required",
+        "valueDepend": "ignore",
+        "dtype": None,
+        "unknownshape_format": None,
+        "format": None,
+    }
     attr_key_defaults = {"type": None, "value": None, "defaultValue": None}
     for op in ops:
         for k in keys:

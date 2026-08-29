@@ -11,7 +11,6 @@
 Interface for msprof
 """
 
-
 __all__ = ["MsProfiler"]
 
 
@@ -22,12 +21,18 @@ import os
 import shutil
 import subprocess
 import time
-
 from typing import List, Optional
 
 # Third-Party Packages
-from .desc import ACL_ERROR_DESC_DICT, AiCoreProfMetrics, TtkMsProfType, AclProfType
-from .desc import MsProfOpDfx, MsprofCompactInfo, MsprofTaskType
+from .desc import (
+    ACL_ERROR_DESC_DICT,
+    AclProfType,
+    AiCoreProfMetrics,
+    MsprofCompactInfo,
+    MsProfOpDfx,
+    MsprofTaskType,
+    TtkMsProfType,
+)
 
 
 class MsProfiler:
@@ -35,11 +40,15 @@ class MsProfiler:
     interfaces for msprof
     """
 
-    def __init__(self, device_id: int, result_path: str,
-                 ttk_prof_type: TtkMsProfType,
-                 extra_acl_prof_type: Optional[List[AclProfType]] = None,
-                 start_step: int = 1,
-                 is_model: bool = False):
+    def __init__(
+        self,
+        device_id: int,
+        result_path: str,
+        ttk_prof_type: TtkMsProfType,
+        extra_acl_prof_type: Optional[List[AclProfType]] = None,
+        start_step: int = 1,
+        is_model: bool = False,
+    ):
         self._dvc_id: int = device_id
         self._result_path: str = result_path
         self._start_step = start_step
@@ -54,7 +63,7 @@ class MsProfiler:
         else:
             if os.path.exists(result_path):
                 shutil.rmtree(result_path)
-            self._msprof_dll = ctypes.CDLL(f"libmsprofiler.so")
+            self._msprof_dll = ctypes.CDLL("libmsprofiler.so")
         self._prof_api_dll = None  # initialize when needed
 
     def __enter__(self):
@@ -78,10 +87,10 @@ class MsProfiler:
         if self._msprof_dll is None:
             return
         if self._prof_api_dll is None:
-            self._prof_api_dll = ctypes.CDLL(f"libprofapi.so")
-        api = getattr(self._prof_api_dll, "MsprofReportCompactInfo")
+            self._prof_api_dll = ctypes.CDLL("libprofapi.so")
+        api = self._prof_api_dll.MsprofReportCompactInfo
         if api is None:
-            logging.warning(f"MsProf API [MsprofReportCompactInfo] is not defined.")
+            logging.warning("MsProf API [MsprofReportCompactInfo] is not defined.")
             return
 
         timestamp = self._get_sys_cycle()
@@ -89,13 +98,11 @@ class MsProfiler:
         task_type = self._get_op_task_type(op_dfx.core_type, op_dfx.task_ration)
         compact_info = MsprofCompactInfo(timestamp, kernel_name, task_type, op_dfx.block_dim)
         start_time = time.time()
-        
+
         api.restype = ctypes.c_int32
         api.argtypes = [ctypes.c_uint8, ctypes.c_void_p, ctypes.c_uint32]
         rt_error = api(1, ctypes.c_void_p(ctypes.addressof(compact_info)), ctypes.sizeof(compact_info))
-        self.parse_error(rt_error, "MsprofReportCompactInfo",
-                         f"costs "
-                         f"{round(time.time() - start_time, 3)} seconds")        
+        self.parse_error(rt_error, "MsprofReportCompactInfo", f"costs {round(time.time() - start_time, 3)} seconds")
 
     @staticmethod
     def parse_error(acl_ret: ctypes.c_uint64, api_name: str, extra_info: str):
@@ -130,8 +137,7 @@ class MsProfiler:
         """
         c_path = self._result_path.encode("UTF-8")
         c_size = ctypes.c_size_t(len(self._result_path))
-        self._api_call("aclprofInit", None,
-                       c_path, c_size)
+        self._api_call("aclprofInit", None, c_path, c_size)
         self._prof_inited = True
 
     def _acl_prof_create_config(self, data_type_cfg: int):
@@ -146,10 +152,9 @@ class MsProfiler:
         c_device_nums = ctypes.c_uint32(1)
         c_aicore_metrics = ctypes.c_int(AiCoreProfMetrics.PIPE_UTILIZATION.value)
         c_data_type_config = ctypes.c_uint64(data_type_cfg)
-        self._prof_cfg = self._api_call_with_ptr_return("aclprofCreateConfig", None,
-                                                        c_device_id_lst, c_device_nums,
-                                                        c_aicore_metrics, None,
-                                                        c_data_type_config)
+        self._prof_cfg = self._api_call_with_ptr_return(
+            "aclprofCreateConfig", None, c_device_id_lst, c_device_nums, c_aicore_metrics, None, c_data_type_config
+        )
 
     def _acl_prof_start(self):
         """
@@ -183,46 +188,46 @@ class MsProfiler:
             self._prof_inited = False
 
     def _get_hash_id(self, hash_info: str):
-        api = getattr(self._prof_api_dll, "MsprofGetHashId")
+        api = self._prof_api_dll.MsprofGetHashId
         if api is None:
-            raise RuntimeError(f"MsProf API [MsprofGetHashId] is not defined.")
+            raise RuntimeError("MsProf API [MsprofGetHashId] is not defined.")
         start_time = time.time()
         api.restype = ctypes.c_uint64
         api.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
-        hash_info = hash_info.encode('utf-8')
+        hash_info = hash_info.encode("utf-8")
         rt_val = api(hash_info, len(hash_info))
-        logging.debug(f"MsProf API Call MsprofGetHashId() Success, hash_info: {hash_info}. "
-                      f"costs {round(time.time() - start_time, 3)} seconds")
+        logging.debug(
+            f"MsProf API Call MsprofGetHashId() Success, hash_info: {hash_info}. "
+            f"costs {round(time.time() - start_time, 3)} seconds"
+        )
         return rt_val
 
     def _get_sys_cycle(self):
-        api = getattr(self._prof_api_dll, "MsprofSysCycleTime")
+        api = self._prof_api_dll.MsprofSysCycleTime
         if api is None:
-            raise RuntimeError(f"MsProf API [MsprofSysCycleTime] is not defined.")
+            raise RuntimeError("MsProf API [MsprofSysCycleTime] is not defined.")
         start_time = time.time()
         api.restype = ctypes.c_uint64
         api.argtypes = []
         rt_val = api()
-        logging.debug(f"MsProf API Call MsprofSysCycleTime() Success, "
-                      f"costs {round(time.time() - start_time, 3)} seconds")
+        logging.debug(
+            f"MsProf API Call MsprofSysCycleTime() Success, costs {round(time.time() - start_time, 3)} seconds"
+        )
         return rt_val
 
     def _analysis_profile_data(self):
         if not os.path.exists(self._result_path):
             return
-        msprof = f'{os.getenv("ASCEND_OPP_PATH", "")}/../tools/' \
-                 f'profiler/profiler_tool/analysis/msprof/msprof.py'
+        msprof = f"{os.getenv('ASCEND_OPP_PATH', '')}/../tools/profiler/profiler_tool/analysis/msprof/msprof.py"
         if not os.path.exists(msprof):
-            logging.warning(f"File [{msprof}] is not found. "
-                            f"Please install CANN-toolkit RUN package.")
+            logging.warning(f"File [{msprof}] is not found. Please install CANN-toolkit RUN package.")
             return
-        for t in ('summary', 'timeline'):
-            child = subprocess.run(["python3", msprof, "export", t,
-                                    "-dir", self._result_path],
-                                   shell=False, capture_output=True)
+        for t in ("summary", "timeline"):
+            child = subprocess.run(
+                ["python3", msprof, "export", t, "-dir", self._result_path], shell=False, capture_output=True
+            )
             if child.returncode != 0:
-                logging.error(f"call msprof.py to export {t} failed: "
-                              f"{child.stdout}, {child.stderr}")
+                logging.error(f"call msprof.py to export {t} failed: {child.stdout}, {child.stderr}")
 
     def _api_call(self, api_name: str, extra_log: Optional[str], *api_args):
         if extra_log is None:
@@ -233,13 +238,9 @@ class MsProfiler:
         start_time = time.time()
         api.restype = ctypes.c_uint64
         rt_error = api(*api_args)
-        self.parse_error(rt_error, api_name,
-                         f"{extra_log} costs "
-                         f"{round(time.time() - start_time, 3)} seconds")
+        self.parse_error(rt_error, api_name, f"{extra_log} costs {round(time.time() - start_time, 3)} seconds")
 
-    def _api_call_with_ptr_return(self, api_name: str,
-                                  extra_log: Optional[str],
-                                  *api_args) -> ctypes.c_void_p:
+    def _api_call_with_ptr_return(self, api_name: str, extra_log: Optional[str], *api_args) -> ctypes.c_void_p:
         if extra_log is None:
             extra_log = ""
         api = getattr(self._msprof_dll, api_name)
@@ -250,13 +251,15 @@ class MsProfiler:
         rt_ptr = api(*api_args)
         if not rt_ptr:
             raise RuntimeError(f"MsProf API {api_name} return nullptr. {extra_log}")
-        logging.debug(f"MsProf API Call {api_name}() Success, {extra_log} "
-                      f"costs {round(time.time() - start_time, 3)} seconds")
+        logging.debug(
+            f"MsProf API Call {api_name}() Success, {extra_log} costs {round(time.time() - start_time, 3)} seconds"
+        )
         return ctypes.c_void_p(rt_ptr)
 
     @staticmethod
-    def _build_data_type_config(ttk_prof_type: TtkMsProfType,
-                                extra_acl_prof_type: Optional[List[AclProfType]] = None) -> int:
+    def _build_data_type_config(
+        ttk_prof_type: TtkMsProfType, extra_acl_prof_type: Optional[List[AclProfType]] = None
+    ) -> int:
         if not extra_acl_prof_type:
             return ttk_prof_type.value
         else:
@@ -267,9 +270,9 @@ class MsProfiler:
 
     @staticmethod
     def _get_op_task_type(core_type, task_ration):
-        if core_type in ('AiCore', 'CubeCore'):
+        if core_type in ("AiCore", "CubeCore"):
             return MsprofTaskType.MSPROF_TASK_TYPE_AI_CORE.value
-        elif core_type in ('VectorCore',):
+        elif core_type in ("VectorCore",):
             return MsprofTaskType.MSPROF_TASK_TYPE_AIV.value
         else:
             if all(task_ration):

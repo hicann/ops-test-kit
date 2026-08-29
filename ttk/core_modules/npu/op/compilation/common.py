@@ -10,11 +10,13 @@
 """
 common functions in current package
 """
+
 # Standard Packages
 import logging
 import pathlib
 import subprocess
 from typing import Optional, Union
+
 # Third-Party Packages
 from .....utilities import get_global_storage
 from .....utilities.platform import get_npu_hw_info
@@ -32,22 +34,38 @@ def normalize_mode(mode: str):
 
 class CceManualCompile:
     @classmethod
-    def compile(cls, kernel_name: str, kernel_main_func: str, platform: str, core_type: str,
-                mix_task_ratio: Optional[tuple] = None) -> str:
+    def compile(
+        cls,
+        kernel_name: str,
+        kernel_main_func: str,
+        platform: str,
+        core_type: str,
+        mix_task_ratio: Optional[tuple] = None,
+    ) -> str:
         """
         CCEC Manual Compilation
         """
-        if core_type != 'MIX':
+        if core_type != "MIX":
             return cls._compile_normal_kernel(kernel_name, platform, core_type)
         else:
             return cls._compile_mix_kernel(kernel_name, kernel_main_func, platform, mix_task_ratio)
 
     @classmethod
-    def _compile_cce(cls, cce_file: str, i_obj_file: str, platform: str, core_type: str,
-                     extra_compile_options: Optional[Union[tuple, list, str]] = None):
-        ccec_cmd = ["ccec", "-O2", cce_file,
-                    "--cce-aicore-arch=%s" % cls._get_arch_for_ccec(platform, core_type),
-                    "--cce-aicore-only"]
+    def _compile_cce(
+        cls,
+        cce_file: str,
+        i_obj_file: str,
+        platform: str,
+        core_type: str,
+        extra_compile_options: Optional[Union[tuple, list, str]] = None,
+    ):
+        ccec_cmd = [
+            "ccec",
+            "-O2",
+            cce_file,
+            f"--cce-aicore-arch={cls._get_arch_for_ccec(platform, core_type)}",
+            "--cce-aicore-only",
+        ]
         # Source-level debug info. Driven by --compile-opts op_debug_config=ccec_O0,ccec_g
         # (parsed into compile_options). Under msdebug the debug flags are auto-enabled
         # so breakpoints resolve to source lines.
@@ -59,30 +77,38 @@ class CceManualCompile:
             if "ccec_g" in debug_config or debug_compile:
                 ccec_cmd.append("-g")
         short_soc_version = get_npu_hw_info(platform).get("short_soc_version")
-        if (short_soc_version == "Ascend950"
-                and "-O0" in ccec_cmd and "-g" in ccec_cmd):
+        if short_soc_version == "Ascend950" and "-O0" in ccec_cmd and "-g" in ccec_cmd:
             ccec_cmd.append(_REGBASE_V2_SOURCE_DEBUG_OPTION)
         if extra_compile_options:
             if not isinstance(extra_compile_options, (tuple, list)):
                 extra_compile_options = [extra_compile_options]
             ccec_cmd.extend(extra_compile_options)
-        ccec_cmd.extend(["-o", i_obj_file,
-                         "-mllvm", "--cce-aicore-jump-expand=true",
-                         "-mllvm", "-cce-aicore-addr-transform"])
+        ccec_cmd.extend(
+            ["-o", i_obj_file, "-mllvm", "--cce-aicore-jump-expand=true", "-mllvm", "-cce-aicore-addr-transform"]
+        )
         if short_soc_version not in ("Ascend950", "MC62CM12A"):
-            ccec_cmd.extend(["-mllvm", "-cce-aicore-function-stack-size=16000",
-                             "-mllvm", "-cce-aicore-record-overflow=true"])
+            ccec_cmd.extend(
+                ["-mllvm", "-cce-aicore-function-stack-size=16000", "-mllvm", "-cce-aicore-record-overflow=true"]
+            )
         else:
-            ccec_cmd.extend(["-mllvm", "-cce-aicore-stack-size=0x8000",
-                             "-mllvm", "-cce-aicore-function-stack-size=0x8000",
-                             "-mllvm", "-cce-aicore-record-overflow=false",
-                             "-mllvm", "-cce-aicore-dcci-insert-for-scalar=false",
-                             "-mllvm", "-cce-aicore-dcci-before-kernel-end=false"])
-        ccec = subprocess.Popen(ccec_cmd, bufsize=0,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            ccec_cmd.extend(
+                [
+                    "-mllvm",
+                    "-cce-aicore-stack-size=0x8000",
+                    "-mllvm",
+                    "-cce-aicore-function-stack-size=0x8000",
+                    "-mllvm",
+                    "-cce-aicore-record-overflow=false",
+                    "-mllvm",
+                    "-cce-aicore-dcci-insert-for-scalar=false",
+                    "-mllvm",
+                    "-cce-aicore-dcci-before-kernel-end=false",
+                ]
+            )
+        ccec = subprocess.Popen(ccec_cmd, bufsize=0, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         ccec_return = ccec.communicate()[1].decode("UTF-8")
         if not ccec.returncode == 0:
-            logging.error("CCEC Compilation Failure %d: %s" % (ccec.returncode, ccec_return))
+            logging.error(f"CCEC Compilation Failure {ccec.returncode}: {ccec_return}")
             return ccec_return
         return "SUCC"
 
@@ -93,11 +119,10 @@ class CceManualCompile:
         ld_cmd = ["ld.lld", "-m", "aicorelinux", "-Ttext=0"]
         ld_cmd.extend(i_obj_files)
         ld_cmd.extend(["-static", "-o", obj_file])
-        ld = subprocess.Popen(ld_cmd, bufsize=0,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ld = subprocess.Popen(ld_cmd, bufsize=0, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         ld_return = ld.communicate()[1].decode("UTF-8")
         if not ld.returncode == 0:
-            logging.error("CCEC-LD-LLD Compilation Failure %d: %s" % (ld.returncode, ld_return))
+            logging.error(f"CCEC-LD-LLD Compilation Failure {ld.returncode}: {ld_return}")
             return ld_return
         return "SUCC"
 
@@ -114,13 +139,12 @@ class CceManualCompile:
                 return "FOUND_NOTHING"
 
         ret = cls._compile_cce(cce_file, i_obj_file, platform, core_type)
-        if ret != 'SUCC':
+        if ret != "SUCC":
             return ret
         return cls._ld(obj_file, i_obj_file)
 
     @classmethod
-    def _compile_mix_kernel(cls, kernel_name: str, kernel_main_func: str,
-                            platform: str, mix_task_ratio: tuple) -> str:
+    def _compile_mix_kernel(cls, kernel_name: str, kernel_main_func: str, platform: str, mix_task_ratio: tuple) -> str:
         obj_file = f"{kernel_name}.o"
         if all(mix_task_ratio):
             aic_cce_file, aiv_cce_file = f"{kernel_name}_mix_aic.cce", f"{kernel_name}_mix_aiv.cce"
@@ -132,13 +156,15 @@ class CceManualCompile:
                 else:
                     return "FOUND_NOTHING"
 
-            ret = cls._compile_cce(aic_cce_file, aic_i_obj_file, platform, "AiCore",
-                                   f"-D{kernel_main_func}={kernel_main_func}_mix_aic")
-            if ret != 'SUCC':
+            ret = cls._compile_cce(
+                aic_cce_file, aic_i_obj_file, platform, "AiCore", f"-D{kernel_main_func}={kernel_main_func}_mix_aic"
+            )
+            if ret != "SUCC":
                 return ret
-            ret = cls._compile_cce(aiv_cce_file, aiv_i_obj_file, platform, "VectorCore",
-                                   f"-D{kernel_main_func}={kernel_main_func}_mix_aiv")
-            if ret != 'SUCC':
+            ret = cls._compile_cce(
+                aiv_cce_file, aiv_i_obj_file, platform, "VectorCore", f"-D{kernel_main_func}={kernel_main_func}_mix_aiv"
+            )
+            if ret != "SUCC":
                 return ret
             return cls._ld(obj_file, [aic_i_obj_file, aiv_i_obj_file])
         else:
@@ -150,9 +176,10 @@ class CceManualCompile:
                     return "SUCC"
                 else:
                     return "FOUND_NOTHING"
-            ret = cls._compile_cce(cce_file, i_obj_file, platform, core_type,
-                                   f"-D{kernel_main_func}={kernel_main_func}_mix_{suffix}")
-            if ret != 'SUCC':
+            ret = cls._compile_cce(
+                cce_file, i_obj_file, platform, core_type, f"-D{kernel_main_func}={kernel_main_func}_mix_{suffix}"
+            )
+            if ret != "SUCC":
                 return ret
             return cls._ld(obj_file, i_obj_file)
 

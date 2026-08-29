@@ -16,6 +16,7 @@ api it was asked to run — it just reads the X-API header. Covers:
   - backward-compat: env api=None -> no X-API header (old envelopes still work)
   - error: _send_json writes X-API from env (spec §4.2 C4)
 """
+
 from unittest.mock import MagicMock
 
 from ttk.remote.server.xpu_server import XpuRequestHandler
@@ -34,8 +35,7 @@ def _make_handler():
 def test_send_run_ok_x_api_header():
     """_send_run_ok 在 api 非空时写 X-API 头。"""
     handler = _make_handler()
-    env = {"output_path": None, "output_count": 0, "shapes": [], "dtypes": [],
-           "perf": None, "api": "torch.add"}
+    env = {"output_path": None, "output_count": 0, "shapes": [], "dtypes": [], "perf": None, "api": "torch.add"}
     handler._send_run_ok(env)
     calls = {c.args[0]: c.args[1] for c in handler.send_header.call_args_list}
     assert calls.get("X-API") == "torch.add"

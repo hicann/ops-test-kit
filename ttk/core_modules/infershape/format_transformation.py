@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -16,14 +15,15 @@ Tips:
   - Use "python type hints" if possible
   - Recommend to use methods in the standard library instead of reinventing-the-wheel.
 """
+
 # Standard Packages
-import copy
 import inspect
 from typing import Tuple, Union
+
 # Third-Party Packages
 import numpy
-from ...utilities import ceil_div, align, lcm
 
+from ...utilities import align, ceil_div, lcm
 
 BLOCK_SIZE = 16
 
@@ -70,10 +70,9 @@ def _calculate_group(cin, cout, groups, c0):
         "cout1_g": cout_g // BLOCK_SIZE,
         "groups": groups,
         "cin_ori": cin_ori,
-        "cout_ori": cout_ori
+        "cout_ori": cout_ori,
     }
-    print('cin:%d, cout:%d, groups:%d, group_dict:' % (cin, cout, groups),
-          group_dict)
+    print(f"cin:{cin}, cout:{cout}, groups:{groups}, group_dict:", group_dict)
     return group_dict
 
 
@@ -106,8 +105,8 @@ def _get_ndchw_dim_and_transpose_axis(data: numpy.ndarray, data_format: str, is_
 
 
 def determine_c0(dtype, target_shape: Union[list, tuple] = None) -> int:
-    if not isinstance(dtype, str) and hasattr(dtype, 'name'):
-        dtype = getattr(dtype, 'name')
+    if not isinstance(dtype, str) and hasattr(dtype, "name"):
+        dtype = dtype.name
     if target_shape and target_shape[-1] > 0:
         return target_shape[-1]
     else:
@@ -122,8 +121,9 @@ def is_ndchw_like(shape, format_: str) -> bool:
     return len(shape) == 5 and len(set(format_)) == 5 and all([c in format_ for c in "NDCHW"])
 
 
-def nd_shape2fhd_shape(nd_shape, nd_format: str = "NCHW", dtype: str = "float16",
-                       fhd_shape: Union[list, tuple] = None) -> Tuple:
+def nd_shape2fhd_shape(
+    nd_shape, nd_format: str = "NCHW", dtype: str = "float16", fhd_shape: Union[list, tuple] = None
+) -> Tuple:
     if not is_nchw_like(nd_shape, nd_format):
         raise RuntimeError(f"shape: {nd_shape} of format {nd_format} is not NCHW-like.")
     c0 = determine_c0(dtype, fhd_shape)
@@ -133,8 +133,9 @@ def nd_shape2fhd_shape(nd_shape, nd_format: str = "NCHW", dtype: str = "float16"
     return n, c1, h, w, c0
 
 
-def nd_shape2nz_shape(nd_shape: Union[list, tuple], dtype: str = "float16",
-                      nz_shape: Union[list, tuple] = None) -> Tuple:
+def nd_shape2nz_shape(
+    nd_shape: Union[list, tuple], dtype: str = "float16", nz_shape: Union[list, tuple] = None
+) -> Tuple:
     m, n = nd_shape[-2:]
     m0 = 16
     n0 = determine_c0(dtype, nz_shape)
@@ -148,7 +149,7 @@ def fhd2nd(data, target_shape, target_format: str = "NCHW"):
         raise RuntimeError(f"shape: {target_shape} of format {target_format} is not NCHW-like.")
     fhd_shape = data.shape
     pad = 1 + (target_shape[target_format.index("C")] - 1) % fhd_shape[-1]
-    main_block = data[:, :fhd_shape[1] - 1, :, :, :]  # main block
+    main_block = data[:, : fhd_shape[1] - 1, :, :, :]  # main block
     tail_block = data[:, fhd_shape[1] - 1, :, :, :pad]  # tail block
     # NC1HWC0 -> NHWC1C0
     main_block = main_block.transpose((0, 2, 3, 1, 4))
@@ -157,8 +158,14 @@ def fhd2nd(data, target_shape, target_format: str = "NCHW"):
     # concatenate
     nhwc = numpy.concatenate((main_block, tail_block), axis=-1)
     if target_format != "NHWC":
-        return nhwc.transpose(("NHWC".index(target_format[0]), "NHWC".index(target_format[1]),
-                               "NHWC".index(target_format[2]), "NHWC".index(target_format[3])))
+        return nhwc.transpose(
+            (
+                "NHWC".index(target_format[0]),
+                "NHWC".index(target_format[1]),
+                "NHWC".index(target_format[2]),
+                "NHWC".index(target_format[3]),
+            )
+        )
     return nhwc
 
 
@@ -167,7 +174,7 @@ def shd2nd(data, target_shape, target_format: str = "NDCHW"):
         raise RuntimeError(f"shape: {target_shape} of format {target_format} is not NDCHW-like.")
     shd_shape = data.shape
     pad = 1 + (target_shape[target_format.index("C")] - 1) % shd_shape[-1]
-    main_block = data[:, :, :shd_shape[2] - 1, :, :, :]
+    main_block = data[:, :, : shd_shape[2] - 1, :, :, :]
     tail_block = data[:, :, shd_shape[2] - 1, :, :, :pad]
     # NDC1HWC0 -> NDHWC1C0
     main_block = main_block.transpose((0, 1, 3, 4, 2, 5))
@@ -176,9 +183,15 @@ def shd2nd(data, target_shape, target_format: str = "NDCHW"):
     # concatenate
     ndhwc = numpy.concatenate((main_block, tail_block), axis=-1)
     if target_format != "NDHWC":
-        return ndhwc.transpose(("NDHWC".index(target_format[0]), "NDHWC".index(target_format[1]),
-                                "NDHWC".index(target_format[2]), "NDHWC".index(target_format[3]),
-                                "NDHWC".index(target_format[4])))
+        return ndhwc.transpose(
+            (
+                "NDHWC".index(target_format[0]),
+                "NDHWC".index(target_format[1]),
+                "NDHWC".index(target_format[2]),
+                "NDHWC".index(target_format[3]),
+                "NDHWC".index(target_format[4]),
+            )
+        )
     return ndhwc
 
 
@@ -212,9 +225,9 @@ def nz2nd(data, target_shape):
     pad_n = 1 + (n - 1) % N0
     # (A0, A1, A2, ... , An, N1, M1, M0, N0) -> (A, N1, M1, M0, N0) -> (A, M1, M0, N1, N0)
     data = numpy.reshape(data, (numpy.prod(data_shape[:-4]),) + data_shape[-4:]).transpose((0, 2, 3, 1, 4))
-    main_block = data[:, :M1 - 1, :, :N1 - 1, :]  # main block
-    part_1 = data[:, M1 - 1, :pad_m, :N1 - 1, :]  # part 1
-    part_2 = data[:, :M1 - 1, :, N1 - 1, :pad_n]  # part 2
+    main_block = data[:, : M1 - 1, :, : N1 - 1, :]  # main block
+    part_1 = data[:, M1 - 1, :pad_m, : N1 - 1, :]  # part 1
+    part_2 = data[:, : M1 - 1, :, N1 - 1, :pad_n]  # part 2
     tail_block = data[:, M1 - 1, :pad_m, N1 - 1, :pad_n]  # tail_block
     # Reshape
     A = data.shape[0]
@@ -227,7 +240,7 @@ def nz2nd(data, target_shape):
     part_2_concat_tail = numpy.concatenate((part_2, tail_block), axis=1)  # (A, M, pad_n)
     nd = numpy.concatenate((main_concat_part1, part_2_concat_tail), axis=-1)
     # Reshape
-    nd = numpy.reshape(nd, data_shape[:-4]+(m, n))
+    nd = numpy.reshape(nd, data_shape[:-4] + (m, n))
     nd = numpy.reshape(nd, target_shape)
 
     return nd
@@ -257,11 +270,12 @@ def to_fractal_z(data: numpy.ndarray, ori_format: str, target_shape: Union[list,
     data = data.transpose([ori_format.index("N"), ori_format.index("C"), ori_format.index("H"), ori_format.index("W")])
     for m in range(groups):
         for k in range(co_ori):
-            for l in range(0, ci_ori):
+            for ci in range(0, ci_ori):
                 i = m // E
                 j = m % E
-                out[i * E * co_ori + j * co_ori + k, j * ci_ori + l, :, :] = \
-                    data[i * E * co_ori + j * co_ori + k, l, :, :]
+                out[i * E * co_ori + j * co_ori + k, j * ci_ori + ci, :, :] = data[
+                    i * E * co_ori + j * co_ori + k, ci, :, :
+                ]
     # nchw->FRACTAL_Z
     out = out.reshape((G, cou1_g * BLOCK_SIZE, cin1_g, c0, h, w)).transpose(0, 2, 4, 5, 1, 3)
     out = out.reshape(G * cin1_g * h * w, cou1_g, BLOCK_SIZE, c0)
@@ -289,8 +303,8 @@ def to_fractal_z_c04(data: numpy.ndarray, ori_format: str, target_shape: Union[l
     data = data.transpose([ori_format.index("N"), ori_format.index("C"), ori_format.index("H"), ori_format.index("W")])
     # NCHW->FractalZ_C04
     for k in range(co_ori):
-        for l in range(0, ci_ori):
-            out[k, l, :, :] = data[k, l, :, :]
+        for ci in range(0, ci_ori):
+            out[k, ci, :, :] = data[k, ci, :, :]
     # NCHW->Fractal_Z
     out = out.reshape((G, cou1_g * BLOCK_SIZE, cin1_g, c0, h, w)).transpose(0, 2, 4, 5, 1, 3)
     out = out.reshape(G * cin1_g * h * w, cou1_g, BLOCK_SIZE, c0)
@@ -323,8 +337,15 @@ def to_fractal_z_3d(data: numpy.ndarray, ori_format: str, target_shape: Union[li
     mag_factor = group_dict["mag_factor"]
     cout1_g = group_dict["cout1_g"]
     weight_group = numpy.zeros((real_g, d, cin1_g, h, w, cout_g, c0), dtype=data.dtype)
-    data = data.transpose([ori_format.index("N"), ori_format.index("C"),
-                           ori_format.index("D"), ori_format.index("H"), ori_format.index("W")])
+    data = data.transpose(
+        [
+            ori_format.index("N"),
+            ori_format.index("C"),
+            ori_format.index("D"),
+            ori_format.index("H"),
+            ori_format.index("W"),
+        ]
+    )
     for g in range(groups):
         for ci in range(c):
             for co in range(n // groups):
@@ -333,16 +354,15 @@ def to_fractal_z_3d(data: numpy.ndarray, ori_format: str, target_shape: Union[li
                     dst_cin = e * c + ci
                     dst_cout = e * (n // groups) + co
                     src_cout = g * (n // groups) + co
-                    weight_group[g // mag_factor, :, dst_cin // c0, :, :, dst_cout, dst_cin % c0] = \
-                        data[src_cout, ci, :, :, :]
+                    weight_group[g // mag_factor, :, dst_cin // c0, :, :, dst_cout, dst_cin % c0] = data[
+                        src_cout, ci, :, :, :
+                    ]
                 except:
                     e = g % mag_factor
                     dst_cin = e * c + ci
                     dst_cout = e * (n // groups) + co
                     src_cout = g * (n // groups) + co
-                    print(
-                        "================================== Error Detected ======================================="
-                    )
+                    print("================================== Error Detected =======================================")
                     print("weight_group shape:", weight_group.shape)
                     print("Weight Shape : ", data.shape)
                     print("co:", co)
@@ -356,8 +376,9 @@ def to_fractal_z_3d(data: numpy.ndarray, ori_format: str, target_shape: Union[li
     return weight_group
 
 
-def from_fractal_z_3d(data: numpy.ndarray, target_shape: Union[list, tuple] = None,
-                      target_format: str = "NCDHW", groups=None):
+def from_fractal_z_3d(
+    data: numpy.ndarray, target_shape: Union[list, tuple] = None, target_format: str = "NCDHW", groups=None
+):
     if groups is None:
         groups = 1
     n = target_shape[target_format.index("N")]
@@ -388,8 +409,7 @@ def from_fractal_z_3d(data: numpy.ndarray, target_shape: Union[list, tuple] = No
                 dst_cout = e * cout_ori + co
                 src_cout = g * cout_ori + co
                 result[src_cout, ci, :, :, :] = data_reshaped[
-                    g // mag_factor, :, dst_cin // c0, :, :,
-                    dst_cout // n0, dst_cout % n0, dst_cin % c0
+                    g // mag_factor, :, dst_cin // c0, :, :, dst_cout // n0, dst_cout % n0, dst_cin % c0
                 ]
 
     if target_format == "NDHWC":
@@ -399,12 +419,13 @@ def from_fractal_z_3d(data: numpy.ndarray, target_shape: Union[list, tuple] = No
     return result
 
 
-def to_NC1HWC0(data: numpy.ndarray, ori_format: str,
-               target_shape: Union[list, tuple] = None):
+def to_NC1HWC0(data: numpy.ndarray, ori_format: str, target_shape: Union[list, tuple] = None):
     ori_shape = data.shape
     if len(ori_shape) > 4:
-        raise RuntimeError("Please check original format and original shape: NC1HWC0 transformer doesn't support"
-                           f"{len(ori_shape)}D shape")
+        raise RuntimeError(
+            "Please check original format and original shape: NC1HWC0 transformer doesn't support"
+            f"{len(ori_shape)}D shape"
+        )
     c0 = determine_c0(data.dtype.name, target_shape)
     nchw, transpose_axis = _get_ndchw_dim_and_transpose_axis(data, ori_format)
     n, c, h, w = nchw
@@ -420,8 +441,10 @@ def to_NC1HWC0(data: numpy.ndarray, ori_format: str,
 def to_NDC1HWC0(data: numpy.ndarray, ori_format: str, target_shape: Union[list, tuple] = None):
     ori_shape = data.shape
     if len(ori_shape) > 5:
-        raise RuntimeError("Please check original format and original shape: NDC1HWC0 transformer doesn't support"
-                           f"{len(ori_shape)}D shape")
+        raise RuntimeError(
+            "Please check original format and original shape: NDC1HWC0 transformer doesn't support"
+            f"{len(ori_shape)}D shape"
+        )
     c0 = determine_c0(data.dtype.name, target_shape)
     ndchw, transpose_axis = _get_ndchw_dim_and_transpose_axis(data, ori_format, is_ndchw=True)
     n, d, c, h, w = ndchw
@@ -444,7 +467,7 @@ def nd_to_fractal_nz(data: numpy.ndarray, target_shape: Union[list, tuple] = Non
     m1, n1 = ceil_div(m_ori, m0), ceil_div(n_ori, n0)
     padding_m = m1 * m0 - m_ori
     padding_n = n1 * n0 - n_ori
-    data = numpy.pad(data, (batch_padding + ((0, padding_m), (0, padding_n))), 'constant')
+    data = numpy.pad(data, (batch_padding + ((0, padding_m), (0, padding_n))), "constant")
     array_trans = gen_axes_for_transpose(len(data.shape) - 2, [2, 0, 1, 3])
     data = data.reshape(batch_ori + (m1, m0, n1, n0)).transpose(*array_trans)
     return data
@@ -460,7 +483,7 @@ def nd_to_fractal_z(data: numpy.ndarray, target_shape: Union[list, tuple] = None
     m1, n1 = ceil_div(m_ori, m0), ceil_div(n_ori, n0)
     padding_m = m1 * m0 - m_ori
     padding_n = n1 * n0 - n_ori
-    data = numpy.pad(data, (batch_padding + ((0, padding_m), (0, padding_n))), 'constant')
+    data = numpy.pad(data, (batch_padding + ((0, padding_m), (0, padding_n))), "constant")
     array_trans = gen_axes_for_transpose(len(data.shape) - 2, [0, 2, 3, 1])
     data = data.reshape(batch_ori + (m1, m0, n1, n0)).transpose(*array_trans)
     return data
@@ -473,9 +496,7 @@ def is_transformable(ori_format, target_format):
     return False
 
 
-def transform(data, ori_format,
-              target_format, target_shape: Union[list, tuple] = None,
-              groups=None):
+def transform(data, ori_format, target_format, target_shape: Union[list, tuple] = None, groups=None):
     if is_transformable(ori_format, target_format):
         transform_func = format_transformation_map[ori_format][target_format]
         params = inspect.signature(transform_func).parameters
@@ -493,38 +514,13 @@ def transform(data, ori_format,
 
 
 format_transformation_map = {
-    "NHWC": {
-        "NC1HWC0": to_NC1HWC0,
-        "FRACTAL_Z": to_fractal_z,
-        "FRACTAL_Z_C04": to_fractal_z_c04
-    },
-    "NCHW": {
-        "NC1HWC0": to_NC1HWC0,
-        "FRACTAL_Z": to_fractal_z,
-        "FRACTAL_Z_C04": to_fractal_z_c04
-    },
-    "HWCN": {
-        "NC1HWC0": to_NC1HWC0,
-        "FRACTAL_Z": to_fractal_z,
-        "FRACTAL_Z_C04": to_fractal_z_c04
-    },
-    "NDHWC": {
-        "NDC1HWC0": to_NDC1HWC0,
-        "FRACTAL_Z_3D": to_fractal_z_3d
-    },
-    "NCDHW": {
-        "NDC1HWC0": to_NDC1HWC0,
-        "FRACTAL_Z_3D": to_fractal_z_3d
-    },
-    "DHWCN": {
-        "NC1HWC0": to_NDC1HWC0,
-        "FRACTAL_Z_3D": to_fractal_z_3d
-    },
-    "ND": {
-        "FRACTAL_NZ": nd_to_fractal_nz,
-        "FRACTAL_Z": nd_to_fractal_z,
-        "FRACTAL_ZN_RNN": nd_to_fractal_z
-    },
+    "NHWC": {"NC1HWC0": to_NC1HWC0, "FRACTAL_Z": to_fractal_z, "FRACTAL_Z_C04": to_fractal_z_c04},
+    "NCHW": {"NC1HWC0": to_NC1HWC0, "FRACTAL_Z": to_fractal_z, "FRACTAL_Z_C04": to_fractal_z_c04},
+    "HWCN": {"NC1HWC0": to_NC1HWC0, "FRACTAL_Z": to_fractal_z, "FRACTAL_Z_C04": to_fractal_z_c04},
+    "NDHWC": {"NDC1HWC0": to_NDC1HWC0, "FRACTAL_Z_3D": to_fractal_z_3d},
+    "NCDHW": {"NDC1HWC0": to_NDC1HWC0, "FRACTAL_Z_3D": to_fractal_z_3d},
+    "DHWCN": {"NC1HWC0": to_NDC1HWC0, "FRACTAL_Z_3D": to_fractal_z_3d},
+    "ND": {"FRACTAL_NZ": nd_to_fractal_nz, "FRACTAL_Z": nd_to_fractal_z, "FRACTAL_ZN_RNN": nd_to_fractal_z},
     # revert
     "NC1HWC0": {
         "NHWC": fhd2nd,
@@ -545,4 +541,3 @@ format_transformation_map = {
         "DHWCN": from_fractal_z_3d,
     },
 }
-

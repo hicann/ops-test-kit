@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """resolve_tolerance 收敛测试：legacy 注入、cross_check level 预设/override、isclose/cosine legacy 读取。"""
+
 import numpy as np
 import pytest
 
@@ -22,10 +23,13 @@ def test_legacy_injection():
     assert standards[0].params["legacy"]["atol"] == 1e-8
 
 
-@pytest.mark.parametrize("tol_spec, expected_level, expected_mare, expected_mere, expected_rmse, check_extras", [
-    pytest.param({"level": "L1"}, "L1", 5.0, 1.5, 1.5, True, id="L1_preset"),
-    pytest.param({"level": "L1", "mare_ratio": 3.0}, "L1", 3.0, 1.5, 1.5, False, id="explicit_ratio_override"),
-])
+@pytest.mark.parametrize(
+    "tol_spec, expected_level, expected_mare, expected_mere, expected_rmse, check_extras",
+    [
+        pytest.param({"level": "L1"}, "L1", 5.0, 1.5, 1.5, True, id="L1_preset"),
+        pytest.param({"level": "L1", "mare_ratio": 3.0}, "L1", 3.0, 1.5, 1.5, False, id="explicit_ratio_override"),
+    ],
+)
 def test_cross_check_level_preset(tol_spec, expected_level, expected_mare, expected_mere, expected_rmse, check_extras):
     """cross_check level → ratio 预设 + override 组合(spec §9 level 矩阵)：
     L0/L1/L2 预设、显式 ratio 覆盖、无 level 全 ratio。"""
@@ -46,6 +50,7 @@ def test_isclose_reads_legacy_rtol():
     import ttk.core_modules.comparison.is_close  # noqa: F401 — 触发 @register_comparison
     from ttk.core_modules.comparison.registry import ComparisonRegister
     from ttk.core_modules.comparison.resolve import resolve_tolerance
+
     standards = resolve_tolerance(None, [(0.001, 0.001)], 1e-9, ["float32"], None)
     cls = ComparisonRegister.registry["isclose"]
     out = np.array([1.0, 2.0])
@@ -61,6 +66,7 @@ def test_cosine_reads_legacy_rtol():
     import ttk.core_modules.comparison.cosine_similarity  # noqa: F401 — 触发 @register_comparison
     from ttk.core_modules.comparison.registry import ComparisonRegister
     from ttk.core_modules.comparison.resolve import resolve_tolerance
+
     standards = resolve_tolerance(None, [(0.01, 0.001)], 1e-9, ["float32"], "cosine")
     cls = ComparisonRegister.registry["cosine"]
     out = np.array([1.0, 2.0])

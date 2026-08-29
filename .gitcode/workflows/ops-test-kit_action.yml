@@ -100,7 +100,7 @@ stages:
     pre:
     - type: auto
     fail-fast: false
-  
+
 
 post:
   jobs:

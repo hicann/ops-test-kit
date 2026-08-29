@@ -16,9 +16,10 @@ import hashlib
 
 import numpy as np
 
-# Third-party Packages
-from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
 from ...utilities.dtypes import is_4bit_dtype
+
+# Third-party Packages
+from .registry import FAIL_REASONS, ComparisonBase, EachCompareResult, register_comparison
 
 
 @register_comparison(["bin", "binary", "binary_equal"])

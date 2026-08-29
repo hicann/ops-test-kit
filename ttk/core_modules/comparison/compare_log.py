@@ -20,7 +20,6 @@ import logging
 import os
 from typing import Optional
 
-
 MAX_COMPARE_FAILURE_PRINT = 20
 COMPARE_LOG_PATH = "ttk-compare.log"
 

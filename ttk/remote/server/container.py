@@ -2,6 +2,7 @@
 
 Deployment constraint: stdlib + subprocess only. No ttk.* imports.
 """
+
 import json
 import logging
 import os
@@ -10,9 +11,15 @@ import tempfile
 import time
 
 
-def _run_in_container(kwargs: dict, deadline: float, image: str,
-                      memory: str = "8g", network: str = "none",
-                      use_device: bool = False, docker_args=None) -> dict:
+def _run_in_container(
+    kwargs: dict,
+    deadline: float,
+    image: str,
+    memory: str = "8g",
+    network: str = "none",
+    use_device: bool = False,
+    docker_args=None,
+) -> dict:
     """Run execute_request in a Docker container (per-Container isolation).
 
     Bind-mounts req_dir (rw, tmp_in + out) + tenant_sync_dir (ro, specs) at
@@ -38,19 +45,31 @@ def _run_in_container(kwargs: dict, deadline: float, image: str,
             json.dump(ckwargs, f)
 
         if os.getuid() == 0:
-            logging.warning("_run_in_container: server running as root — container will be "
-                            "root, C3 symlink-escape protection inactive")
+            logging.warning(
+                "_run_in_container: server running as root — container will be "
+                "root, C3 symlink-escape protection inactive"
+            )
         cmd = [
-            "docker", "run", "--rm",
-            "-v", f"{host_req_dir}:/work",            # rw: tmp_in + out.npz
-            "-v", f"{host_sync_dir}:/sync:ro",        # ro: specs
-            "--tmpfs", "/tmp",                         # writable tmp (--read-only root)
-            "-e", "HOME=/tmp",                         # torch ~/.cache → tmpfs
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{host_req_dir}:/work",  # rw: tmp_in + out.npz
+            "-v",
+            f"{host_sync_dir}:/sync:ro",  # ro: specs
+            "--tmpfs",
+            "/tmp",  # writable tmp (--read-only root)
+            "-e",
+            "HOME=/tmp",  # torch ~/.cache → tmpfs
             "--read-only",
-            "--network", network,
-            "--memory", memory,
-            "--user", f"{os.getuid()}:{os.getgid()}",  # non-root: blocks symlink escape
-            "-v", f"{kwargs_path}:/kwargs.json:ro",
+            "--network",
+            network,
+            "--memory",
+            memory,
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",  # non-root: blocks symlink escape
+            "-v",
+            f"{kwargs_path}:/kwargs.json:ro",
         ]
         if use_device:
             cmd.extend(docker_args or [])
@@ -65,29 +84,30 @@ def _run_in_container(kwargs: dict, deadline: float, image: str,
             try:
                 envelope = json.loads(result.stdout.strip())
             except json.JSONDecodeError:
-                return {"ok": False, "http_status": 500,
-                        "error": f"invalid envelope JSON: {result.stdout[:200]}",
-                        "api": _api}
+                return {
+                    "ok": False,
+                    "http_status": 500,
+                    "error": f"invalid envelope JSON: {result.stdout[:200]}",
+                    "api": _api,
+                }
             # Map /work/<x> back to host_req_dir/<x> (slice, not replace)
             op = envelope.get("output_path")
             if op and op.startswith("/work/"):
-                envelope["output_path"] = host_req_dir + op[len("/work"):]
+                envelope["output_path"] = host_req_dir + op[len("/work") :]
             return envelope
-        return {"ok": False, "http_status": 500,
-                "error": "container execution failed" if result.stderr
-                else f"exit code {result.returncode}",
-                "api": _api}
+        return {
+            "ok": False,
+            "http_status": 500,
+            "error": "container execution failed" if result.stderr else f"exit code {result.returncode}",
+            "api": _api,
+        }
 
     except subprocess.TimeoutExpired:
-        return {"ok": False, "http_status": 500,
-                "error": f"container timed out after {timeout_s}s",
-                "api": _api}
+        return {"ok": False, "http_status": 500, "error": f"container timed out after {timeout_s}s", "api": _api}
     except FileNotFoundError:
-        return {"ok": False, "http_status": 500, "error": "docker not found",
-                "api": _api}
+        return {"ok": False, "http_status": 500, "error": "docker not found", "api": _api}
     except Exception as e:
-        return {"ok": False, "http_status": 500, "error": str(e),
-                "api": _api}
+        return {"ok": False, "http_status": 500, "error": str(e), "api": _api}
     finally:
         if os.path.exists(kwargs_path):
             os.unlink(kwargs_path)

@@ -4,6 +4,7 @@ Verifies the full mTLS path (server wrap_socket CERT_REQUIRED + client
 HTTPSConnection) that unit tests (config loading / HTTP-vs-HTTPS selection)
 don't cover. See spec 2026-06-19-mtls-e2e-test-design.
 """
+
 import os
 import socket
 import subprocess
@@ -24,7 +25,7 @@ def _free_port():
     return port
 
 
-_TENANT = "mtls_test"   # client cert tenant → <TENANT>.client.{crt,key}
+_TENANT = "mtls_test"  # client cert tenant → <TENANT>.client.{crt,key}
 
 
 def _gen_certs(d):
@@ -51,7 +52,7 @@ def _wait_server(host, port, timeout=30):
             time.sleep(0.3)
     else:
         raise RuntimeError(f"server not reachable on {host}:{port}")
-    time.sleep(1)   # let the TLS socket settle
+    time.sleep(1)  # let the TLS socket settle
 
 
 def _set_tls(ca, cert="", key=""):
@@ -68,30 +69,34 @@ def _set_tls(ca, cert="", key=""):
     import yaml
 
     import ttk.config.loader as loader
+
     remote = {
-        "endpoints": [{"host": "127.0.0.1", "port": 0}],   # placeholder; _create_connection uses args
-        "tls_ca": ca, "tls_cert": cert, "tls_key": key,
+        "endpoints": [{"host": "127.0.0.1", "port": 0}],  # placeholder; _create_connection uses args
+        "tls_ca": ca,
+        "tls_cert": cert,
+        "tls_key": key,
     }
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".yaml", delete=False) as f:
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         yaml.dump({"remote": remote}, f)
         path = f.name
     try:
         loader._config = None
         loader.load_config(path)
     finally:
-        os.unlink(path)   # load_config 已读完，清掉临时 yaml
+        os.unlink(path)  # load_config 已读完，清掉临时 yaml
 
 
 def _reset_tls():
     """恢复默认 config（清缓存后重新 load 默认链）。"""
     import ttk.config.loader as loader
+
     loader._config = None
     loader.load_config()  # 恢复默认
 
 
 def _https_get(host, port):
     from ttk.remote.dispatcher import _create_connection
+
     conn = _create_connection(host, port, timeout=5)
     try:
         conn.request("GET", "/v1/heartbeat")
@@ -105,36 +110,48 @@ def _https_get(host, port):
 @pytest.fixture(scope="module")
 def mtls_env(tmp_path_factory):
     import yaml
+
     certs = tmp_path_factory.mktemp("certs")
     wrong_certs = tmp_path_factory.mktemp("wrong_certs")
     _gen_certs(certs)
-    _gen_certs(wrong_certs)        # independent CA for the wrong-CA negative test
+    _gen_certs(wrong_certs)  # independent CA for the wrong-CA negative test
 
     port = _free_port()
     sync = tmp_path_factory.mktemp("sync")
     tmp = tmp_path_factory.mktemp("tmp")
     yaml_path = tmp_path_factory.mktemp("config") / "tls.yaml"
-    yaml.dump({
-        "server": {"bind": "127.0.0.1", "port": port, "max_concurrent": 4},
-        "execution": {"sandbox": "none"},
-        "storage": {"sync_dir": str(sync), "tmp_dir": str(tmp)},
-        "tls": {"enabled": True,
+    yaml.dump(
+        {
+            "server": {"bind": "127.0.0.1", "port": port, "max_concurrent": 4},
+            "execution": {"sandbox": "none"},
+            "storage": {"sync_dir": str(sync), "tmp_dir": str(tmp)},
+            "tls": {
+                "enabled": True,
                 "ca_cert": str(certs / "ca.crt"),
                 "server_cert": str(certs / "server.crt"),
-                "server_key": str(certs / "server.key")},
-    }, open(yaml_path, "w"))
+                "server_key": str(certs / "server.key"),
+            },
+        },
+        open(yaml_path, "w"),
+    )
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", _SERVER_MOD, "--port", str(port),
-         "--devices", "cpu", "--config", str(yaml_path)],
-        env=os.environ.copy(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        [sys.executable, "-m", _SERVER_MOD, "--port", str(port), "--devices", "cpu", "--config", str(yaml_path)],
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
     try:
         _wait_server("127.0.0.1", port)
-        yield {"host": "127.0.0.1", "port": port, "proc": proc,
-               "ca": str(certs / "ca.crt"),
-               "client_crt": str(certs / f"{_TENANT}.client.crt"),
-               "client_key": str(certs / f"{_TENANT}.client.key"),
-               "wrong_ca": str(wrong_certs / "ca.crt")}
+        yield {
+            "host": "127.0.0.1",
+            "port": port,
+            "proc": proc,
+            "ca": str(certs / "ca.crt"),
+            "client_crt": str(certs / f"{_TENANT}.client.crt"),
+            "client_key": str(certs / f"{_TENANT}.client.key"),
+            "wrong_ca": str(wrong_certs / "ca.crt"),
+        }
     finally:
         proc.terminate()
         try:

@@ -6,7 +6,7 @@ Public API:
     is_remote_configured() — 检查是否配置了远端执行
     dispatch_to_remote() — 发送输入到远端 xpu_server，返回输出
 """
-import logging
+
 import os
 import uuid
 from dataclasses import dataclass
@@ -47,6 +47,7 @@ def is_remote_configured() -> bool:
     """
     try:
         from ttk.remote.config import get_remote_config
+
         config = get_remote_config()
         return config is not None and bool(config.endpoints)
     except RuntimeError:
@@ -62,6 +63,7 @@ class ExecutionSpec:
     type == 'spec':  sync ``spec_file`` and invoke ``spec_class``
                         (whose ``third_party[provider]`` is the impl) on the server.
     """
+
     provider: str
     type: str = "api"
     api: Optional[str] = None

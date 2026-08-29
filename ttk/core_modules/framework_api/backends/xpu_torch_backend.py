@@ -7,8 +7,6 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-from __future__ import annotations
-
 """XPU (hardware accelerator) backend.
 
 The torch-level device API (is_available /
@@ -17,6 +15,8 @@ device_count / to_device / synchronize) all come from TorchBackend via
 for any torch_lib that is not 'npu' or 'cpu' (mlu/musa/...); the segment
 identity (alias) is config-driven via _segment_name injected by _build.
 """
+
+from __future__ import annotations
 
 from .torch_backend import TorchBackend
 

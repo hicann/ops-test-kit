@@ -18,11 +18,10 @@ import numpy as np
 
 from ttk.core_modules.npu.op import output_generation as _mod
 
-_golden_reshape = getattr(_mod, '__golden_flatten')
+_golden_reshape = getattr(_mod, "__golden_flatten")
 
 
 class TestGoldenReshapeFlat:
-
     def test_flat_ndarrays(self):
         a = np.ones((3,), dtype="float16")
         b = np.ones((4,), dtype="float32")
@@ -33,7 +32,6 @@ class TestGoldenReshapeFlat:
 
 
 class TestGoldenReshapeNested:
-
     def test_nested_tensorlist(self):
         a1 = np.ones((3,), dtype="float16")
         a2 = np.ones((4,), dtype="float16")
@@ -46,7 +44,6 @@ class TestGoldenReshapeNested:
 
 
 class TestGoldenReshapeEdgeCases:
-
     def test_empty_tuple(self):
         result = _golden_reshape(())
         assert result == []

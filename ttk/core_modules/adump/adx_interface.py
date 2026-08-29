@@ -10,61 +10,73 @@
 """
 ADump Interface, refer to 'dump_printf.cpp'
 """
+
 # Standard Packages
 import ctypes
 import logging
-import numpy
 import re
 from functools import partial, reduce
 from typing import Type, Union
 
+import numpy
+
+from ...utilities import (
+    DATA_TYPE_INT_TO_STR,
+    PLATFORM_BEFORE_DAVID,
+    Singleton,
+    get_dtype_width,
+    resolve_custom_numpy_dtypes,
+)
+
 # Third-Party Packages
+from .adx_structure import (
+    AdxBlockInfo,
+    AdxDumpInfoHead,
+    AdxDumpMessageHead,
+    AdxDumpMeta,
+    AdxDumpShapeMessageHead,
+    AdxDumpTimestampHead,
+    AdxSimtDumpMeta,
+    AscendDumpType,
+)
 
-from .adx_structure import *
-from ...utilities import Singleton, DATA_TYPE_INT_TO_STR, get_dtype_width
-from ...utilities import PLATFORM_BEFORE_DAVID, resolve_custom_numpy_dtypes
 
-
-def __format_decimal(fmt_str: str, fmt_start: int, fmt_stop: int,
-                     c_param_p: ctypes.c_void_p, c_type):
+def __format_decimal(fmt_str: str, fmt_start: int, fmt_stop: int, c_param_p: ctypes.c_void_p, c_type):
     num = ctypes.cast(c_param_p, ctypes.POINTER(c_type))[0]
     return fmt_str[:fmt_start] + str(num) + fmt_str[fmt_stop:]
 
 
-def __format_hex(fmt_str: str, fmt_start: int, fmt_stop: int,
-                 c_param_p: ctypes.c_void_p, c_type):
+def __format_hex(fmt_str: str, fmt_start: int, fmt_stop: int, c_param_p: ctypes.c_void_p, c_type):
     num = ctypes.cast(c_param_p, ctypes.POINTER(c_type))[0]
     return fmt_str[:fmt_start] + f"0x{num:x}" + fmt_str[fmt_stop:]
 
 
-def __format_str(fmt_str: str, fmt_start: int, fmt_stop: int,
-                 c_param_p: ctypes.c_void_p):
+def __format_str(fmt_str: str, fmt_start: int, fmt_stop: int, c_param_p: ctypes.c_void_p):
     str_offset = ctypes.cast(c_param_p, ctypes.POINTER(ctypes.c_uint64))[0]
-    c_str_p = ctypes.cast(ctypes.c_void_p(c_param_p.value + str_offset),
-                          ctypes.c_char_p)
+    c_str_p = ctypes.cast(ctypes.c_void_p(c_param_p.value + str_offset), ctypes.c_char_p)
     return fmt_str[:fmt_start] + c_str_p.value.decode() + fmt_str[fmt_stop:]
 
 
 ADX_FORMATTERS = {
-    '%d': partial(__format_decimal, c_type=ctypes.c_int64),
-    '%ld': partial(__format_decimal, c_type=ctypes.c_int64),
-    '%lld': partial(__format_decimal, c_type=ctypes.c_int64),
-    '%i': partial(__format_decimal, c_type=ctypes.c_int64),
-    '%li': partial(__format_decimal, c_type=ctypes.c_int64),
-    '%lli': partial(__format_decimal, c_type=ctypes.c_int64),
-    '%u': partial(__format_decimal, c_type=ctypes.c_uint64),
-    '%lu': partial(__format_decimal, c_type=ctypes.c_uint64),
-    '%llu': partial(__format_decimal, c_type=ctypes.c_uint64),
-    '%f': partial(__format_decimal, c_type=ctypes.c_float),
-    '%F': partial(__format_decimal, c_type=ctypes.c_float),
-    '%x': partial(__format_hex, c_type=ctypes.c_int64),
-    '%lx': partial(__format_hex, c_type=ctypes.c_int64),
-    '%llx': partial(__format_hex, c_type=ctypes.c_int64),
-    '%X': partial(__format_hex, c_type=ctypes.c_int64),
-    '%lX': partial(__format_hex, c_type=ctypes.c_int64),
-    '%llX': partial(__format_hex, c_type=ctypes.c_int64),
-    '%p': partial(__format_hex, c_type=ctypes.c_uint64),
-    '%s': __format_str,
+    "%d": partial(__format_decimal, c_type=ctypes.c_int64),
+    "%ld": partial(__format_decimal, c_type=ctypes.c_int64),
+    "%lld": partial(__format_decimal, c_type=ctypes.c_int64),
+    "%i": partial(__format_decimal, c_type=ctypes.c_int64),
+    "%li": partial(__format_decimal, c_type=ctypes.c_int64),
+    "%lli": partial(__format_decimal, c_type=ctypes.c_int64),
+    "%u": partial(__format_decimal, c_type=ctypes.c_uint64),
+    "%lu": partial(__format_decimal, c_type=ctypes.c_uint64),
+    "%llu": partial(__format_decimal, c_type=ctypes.c_uint64),
+    "%f": partial(__format_decimal, c_type=ctypes.c_float),
+    "%F": partial(__format_decimal, c_type=ctypes.c_float),
+    "%x": partial(__format_hex, c_type=ctypes.c_int64),
+    "%lx": partial(__format_hex, c_type=ctypes.c_int64),
+    "%llx": partial(__format_hex, c_type=ctypes.c_int64),
+    "%X": partial(__format_hex, c_type=ctypes.c_int64),
+    "%lX": partial(__format_hex, c_type=ctypes.c_int64),
+    "%llX": partial(__format_hex, c_type=ctypes.c_int64),
+    "%p": partial(__format_hex, c_type=ctypes.c_uint64),
+    "%s": __format_str,
 }
 
 
@@ -97,16 +109,14 @@ class AdxInterface(metaclass=Singleton):
         pass
 
     @classmethod
-    def print_dump_info(cls, c_ws_data_p: ctypes.c_void_p, debug_buf_size: int,
-                        short_soc_version: str):
+    def print_dump_info(cls, c_ws_data_p: ctypes.c_void_p, debug_buf_size: int, short_soc_version: str):
         mem_bound = ctypes.c_void_p(c_ws_data_p.value + debug_buf_size)
         block_data_len = cls._get_block_data_len(c_ws_data_p, debug_buf_size)
         simd_dump_cores = cls._get_max_dump_core_num(short_soc_version)
         for block_idx in range(simd_dump_cores):
             offset = block_data_len * block_idx
             c_ws_ptr = ctypes.c_void_p(c_ws_data_p.value + offset)
-            cls._print_block_info(c_ws_ptr, block_data_len, mem_bound, block_idx,
-                                  AdxDumpMeta, short_soc_version)
+            cls._print_block_info(c_ws_ptr, block_data_len, mem_bound, block_idx, AdxDumpMeta, short_soc_version)
 
         if not cls._has_simt_dump_info(debug_buf_size, short_soc_version):
             return
@@ -124,8 +134,9 @@ class AdxInterface(metaclass=Singleton):
             for thread_idx in range(cls.ADX_SIMT_MAX_THREAD_NUM):
                 offset = (block_idx * cls.ADX_SIMT_MAX_THREAD_NUM + thread_idx) * simt_block_data_len
                 c_ws_ptr = ctypes.c_void_p(c_simt_data_p.value + offset)
-                cls._print_block_info(c_ws_ptr, simt_block_data_len, mem_bound, block_idx,
-                                      AdxSimtDumpMeta, short_soc_version)
+                cls._print_block_info(
+                    c_ws_ptr, simt_block_data_len, mem_bound, block_idx, AdxSimtDumpMeta, short_soc_version
+                )
 
     @staticmethod
     def _get_max_dump_core_num(short_soc_version: str) -> int:
@@ -144,18 +155,18 @@ class AdxInterface(metaclass=Singleton):
     @staticmethod
     def _has_simt_dump_info(debug_buf_size: int, short_soc_version: str) -> bool:
         max_dump_core = AdxInterface._get_max_dump_core_num(short_soc_version)
-        return short_soc_version not in PLATFORM_BEFORE_DAVID and \
-            debug_buf_size > max_dump_core * AdxInterface.ADX_MAX_STR_LEN
+        return (
+            short_soc_version not in PLATFORM_BEFORE_DAVID
+            and debug_buf_size > max_dump_core * AdxInterface.ADX_MAX_STR_LEN
+        )
 
     @staticmethod
     def _get_block_data_len(c_ws_data_p: ctypes.c_void_p, debug_buf_size: int):
         block_info = ctypes.cast(c_ws_data_p, ctypes.POINTER(AdxBlockInfo))[0]
         block_data_len = block_info.len
         if (
-            (block_data_len != AdxInterface.ADX_MAX_STR_LEN and
-             block_data_len != AdxInterface.ADX_ASSERT_LEN)
-            or block_data_len == 0
-        ):
+            block_data_len != AdxInterface.ADX_MAX_STR_LEN and block_data_len != AdxInterface.ADX_ASSERT_LEN
+        ) or block_data_len == 0:
             length = debug_buf_size // ctypes.sizeof(ctypes.c_uint32)
             if length < AdxBlockInfo.size():
                 raise RuntimeError(f"debug_buf_size [{debug_buf_size}] is illegal.")
@@ -169,77 +180,78 @@ class AdxInterface(metaclass=Singleton):
                     break
 
         if (
-            (block_data_len != AdxInterface.ADX_MAX_STR_LEN and
-             block_data_len != AdxInterface.ADX_ASSERT_LEN)
-            or block_data_len == 0
-        ):
+            block_data_len != AdxInterface.ADX_MAX_STR_LEN and block_data_len != AdxInterface.ADX_ASSERT_LEN
+        ) or block_data_len == 0:
             raise RuntimeError(f"BlockDataLen [{block_data_len} bytes] is illegal.")
 
         return block_data_len
 
     @staticmethod
-    def _print_block_info(c_ws_data_p: ctypes.c_void_p, data_len: int,
-                          mem_bound: ctypes.c_void_p, block_idx: int,
-                          dump_meta_cls: Union[Type[AdxSimtDumpMeta], Type[AdxDumpMeta]],
-                          short_soc_version: str):
+    def _print_block_info(
+        c_ws_data_p: ctypes.c_void_p,
+        data_len: int,
+        mem_bound: ctypes.c_void_p,
+        block_idx: int,
+        dump_meta_cls: Union[Type[AdxSimtDumpMeta], Type[AdxDumpMeta]],
+        short_soc_version: str,
+    ):
         if c_ws_data_p.value + data_len >= mem_bound.value:
             return
         block_info = ctypes.cast(c_ws_data_p, ctypes.POINTER(AdxBlockInfo))[0]
         if block_info.magic != AdxInterface.ADX_PRINT_MAGIC:
-            logging.debug(f"Block info [{block_idx}] is illegal, "
-                          f"magic is {block_info.magic}.")
+            logging.debug(f"Block info [{block_idx}] is illegal, magic is {block_info.magic}.")
             return
         block_info_hdr_len = AdxBlockInfo.size()
         dump_meta_hdr_len = dump_meta_cls.size()
         dump_info_hdr_len = AdxDumpInfoHead.size()
         max_data_len = data_len - block_info_hdr_len - dump_meta_hdr_len
         if max_data_len < block_info.remain_len:
-            logging.debug(f"Block info remain_len [{block_info.remain_len}] is illegal, "
-                          f"must small than {max_data_len}.")
+            logging.debug(
+                f"Block info remain_len [{block_info.remain_len}] is illegal, must small than {max_data_len}."
+            )
             return
 
-        total_log = ['']
-        dump_meta = ctypes.cast(block_info.data_ptr(),
-                                ctypes.POINTER(dump_meta_cls))[0]
+        total_log = [""]
+        dump_meta = ctypes.cast(block_info.data_ptr(), ctypes.POINTER(dump_meta_cls))[0]
         if dump_meta_cls is AdxSimtDumpMeta:
-            core_id = f'AIV-{block_info.core}'
-            total_log.append(f"Simt DumpHead: {core_id}, ThreadId={dump_meta.thread_id}, "
-                             f"TotalBlockNum={block_info.block_num}, BlockRemainLen={block_info.remain_len}, "
-                             f"BlockInitialSpace={block_info.len}, RSV={block_info.rsv}, "
-                             f"Magic=0x{block_info.magic:x}")
+            core_id = f"AIV-{block_info.core}"
+            total_log.append(
+                f"Simt DumpHead: {core_id}, ThreadId={dump_meta.thread_id}, "
+                f"TotalBlockNum={block_info.block_num}, BlockRemainLen={block_info.remain_len}, "
+                f"BlockInitialSpace={block_info.len}, RSV={block_info.rsv}, "
+                f"Magic=0x{block_info.magic:x}"
+            )
         else:
-            core_type = 'MIX' if dump_meta.mix_flag != 0 \
-                else 'AIC' if dump_meta.core_type == 1 else 'AIV'
+            core_type = "MIX" if dump_meta.mix_flag != 0 else "AIC" if dump_meta.core_type == 1 else "AIV"
             aic_idx_offset = AdxInterface._get_aic_idx_offset(short_soc_version)
-            core_id = f'AIC-{block_info.core - aic_idx_offset}' if dump_meta.core_type == 1 \
-                else f'AIV-{block_info.core}'
-            total_log.append(f"DumpHead: {core_id}, CoreType={core_type}, BlockDim={dump_meta.block_dim}, "
-                             f"TotalBlockNum={block_info.block_num}, BlockRemainLen={block_info.remain_len}, "
-                             f"BlockInitialSpace={block_info.len}, RSV={block_info.rsv}, "
-                             f"Magic=0x{block_info.magic:x}")
+            core_id = (
+                f"AIC-{block_info.core - aic_idx_offset}" if dump_meta.core_type == 1 else f"AIV-{block_info.core}"
+            )
+            total_log.append(
+                f"DumpHead: {core_id}, CoreType={core_type}, BlockDim={dump_meta.block_dim}, "
+                f"TotalBlockNum={block_info.block_num}, BlockRemainLen={block_info.remain_len}, "
+                f"BlockInitialSpace={block_info.len}, RSV={block_info.rsv}, "
+                f"Magic=0x{block_info.magic:x}"
+            )
         if block_info.rsv == AdxInterface.ADX_PRINT_NO_ENOUGH_SPACE_FLAG:
             logging.warning("Remain block space is not enough, printing information may be incomplete!")
         user_data_len = max_data_len - block_info.remain_len
         offset = 0
         tensor_shape: list = []
         while offset + dump_info_hdr_len <= user_data_len:
-            dump_info_head = ctypes.cast(dump_meta.data_ptr_offset(offset),
-                                         ctypes.POINTER(AdxDumpInfoHead))[0]
-            offset += (dump_info_hdr_len + dump_info_head.info_len)
+            dump_info_head = ctypes.cast(dump_meta.data_ptr_offset(offset), ctypes.POINTER(AdxDumpInfoHead))[0]
+            offset += dump_info_hdr_len + dump_info_head.info_len
             if offset > user_data_len:
                 logging.debug(f"Dump data info len {dump_info_head.info_len} illegal.")
                 break
             AdxInterface._print_user_data(dump_info_head, tensor_shape, total_log)
         if len(total_log) > 2:
-            logging.info('\n'.join(total_log))
+            logging.info("\n".join(total_log))
 
     @staticmethod
-    def _print_user_data(dump_info: AdxDumpInfoHead, tensor_shape: list,
-                         total_log: list):
+    def _print_user_data(dump_info: AdxDumpInfoHead, tensor_shape: list, total_log: list):
         dump_type = dump_info.type
-        if dump_type in (AscendDumpType.SCALAR.value,
-                         AscendDumpType.ASSERT.value,
-                         AscendDumpType.SIMT.value):
+        if dump_type in (AscendDumpType.SCALAR.value, AscendDumpType.ASSERT.value, AscendDumpType.SIMT.value):
             total_log.extend(AdxInterface._print_user_data_scalar(dump_info))
         elif dump_type == AscendDumpType.TENSOR.value:
             total_log.extend(AdxInterface._print_user_data_tensor(dump_info, tensor_shape))
@@ -255,10 +267,8 @@ class AdxInterface(metaclass=Singleton):
         if dump_info.info_len < AdxInterface.ADX_PRINT_ARG_LEN:
             return
         c_param_begin_p = dump_info.data_ptr()
-        fmt_str_offset = ctypes.cast(c_param_begin_p,
-                                     ctypes.POINTER(ctypes.c_size_t))[0]
-        c_fmt_str_p = ctypes.cast(ctypes.c_void_p(c_param_begin_p.value + fmt_str_offset),
-                                  ctypes.c_char_p)
+        fmt_str_offset = ctypes.cast(c_param_begin_p, ctypes.POINTER(ctypes.c_size_t))[0]
+        c_fmt_str_p = ctypes.cast(ctypes.c_void_p(c_param_begin_p.value + fmt_str_offset), ctypes.c_char_p)
         fmt_str = c_fmt_str_p.value.decode()
         matches = AdxInterface._match_fmt_pattern(fmt_str)
         if matches:
@@ -273,7 +283,7 @@ class AdxInterface(metaclass=Singleton):
     @staticmethod
     def _match_fmt_pattern(fmt_str: str):
         matches = []
-        pattern = '|'.join(list(ADX_FORMATTERS.keys()))
+        pattern = "|".join(list(ADX_FORMATTERS.keys()))
         for match in re.finditer(pattern, fmt_str):
             matches.append((match.group(), match.start(), match.end()))
         return matches
@@ -289,18 +299,20 @@ class AdxInterface(metaclass=Singleton):
         if dump_info.info_len < dump_msg_hdr_len:
             return []
         logs = []
-        dump_msg_hdr = ctypes.cast(dump_info.data_ptr(),
-                                   ctypes.POINTER(AdxDumpMessageHead))[0]
-        position = ADX_TENSOR_POSITIONS[dump_msg_hdr.position] \
-            if dump_msg_hdr.position in ADX_TENSOR_POSITIONS \
+        dump_msg_hdr = ctypes.cast(dump_info.data_ptr(), ctypes.POINTER(AdxDumpMessageHead))[0]
+        position = (
+            ADX_TENSOR_POSITIONS[dump_msg_hdr.position]
+            if dump_msg_hdr.position in ADX_TENSOR_POSITIONS
             else str(dump_msg_hdr.position)
+        )
         dtype = DATA_TYPE_INT_TO_STR.get(dump_msg_hdr.dtype)
-        logs.append(f"DumpTensor: Desc={dump_msg_hdr.desc}, Address=0x{dump_msg_hdr.addr:x}, "
-                    f"Dtype={dtype or str(dump_msg_hdr.dtype)}, Position={position}")
+        logs.append(
+            f"DumpTensor: Desc={dump_msg_hdr.desc}, Address=0x{dump_msg_hdr.addr:x}, "
+            f"Dtype={dtype or str(dump_msg_hdr.dtype)}, Position={position}"
+        )
         data_len = dump_info.info_len - dump_msg_hdr_len
         if data_len % AdxInterface.ADX_PRINT_ARG_LEN != 0:
-            logging.debug(f"Data len {data_len} is illegal, "
-                          f"must a multiple of {AdxInterface.ADX_PRINT_ARG_LEN}.")
+            logging.debug(f"Data len {data_len} is illegal, must a multiple of {AdxInterface.ADX_PRINT_ARG_LEN}.")
         if not dtype:
             logging.debug(f"Dump tensor does not support dtype [{dtype}]")
         else:
@@ -308,9 +320,9 @@ class AdxInterface(metaclass=Singleton):
             data_count = data_len // get_dtype_width(dtype)
             c_buffer_type = ctypes.c_char * (data_count * get_dtype_width(dtype))
             c_buffer = c_buffer_type.from_address(c_dump_data_p.value)
-            np_array: numpy.ndarray = numpy.frombuffer(c_buffer,
-                                                       dtype=resolve_custom_numpy_dtypes([dtype])[0],
-                                                       count=data_count)
+            np_array: numpy.ndarray = numpy.frombuffer(
+                c_buffer, dtype=resolve_custom_numpy_dtypes([dtype])[0], count=data_count
+            )
             if tensor_shape:
                 shape_prod = reduce(lambda x, y: x * y, tensor_shape)
                 if shape_prod == np_array.size:
@@ -324,8 +336,7 @@ class AdxInterface(metaclass=Singleton):
         dump_shape_hdr_len = ctypes.sizeof(AdxDumpShapeMessageHead)
         if dump_info.info_len < dump_shape_hdr_len:
             return []
-        dump_shape_hdr = ctypes.cast(dump_info.data_ptr(),
-                                     ctypes.POINTER(AdxDumpShapeMessageHead))[0]
+        dump_shape_hdr = ctypes.cast(dump_info.data_ptr(), ctypes.POINTER(AdxDumpShapeMessageHead))[0]
         dims = dump_shape_hdr.dim
         if dims > 8:
             logging.debug(f"Dump tensor's shape specified is invalid: {dims}")
@@ -339,9 +350,10 @@ class AdxInterface(metaclass=Singleton):
         dump_ts_hdr_len = ctypes.sizeof(AdxDumpTimestampHead)
         if dump_info.info_len < dump_ts_hdr_len:
             return []
-        dump_ts_hdr = ctypes.cast(dump_info.data_ptr(),
-                                  ctypes.POINTER(AdxDumpTimestampHead))[0]
-        return [f"DescId={dump_ts_hdr.desc_id}, "
-                f"Rsv={dump_ts_hdr.rsv}, "
-                f"Timestamp={dump_ts_hdr.sys_cycle}, "
-                f"PcPtr={dump_ts_hdr.current_pc}"]
+        dump_ts_hdr = ctypes.cast(dump_info.data_ptr(), ctypes.POINTER(AdxDumpTimestampHead))[0]
+        return [
+            f"DescId={dump_ts_hdr.desc_id}, "
+            f"Rsv={dump_ts_hdr.rsv}, "
+            f"Timestamp={dump_ts_hdr.sys_cycle}, "
+            f"PcPtr={dump_ts_hdr.current_pc}"
+        ]

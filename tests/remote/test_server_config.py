@@ -17,6 +17,7 @@ import os
 def test_detect_gpu_and_mlu(monkeypatch):
     """detect_hardware: 识别 gpu（nvidia 前缀）/ mlu（cambricon 前缀），排除控制设备。"""
     from ttk.remote.server.config import detect_hardware
+
     cfg = {"gpu": {"dev_prefix": "nvidia"}, "mlu": {"dev_prefix": "cambricon"}}
 
     # gpu（排除 nvidiactl 控制设备）
@@ -31,6 +32,7 @@ def test_detect_gpu_and_mlu(monkeypatch):
 def test_detect_segment_order_and_cpu_fallback(monkeypatch):
     """detect_hardware: 段序保留（gpu 先于 mlu）；空/不可读 /dev → cpu fallback。"""
     from ttk.remote.server.config import detect_hardware
+
     cfg = {"gpu": {"dev_prefix": "nvidia"}, "mlu": {"dev_prefix": "cambricon"}}
 
     # 段序：gpu + mlu 都命中，gpu 先
@@ -44,5 +46,6 @@ def test_detect_segment_order_and_cpu_fallback(monkeypatch):
     # 不可读 → cpu
     def boom(p):
         raise OSError("denied")
+
     monkeypatch.setattr(os, "listdir", boom)
     assert detect_hardware({"gpu": {"dev_prefix": "nvidia"}}) == ("cpu", ["cpu"])

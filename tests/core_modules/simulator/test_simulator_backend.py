@@ -5,6 +5,7 @@
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 """Unit tests for the NPUSim simulator backend (no device / simulation needed)."""
+
 import json
 import os
 import pickle
@@ -20,6 +21,7 @@ from ttk.utilities.classes import MODE, SWITCHES
 
 class _DummyRTSProfilingParam:
     """Minimal stand-in for RTSProfilingParam (module-level: picklable)."""
+
     switch = True
     compile_result = "SUCC"
     is_valid = True
@@ -172,8 +174,7 @@ class TestResultLoading:
         mdir = tmp_path / "dyn"
         if scenario == "ok":
             mdir.mkdir()
-            (mdir / "result.json").write_text(
-                json.dumps({"ok": True, "cycle": "UNKNOWN", "oob": "OK,OK"}))
+            (mdir / "result.json").write_text(json.dumps({"ok": True, "cycle": "UNKNOWN", "oob": "OK,OK"}))
             (mdir / "output_0.bin").write_bytes(b"\x00\x01")
             (mdir / "output_1.bin").write_bytes(b"\x02\x03")
             res = _load_mode_result(tmp_path, "dyn")
@@ -182,8 +183,7 @@ class TestResultLoading:
             assert res.oob == "OK,OK"
         elif scenario == "failure":
             mdir.mkdir()
-            (mdir / "result.json").write_text(
-                json.dumps({"ok": False, "error": "SIM_EXECUTION_FAILED"}))
+            (mdir / "result.json").write_text(json.dumps({"ok": False, "error": "SIM_EXECUTION_FAILED"}))
             res = _load_mode_result(tmp_path, "dyn")
             assert isinstance(res, RTSProfilingResult)
             assert res.cycle == "SIM_EXECUTION_FAILED"
@@ -197,9 +197,8 @@ class TestResultLoading:
             # A wrapper crash must surface its traceback, not a bare MISSING.
             (tmp_path / "dyn").mkdir()
             (tmp_path / "wrapper_error.json").write_text(
-                'Traceback (most recent call last):\n'
-                '  File "wrapper.py", line 12, in main\n'
-                'RuntimeError: boom')
+                'Traceback (most recent call last):\n  File "wrapper.py", line 12, in main\nRuntimeError: boom'
+            )
             res = _load_mode_result(tmp_path, "dyn")
             assert res.cycle.startswith("SIM_RESULT_MISSING")
             assert "RuntimeError: boom" in res.cycle
@@ -214,9 +213,17 @@ class TestResultLoading:
         from ttk.core_modules.simulator.sim_profiling import _load_aclnn_result
 
         if scenario == "ok":
-            (tmp_path / "final_result.json").write_text(json.dumps(
-                {"ok": True, "api_prof": "UNKNOWN", "op_prof": "TOTAL_CYCLE_TODO",
-                 "oob": "UNKNOWN", "deterministic_status": None}))
+            (tmp_path / "final_result.json").write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "api_prof": "UNKNOWN",
+                        "op_prof": "TOTAL_CYCLE_TODO",
+                        "oob": "UNKNOWN",
+                        "deterministic_status": None,
+                    }
+                )
+            )
             (tmp_path / "output_0.bin").write_bytes(b"\x00\x01")
             with (tmp_path / "output_view_shapes.pkl").open("wb") as f:
                 pickle.dump([("float32", [1, 2])], f)
@@ -443,8 +450,7 @@ class TestCannsimBackend:
         from ttk.core_modules.simulator import npusim_runner
 
         fake_script = Path("/opt/ascend/bin/cannsim")
-        monkeypatch.setattr(npusim_runner, "locate_cannsim_executable",
-                            lambda: fake_script)
+        monkeypatch.setattr(npusim_runner, "locate_cannsim_executable", lambda: fake_script)
         cmd = npusim_runner._cannsim_cmd()
         assert cmd == [sys.executable, str(fake_script)]
 
@@ -484,8 +490,7 @@ class TestSimRecordFailure:
         sw = SWITCHES()
         sw.sim_output_dir = str(tmp_path)
         monkeypatch.setattr(sim_mod, "get_global_storage", lambda: sw)
-        monkeypatch.setattr(sim_mod, "_construct_param",
-                            lambda *a, **k: _DummyRTSProfilingParam())
+        monkeypatch.setattr(sim_mod, "_construct_param", lambda *a, **k: _DummyRTSProfilingParam())
         monkeypatch.setattr(sim_mod, "_validate_param", lambda p: None)
 
         def _boom(*a, **k):

@@ -72,9 +72,7 @@ class GeirCompiler:
             cmd.append(f"-l{lib}")
         return cmd
 
-    def compile(
-        self, source_path: str, binary_name: str = "ttk_geir_test"
-    ) -> Optional[str]:
+    def compile(self, source_path: str, binary_name: str = "ttk_geir_test") -> Optional[str]:
         include_dirs, lib_dirs, libs = self._resolve_ascend_env()
 
         binary_path = os.path.join(self._build_dir, binary_name)

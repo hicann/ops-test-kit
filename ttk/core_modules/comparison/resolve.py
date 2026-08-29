@@ -1,6 +1,6 @@
 # ttk/core_modules/comparison/resolve.py
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Optional
 
 
 @dataclass
@@ -22,15 +22,15 @@ DEFAULT_THRESHOLD = 2**-13
 # cross_check level 预设（level 矩阵）
 LEVEL_PRESETS = {
     "L0": {"mare_ratio": 10.0, "mere_ratio": 2.0, "rmse_ratio": 2.0},
-    "L1": {"mare_ratio": 5.0,  "mere_ratio": 1.5, "rmse_ratio": 1.5},
-    "L2": {"mare_ratio": 2.0,  "mere_ratio": 1.2, "rmse_ratio": 1.2},
+    "L1": {"mare_ratio": 5.0, "mere_ratio": 1.5, "rmse_ratio": 1.5},
+    "L2": {"mare_ratio": 2.0, "mere_ratio": 1.2, "rmse_ratio": 1.2},
 }
 
 # small-value thresholds (key 必须跟 _dtype_str 输出一致；cross_check 只支持 fp16/bf16/fp32)
 SMALL_VALUE = {
-    "float16":   {"small_value": 2**-11, "small_value_atol": 2**-16},
-    "bfloat16":  {"small_value": 2**-8,  "small_value_atol": 2**-16},
-    "float32":   {"small_value": 2**-14, "small_value_atol": 2**-30},
+    "float16": {"small_value": 2**-11, "small_value_atol": 2**-16},
+    "bfloat16": {"small_value": 2**-8, "small_value_atol": 2**-16},
+    "float32": {"small_value": 2**-14, "small_value_atol": 2**-30},
 }
 
 _REQUANT_DTYPES = {"float8_e5m2", "float8_e4m3fn", "hifloat8"}
@@ -44,6 +44,7 @@ def _dtype_str(dtype) -> str:
     # 优先用 numpy.dtype(...).name 做鲁棒解析，失败再回退旧逻辑。
     try:
         import numpy as _np
+
         return _np.dtype(dtype).name
     except Exception:
         return str(dtype).split(".")[-1].rstrip("'>\" ")
@@ -93,26 +94,27 @@ def _check_quant_applicable(dtype_str, input_dtypes):
     if dtype_str not in _QUANT_OUT_DTYPES:
         raise ValueError(
             f"Spec.tolerance 为 [{dtype_str}] 声明了 standard='quant'，但 quant 仅适用于 "
-            f"{sorted(_QUANT_OUT_DTYPES)} 输出（绝对误差<=1 是量化语义；索引/计数类输出差 1 即错）。")
+            f"{sorted(_QUANT_OUT_DTYPES)} 输出（绝对误差<=1 是量化语义；索引/计数类输出差 1 即错）。"
+        )
     if input_dtypes is not None:
         ins = [_dtype_str(d) for d in input_dtypes if d is not None]
         if ins and not any(_is_float_dtype(i) for i in ins):
             raise ValueError(
                 f"Spec.tolerance 为 [{dtype_str}] 声明了 standard='quant'，但输入 dtype {ins} "
                 f"全为整型。quant 的前提是【浮点型输入 + int4/int8 输出】的量化场景；"
-                f"纯整型算子（索引/计数/掩码）应使用 binary_equal。")
+                f"纯整型算子（索引/计数/掩码）应使用 binary_equal。"
+            )
 
 
-def _float_choice(tolerance: Optional[dict], dtype_str: str,
-                  compare_method: Optional[str]) -> str:
+def _float_choice(tolerance: Optional[dict], dtype_str: str, compare_method: Optional[str]) -> str:
     """普通浮点族的三级优先级：CLI > Spec.tolerance > stat_rel_err。"""
-    if compare_method:                       # a) CLI 显式指定
+    if compare_method:  # a) CLI 显式指定
         return compare_method.lower()
     if tolerance and dtype_str in tolerance:  # b) Spec 配了该 dtype
         std = tolerance[dtype_str].get("standard")
         if std:
             return std.lower()
-    return "stat_rel_err"                     # c) 默认社区标准
+    return "stat_rel_err"  # c) 默认社区标准
 
 
 def _resolve_params(standard, tolerance, dtype_str) -> dict:
@@ -129,7 +131,9 @@ def _resolve_params(standard, tolerance, dtype_str) -> dict:
         level = extra.get("level")
         if level is not None:
             if level not in LEVEL_PRESETS:
-                raise ValueError(f"[{dtype_str}] cross_check unknown level: {level!r}; expected {sorted(LEVEL_PRESETS)}")
+                raise ValueError(
+                    f"[{dtype_str}] cross_check unknown level: {level!r}; expected {sorted(LEVEL_PRESETS)}"
+                )
             limits = dict(LEVEL_PRESETS[level])
         else:
             level = "L1"
@@ -142,16 +146,20 @@ def _resolve_params(standard, tolerance, dtype_str) -> dict:
             raise ValueError(f"[{dtype_str}] cross_check missing ratios: {missing}; specify level or all 3 ratios")
         resolved_level = level or "L1"
         sv_default = SMALL_VALUE[dtype_str]
-        return {"level": resolved_level, **limits,
-                "small_value": extra.get("small_value", sv_default["small_value"]),
-                "small_value_atol": extra.get("small_value_atol", sv_default["small_value_atol"])}
+        return {
+            "level": resolved_level,
+            **limits,
+            "small_value": extra.get("small_value", sv_default["small_value"]),
+            "small_value_atol": extra.get("small_value_atol", sv_default["small_value_atol"]),
+        }
 
     else:
         return {}
 
 
-def resolve_tolerance(tolerance, precision_tolerances, absolute_precision,
-                      output_dtypes, compare_method, input_dtypes=None):
+def resolve_tolerance(
+    tolerance, precision_tolerances, absolute_precision, output_dtypes, compare_method, input_dtypes=None
+):
     """input_dtypes 可选：仅供 quant 的护栏校验"输入是否全为浮点"，不参与判据选择。
     不传时跳过该校验，Spec 声明的 quant 依然生效——判据由算子作者的声明决定，
     拿不到输入 dtype 只是少了一道校验，不应反过来否定声明。
@@ -190,7 +198,9 @@ def resolve_tolerance(tolerance, precision_tolerances, absolute_precision,
         params["legacy"] = {
             "rtol": precision_tolerances[idx][0] if precision_tolerances and idx < len(precision_tolerances) else None,
             "ptol": precision_tolerances[idx][1] if precision_tolerances and idx < len(precision_tolerances) else None,
-            "atol": absolute_precision[idx] if isinstance(absolute_precision, (tuple, list)) and idx < len(absolute_precision) else (absolute_precision if not isinstance(absolute_precision, (tuple, list)) else None),            
+            "atol": absolute_precision[idx]
+            if isinstance(absolute_precision, (tuple, list)) and idx < len(absolute_precision)
+            else (absolute_precision if not isinstance(absolute_precision, (tuple, list)) else None),
         }
         standards.append(ResolvedStandard(token, params))
     return standards

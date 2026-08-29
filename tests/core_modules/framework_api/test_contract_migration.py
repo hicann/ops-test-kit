@@ -19,6 +19,7 @@ After Task 7:
   - get_profiler uses is_npu() + profile.get('profiler') instead of
     device_name() string compares.
 """
+
 from __future__ import annotations
 
 import subprocess

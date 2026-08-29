@@ -11,6 +11,7 @@ TTK runs the CANN-installed ``cannsim`` entry script
 Its record format matches the installed camodel, so no separate
 npu-simulator repository source is needed.
 """
+
 import logging
 import os
 import subprocess
@@ -102,8 +103,7 @@ def _latest_record_dir(record_out: Path, before: Iterable[str] = ()) -> Path:
     return dirs[-1]
 
 
-def run_record(sw, wrapper_path: Path, case_dir: Path,
-               extra_argv: Iterable[str] = ()) -> Path:
+def run_record(sw, wrapper_path: Path, case_dir: Path, extra_argv: Iterable[str] = ()) -> Path:
     """Run ``record <wrapper> -s <soc> -o <case_dir>/record_out [-n ...] [-f ...]``.
 
     Returns the archive root ``<case_dir>/record_out/{cannsim,npusim}_<ts>_<label>/``.
@@ -120,8 +120,10 @@ def run_record(sw, wrapper_path: Path, case_dir: Path,
         *_cannsim_cmd(),
         "record",
         str(wrapper_path.resolve()),
-        "-s", sw.sim_soc_version,
-        "-o", str(record_out),
+        "-s",
+        sw.sim_soc_version,
+        "-o",
+        str(record_out),
     ]
     if getattr(sw, "sim_cores", None):
         cmd += ["-n", sw.sim_cores]
@@ -144,7 +146,9 @@ def run_record(sw, wrapper_path: Path, case_dir: Path,
         # captured stderr so a real record failure is distinguishable.
         logging.warning(
             "npusim record returned rc=%s (teardown crashes are expected); stderr tail:\n%s",
-            proc.returncode, (proc.stderr or "")[-2000:])
+            proc.returncode,
+            (proc.stderr or "")[-2000:],
+        )
     return _latest_record_dir(record_out, before)
 
 
@@ -197,8 +201,11 @@ def run_report(sw, export_dir: Path, output_dir: Optional[Path] = None) -> Optio
         logging.warning("npusim report failed: %s", exc)
         return None
     if proc.returncode != 0:
-        logging.warning("npusim report rc=%s; stdout tail:\n%s\nstderr tail:\n%s",
-                        proc.returncode, (proc.stdout or "")[-2000:],
-                        (proc.stderr or "")[-2000:])
+        logging.warning(
+            "npusim report rc=%s; stdout tail:\n%s\nstderr tail:\n%s",
+            proc.returncode,
+            (proc.stdout or "")[-2000:],
+            (proc.stderr or "")[-2000:],
+        )
         return None
     return out

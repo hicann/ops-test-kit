@@ -10,5 +10,6 @@
 """
 DSMI Related Objects Module
 """
-from . import dsmi_info
-from .dsmi_interface import DSMIInterface
+
+from . import dsmi_info as dsmi_info  # noqa: F401
+from .dsmi_interface import DSMIInterface as DSMIInterface  # noqa: F401

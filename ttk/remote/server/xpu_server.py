@@ -24,7 +24,6 @@ Full deployment guide (plain HTTP / mTLS / per-process / per-container):
 import argparse
 import base64
 import hashlib
-import importlib
 import json
 import logging
 import multiprocessing
@@ -55,7 +54,7 @@ HEARTBEAT_TIMEOUT_S = 600
 # distinct devices while serializing access to the same device. Initialized by
 # run_server. Kill-safe: parent-held around child -> never orphaned even if the
 # child crashes.
-_device_locks: dict = {}   # {device_id: threading.Lock()}
+_device_locks: dict = {}  # {device_id: threading.Lock()}
 
 
 def _init_device_locks(device_ids):
@@ -83,15 +82,13 @@ def _build_device_opts(handler, n):
     """
     if not handler.use_device:
         return {"device_id": "cpu"}
-    opts = {"device_id": 0}            # 容器内固定（executor 见 {torch_lib}:0）
+    opts = {"device_id": 0}  # 容器内固定（executor 见 {torch_lib}:0）
     if handler.sandbox == "docker":
         if not handler.profile.get("docker_args"):
-            return {"ok": False, "http_status": 500,
-                    "error": "sandbox=docker but profile missing docker_args"}
+            return {"ok": False, "http_status": 500, "error": "sandbox=docker but profile missing docker_args"}
         opts["docker_args"] = [a.format(device_id=n) for a in handler.profile["docker_args"]]
     else:
-        env_name = handler.profile.get("visible_env") or \
-            f"{handler.profile['torch_lib'].upper()}_VISIBLE_DEVICES"
+        env_name = handler.profile.get("visible_env") or f"{handler.profile['torch_lib'].upper()}_VISIBLE_DEVICES"
         opts["env"] = {env_name: str(n)}
     return opts
 
@@ -178,8 +175,7 @@ def _run_in_subprocess(kwargs: dict, deadline: float) -> dict:
     if proc.is_alive():
         proc.kill()
         proc.join(5)
-        return executor._err(500, f"request timed out after {deadline}s",
-                             api=executor._api_from_kwargs(kwargs))
+        return executor._err(500, f"request timed out after {deadline}s", api=executor._api_from_kwargs(kwargs))
     envelope = None
     if parent_conn.poll(0):
         try:
@@ -188,8 +184,9 @@ def _run_in_subprocess(kwargs: dict, deadline: float) -> dict:
             envelope = None
     parent_conn.close()
     if envelope is None:
-        return executor._err(500, f"child process exited with code {proc.exitcode}",
-                             api=executor._api_from_kwargs(kwargs))
+        return executor._err(
+            500, f"child process exited with code {proc.exitcode}", api=executor._api_from_kwargs(kwargs)
+        )
     return envelope
 
 
@@ -228,7 +225,8 @@ class TenantManager:
         now = time.time()
         with self._lock:
             expired = [
-                (tid, info["path"]) for tid, info in self._tenants.items()
+                (tid, info["path"])
+                for tid, info in self._tenants.items()
                 if now - info["last_heartbeat"] > HEARTBEAT_TIMEOUT_S
             ]
             for tid, _ in expired:
@@ -261,25 +259,24 @@ def _atomic_write_file(abs_path: str, content: bytes) -> None:
 
 
 class XpuRequestHandler(BaseHTTPRequestHandler):
-
     tenant_manager: TenantManager
     dry_run: bool = False
     device_count: int = 1
-    device_ids = ["cpu"]   # device=[ids]，CPU=["cpu"]；run_server 设置
+    device_ids = ["cpu"]  # device=[ids]，CPU=["cpu"]；run_server 设置
     _device_rr_counter: int = 0
     _device_rr_lock = threading.Lock()
     use_device: bool = False
-    data_gate = None                 # threading.BoundedSemaphore (backpressure)
-    provider: str = ""               # set by run_server() from config/detect
-    hardware: str = ""               # device_str format key; "" = auto-detect
-    profile: dict = {}               # hardware_config[role] segment; {} = cpu 兜底
-    hardware_config: dict = {}       # full hardware section from cfg
-    provider_framework: dict = {}    # provider→framework overrides
+    data_gate = None  # threading.BoundedSemaphore (backpressure)
+    provider: str = ""  # set by run_server() from config/detect
+    hardware: str = ""  # device_str format key; "" = auto-detect
+    profile: dict = {}  # hardware_config[role] segment; {} = cpu 兜底
+    hardware_config: dict = {}  # full hardware section from cfg
+    provider_framework: dict = {}  # provider→framework overrides
     frameworks: dict = {}
-    sync_base_dir: str = ""          # set by run_server() from config
-    tmp_root: str = ""               # set by run_server() from config
-    gate_wait_s: float = 1.0         # set by run_server() from config
-    run_deadline_s: int = 300        # set by run_server() from config
+    sync_base_dir: str = ""  # set by run_server() from config
+    tmp_root: str = ""  # set by run_server() from config
+    gate_wait_s: float = 1.0  # set by run_server() from config
+    run_deadline_s: int = 300  # set by run_server() from config
 
     def log_message(self, format, *args):
         logging.info(f"{self.client_address[0]} - {format % args}")
@@ -301,6 +298,7 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
     def _valid_tenant_id(tid):
         """Reject path-traversal / injection in tenant_id (flows into os.path.join)."""
         import re
+
         return bool(tid) and bool(re.fullmatch(r"[A-Za-z0-9._-]{1,64}", tid))
 
     def do_GET(self):
@@ -322,12 +320,15 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
             if getattr(self, "sandbox", "none") == "docker":
                 docker_images = getattr(self, "docker_images", {}) or {}
                 providers = list(docker_images.keys())
-            self._send_json(200, {
-                "status": "ok",
-                "device_count": self.device_count,
-                "hardware": self.hardware,
-                "providers": providers,
-            })
+            self._send_json(
+                200,
+                {
+                    "status": "ok",
+                    "device_count": self.device_count,
+                    "hardware": self.hardware,
+                    "providers": providers,
+                },
+            )
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -338,10 +339,13 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "invalid tenant_id"})
                 return
             cleaned = self.tenant_manager.cleanup(tenant_id)
-            self._send_json(200, {
-                "cleaned": cleaned,
-                "path": os.path.join(self.sync_base_dir, tenant_id),
-            })
+            self._send_json(
+                200,
+                {
+                    "cleaned": cleaned,
+                    "path": os.path.join(self.sync_base_dir, tenant_id),
+                },
+            )
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -414,11 +418,9 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
                 errors.append({"path": rel_path, "error": str(e)})
 
         if errors:
-            self._send_json(400, {"synced": synced, "skipped": skipped,
-                                  "errors": errors})
+            self._send_json(400, {"synced": synced, "skipped": skipped, "errors": errors})
         else:
-            self._send_json(200, {"synced": synced, "skipped": skipped,
-                                  "errors": errors})
+            self._send_json(200, {"synced": synced, "skipped": skipped, "errors": errors})
 
     def _device_rr_next(self) -> int:
         """Thread-safe RR counter increment. Returns previous value."""
@@ -447,8 +449,7 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         return device_ids[start]
 
     def _handle_run(self):
-        req_api = self._get_header("X-API", "") or \
-            self._get_header("X-Spec-Class", "") or None
+        req_api = self._get_header("X-API", "") or self._get_header("X-Spec-Class", "") or None
         parsed = self._parse_run_headers(req_api)
         if parsed is None:
             return
@@ -457,8 +458,7 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         gate_held = False
         if gate is not None:
             if not gate.acquire(timeout=self.gate_wait_s):
-                self._send_json(503, {"error": "server busy, retry"},
-                                env={"api": req_api})
+                self._send_json(503, {"error": "server busy, retry"}, env={"api": req_api})
                 return
             gate_held = True
         req_dir = tempfile.mkdtemp(prefix=f"req_{tenant_id}_", dir=self.tmp_root)
@@ -477,8 +477,7 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         """Parse and validate all /v1/run headers. Returns dict or None (error sent)."""
         tenant_id = self._get_header("X-Tenant-ID", "")
         if not self._valid_tenant_id(tenant_id):
-            self._send_json(400, {"error": "invalid or missing tenant_id"},
-                            env={"api": req_api})
+            self._send_json(400, {"error": "invalid or missing tenant_id"}, env={"api": req_api})
             return None
         mode = _parse_mode(self._get_header("X-Mode", "data"))
         exec_type = self._get_header("X-Execution-Type", "api")
@@ -487,14 +486,12 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         try:
             input_schema = json.loads(schema_raw)
         except json.JSONDecodeError:
-            self._send_json(400, {"error": "Invalid X-Input-Schema JSON"},
-                            env={"api": req_api})
+            self._send_json(400, {"error": "Invalid X-Input-Schema JSON"}, env={"api": req_api})
             return None
         try:
             input_count = int(self._get_header("X-Input-Count", "0"))
         except ValueError:
-            self._send_json(400, {"error": "Invalid X-Input-Count (not integer)"},
-                            env={"api": req_api})
+            self._send_json(400, {"error": "Invalid X-Input-Count (not integer)"}, env={"api": req_api})
             return None
         attrs_raw = self._get_header("X-Attrs", "{}")
         try:
@@ -508,39 +505,37 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
                 param_order = json.loads(param_order_raw)
             except json.JSONDecodeError:
                 param_order = None
-        return {"tenant_id": tenant_id, "mode": mode, "exec_type": exec_type,
-                "runtime": runtime, "input_schema": input_schema,
-                "input_count": input_count, "attrs": attrs,
-                "param_order": param_order}
+        return {
+            "tenant_id": tenant_id,
+            "mode": mode,
+            "exec_type": exec_type,
+            "runtime": runtime,
+            "input_schema": input_schema,
+            "input_count": input_count,
+            "attrs": attrs,
+            "param_order": param_order,
+        }
 
     def _dispatch_run(self, req_dir, req_api, parsed):
         """Build kwargs and dispatch to subprocess/container. Returns (result, provider, n)."""
         tmp_in = _receive_body_to_file(self, dir=req_dir)
-        logging.info("_handle_run: dry_run=%s body_size=%s",
-                     self.dry_run, os.path.getsize(tmp_in) if tmp_in else 0)
+        logging.info("_handle_run: dry_run=%s body_size=%s", self.dry_run, os.path.getsize(tmp_in) if tmp_in else 0)
         n = None
         provider = None
-        result = {"ok": False, "http_status": 500,
-                  "error": "internal error", "api": req_api}
+        result = {"ok": False, "http_status": 500, "error": "internal error", "api": req_api}
         try:
             if self.dry_run:
                 result = _dry_run_env(req_dir)
             else:
-                provider = get_framework(
-                    self._get_header("X-Provider", "torch"),
-                    self.provider_framework)
+                provider = get_framework(self._get_header("X-Provider", "torch"), self.provider_framework)
                 n = "cpu" if not self.use_device else self._assign_device()
                 opts = _build_device_opts(self, n)
                 if opts.get("ok") is False:
                     result = {**opts, "api": req_api}
                 else:
-                    _wait_device(provider, self.profile,
-                                 self.device_lost_retries,
-                                 self.device_lost_wait_s)
-                    kwargs = self._build_run_kwargs(
-                        req_dir, req_api, provider, parsed, tmp_in, opts)
-                    result = self._exec_run(
-                        kwargs, opts, req_api, provider)
+                    _wait_device(provider, self.profile, self.device_lost_retries, self.device_lost_wait_s)
+                    kwargs = self._build_run_kwargs(req_dir, req_api, provider, parsed, tmp_in, opts)
+                    result = self._exec_run(kwargs, opts, req_api, provider)
         finally:
             if n is not None and n != "cpu":
                 _device_locks[n].release()
@@ -549,19 +544,25 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
     def _build_run_kwargs(self, req_dir, req_api, provider, parsed, tmp_in, opts):
         kwargs = dict(
             tenant_sync_dir=os.path.join(self.sync_base_dir, parsed["tenant_id"]),
-            exec_type=parsed["exec_type"], provider=provider,
+            exec_type=parsed["exec_type"],
+            provider=provider,
             profile=self.profile,
             op_name=self._get_header("X-Op-Name", "") or None,
             op_type=self._get_header("X-Op-Type", "") or None,
             api=req_api,
             spec_module=self._get_header("X-Spec-Module", "") or None,
             spec_class=self._get_header("X-Spec-Class", "") or None,
-            mode=parsed["mode"], input_schema=parsed["input_schema"],
-            attrs=parsed["attrs"], tmp_in_path=tmp_in,
+            mode=parsed["mode"],
+            input_schema=parsed["input_schema"],
+            attrs=parsed["attrs"],
+            tmp_in_path=tmp_in,
             input_count=parsed["input_count"],
             device_id=opts["device_id"],
-            use_device=self.use_device, output_dir=req_dir,
-            runtime=parsed["runtime"], param_order=parsed["param_order"])
+            use_device=self.use_device,
+            output_dir=req_dir,
+            runtime=parsed["runtime"],
+            param_order=parsed["param_order"],
+        )
         if "env" in opts:
             kwargs["env"] = opts["env"]
         return kwargs
@@ -570,14 +571,21 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         if self.sandbox == "docker":
             image = self.docker_images.get(provider)
             if image is None:
-                return {"ok": False, "http_status": 500,
-                        "error": f"no docker image for provider {provider}",
-                        "api": req_api}
+                return {
+                    "ok": False,
+                    "http_status": 500,
+                    "error": f"no docker image for provider {provider}",
+                    "api": req_api,
+                }
             return _run_in_container(
-                kwargs, deadline=self.run_deadline_s, image=image,
-                memory=self.docker_memory, network=self.docker_network,
+                kwargs,
+                deadline=self.run_deadline_s,
+                image=image,
+                memory=self.docker_memory,
+                network=self.docker_network,
                 use_device=self.use_device,
-                docker_args=opts.get("docker_args") or [])
+                docker_args=opts.get("docker_args") or [],
+            )
         return _run_in_subprocess(kwargs, deadline=self.run_deadline_s)
 
     def _send_run_result(self, result, req_api, provider, n):
@@ -589,14 +597,15 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         if status >= 500:
             logging.error(
                 "_handle_run fail: status=%s api=%s provider=%s device=%s err=%s",
-                status, req_api, provider, n, result.get("error"))
+                status,
+                req_api,
+                provider,
+                n,
+                result.get("error"),
+            )
         else:
-            logging.warning("_handle_run client-err: status=%s api=%s err=%s",
-                            status, req_api, result.get("error"))
-        self._send_json(status,
-                        {"error": result.get("error"),
-                         "missing": result.get("missing")},
-                        env=result)
+            logging.warning("_handle_run client-err: status=%s api=%s err=%s", status, req_api, result.get("error"))
+        self._send_json(status, {"error": result.get("error"), "missing": result.get("missing")}, env=result)
 
     def _send_run_ok(self, env):
         output_path = env.get("output_path")
@@ -606,7 +615,7 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Output-Count", str(env.get("output_count", 0)))
         if has_body:
             self.send_header("X-Output-Shapes", json.dumps(env.get("shapes", [])))
-            self.send_header("X-Output-Schema", json.dumps(env.get("schema", [])))   # 替 X-Output-Dtypes
+            self.send_header("X-Output-Schema", json.dumps(env.get("schema", [])))  # 替 X-Output-Dtypes
         if env.get("perf") is not None:
             self.send_header("X-Perf", json.dumps(env["perf"]))
         if env.get("api"):
@@ -628,11 +637,16 @@ def _dry_run_env(req_dir):
     outs = [np.random.randn(4, 8).astype(np.float32)]
     path = os.path.join(req_dir, "out.npz")
     np.savez_compressed(path, **{f"a{i}": o for i, o in enumerate(outs)})
-    return {"ok": True, "http_status": 200, "output_path": path,
-            "output_count": len(outs),
-            "shapes": [list(o.shape) for o in outs],
-            "schema": [{"index": i, "dtype": str(o.dtype)} for i, o in enumerate(outs)],   # 替 dtypes
-            "perf": None, "api": None}
+    return {
+        "ok": True,
+        "http_status": 200,
+        "output_path": path,
+        "output_count": len(outs),
+        "shapes": [list(o.shape) for o in outs],
+        "schema": [{"index": i, "dtype": str(o.dtype)} for i, o in enumerate(outs)],  # 替 dtypes
+        "perf": None,
+        "api": None,
+    }
 
 
 def _heartbeat_watcher(tenant_manager: TenantManager):
@@ -656,11 +670,12 @@ def _detect_frameworks() -> dict:
     init + flood ~700 log lines and starve the HTTP handler.
     """
     import importlib.util
+
     providers = {}
     if importlib.util.find_spec("torch") is not None:
         providers["torch"] = True
     if importlib.util.find_spec("tensorflow") is not None:
-        providers["tf"] = True       # provider name; the import is 'tensorflow'
+        providers["tf"] = True  # provider name; the import is 'tensorflow'
     return providers
 
 
@@ -685,11 +700,11 @@ def _warn_max_concurrent(cfg, device_ids):
         logging.warning(
             f"max_concurrent ({cfg['max_concurrent']}) < device count ({device_count}); "
             f"data_gate caps total concurrency, {device_count - cfg['max_concurrent']} "
-            f"device(s) may idle")
+            f"device(s) may idle"
+        )
 
 
-def _apply_handler_config(handler, cfg, role, device_ids, use_device,
-                          dry_run, sync_base_dir, tmp_root):
+def _apply_handler_config(handler, cfg, role, device_ids, use_device, dry_run, sync_base_dir, tmp_root):
     """Populate XpuRequestHandler class-level config from cfg + runtime state."""
     handler.hardware = role
     handler.profile = cfg["hardware_config"].get(role, {})
@@ -714,13 +729,11 @@ def _apply_handler_config(handler, cfg, role, device_ids, use_device,
     handler.run_deadline_s = cfg["run_deadline_s"]
 
 
-def run_server(port: int, dry_run: bool = False, devices: str = None,
-               bind: str = "127.0.0.1", config_path: str = None):
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+def run_server(port: int, dry_run: bool = False, devices: str = None, bind: str = "127.0.0.1", config_path: str = None):
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     import sys
+
     try:
         cfg = load_server_config(config_path)
         bind = bind or cfg["bind"]
@@ -738,11 +751,9 @@ def run_server(port: int, dry_run: bool = False, devices: str = None,
     os.makedirs(SYNC_BASE_DIR, exist_ok=True)
     os.makedirs(TMP_ROOT, exist_ok=True)
 
-    _apply_handler_config(XpuRequestHandler, cfg, role, device_ids,
-                          use_device, dry_run, SYNC_BASE_DIR, TMP_ROOT)
+    _apply_handler_config(XpuRequestHandler, cfg, role, device_ids, use_device, dry_run, SYNC_BASE_DIR, TMP_ROOT)
 
-    watcher = threading.Thread(target=_heartbeat_watcher,
-                               args=(XpuRequestHandler.tenant_manager,), daemon=True)
+    watcher = threading.Thread(target=_heartbeat_watcher, args=(XpuRequestHandler.tenant_manager,), daemon=True)
     watcher.start()
 
     class _Server(ThreadingHTTPServer):
@@ -763,6 +774,7 @@ def run_server(port: int, dry_run: bool = False, devices: str = None,
 def _apply_tls(server, cfg):
     """Wrap server socket with mTLS if enabled, else exit on misconfig."""
     import sys
+
     if not cfg["tls_enabled"]:
         return
     tls_ca = cfg["tls_ca_cert"]
@@ -781,19 +793,13 @@ def _apply_tls(server, cfg):
 
 def main():
     parser = argparse.ArgumentParser(description="TTK XPU Remote Execution Server")
-    parser.add_argument("--port", type=int, default=None,
-                        help="Listen port (default: from config yaml or 9090)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Dry-run mode: return random outputs")
-    parser.add_argument("--bind", default="",
-                        help="Bind address (default: from config or 127.0.0.1)")
-    parser.add_argument("--config", default=None,
-                        help="Path to xpu_server.yaml")
-    parser.add_argument("--devices", default=None,
-                        help="Device IDs (e.g. 0,1) or 'cpu'")
+    parser.add_argument("--port", type=int, default=None, help="Listen port (default: from config yaml or 9090)")
+    parser.add_argument("--dry-run", action="store_true", help="Dry-run mode: return random outputs")
+    parser.add_argument("--bind", default="", help="Bind address (default: from config or 127.0.0.1)")
+    parser.add_argument("--config", default=None, help="Path to xpu_server.yaml")
+    parser.add_argument("--devices", default=None, help="Device IDs (e.g. 0,1) or 'cpu'")
     args = parser.parse_args()
-    run_server(args.port, dry_run=args.dry_run, devices=args.devices,
-               bind=args.bind, config_path=args.config)
+    run_server(args.port, dry_run=args.dry_run, devices=args.devices, bind=args.bind, config_path=args.config)
 
 
 if __name__ == "__main__":

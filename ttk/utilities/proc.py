@@ -11,29 +11,38 @@
 Process Related Utilities
 """
 
-
-__all__ = ["set_process_name", "get_process_name", "is_main_process",
-           "set_thread_name", "process_exists", "waiting_for_memory",
-           "append_ld_library_path", "signal_registered",
-           "cpu_count", "insert_env_path", "add_exec_permission",
-           "get_ubuntu_main_version", "insert_python_path",
-           "msdebug_runtime_injection_enabled", "kernel_debug_compile_enabled",
-           ]
+__all__ = [
+    "set_process_name",
+    "get_process_name",
+    "is_main_process",
+    "set_thread_name",
+    "process_exists",
+    "waiting_for_memory",
+    "append_ld_library_path",
+    "signal_registered",
+    "cpu_count",
+    "insert_env_path",
+    "add_exec_permission",
+    "get_ubuntu_main_version",
+    "insert_python_path",
+    "msdebug_runtime_injection_enabled",
+    "kernel_debug_compile_enabled",
+]
 
 
 # Standard Packages
+import multiprocessing
 import os
 import pathlib
 import re
 import shutil
 import stat
 import subprocess
+import threading
 import time
 from typing import Union
 
 import psutil
-import threading
-import multiprocessing
 
 
 def set_process_name(name: str = "MP"):
@@ -52,7 +61,7 @@ def set_thread_name(name: str = "MT"):
 
 
 def is_main_process() -> bool:
-    return os.getpid() == int(os.getenv('TTK_PARENT_PID', "0"))
+    return os.getpid() == int(os.getenv("TTK_PARENT_PID", "0"))
 
 
 def process_exists(pid: int):
@@ -62,20 +71,25 @@ def process_exists(pid: int):
     try:
         os.kill(pid, 0)
         return True
-    except:
+    except Exception:
         return False
 
 
 def waiting_for_memory():
     import logging
+
     GB = 1024 * 1024 * 1024
     print_once = False
-    while (psutil.virtual_memory().available <= psutil.virtual_memory().total * 0.5 and
-            psutil.virtual_memory().available <= 128 * GB):
+    while (
+        psutil.virtual_memory().available <= psutil.virtual_memory().total * 0.5
+        and psutil.virtual_memory().available <= 128 * GB
+    ):
         if not print_once:
-            logging.warning(f"Task paused because of insufficient memory, "
-                            f"available: {psutil.virtual_memory().available / GB} GB, "
-                            f"total: {psutil.virtual_memory().total / GB} GB")
+            logging.warning(
+                f"Task paused because of insufficient memory, "
+                f"available: {psutil.virtual_memory().available / GB} GB, "
+                f"total: {psutil.virtual_memory().total / GB} GB"
+            )
             print_once = True
         time.sleep(1)
         if os.path.exists("/tmp/TTK_FORCE_MEMORY_OVERRIDE"):
@@ -84,8 +98,8 @@ def waiting_for_memory():
 
 
 def insert_env_xpath(path: Union[pathlib.Path, str], env_name):
-    env_xpath = os.getenv(env_name, '')
-    lists = env_xpath.split(':')
+    env_xpath = os.getenv(env_name, "")
+    lists = env_xpath.split(":")
     if isinstance(path, str):
         path = pathlib.Path(path)
     abs_path = path.resolve()
@@ -94,15 +108,15 @@ def insert_env_xpath(path: Union[pathlib.Path, str], env_name):
 
 
 def append_ld_library_path(path: Union[pathlib.Path, str]):
-    insert_env_xpath(path, 'LD_LIBRARY_PATH')
+    insert_env_xpath(path, "LD_LIBRARY_PATH")
 
 
 def insert_env_path(path: Union[pathlib.Path, str]):
-    insert_env_xpath(path, 'PATH')
+    insert_env_xpath(path, "PATH")
 
 
 def insert_python_path(path: Union[pathlib.Path, str]):
-    insert_env_xpath(path, 'PYTHONPATH')
+    insert_env_xpath(path, "PYTHONPATH")
 
 
 def add_exec_permission(file_path):
@@ -120,7 +134,7 @@ def signal_registered(signum: int) -> bool:
         return False
 
     signal_data = {}
-    with open(status_file, "r") as f:
+    with open(status_file) as f:
         for line in f:
             for field in signal_fields:
                 if line.startswith(field + ":"):
@@ -141,17 +155,15 @@ def cpu_count() -> int:
 
 
 def get_ubuntu_main_version_via_lsb_release():
-    if shutil.which('lsb_release') is None:
+    if shutil.which("lsb_release") is None:
         return None
 
     try:
-        result = subprocess.run(['lsb_release', '-r'],
-                                capture_output=True, text=True,
-                                shell=False)
+        result = subprocess.run(["lsb_release", "-r"], capture_output=True, text=True, shell=False)
         if result.returncode == 0:
             # Release:	18.04
             version_str = result.stdout.strip()
-            match = re.search(r'(\d+)\.\d+', version_str)
+            match = re.search(r"(\d+)\.\d+", version_str)
             if match:
                 return int(match.group(1))
     except Exception:
@@ -160,16 +172,13 @@ def get_ubuntu_main_version_via_lsb_release():
 
 
 def get_ubuntu_main_version_via_etc_files():
-    etc_files = ['/etc/os-release', '/etc/lsb-release', '/usr/lib/os-release']
+    etc_files = ["/etc/os-release", "/etc/lsb-release", "/usr/lib/os-release"]
     for file_path in etc_files:
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path) as f:
                 content = f.read()
-                if 'ubuntu' in content.lower():
-                    patterns = [
-                        r'VERSION_ID\s*=\s*"(\d+)\.\d+"',
-                        r'DISTRIB_RELEASE\s*=\s*(\d+)\.\d+'
-                    ]
+                if "ubuntu" in content.lower():
+                    patterns = [r'VERSION_ID\s*=\s*"(\d+)\.\d+"', r"DISTRIB_RELEASE\s*=\s*(\d+)\.\d+"]
                     for pattern in patterns:
                         match = re.search(pattern, content, re.IGNORECASE)
                         if match:
@@ -207,10 +216,7 @@ def msdebug_runtime_injection_enabled() -> bool:
 def _msdebug_runtime_stub_preloaded() -> bool:
     """Return whether msdebug's runtime interposition library is preloaded."""
     preload = os.getenv("LD_PRELOAD", "")
-    return any(
-        os.path.basename(path) == "libruntime_stub.so"
-        for path in preload.replace(":", " ").split()
-    )
+    return any(os.path.basename(path) == "libruntime_stub.so" for path in preload.replace(":", " ").split())
 
 
 def kernel_debug_compile_enabled() -> bool:

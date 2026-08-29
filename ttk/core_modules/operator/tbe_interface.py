@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -12,19 +11,17 @@
 Tbe Interface
 """
 
-
 __all__ = ["Opc"]
 
 
 # Standard Packages
-from abc import ABCMeta, abstractmethod
-from importlib import util as importlib_util
 import logging
 import os
+from abc import ABCMeta, abstractmethod
 from typing import Optional
-import subprocess
+
 # Third-Party Packages
-from ...utilities import get_global_storage, Singleton
+from ...utilities import Singleton, get_global_storage
 from ...utilities.platform import get_npu_hw_info
 
 
@@ -42,56 +39,42 @@ class NullApiConfig:
 
 class IOpc(metaclass=ABCMeta):
     @abstractmethod
-    def is_initialized(self) -> bool:
-        ...
+    def is_initialized(self) -> bool: ...
 
     @abstractmethod
-    def set_compile_soc_info(self, soc_version,
-                             core_type="AiCore"):
-        ...
+    def set_compile_soc_info(self, soc_version, core_type="AiCore"): ...
 
     @abstractmethod
-    def set_platform_info_res(self, device_id,
-                              res: dict):
-        ...
+    def set_platform_info_res(self, device_id, res: dict): ...
 
     @abstractmethod
-    def get_soc_spec(self, key: str):
-        ...
+    def get_soc_spec(self, key: str): ...
 
     @abstractmethod
-    def get_context(self):
-        ...
+    def get_context(self): ...
 
     @abstractmethod
-    def get_compile_info(self):
-        ...
+    def get_compile_info(self): ...
 
     @abstractmethod
-    def get_param_generalization(self, op_type: str):
-        ...
+    def get_param_generalization(self, op_type: str): ...
 
     @abstractmethod
-    def do_op_tiling(self, *args, **kwargs):
-        ...
+    def do_op_tiling(self, *args, **kwargs): ...
 
     @abstractmethod
-    def build_config(self, **kwargs):
-        ...
+    def build_config(self, **kwargs): ...
 
     @abstractmethod
-    def get_tiling_op_type(self):
-        ...
+    def get_tiling_op_type(self): ...
 
     @property
     @abstractmethod
-    def op_context(self):
-        ...
+    def op_context(self): ...
 
     @property
     @abstractmethod
-    def op_info(self):
-        ...
+    def op_info(self): ...
 
     @property
     def api_config(self):
@@ -110,7 +93,7 @@ class TbeOpc(IOpc):
         self._initialized = False
         try:
             self._tbe = __import__("tbe")
-            logging.debug("Using tbe module from %s" % self._tbe.__file__)
+            logging.debug(f"Using tbe module from {self._tbe.__file__}")
         except ModuleNotFoundError as e:
             logging.info(f"Import `tbe` failed. Maybe it has been removed: {e}")
         else:
@@ -138,8 +121,7 @@ class TbeOpc(IOpc):
         return self._tbe.dsl.base.operation.get_compile_info()
 
     def set_compile_soc_info(self, soc_version, core_type="AiCore"):
-        self._tbe.common.platform.platform_info.set_current_compile_soc_info(soc_version,
-                                                                             core_type)
+        self._tbe.common.platform.platform_info.set_current_compile_soc_info(soc_version, core_type)
 
     def get_param_generalization(self, op_type: str):
         return self._tbe.common.register.get_param_generalization(op_type)
@@ -172,15 +154,13 @@ class AscOpc(IOpc):
         self._initialized = False
         try:
             self._asc = __import__("asc_op_compile_base")
-            logging.debug("Using asc_op_compile_base module from %s" % self._asc.__file__)
+            logging.debug(f"Using asc_op_compile_base module from {self._asc.__file__}")
         except ModuleNotFoundError as e:
-            logging.info(f"Import `asc_op_compile_base` failed. "
-                         f"Maybe it is not activated: {e}")
+            logging.info(f"Import `asc_op_compile_base` failed. Maybe it is not activated: {e}")
         else:
             self._initialized = True
             try:
-                self._asc_common = __import__("asc_op_compile_base.common",
-                                              fromlist=["register"])
+                self._asc_common = __import__("asc_op_compile_base.common", fromlist=["register"])
             except BaseException as e:
                 logging.critical(f"Module `AscOpc` init failed: {e}")
                 raise e
@@ -189,8 +169,7 @@ class AscOpc(IOpc):
         return self._initialized
 
     def set_compile_soc_info(self, soc_version, core_type="AiCore"):
-        self._asc.common.platform.platform_info.set_current_compile_soc_info(soc_version,
-                                                                             core_type)
+        self._asc.common.platform.platform_info.set_current_compile_soc_info(soc_version, core_type)
 
     def set_platform_info_res(self, device_id, res: dict):
         self._asc.common.platform.platform_info.set_platform_info_res(device_id, res)
@@ -214,7 +193,7 @@ class AscOpc(IOpc):
         return self._asc.common.buildcfg.build_config(**kwargs)
 
     def get_tiling_op_type(self):
-        return self.get_context().get_addition('op_name')
+        return self.get_context().get_addition("op_name")
 
     @property
     def op_context(self):
@@ -226,7 +205,7 @@ class AscOpc(IOpc):
 
 
 class Opc(metaclass=Singleton):
-    OpcImplement: dict = {'tbe': TbeOpc, 'asc': AscOpc}
+    OpcImplement: dict = {"tbe": TbeOpc, "asc": AscOpc}
 
     def __init__(self):
         self._core_type = None
@@ -242,9 +221,17 @@ class Opc(metaclass=Singleton):
             raise e
 
     def __getattribute__(self, item):
-        if item in ("get_compile_info", "get_tiling_op_type",
-                    "get_param_generalization", "get_soc_spec", "do_op_tiling",
-                    "build_config", "op_context", "op_info", "api_config"):
+        if item in (
+            "get_compile_info",
+            "get_tiling_op_type",
+            "get_param_generalization",
+            "get_soc_spec",
+            "do_op_tiling",
+            "build_config",
+            "op_context",
+            "op_info",
+            "api_config",
+        ):
             return getattr(self._opc, item)
         else:
             return super().__getattribute__(item)
@@ -258,8 +245,7 @@ class Opc(metaclass=Singleton):
         self._core_type = val or "AiCore"
         self._core_type = self._core_type or "AiCore"
         dev_plat = get_global_storage().dev_plat
-        logging.debug(f"Setting soc version to "
-                      f"{dev_plat} for {self._core_type}")
+        logging.debug(f"Setting soc version to {dev_plat} for {self._core_type}")
         self._all_opc_invoke("set_compile_soc_info", dev_plat, self._core_type)
 
     def switch_opc(self, opc_type: str):
@@ -275,9 +261,10 @@ class Opc(metaclass=Singleton):
             if os.path.exists(obj_file):
                 os.remove(obj_file)
             full_soc_version = opc.get_soc_spec("FULL_SOC_VERSION")
-            core_type = 'VectorCore' if get_npu_hw_info(full_soc_version).get('cv_split') else 'AiCore'
+            core_type = "VectorCore" if get_npu_hw_info(full_soc_version).get("cv_split") else "AiCore"
             clean_val = switches.force_clear_ub
             from .helper_kernels import clear_ub
+
             with opc.op_context.OpContext("pre-static") as cxt:
                 tensor = {"shape": (1,), "range": ((1, None),), "dtype": clean_val.dtype.name, "format": "ND"}
                 attrs = {"full_soc_version": full_soc_version, "core_type": core_type, "kernel_name": "clear_ub"}
@@ -296,10 +283,10 @@ class Opc(metaclass=Singleton):
                 cxt.add_addition("op_name", "TestClearUB")
                 test_clear_ub(tensor, **attrs)
             """
-            if not os.path.exists(obj_file) \
-                    or not os.path.exists(os.path.join(switches.kernel_meta, "clear_ub.json")):
-                raise RuntimeError(f"Compile clear_ub failed. "
-                                   f"kernel or json file does not exist in {switches.kernel_meta}")
+            if not os.path.exists(obj_file) or not os.path.exists(os.path.join(switches.kernel_meta, "clear_ub.json")):
+                raise RuntimeError(
+                    f"Compile clear_ub failed. kernel or json file does not exist in {switches.kernel_meta}"
+                )
 
     def compile_l1_clear(self):
         switches = get_global_storage()
@@ -311,6 +298,7 @@ class Opc(metaclass=Singleton):
             full_soc_version = opc.get_soc_spec("FULL_SOC_VERSION")
             clean_val = switches.force_clear_l1
             from .helper_kernels import clear_l1
+
             with opc.op_context.OpContext("pre-static") as cxt:
                 tensor = {"shape": (1,), "range": ((1, None),), "dtype": clean_val.dtype.name, "format": "ND"}
                 attrs = {"full_soc_version": full_soc_version, "kernel_name": "clear_l1"}
@@ -318,10 +306,10 @@ class Opc(metaclass=Singleton):
                 cxt.add_op_info(op_info)
                 cxt.add_addition("op_name", "ClearL1")
                 clear_l1(tensor, **attrs)
-            if not os.path.exists(obj_file) \
-                    or not os.path.exists(os.path.join(switches.kernel_meta, "clear_l1.json")):
-                raise RuntimeError(f"Compile clear_l1 failed. "
-                                   f"kernel or json file does not exist in {switches.kernel_meta}")
+            if not os.path.exists(obj_file) or not os.path.exists(os.path.join(switches.kernel_meta, "clear_l1.json")):
+                raise RuntimeError(
+                    f"Compile clear_l1 failed. kernel or json file does not exist in {switches.kernel_meta}"
+                )
 
     def compile_warmup_kernel(self):
         switches = get_global_storage()
@@ -332,6 +320,7 @@ class Opc(metaclass=Singleton):
                 os.remove(obj_file)
             full_soc_version = opc.get_soc_spec("FULL_SOC_VERSION")
             from .helper_kernels import warmup
+
             with opc.op_context.OpContext("pre-static") as cxt:
                 build_cfg = {"op_debug_config": "dump_cce"}
                 with opc.build_config(**build_cfg):
@@ -340,10 +329,10 @@ class Opc(metaclass=Singleton):
                     cxt.add_op_info(op_info)
                     cxt.add_addition("op_name", "Warmup")
                     warmup(**attrs)
-            if not os.path.exists(obj_file) \
-                    or not os.path.exists(os.path.join(switches.kernel_meta, "warmup.json")):
-                raise RuntimeError(f"Compile warmup kernel failed. "
-                                   f"kernel or json file does not exist in {switches.kernel_meta}")
+            if not os.path.exists(obj_file) or not os.path.exists(os.path.join(switches.kernel_meta, "warmup.json")):
+                raise RuntimeError(
+                    f"Compile warmup kernel failed. kernel or json file does not exist in {switches.kernel_meta}"
+                )
 
     def _get_any_opc(self) -> Optional[IOpc]:
         for k in self.OpcImplement.keys():

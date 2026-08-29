@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -10,19 +9,25 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Standard Packages
-import os
 import json
 import logging
+import os
 import pathlib
 from typing import NoReturn
+
+from .....utilities import (
+    KernelJsonInfo,
+    StaticCompilationResult,
+    compilation_result,
+    get_global_storage,
+    process_kernel_string,
+)
+from ....operator.op_interface import CaseNotSupportedError, OperatorInterface, OperatorNotFoundError
+from ....tbe_multiprocessing import get_process_context
+
 # Third-Party Packages
 from ....testcase_manager import TestcaseOp
-from .....utilities import get_global_storage, process_kernel_string, compilation_result
-from .....utilities import StaticCompilationResult, KernelJsonInfo
-from ....operator.op_interface import OperatorInterface, CaseNotSupportedError, OperatorNotFoundError
-from ....tbe_multiprocessing import get_process_context
-from .common import normalize_mode
-from .common import CceManualCompile
+from .common import CceManualCompile, normalize_mode
 
 
 def static_compilation(testcase: TestcaseOp, mode_name: str = "Cst"):
@@ -58,7 +63,7 @@ def static_compilation(testcase: TestcaseOp, mode_name: str = "Cst"):
             get_process_context().notify_status(f"On{mode_name}ManualCompilation")
             # Find stored compile info
             cst_manual_compile(result)
-        logging.debug("Static kernel compilation id %s complete" % kernel_name)
+        logging.debug(f"Static kernel compilation id {kernel_name} complete")
     else:
         result.all_set(f"{mode_name.upper()}_OFF")
     return result
@@ -72,23 +77,27 @@ def cst_manual_compile(result: StaticCompilationResult) -> NoReturn:
     else:
         with open(compile_info_path, encoding="UTF-8") as json_file:
             json_data = json.loads(json_file.read())
-    kernel_dir = json_data.get('kernel_dir', kernel_meta) or kernel_meta
-    kernel_name = json_data.get('kernel_name', result.kernel_name) or result.kernel_name
+    kernel_dir = json_data.get("kernel_dir", kernel_meta) or kernel_meta
+    kernel_name = json_data.get("kernel_name", result.kernel_name) or result.kernel_name
     kernel_json_info = KernelJsonInfo.from_file(pathlib.Path(kernel_dir, f"{kernel_name}.json"))
     # Call ccec
     kernel_path = pathlib.Path(kernel_dir, kernel_name)
-    cce_compile_result = CceManualCompile.compile(str(kernel_path), kernel_json_info.kernel_name,
-                                                  get_global_storage().dev_plat,
-                                                  kernel_json_info.core_type,
-                                                  kernel_json_info.task_ration)
+    cce_compile_result = CceManualCompile.compile(
+        str(kernel_path),
+        kernel_json_info.kernel_name,
+        get_global_storage().dev_plat,
+        kernel_json_info.core_type,
+        kernel_json_info.task_ration,
+    )
     # set compilation result
-    result.standard_set(cce_compile_result, "MANUAL_COMPILE",
-                        json_data.get("func_params", ()),
-                        kernel_json_info, result.kernel_name)
+    result.standard_set(
+        cce_compile_result, "MANUAL_COMPILE", json_data.get("func_params", ()), kernel_json_info, result.kernel_name
+    )
 
 
-def cst_compile(interface: OperatorInterface, testcase: TestcaseOp,
-                result: StaticCompilationResult, mode: str) -> NoReturn:
+def cst_compile(
+    interface: OperatorInterface, testcase: TestcaseOp, result: StaticCompilationResult, mode: str
+) -> NoReturn:
     """
     Wrapper function for op_interface const operator compilation sequence
     """
@@ -108,10 +117,8 @@ def cst_compile(interface: OperatorInterface, testcase: TestcaseOp,
                 logging.error(f"{mode} operator {kernel_name} build artifacts not found")
                 result.all_set(f"{mode.upper()}_OPERATOR_BUILD_LOST")
             else:
-                logging.debug(f"Compilation of %s kernel %s success" % (mode, kernel_name))
-                result.standard_set("SUCC", compile_time,
-                                    func_params,
-                                    kernel_json_info, kernel_name)
+                logging.debug(f"Compilation of {mode} kernel {kernel_name} success")
+                result.standard_set("SUCC", compile_time, func_params, kernel_json_info, kernel_name)
         else:
             logging.warning(f"{mode} operator {op_name} not found")
             result.all_set(f"{mode.upper()}_OPERATOR_NOT_FOUND")
@@ -124,6 +131,6 @@ def cst_compile(interface: OperatorInterface, testcase: TestcaseOp,
     except OperatorNotFoundError:
         logging.warning(f"{mode} operator {op_name} not found")
         result.all_set(f"{mode.upper()}_OPERATOR_NOT_FOUND")
-    except:
+    except Exception:
         logging.exception(f"Compilation of {mode} operator {kernel_name} failed")
         result.all_set(f"{mode.upper()}_COMPILE_FAILURE")

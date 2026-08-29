@@ -14,7 +14,7 @@ across testcases in the same group.
 
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -106,28 +106,30 @@ def compare_batch_consistency(
             else:
                 sliced_md5 = "NO_OUTPUT"
 
-            member_infos.append({
-                "testcase": testcase.testcase_name,
-                "md5": sliced_md5,
-            })
+            member_infos.append(
+                {
+                    "testcase": testcase.testcase_name,
+                    "md5": sliced_md5,
+                }
+            )
             md5_set.add(sliced_md5)
 
         passed = len(md5_set) == 1
         if not passed:
             logging.error(
-                f"Batch consistency FAIL for group {bcid}: "
-                f"{[m['testcase'] + '=' + m['md5'][:8] for m in member_infos]}"
+                f"Batch consistency FAIL for group {bcid}: {[m['testcase'] + '=' + m['md5'][:8] for m in member_infos]}"
             )
         else:
             logging.info(
-                f"Batch consistency PASS for group {bcid}: "
-                f"{len(member_infos)} testcases, MD5={list(md5_set)[0][:8]}"
+                f"Batch consistency PASS for group {bcid}: {len(member_infos)} testcases, MD5={list(md5_set)[0][:8]}"
             )
 
-        results.append({
-            "batch_consistency_id": str(bcid),
-            "members": member_infos,
-            "pass": passed,
-        })
+        results.append(
+            {
+                "batch_consistency_id": str(bcid),
+                "members": member_infos,
+                "pass": passed,
+            }
+        )
 
     return results

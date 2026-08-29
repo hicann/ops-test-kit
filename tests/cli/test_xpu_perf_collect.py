@@ -51,6 +51,7 @@ def test_xpu_perf_mapped_to_switches():
 
 # -- _xpu_inputs 数据选择 ----------------------------------------------------
 
+
 def test_xpu_inputs_prefers_original_shape_arrays():
     """XPU 优先喂 logical ori-shape 数组，而非 NPU run-format 数组（如 NC1HWC0）。"""
     from ttk.core_modules.npu.op.profiling import _xpu_inputs
@@ -69,6 +70,7 @@ def test_xpu_inputs_falls_back_to_input_arrays():
 
 # -- _xpu_mode 位运算 --------------------------------------------------------
 
+
 def test_xpu_mode_bitwise_or():
     """_xpu_mode = xpu_perf(PERF) | need_data(DATA)；全 False 返回 0。"""
     from ttk.core_modules.npu.op import profiling as prof
@@ -86,6 +88,7 @@ def test_xpu_mode_bitwise_or():
 
 
 # -- validate_xpu_perf_precondition 前置校验 ---------------------------------
+
 
 def test_validate_xpu_perf_precondition_three_branches(monkeypatch):
     """前置校验三分支：无远端+开启→抛错；有远端+开启→不抛；未开启→跳过。"""
@@ -111,6 +114,7 @@ def test_validate_xpu_perf_precondition_three_branches(monkeypatch):
 
 # -- _extract_third_party fail-closed ---------------------------------------
 
+
 def test_extract_third_party_fail_closed():
     """_extract_third_party fail-closed：非 PASS / 无 outputs / 无 priority → None。"""
     from ttk.core_modules.npu.op import profiling as prof
@@ -128,6 +132,7 @@ def test_extract_third_party_fail_closed():
 
 
 # -- profile_process XPU gate 回归看护 ---------------------------------------
+
 
 # _fake_do_xpu 被调用时抛此异常，短路 profile_process 证明 gate 已开。
 class _XpuCalled(Exception):
@@ -167,9 +172,14 @@ def test_profile_process_gate_open_and_shut(monkeypatch):
 
     # 隔离 gate 上游：所有 parse/gen 步骤为 no-op
     monkeypatch.setattr(prof, "get_global_storage", lambda: sw)
-    monkeypatch.setattr(prof, "get_process_context", lambda: SimpleNamespace(
-        change_name=lambda _name: None, notify_status=lambda _s: None,
-    ))
+    monkeypatch.setattr(
+        prof,
+        "get_process_context",
+        lambda: SimpleNamespace(
+            change_name=lambda _name: None,
+            notify_status=lambda _s: None,
+        ),
+    )
     monkeypatch.setattr(prof, "__parse_manual_params", lambda _ctx: None)
     monkeypatch.setattr(prof, "__parse_dynamic_tiling_data", lambda _ctx: None)
     monkeypatch.setattr(prof, "__parse_binary_tiling_data", lambda _ctx: None)
@@ -178,9 +188,11 @@ def test_profile_process_gate_open_and_shut(monkeypatch):
     # resolve 路径：tolerance None → resolve 返回 [] → need_3party=False
     monkeypatch.setattr(prof, "get_spec_attr", lambda *_a, **_k: None)
     import ttk.core_modules.comparison.resolve as resolve_mod
+
     monkeypatch.setattr(resolve_mod, "resolve_tolerance", lambda *_a, **_k: [])
     # clear_error_manager 在 profile_process 内 lazy import
     import ttk.core_modules.npu.error_cleaner as ec
+
     monkeypatch.setattr(ec, "clear_error_manager", lambda: None)
 
     # 记录 _do_xpu_profiling 调用；OPEN 时抛异常短路

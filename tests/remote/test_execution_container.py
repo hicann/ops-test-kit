@@ -36,8 +36,7 @@ class TestMatchParamsV1:
                 id="single_tensors",
             ),
             pytest.param(
-                [{"name": "x", "index": 0}, {"name": "z", "index": None},
-                 {"name": "y", "index": 1}],
+                [{"name": "x", "index": 0}, {"name": "z", "index": None}, {"name": "y", "index": 1}],
                 [[1.0], [2.0]],
                 {"x": 0, "z": None, "y": 1},
                 id="none_optional",
@@ -61,10 +60,12 @@ class TestBindParams:
     @staticmethod
     def test_required_param_missing_raises_with_leftover():
         """必填参数缺失时不得贪婪绑定未消费项(否则静默绑错值)。"""
+
         class Impl:
             @staticmethod
             def __call__(x, scale):
                 return (x, scale)
+
         # 'scale' 非 input/attr; 'alpha' 是未消费项, 不得被贪婪绑定给 'scale'。
         with pytest.raises(UnknownParamError):
             bind_params(Impl.__call__, {"x": 1, "alpha": 0.5})

@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """API 解析与信封测试：覆盖 _resolve_3party_api、_aclnn_resolve 及 _ok/_err 信封的 api 字段。"""
+
 from ttk.remote.server.executor import _resolve_3party_api
 
 

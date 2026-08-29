@@ -2,12 +2,11 @@
 
 import ast
 import sys
+
 import pytest
 
-from ttk.test_spec.manager import TestSpecManager
 from ttk.test_spec.loader import SpecLoader, _snake_to_pascal
-from ttk.test_spec.validator import validate
-
+from ttk.test_spec.manager import TestSpecManager
 
 EXAMPLES_DIR = "ttk/test_spec/examples"
 
@@ -138,13 +137,11 @@ class TestManagerValidation:
         """First load of an invalid spec triggers validate → raises (fail-fast)."""
         import tempfile
         from pathlib import Path
+
         from ttk.test_spec import InvalidSpecError
 
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "bad.py").write_text(
-                'class BadSpec:\n    golden = 123\n'
-                '__spec__ = {"bad_op": "BadSpec"}\n'
-            )
+            (Path(d) / "bad.py").write_text('class BadSpec:\n    golden = 123\n__spec__ = {"bad_op": "BadSpec"}\n')
             mgr = TestSpecManager((d,))
             with pytest.raises(InvalidSpecError):
                 mgr.load("bad_op")
@@ -185,10 +182,10 @@ class TestSingleFilePluginPath:
         with tempfile.TemporaryDirectory() as d:
             spec_file = Path(d) / "my_op.py"
             spec_file.write_text(
-                'import numpy\n'
-                'class MyOpTestSpec:\n'
-                '    def golden(x, **kwargs):\n'
-                '        return [numpy.abs(x)]\n'
+                "import numpy\n"
+                "class MyOpTestSpec:\n"
+                "    def golden(x, **kwargs):\n"
+                "        return [numpy.abs(x)]\n"
                 '__spec__ = {"my_op": "MyOpTestSpec"}\n'
             )
             loader = SpecLoader([str(spec_file)])
@@ -204,10 +201,10 @@ class TestSingleFilePluginPath:
         with tempfile.TemporaryDirectory() as d:
             spec_file = Path(d) / "relu.py"
             spec_file.write_text(
-                'import numpy\n'
-                'class ReluTestSpec:\n'
-                '    def golden(x, **kwargs):\n'
-                '        return [numpy.maximum(x, 0)]\n'
+                "import numpy\n"
+                "class ReluTestSpec:\n"
+                "    def golden(x, **kwargs):\n"
+                "        return [numpy.maximum(x, 0)]\n"
             )
             loader = SpecLoader([str(spec_file)])
             cls = loader.load("relu")
@@ -222,18 +219,18 @@ class TestSingleFilePluginPath:
         with tempfile.TemporaryDirectory() as d:
             d_path = Path(d)
             (d_path / "dir_spec.py").write_text(
-                'import numpy\n'
-                'class DirOpTestSpec:\n'
-                '    def golden(x, **kwargs):\n'
-                '        return [x]\n'
+                "import numpy\n"
+                "class DirOpTestSpec:\n"
+                "    def golden(x, **kwargs):\n"
+                "        return [x]\n"
                 '__spec__ = {"dir_op": "DirOpTestSpec"}\n'
             )
             file_spec = d_path / "file_spec.py"
             file_spec.write_text(
-                'import numpy\n'
-                'class FileOpTestSpec:\n'
-                '    def golden(x, **kwargs):\n'
-                '        return [x]\n'
+                "import numpy\n"
+                "class FileOpTestSpec:\n"
+                "    def golden(x, **kwargs):\n"
+                "        return [x]\n"
                 '__spec__ = {"file_op": "FileOpTestSpec"}\n'
             )
             loader = SpecLoader([str(d_path), str(file_spec)])
@@ -285,12 +282,14 @@ class TestValidateClassExclusion:
 
     def test_golden_accepts_class(self):
         """golden 文档有 class 形式 → validate 通过。"""
+
         class GoldenImpl:
             def __call__(self, x, **kwargs):
                 return [x]
 
         class S:
             golden = GoldenImpl
+
         self.mgr.validate(S)  # 不抛
 
     def test_third_party_accepts_class(self):
@@ -300,6 +299,7 @@ class TestValidateClassExclusion:
 
         class S:
             third_party = TpImpl
+
         self.mgr.validate(S)  # 不抛
 
     def test_customize_inputs_rejects_class(self):
@@ -311,6 +311,7 @@ class TestValidateClassExclusion:
 
         class S:
             customize_inputs = InputImpl
+
         with pytest.raises(InvalidSpecError):
             self.mgr.validate(S)
 
@@ -323,6 +324,7 @@ class TestValidateClassExclusion:
 
         class S:
             compare = CompareImpl
+
         with pytest.raises(InvalidSpecError):
             self.mgr.validate(S)
 
@@ -335,6 +337,7 @@ class TestValidateClassExclusion:
 
         class S:
             pre_compare = PreImpl
+
         with pytest.raises(InvalidSpecError):
             self.mgr.validate(S)
 
@@ -347,6 +350,7 @@ class TestValidateClassExclusion:
 
         class S:
             describe = DescImpl
+
         with pytest.raises(InvalidSpecError):
             self.mgr.validate(S)
 
@@ -366,6 +370,7 @@ class TestValidateTorchGraph:
 
         class S:
             torch_graph = GraphMod
+
         self.mgr.validate(S)  # 不抛
 
     def test_rejects_non_nn_module_class(self):
@@ -377,6 +382,7 @@ class TestValidateTorchGraph:
 
         class S:
             torch_graph = NotModule
+
         with pytest.raises(InvalidSpecError):
             self.mgr.validate(S)
 
@@ -395,64 +401,70 @@ class TestLazyAstDiscovery:
         return f
 
     def test_g1_top_placement_spec(self, tmp_path):  # G1: __spec__ 写顶部
-        self._write(tmp_path, "s.py",
-            '__spec__ = {"op": "Cls"}\n'             # 顶部,类之前
-            'class Cls:\n'
-            '    def __call__(self): return [1]\n')
+        self._write(
+            tmp_path,
+            "s.py",
+            '__spec__ = {"op": "Cls"}\n'  # 顶部,类之前
+            "class Cls:\n"
+            "    def __call__(self): return [1]\n",
+        )
         cls = SpecLoader([tmp_path]).load("op")
         assert cls is not None and cls.__name__ == "Cls"
 
     def test_g2_class_object_value_rejected(self, tmp_path):  # G2
-        self._write(tmp_path, "s.py",
-            'class Cls: pass\n'
-            '__spec__ = {"op": Cls}\n')              # 旧类对象写法
+        self._write(tmp_path, "s.py", 'class Cls: pass\n__spec__ = {"op": Cls}\n')  # 旧类对象写法
         with pytest.raises(ValueError, match="only string class names"):
             SpecLoader([tmp_path]).load("op")
 
     def test_g2b_non_str_constant_rejected(self, tmp_path):  # G2b: int/None
-        self._write(tmp_path, "s.py",
-            '__spec__ = {"op": 123}\nclass Cls: pass\n')
+        self._write(tmp_path, "s.py", '__spec__ = {"op": 123}\nclass Cls: pass\n')
         with pytest.raises(ValueError, match="only string class names"):
             SpecLoader([tmp_path]).load("op")
 
     def test_g4_lazy_one_exec_not_n(self, tmp_path):  # G4 核心
         for i in range(3):
-            self._write(tmp_path, f"f{i}.py",
-                f'class C{i}:\n    def __call__(self): return [{i}]\n'
-                f'__spec__ = {{"op{i}": "C{i}"}}\n')
+            self._write(
+                tmp_path,
+                f"f{i}.py",
+                f'class C{i}:\n    def __call__(self): return [{i}]\n__spec__ = {{"op{i}": "C{i}"}}\n',
+            )
         loader = SpecLoader([tmp_path])
         import unittest.mock as _m
+
         with _m.patch.object(loader, "_import_file", wraps=loader._import_file) as spy:
             loader.load("op0")
-        assert spy.call_count == 1                  # 不是 3
+        assert spy.call_count == 1  # 不是 3
 
     def test_g7_per_file_cache(self, tmp_path):  # G7（回归：per-file cache 锁定）
         # 注:当前 _file_cache 也 memoize dict,故本测在旧代码上也 ==1（非 bug-catcher）;
         # 锁定新 per-file module cache 行为,防重构退化。
-        self._write(tmp_path, "s.py",
-            '__spec__ = {"a": "C", "b": "C"}\nclass C: pass\n')
+        self._write(tmp_path, "s.py", '__spec__ = {"a": "C", "b": "C"}\nclass C: pass\n')
         loader = SpecLoader([tmp_path])
         import unittest.mock as _m
+
         with _m.patch.object(loader, "_import_file", wraps=loader._import_file) as spy:
-            loader.load("a"); loader.load("b")
-        assert spy.call_count == 1                  # 同文件,exec 1 次
+            loader.load("a")
+            loader.load("b")
+        assert spy.call_count == 1  # 同文件,exec 1 次
 
     def test_g9_index_built_once(self, tmp_path):  # G9 memoization(RED:旧代码 0 次 ast.parse)
         for i in range(3):
-            self._write(tmp_path, f"f{i}.py",
-                f'__spec__ = {{"op{i}": "C{i}"}}\nclass C{i}: pass\n')
+            self._write(tmp_path, f"f{i}.py", f'__spec__ = {{"op{i}": "C{i}"}}\nclass C{i}: pass\n')
         loader = SpecLoader([tmp_path])
         import unittest.mock as _m
+
         with _m.patch("ttk.test_spec.loader.ast.parse", wraps=ast.parse) as spy:
-            loader.load("op0"); loader.load("op1")
-        assert spy.call_count == 3                  # 精确:建一次 + memoized
+            loader.load("op0")
+            loader.load("op1")
+        assert spy.call_count == 3  # 精确:建一次 + memoized
 
     def test_g10_classname_collision_first_wins(self, tmp_path):  # G10
         d1, d2 = tmp_path / "a", tmp_path / "b"
-        d1.mkdir(); d2.mkdir()
+        d1.mkdir()
+        d2.mkdir()
         self._write(d1, "f.py", '__spec__={"op":"C"}\nclass C:\n    TAG=1\n')
         self._write(d2, "f.py", '__spec__={"op":"C"}\nclass C:\n    TAG=2\n')
-        cls = SpecLoader([d1, d2]).load("op")       # first-wins (d1)
+        cls = SpecLoader([d1, d2]).load("op")  # first-wins (d1)
         assert cls.TAG == 1
 
     def test_g11_clear_cache_rebuilds(self, tmp_path):  # G11
@@ -460,18 +472,19 @@ class TestLazyAstDiscovery:
         loader = SpecLoader([tmp_path])
         assert loader.load("op") is not None
         loader.clear_cache()
-        assert loader.load("op") is not None        # 重建后仍可 load
+        assert loader.load("op") is not None  # 重建后仍可 load
 
     # 回归守卫
     def test_g5_naming_convention_fallback(self, tmp_path):  # G5
-        self._write(tmp_path, "s.py", 'class FooTestSpec:\n    def __call__(self): return [1]\n')
+        self._write(tmp_path, "s.py", "class FooTestSpec:\n    def __call__(self): return [1]\n")
         assert SpecLoader([tmp_path]).load("foo") is not None
 
     def test_g8_mark_source_both_paths(self, tmp_path):  # G8
         # __spec__ 路
         self._write(tmp_path, "a.py", '__spec__={"op1":"C1"}\nclass C1: pass\n')
         # 命名约定路
-        self._write(tmp_path, "b.py", 'class FooTestSpec: pass\n')
+        self._write(tmp_path, "b.py", "class FooTestSpec: pass\n")
         loader = SpecLoader([tmp_path])
-        c1 = loader.load("op1"); c2 = loader.load("foo")
+        c1 = loader.load("op1")
+        c2 = loader.load("foo")
         assert hasattr(c1, "__ttk_spec_file__") and hasattr(c2, "__ttk_spec_file__")

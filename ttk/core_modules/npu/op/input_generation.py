@@ -10,18 +10,29 @@
 """
 Input generation method for Universal testcases
 """
+
 # Standard Packages
 import logging
+
 import numpy
-import os
+
+from ....utilities import (
+    RandomData,
+    deep_flatten,
+    eliminate_scalar_shapes,
+    get,
+    get_global_storage,
+    input_apply_as_list,
+    load_numpy_data,
+    param_transformation,
+    resolve_custom_numpy_dtypes,
+)
+from ...infershape import format_transformation
+from ...operator.op_info_keeper import OpInfoKeeper
 
 # Third-party Packages
 from ...plugin_loader import get_plugin_function
-from ...operator.op_info_keeper import OpInfoKeeper
-from ...infershape import format_transformation
 from ...testcase_manager import TestcaseOp
-from ....utilities import resolve_custom_numpy_dtypes, eliminate_scalar_shapes, load_numpy_data
-from ....utilities import get, get_global_storage, param_transformation, RandomData, input_apply_as_list, deep_flatten
 
 
 def __use_manual_input(context: TestcaseOp):
@@ -66,10 +77,11 @@ def __need_transform(ori_format, format_, ori_shape, shape):
         return False
     if ori_shape is None or shape is None:
         if ori_shape is not None or shape is not None:
-            raise ValueError(f"ori_shape and shape must be both None or both not None, "
-                             f"got ori_shape={ori_shape}, shape={shape}")
+            raise ValueError(
+                f"ori_shape and shape must be both None or both not None, got ori_shape={ori_shape}, shape={shape}"
+            )
         return False
-    if tuple(ori_shape) == tuple(shape) and (ori_format == 'ND' or format_ == 'ND'):
+    if tuple(ori_shape) == tuple(shape) and (ori_format == "ND" or format_ == "ND"):
         return False
     return True
 
@@ -98,8 +110,9 @@ def __transform_single_to_ori(context, arr, nested_ori, group_idx, sub_idx):
     if not format_transformation.is_transformable(format_, ori_format):
         raise RuntimeError(f"Can not transform from [{format_}] to [{ori_format}].")
 
-    transformed = format_transformation.transform(arr, format_, ori_format, ori_shape,
-                                                  groups=context.attributes.get('groups'))
+    transformed = format_transformation.transform(
+        arr, format_, ori_format, ori_shape, groups=context.attributes.get("groups")
+    )
     if sub_idx is not None:
         nested_ori[group_idx][sub_idx][:] = transformed
     else:
@@ -119,8 +132,9 @@ def __override_inputs_from_attributes(context: TestcaseOp):
     nested_arrays = list(context.input_arrays)
     nested_ori_arrays = list(context.original_input_arrays) if context.original_input_arrays else None
 
-    assert len(nested_arrays) == len(input_names), \
+    assert len(nested_arrays) == len(input_names), (
         f"input_arrays({len(nested_arrays)}) != input_names({len(input_names)})"
+    )
 
     for group_idx, name in enumerate(input_names):
         if name not in attr_inputs:
@@ -141,8 +155,8 @@ def __override_inputs_from_attributes(context: TestcaseOp):
             else:
                 if len(val) != num_sub:
                     raise ValueError(
-                        f"Attribute [{name}] TensorList length mismatch: "
-                        f"got {len(val)}, expected {num_sub}")
+                        f"Attribute [{name}] TensorList length mismatch: got {len(val)}, expected {num_sub}"
+                    )
                 per_tensor_val = list(val)
             for j in range(num_sub):
                 __assign_tensor_value(item[j], per_tensor_val[j], f"{name}[{j}]")
@@ -181,12 +195,15 @@ def __transform_to_original_format(context: TestcaseOp):
             continue
         if not format_transformation.is_transformable(format_, ori_format):
             raise RuntimeError(f"Can not transform from [{format_}] to [{ori_format}].")
-        transformed = format_transformation.transform(input_array, format_, ori_format, ori_shape,
-                                                      groups=context.attributes.get('groups'))
+        transformed = format_transformation.transform(
+            input_array, format_, ori_format, ori_shape, groups=context.attributes.get("groups")
+        )
         if list(transformed.shape) != list(ori_shape):
-            raise RuntimeError(f"Try to transform from [{format_}] to original format [{ori_format}] failed: "
-                               f"Transformed shape: {transformed.shape}, but expected shape: {ori_shape}. "
-                               f"From shape is: {shape_}.")
+            raise RuntimeError(
+                f"Try to transform from [{format_}] to original format [{ori_format}] failed: "
+                f"Transformed shape: {transformed.shape}, but expected shape: {ori_shape}. "
+                f"From shape is: {shape_}."
+            )
         ori_arrays[idx] = transformed
 
     # flat → nested
@@ -219,16 +236,21 @@ def __realtime_random_input(context: TestcaseOp):
 
         if __need_transform(ori_format, format_, ori_shape, shape):
             if not format_transformation.is_transformable(ori_format, format_):
-                raise RuntimeError(f"Can not transform from [{ori_format}] to [{format_}]. "
-                                   f"Please check `input_ori_formats` and `input_formats`.")
+                raise RuntimeError(
+                    f"Can not transform from [{ori_format}] to [{format_}]. "
+                    f"Please check `input_ori_formats` and `input_formats`."
+                )
             rd = RandomData(dtype, ori_shape, data_range)
             ori_arr = rd.generate(switches.input_distribution)
-            transformed = format_transformation.transform(ori_arr, ori_format, format_, shape,
-                                                          groups=context.attributes.get('groups'))
+            transformed = format_transformation.transform(
+                ori_arr, ori_format, format_, shape, groups=context.attributes.get("groups")
+            )
             if list(transformed.shape) != list(shape):
-                raise RuntimeError(f"Try to transform from original format [{ori_format}] to [{format_}] failed: "
-                                   f"Transformed shape: {transformed.shape}, but expected shape: {shape}. "
-                                   f"From original shape is: {ori_shape}.")
+                raise RuntimeError(
+                    f"Try to transform from original format [{ori_format}] to [{format_}] failed: "
+                    f"Transformed shape: {transformed.shape}, but expected shape: {shape}. "
+                    f"From original shape is: {ori_shape}."
+                )
             input_arrays.append(transformed)
             ori_input_arrays.append(ori_arr)
         else:
@@ -249,13 +271,9 @@ def __gen_input(context: TestcaseOp, stored_inputs=None):
     if stored_inputs is not None:
         logging.info("Using prepared Kernel input data")
         flat_inputs = list(stored_inputs)
-        context.input_arrays = tuple(
-            input_apply_as_list(flat_inputs, context.input_distribution)
-        )
+        context.input_arrays = tuple(input_apply_as_list(flat_inputs, context.input_distribution))
         context.actual_input_data_ranges = tuple(
-            input_apply_as_list(
-                [(None, None)] * len(flat_inputs), context.input_distribution
-            )
+            input_apply_as_list([(None, None)] * len(flat_inputs), context.input_distribution)
         )
         context.invalidate_flat_cache("input_arrays")
         __transform_to_original_format(context)
@@ -278,7 +296,8 @@ def __gen_input(context: TestcaseOp, stored_inputs=None):
             flat = deep_flatten(input_arrays)
             if len(flat) != len(context.flat_input_shapes):
                 raise RuntimeError(
-                    f"Input plugin returned {len(flat)} arrays, expected {len(context.flat_input_shapes)}")
+                    f"Input plugin returned {len(flat)} arrays, expected {len(context.flat_input_shapes)}"
+                )
             context.input_arrays = tuple(input_apply_as_list(flat, context.input_distribution))
             __transform_to_original_format(context)
 
@@ -289,7 +308,7 @@ def __collect_dynamic_kwargs(context: TestcaseOp):
     # delete internal attributes
     keys = list(kwargs.keys())
     for k in keys:
-        if str(k)[0] in ('!', '#', '@'):
+        if str(k)[0] in ("!", "#", "@"):
             del kwargs[k]
     # delete const inputs in attributes
     op_info = OpInfoKeeper().info_of(context.op_name)
@@ -299,18 +318,20 @@ def __collect_dynamic_kwargs(context: TestcaseOp):
         if ipt in keys:
             del kwargs[ipt]
     # add some additional information.
-    kwargs.update({
-        'full_soc_version': switches.dev_plat,
-        'short_soc_version': switches.short_soc_version,
-        'testcase_name': context.testcase_name,
-        'input_ori_shapes': context.input_ori_shapes,
-        'output_ori_shapes': context.output_ori_shapes,
-        'input_formats': context.input_formats,
-        'output_formats': context.output_formats,
-        'input_ori_formats': context.input_ori_formats,
-        'output_ori_formats': context.output_ori_formats,
-        'input_dtypes': context.input_dtypes,
-        'output_dtypes': context.output_dtypes,
-        'input_ranges': context.input_data_ranges
-    })
+    kwargs.update(
+        {
+            "full_soc_version": switches.dev_plat,
+            "short_soc_version": switches.short_soc_version,
+            "testcase_name": context.testcase_name,
+            "input_ori_shapes": context.input_ori_shapes,
+            "output_ori_shapes": context.output_ori_shapes,
+            "input_formats": context.input_formats,
+            "output_formats": context.output_formats,
+            "input_ori_formats": context.input_ori_formats,
+            "output_ori_formats": context.output_ori_formats,
+            "input_dtypes": context.input_dtypes,
+            "output_dtypes": context.output_dtypes,
+            "input_ranges": context.input_data_ranges,
+        }
+    )
     return kwargs

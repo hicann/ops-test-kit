@@ -9,13 +9,12 @@
 Spec loader - TestSpec public API adapter for plugin_loader
 """
 
-from typing import Optional, Callable
+from typing import Callable, Optional
 
 
-def load_spec_function(operator_name: str,
-                          plugin_type: str,
-                          plugin_path) -> Optional[Callable]:
+def load_spec_function(operator_name: str, plugin_type: str, plugin_path) -> Optional[Callable]:
     """从 TestSpec 加载 golden/input 函数（通过 get_spec_attr）。"""
     from ttk.test_spec import get_spec_attr
+
     attr_name = "customize_inputs" if plugin_type == "input" else plugin_type
     return get_spec_attr(operator_name, attr_name, plugin_path)

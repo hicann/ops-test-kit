@@ -1,10 +1,11 @@
 """
 配置加载：default.yaml（基础）→ 用户配置（覆盖）→ CLI（覆盖）。
 """
+
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 # ── 用户配置文件搜索路径 ──
 _CONFIG_PATHS = [
@@ -19,9 +20,11 @@ _config: Optional[dict] = None
 # 数据模型
 # ====================================================================
 
+
 @dataclass
 class Endpoint:
     """远端 XPU 服务器端点。"""
+
     host: str
     port: int
     providers: Optional[List[str]] = None
@@ -40,6 +43,7 @@ class Endpoint:
 @dataclass
 class RemoteConfig:
     """远端执行配置。"""
+
     endpoints: List[Endpoint] = field(default_factory=list)
     backoff_base_s: float = 0.5
     backoff_max_s: float = 10.0
@@ -75,9 +79,11 @@ def get_hardware_config() -> dict:
 
 # ── CascadeConfig ──
 
+
 @dataclass
 class CascadeConfig:
     """MC2 算子级联通信端口配置。"""
+
     port_base: int = 30000
     port_step: int = 13
     port_max: int = 60000
@@ -98,6 +104,7 @@ def get_cascade_config() -> CascadeConfig:
 # ====================================================================
 # 加载逻辑
 # ====================================================================
+
 
 def deep_merge(base: dict, override: dict) -> dict:
     """递归合并配置：override 覆盖 base。

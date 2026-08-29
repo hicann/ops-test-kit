@@ -11,7 +11,6 @@
 OpApi Profiling Module
 """
 
-
 __all__ = ["ApiProfileObject"]
 
 

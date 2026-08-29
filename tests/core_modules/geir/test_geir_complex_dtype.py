@@ -41,8 +41,7 @@ def test_parse_stdout_complex32():
 
 
 def test_parse_stdout_complex64():
-    arr = np.array([[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]],
-                   dtype=np.complex64)
+    arr = np.array([[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]], dtype=np.complex64)
     data = _make_geir_output([arr])
     result = _parse_stdout(data, ["complex64"], [[2, 3]])
     assert len(result) == 1
@@ -52,8 +51,7 @@ def test_parse_stdout_complex64():
 
 
 def test_parse_stdout_complex128():
-    arr = np.array([[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]],
-                   dtype=np.complex128)
+    arr = np.array([[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]], dtype=np.complex128)
     data = _make_geir_output([arr])
     result = _parse_stdout(data, ["complex128"], [[2, 3]])
     assert len(result) == 1

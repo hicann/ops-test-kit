@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -15,15 +14,25 @@ import logging
 import os
 import pathlib
 import time
-import numpy
 from typing import NoReturn
+
+import numpy
+
+from .....utilities import (
+    DynamicCompilationResult,
+    DynamicOpTilingResult,
+    KernelJsonInfo,
+    OPTestSwitch,
+    compilation_result,
+    get_global_storage,
+    process_kernel_string,
+)
+from ....operator.op_interface import CaseNotSupportedError, OperatorInterface
+from ....tbe_multiprocessing import get_process_context
+
 # Third-Party Packages
 from ....testcase_manager import TestcaseOp
-from .....utilities import get_global_storage, process_kernel_string, OPTestSwitch, compilation_result
-from .....utilities import DynamicCompilationResult, DynamicOpTilingResult, KernelJsonInfo
-from ....operator.op_interface import OperatorInterface, CaseNotSupportedError
-from ....tbe_multiprocessing import get_process_context
-from ..mc2_hccl_helper import is_mc2_op, get_hccl_group_name, init_hccl
+from ..mc2_hccl_helper import init_hccl, is_mc2_op
 
 
 def _inject_mc2_hccl_group(testcase):
@@ -38,9 +47,10 @@ def _inject_mc2_hccl_group(testcase):
                 logging.info(f"mc2_hccl: replaced group '{old_group}' -> '{group_name}' for op {testcase.op_name}")
         except Exception as e:
             logging.warning(f"mc2_hccl: failed to init HCCL for tiling: {e}")
-from .binary_kernel_match import binary_kernel_match, parse_matched_bin_info
-from .common import normalize_mode
-from .common import CceManualCompile
+
+
+from .binary_kernel_match import binary_kernel_match, parse_matched_bin_info  # noqa: E402
+from .common import CceManualCompile, normalize_mode  # noqa: E402
 
 
 def dynamic_compilation(testcase: TestcaseOp, mode_name: str = "Dyn"):
@@ -107,13 +117,15 @@ def dynamic_compilation(testcase: TestcaseOp, mode_name: str = "Dyn"):
         else:
             get_process_context().notify_status(f"On{mode_name}ManualCompilation")
             dyn_manual_compile(result)
-        logging.debug("%s kernel compilation id %s complete" %
-                      ("Dynamic" if mode_name == "Dyn" else "Binary", compilation_id))
+        logging.debug(
+            "{} kernel compilation id {} complete".format("Dynamic" if mode_name == "Dyn" else "Binary", compilation_id)
+        )
         get_process_context().set_semaphore(compilation_id, result.standard_get())
     else:
         # Failed to gain access, wait
-        logging.debug("%s kernel compilation reuse id %s" %
-                      ("Dynamic" if mode_name == "Dyn" else "Binary", compilation_id))
+        logging.debug(
+            "{} kernel compilation reuse id {}".format("Dynamic" if mode_name == "Dyn" else "Binary", compilation_id)
+        )
         get_process_context().notify_status(f"{mode_name}WaitCompilation")
         _lock_res = get_process_context().get_semaphore(compilation_id)
         while _lock_res is None:
@@ -136,20 +148,28 @@ def dynamic_compilation(testcase: TestcaseOp, mode_name: str = "Dyn"):
 
 def load_compile_info_cache(dynamic_characteristic_code: str, result: DynamicCompilationResult):
     kernel_meta = get_global_storage().kernel_meta
-    compile_info_path = pathlib.Path(kernel_meta, "%s.ttk" % dynamic_characteristic_code)
+    compile_info_path = pathlib.Path(kernel_meta, f"{dynamic_characteristic_code}.ttk")
     if not compile_info_path.is_file():
-        logging.error(f"Compile cache file {compile_info_path} does not exist."
-                      f"Please run realtime compilation once before using non-realtime mode!")
+        logging.error(
+            f"Compile cache file {compile_info_path} does not exist."
+            f"Please run realtime compilation once before using non-realtime mode!"
+        )
         result.all_set("MANUAL_COMPILE_FAILURE")
     else:
         with open(compile_info_path, encoding="UTF-8") as json_file:
             json_data = json.loads(json_file.read())
-        kernel_dir = json_data.get('kernel_dir') or kernel_meta
-        kernel_json_info = KernelJsonInfo.from_file(pathlib.Path(kernel_dir, json_data['kernel_name'] + ".json"))
-        result.standard_set(json_data.get('compile_info'), json_data.get('tiling_op_type'),
-                            "UNKNOWN", "MANUAL_COMPILE",
-                            json_data.get('func_params'),
-                            kernel_json_info, json_data['kernel_name'], json_data.get('kernel_dir'))
+        kernel_dir = json_data.get("kernel_dir") or kernel_meta
+        kernel_json_info = KernelJsonInfo.from_file(pathlib.Path(kernel_dir, json_data["kernel_name"] + ".json"))
+        result.standard_set(
+            json_data.get("compile_info"),
+            json_data.get("tiling_op_type"),
+            "UNKNOWN",
+            "MANUAL_COMPILE",
+            json_data.get("func_params"),
+            kernel_json_info,
+            json_data["kernel_name"],
+            json_data.get("kernel_dir"),
+        )
 
 
 def dyn_manual_compile(result: DynamicCompilationResult) -> NoReturn:
@@ -159,28 +179,37 @@ def dyn_manual_compile(result: DynamicCompilationResult) -> NoReturn:
     # check fat bin directory exists
     kernel_path = pathlib.Path(kernel_dir, result.kernel_name)
     sub_kernel_path = os.path.join(kernel_path, f"{result.kernel_name}_{result.tiling_key}")
-    if any(os.path.exists(f"{sub_kernel_path}.{x}") for x in ("cce", "o")) or \
-           any(os.path.exists(f"{sub_kernel_path}_mix_aic.{x}") for x in ("cce", "o")) or \
-               any(os.path.exists(f"{sub_kernel_path}_mix_aiv.{x}") for x in ("cce", "o")):
+    if (
+        any(os.path.exists(f"{sub_kernel_path}.{x}") for x in ("cce", "o"))
+        or any(os.path.exists(f"{sub_kernel_path}_mix_aic.{x}") for x in ("cce", "o"))
+        or any(os.path.exists(f"{sub_kernel_path}_mix_aiv.{x}") for x in ("cce", "o"))
+    ):
         # reset kernel_json_info to sub-kernel
         result.kernel_json_info = KernelJsonInfo.from_file(f"{sub_kernel_path}.json")
-        cce_compile_result = CceManualCompile.compile(sub_kernel_path, result.kernel_json_info.kernel_name,
-                                                      switches.dev_plat,
-                                                      result.kernel_json_info.core_type,
-                                                      result.kernel_json_info.task_ration)
+        cce_compile_result = CceManualCompile.compile(
+            sub_kernel_path,
+            result.kernel_json_info.kernel_name,
+            switches.dev_plat,
+            result.kernel_json_info.core_type,
+            result.kernel_json_info.task_ration,
+        )
         result.compile_result = cce_compile_result
         result.kernel_name = f"{result.kernel_name}_{result.tiling_key}"
         result.kernel_dir = kernel_path
     else:
-        cce_compile_result = CceManualCompile.compile(str(kernel_path), result.kernel_json_info.kernel_name,
-                                                      switches.dev_plat,
-                                                      result.kernel_json_info.core_type,
-                                                      result.kernel_json_info.task_ration)
+        cce_compile_result = CceManualCompile.compile(
+            str(kernel_path),
+            result.kernel_json_info.kernel_name,
+            switches.dev_plat,
+            result.kernel_json_info.core_type,
+            result.kernel_json_info.task_ration,
+        )
         result.compile_result = cce_compile_result
 
 
-def dyn_compile(interface: OperatorInterface, testcase: TestcaseOp,
-                result: DynamicCompilationResult, mode: str) -> NoReturn:
+def dyn_compile(
+    interface: OperatorInterface, testcase: TestcaseOp, result: DynamicCompilationResult, mode: str
+) -> NoReturn:
     """
     Wrapper function for op_interface dynamic operator compilation sequence
     """
@@ -198,12 +227,12 @@ def dyn_compile(interface: OperatorInterface, testcase: TestcaseOp,
                 logging.error(f"{mode} operator {kernel_name} build artifacts not found")
                 result.all_set(f"{mode.upper()}_OPERATOR_BUILD_LOST")
             else:
-                logging.debug(f"Compilation of %s kernel %s success, received compile info:\n%s"
-                              % (mode, kernel_name, json.dumps(compile_info)))
-                result.standard_set(compile_info, tiling_op_type,
-                                    "SUCC", compile_time,
-                                    func_params,
-                                    kernel_json_info, kernel_name)
+                logging.debug(
+                    f"Compilation of {mode} kernel {kernel_name} success, received compile info:\n{json.dumps(compile_info)}"
+                )
+                result.standard_set(
+                    compile_info, tiling_op_type, "SUCC", compile_time, func_params, kernel_json_info, kernel_name
+                )
         else:
             logging.warning(f"{mode} operator {testcase.op_name} not found")
             result.all_set(f"{mode.upper()}_OPERATOR_NOT_FOUND")
@@ -213,14 +242,12 @@ def dyn_compile(interface: OperatorInterface, testcase: TestcaseOp,
     except CaseNotSupportedError:
         logging.exception(f"Compilation of {mode} operator {kernel_name} unsupported")
         result.all_set(f"{mode.upper()}_UNSUPPORTED")
-    except:
+    except Exception:
         logging.exception(f"Compilation of {mode} operator {kernel_name} failed")
         result.all_set(f"{mode.upper()}_COMPILE_FAILURE")
 
 
-def dyn_do_tiling(interface: OperatorInterface,
-                  testcase: TestcaseOp,
-                  result: DynamicCompilationResult) -> NoReturn:
+def dyn_do_tiling(interface: OperatorInterface, testcase: TestcaseOp, result: DynamicCompilationResult) -> NoReturn:
     """
     Wrapper function for op_interface dynamic operator op_tiling sequence
     """
@@ -235,5 +262,11 @@ def dyn_do_tiling(interface: OperatorInterface,
         tiling_key = int(numpy.uint64(tiling_result["tiling_key"]))
         workspaces = tuple(tiling_result["workspaces"])
         local_memory_size = int(numpy.int32(tiling_result.get("local_memory_size", -1)))
-        result.tiling_result.standard_set(dyn_block_dim, tiling_key, tiling_result["tiling_data"],
-                                          workspaces, tiling_result["tiling_time"], local_memory_size)
+        result.tiling_result.standard_set(
+            dyn_block_dim,
+            tiling_key,
+            tiling_result["tiling_data"],
+            workspaces,
+            tiling_result["tiling_time"],
+            local_memory_size,
+        )

@@ -20,12 +20,15 @@ import pytest
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
-def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
-                   input_dtypes=("float16", "float16"),
-                   output_shapes=((8,),),
-                   output_dtypes=("float16",),
-                   const_input_indexes=None,
-                   **kwargs):
+def _make_testcase(
+    op_name="Add",
+    input_shapes=((8,), (8,)),
+    input_dtypes=("float16", "float16"),
+    output_shapes=((8,),),
+    output_dtypes=("float16",),
+    const_input_indexes=None,
+    **kwargs,
+):
     case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
@@ -58,7 +61,7 @@ def _mock_op_info(monkeypatch):
 
 
 def _validate(case):
-    with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as mock:
+    with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as mock:
         mock.return_value.info_of.return_value = None
         case.validate()
 
@@ -72,11 +75,15 @@ class TestDynInputsNested:
       特殊断言（None 元素 / 直接调用 classmethod），保留独立测试
     """
 
-    @pytest.mark.parametrize("input_shapes, expected", [
-        (((8,), (8,)), ((-1,), (-1,))),
-        ((((3, 4), (5, 4)), (8,)), (((-1, -1), (-1, -1)), (-1,))),
-        ((), ()),
-    ], ids=["flat-no-tensorlist", "nested-with-tensorlist", "empty"])
+    @pytest.mark.parametrize(
+        "input_shapes, expected",
+        [
+            (((8,), (8,)), ((-1,), (-1,))),
+            ((((3, 4), (5, 4)), (8,)), (((-1, -1), (-1, -1)), (-1,))),
+            ((), ()),
+        ],
+        ids=["flat-no-tensorlist", "nested-with-tensorlist", "empty"],
+    )
     def test_dyn_inputs(self, input_shapes, expected):
         """验证 dyn_inputs 在 flat/nested/empty 下的返回值。"""
         case = _make_testcase(input_shapes=input_shapes)
@@ -103,27 +110,29 @@ class TestDynInputDtypesNested:
     expected 为期望返回值。
     """
 
-    @pytest.mark.parametrize("property_name, kwargs, expected", [
-        ("dyn_input_dtypes",
-         {"input_dtypes": ("float16", "float32")},
-         ("float16", "float32")),
-        ("dyn_input_dtypes",
-         {"input_shapes": (((3, 4), (5, 4)), (8,)),
-          "input_dtypes": (("float16", "float16"), "float32")},
-         (("float16", "float16"), "float32")),
-        ("dyn_input_formats",
-         {"input_shapes": (((3, 4), (5, 4)), (8,)),
-          "input_formats": (("ND", "ND"), "NCHW")},
-         (("ND", "ND"), "NCHW")),
-        ("dyn_outputs",
-         {"output_shapes": (((8,), (8,)),)},
-         (((-1,), (-1,)),)),
-        ("dyn_ori_inputs",
-         {"input_shapes": (((3, 4), (5, 4)), (8,)),
-          "input_ori_shapes": (((3, 4), (5, 4)), (8,))},
-         (((-1, -1), (-1, -1)), (-1,))),
-    ], ids=["dtypes-flat", "dtypes-nested", "formats-nested",
-            "outputs-nested", "ori-inputs-nested"])
+    @pytest.mark.parametrize(
+        "property_name, kwargs, expected",
+        [
+            ("dyn_input_dtypes", {"input_dtypes": ("float16", "float32")}, ("float16", "float32")),
+            (
+                "dyn_input_dtypes",
+                {"input_shapes": (((3, 4), (5, 4)), (8,)), "input_dtypes": (("float16", "float16"), "float32")},
+                (("float16", "float16"), "float32"),
+            ),
+            (
+                "dyn_input_formats",
+                {"input_shapes": (((3, 4), (5, 4)), (8,)), "input_formats": (("ND", "ND"), "NCHW")},
+                (("ND", "ND"), "NCHW"),
+            ),
+            ("dyn_outputs", {"output_shapes": (((8,), (8,)),)}, (((-1,), (-1,)),)),
+            (
+                "dyn_ori_inputs",
+                {"input_shapes": (((3, 4), (5, 4)), (8,)), "input_ori_shapes": (((3, 4), (5, 4)), (8,))},
+                (((-1, -1), (-1, -1)), (-1,)),
+            ),
+        ],
+        ids=["dtypes-flat", "dtypes-nested", "formats-nested", "outputs-nested", "ori-inputs-nested"],
+    )
     def test_dyn_property_nested(self, property_name, kwargs, expected):
         """验证各 dyn_* 属性在嵌套结构下返回与 stc 同构的结果。"""
         case = _make_testcase(**kwargs)
@@ -138,26 +147,27 @@ class TestFlatDynProperties:
     expected 为期望扁平化结果。
     """
 
-    @pytest.mark.parametrize("property_name, kwargs, expected", [
-        ("flat_dyn_inputs",
-         {"input_shapes": ((8,), (8,))},
-         ((-1,), (-1,))),
-        ("flat_dyn_inputs",
-         {"input_shapes": (((3, 4), (5, 4)), (8,))},
-         ((-1, -1), (-1, -1), (-1,))),
-        ("flat_dyn_input_dtypes",
-         {"input_shapes": (((3, 4), (5, 4)), (8,)),
-          "input_dtypes": (("float16", "float16"), "float32")},
-         ("float16", "float16", "float32")),
-        ("flat_dyn_outputs",
-         {"output_shapes": (((8,), (8,)),)},
-         ((-1,), (-1,))),
-        ("flat_dyn_inputs",
-         {"input_shapes": (), "input_dtypes": ()},
-         ()),
-    ], ids=["inputs-no-tensorlist", "inputs-with-tensorlist",
-            "input_dtypes-with-tensorlist", "outputs-with-tensorlist",
-            "inputs-empty"])
+    @pytest.mark.parametrize(
+        "property_name, kwargs, expected",
+        [
+            ("flat_dyn_inputs", {"input_shapes": ((8,), (8,))}, ((-1,), (-1,))),
+            ("flat_dyn_inputs", {"input_shapes": (((3, 4), (5, 4)), (8,))}, ((-1, -1), (-1, -1), (-1,))),
+            (
+                "flat_dyn_input_dtypes",
+                {"input_shapes": (((3, 4), (5, 4)), (8,)), "input_dtypes": (("float16", "float16"), "float32")},
+                ("float16", "float16", "float32"),
+            ),
+            ("flat_dyn_outputs", {"output_shapes": (((8,), (8,)),)}, ((-1,), (-1,))),
+            ("flat_dyn_inputs", {"input_shapes": (), "input_dtypes": ()}, ()),
+        ],
+        ids=[
+            "inputs-no-tensorlist",
+            "inputs-with-tensorlist",
+            "input_dtypes-with-tensorlist",
+            "outputs-with-tensorlist",
+            "inputs-empty",
+        ],
+    )
     def test_flat_dyn_property(self, property_name, kwargs, expected):
         """验证 flat_dyn_* 属性返回扁平化结果。"""
         case = _make_testcase(**kwargs)

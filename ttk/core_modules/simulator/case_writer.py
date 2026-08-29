@@ -13,6 +13,7 @@ Layout (one case):
         record_out/{cannsim,npusim}_*/   # NPUSim record archive (CANN cannsim)
         output_*.bin / result.json   # wrapper-written results
 """
+
 import logging
 import os
 import pickle
@@ -61,8 +62,7 @@ def dump_kernel_param(param, case_path: Path, mode: str) -> Optional[Path]:
 def enabled_kernel_modes(sw) -> tuple:
     """The kernel modes that should actually run (enabled + profiling on)."""
     out = []
-    for mode, switch in (("dyn", sw.dyn_switches), ("cst", sw.cst_switches),
-                         ("bin", sw.bin_switches)):
+    for mode, switch in (("dyn", sw.dyn_switches), ("cst", sw.cst_switches), ("bin", sw.bin_switches)):
         if switch.enabled and switch.prof:
             out.append(mode)
     return tuple(out)

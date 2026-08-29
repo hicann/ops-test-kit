@@ -16,11 +16,10 @@ from typing import Any, Mapping, Optional
 
 import numpy as np
 
-from .comparison import compare
 from ...utilities.container_utils import apply_as_list, deep_flatten
+from .comparison import compare
 
-__all__ = ["CompareContext", "apply_pre_compare", "try_custom_compare",
-           "compare_with_hooks"]
+__all__ = ["CompareContext", "apply_pre_compare", "try_custom_compare", "compare_with_hooks"]
 
 
 def _copy_goldens(goldens):
@@ -51,8 +50,9 @@ def _reshape_outputs_for_hooks(outputs, goldens):
     return reshaped
 
 
-def compare_with_hooks(testcase, outputs, goldens, output_dtypes,
-                       standards, third_parties, pre_compare, custom_compare):
+def compare_with_hooks(
+    testcase, outputs, goldens, output_dtypes, standards, third_parties, pre_compare, custom_compare
+):
     """带 TestSpec 钩子（pre_compare / compare）的比对入口，供各测试通路共用。
 
     【为何要做】
@@ -77,12 +77,9 @@ def compare_with_hooks(testcase, outputs, goldens, output_dtypes,
     默认路径，行为逐位不变。
     """
     hooks_enabled = testcase is not None and (pre_compare is not None or custom_compare is not None)
-    has_runtime_output = outputs and not any(
-        isinstance(output, (str, type(None))) for output in outputs
-    )
+    has_runtime_output = outputs and not any(isinstance(output, (str, type(None))) for output in outputs)
     if not hooks_enabled or not has_runtime_output:
-        return compare(outputs, goldens, output_dtypes,
-                       standards=standards, third_parties=third_parties)
+        return compare(outputs, goldens, output_dtypes, standards=standards, third_parties=third_parties)
 
     mode_outputs = _reshape_outputs_for_hooks(outputs, goldens)
     mode_goldens = _copy_goldens(goldens)
@@ -91,8 +88,7 @@ def compare_with_hooks(testcase, outputs, goldens, output_dtypes,
     if custom_result is not None:
         precision, logging_data, passed = custom_result
         return precision, logging_data, passed, {}
-    return compare(mode_outputs, mode_goldens, output_dtypes,
-                   standards=standards, third_parties=third_parties)
+    return compare(mode_outputs, mode_goldens, output_dtypes, standards=standards, third_parties=third_parties)
 
 
 @dataclass(frozen=True)
@@ -108,9 +104,7 @@ class CompareContext:
 
 
 def _can_customize(outputs, goldens):
-    return bool(outputs) and bool(goldens) and not any(
-        isinstance(golden, str) for golden in goldens
-    )
+    return bool(outputs) and bool(goldens) and not any(isinstance(golden, str) for golden in goldens)
 
 
 def _fold_outputs(testcase, outputs, goldens):
@@ -196,15 +190,9 @@ def try_custom_compare(testcase, outputs, goldens, func):
     nested_outputs, nested_goldens = _fold_outputs(testcase, outputs, goldens)
     kwargs = _compare_kwargs(testcase)
     signature = inspect.signature(func)
-    accepts_kwargs = any(
-        param.kind == inspect.Parameter.VAR_KEYWORD
-        for param in signature.parameters.values()
-    )
+    accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values())
     if not accepts_kwargs:
-        kwargs = {
-            name: value for name, value in kwargs.items()
-            if name in signature.parameters
-        }
+        kwargs = {name: value for name, value in kwargs.items() if name in signature.parameters}
 
     context_param = signature.parameters.get("compare_context")
     if context_param is not None:
@@ -227,18 +215,12 @@ def try_custom_compare(testcase, outputs, goldens, func):
     log_lines = []
     for index, item in enumerate(items):
         if not isinstance(item, dict):
-            raise ValueError(
-                f"[{testcase.testcase_name}] compare output[{index}] is not a dict"
-            )
-        missing_keys = [
-            key for key in ("pass", "precision")
-            if key not in item
-        ]
+            raise ValueError(f"[{testcase.testcase_name}] compare output[{index}] is not a dict")
+        missing_keys = [key for key in ("pass", "precision") if key not in item]
         if missing_keys:
             formatted_keys = ", ".join(repr(key) for key in missing_keys)
             raise ValueError(
-                f"[{testcase.testcase_name}] compare output[{index}] "
-                f"missing required key(s): {formatted_keys}"
+                f"[{testcase.testcase_name}] compare output[{index}] missing required key(s): {formatted_keys}"
             )
         precision = item["precision"]
         precisions.append(f"{precision}%" if isinstance(precision, (int, float)) else str(precision))

@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Tests for NpuInstance heartbeat lifecycle."""
+
 from unittest.mock import MagicMock
 
 

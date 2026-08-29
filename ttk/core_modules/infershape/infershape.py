@@ -15,20 +15,14 @@ Inside a method, a shape can be a list.
 BUT DO NOT pass a shape as list between public methods!!! Always treat it as a tuple!!!
 """
 
-
 __all__ = ["shape_inference"]
 
 
 # Standard Packages
-import copy
 import math
-import logging
-from typing import Tuple
-from typing import Union
+from typing import Tuple, Union
 
-from ...utilities import get
-from ...utilities import is_shape
-from ...utilities import eliminate_scalar_shapes
+from ...utilities import eliminate_scalar_shapes, is_shape
 
 
 def __reversed_broadcast_rule_with_size(size: int, shape1: list, shape2: list) -> bool:
@@ -39,8 +33,7 @@ def __reversed_broadcast_rule_with_size(size: int, shape1: list, shape2: list) -
     for idx in range(-1, -size - 1, -1):
         both_dim = (shape1[idx], shape2[idx])
         if shape1[idx] != shape2[idx] and (1 not in both_dim and -1 not in both_dim):
-            raise RuntimeError("Cannot perform Elewise operation on %s and %s"
-                               % (str(shape1), str(shape2)))
+            raise RuntimeError(f"Cannot perform Elewise operation on {str(shape1)} and {str(shape2)}")
         shape1[idx] = -1 if (-1 in both_dim and 1 in both_dim) else max(shape1[idx], shape2[idx])
     return result
 
@@ -49,6 +42,7 @@ def _produce_by_broadcast_rule(*input_shapes) -> tuple:
     """
     Produce an output shape by using input_shapes, this complies to broadcast rule
     """
+
     def __get_axis(shape, minus_dim) -> int:
         return shape[len(shape) + minus_dim] if len(shape) + minus_dim >= 0 else 1
 
@@ -71,35 +65,37 @@ def _elewise_check_input_parameters(args, output_num, relations):
     # Only shape<int> can be passed as args
     for arg in args:
         if not is_shape(arg):
-            raise TypeError("Elewise infershape function received invalid shapes: %s" % (str(args)))
+            raise TypeError(f"Elewise infershape function received invalid shapes: {str(args)}")
     # If relations are specified, it must be a tuple and its length must be the same as output_num
     # Also, related relations must use in-range int or NoneType as an index to indicate the
     # related input shape
     if relations is not None:
         if not isinstance(relations, tuple):
             raise TypeError(
-                "Elewise infershape function received %s instead of tuple as shape relationships"
-                % str(type(relations)))
+                f"Elewise infershape function received {str(type(relations))} instead of tuple as shape relationships"
+            )
         for relation in relations:
             if not isinstance(relation, (tuple, type(None))):
                 raise TypeError(
-                    "Elewise infershape function received %s instead of "
-                    "tuple or NoneType as shape relationship"
-                    % str(type(relation)))
+                    f"Elewise infershape function received {str(type(relation))} instead of tuple or NoneType as shape relationship"
+                )
             if isinstance(relation, tuple):
                 if not len(relation) > 0:
-                    raise ValueError("Cannot perform shape inference mode ELEWISE if "
-                                     "output shape isn't related with any input shape")
+                    raise ValueError(
+                        "Cannot perform shape inference mode ELEWISE if output shape isn't related with any input shape"
+                    )
                 for related_shape_idx in relation:
                     if not isinstance(related_shape_idx, int):
                         raise TypeError(
-                            "Elewise infershape function received %s instead of "
+                            f"Elewise infershape function received {str(type(related_shape_idx))} instead of "
                             "int as related input shape index"
-                            % str(type(related_shape_idx)))
+                        )
                     if related_shape_idx >= len(args):
-                        raise ValueError("Cannot perform shape inference mode ELEWISE if "
-                                         "output shape is related with input shape index "
-                                         "that is out of range %s" % str(len(args)))
+                        raise ValueError(
+                            "Cannot perform shape inference mode ELEWISE if "
+                            "output shape is related with input shape index "
+                            f"that is out of range {str(len(args))}"
+                        )
 
 
 def elewise(*args, output_num=1, relations=None) -> Tuple[Tuple[int], ...]:
@@ -113,9 +109,11 @@ def elewise(*args, output_num=1, relations=None) -> Tuple[Tuple[int], ...]:
         if relations is None:
             output_shapes[output_idx] = _produce_by_broadcast_rule(*args)
             continue
-        related_shapes = tuple(args[shape_idx] for shape_idx in range(len(args))
-                               if relations[output_idx] is None
-                               or shape_idx in relations[output_idx])
+        related_shapes = tuple(
+            args[shape_idx]
+            for shape_idx in range(len(args))
+            if relations[output_idx] is None or shape_idx in relations[output_idx]
+        )
         output_shapes[output_idx] = _produce_by_broadcast_rule(*related_shapes)
     return tuple(output_shapes)
 
@@ -125,7 +123,7 @@ def reduce(input_tensor: tuple, axes) -> tuple:
     Produce output shapes by input shapes, this method complies to the reduce rule
     """
     if not is_shape(input_tensor):
-        raise RuntimeError("%s is not a shapelike object" % str(input_tensor))
+        raise RuntimeError(f"{str(input_tensor)} is not a shapelike object")
     mutable_shape = list(input_tensor)
     # For dynamic reduce axes
     if axes is None:
@@ -144,7 +142,7 @@ def range_inference(shape: tuple) -> Union[tuple, type(None)]:
     if shape is None:
         return None
     if not is_shape(shape):
-        raise TypeError("Range inference function received invalid shape: %s" % str(shape))
+        raise TypeError(f"Range inference function received invalid shape: {str(shape)}")
     _range = []
     for dim in shape:
         if dim in [-1, -2]:
@@ -173,7 +171,7 @@ def shape_inference(shapes: tuple, args: tuple, mode: str) -> tuple:
         return tuple(reduce_results)
     if mode == "RANGE":
         return tuple(range_inference(shape) for shape in shapes)
-    raise RuntimeError("UNKNOWN MODE %s" % mode)
+    raise RuntimeError(f"UNKNOWN MODE {mode}")
 
 
 def transform(shape, cur_format, target_format):
@@ -185,28 +183,16 @@ def transform(shape, cur_format, target_format):
     :return:
     """
     format_transformation_map = {
-        "NHWC": {
-            "NC1HWC0": _NHWC25Dinfer,
-            "FRACTAL_NZ": _NZinfer
-        },
-        "NCHW": {
-            "NC1HWC0": _NCHW25Dinfer,
-            "FRACTAL_NZ": _NZinfer
-        },
-        "NWC": {
-            "NC1HWC0": _NWC25Dinfer,
-            "FRACTAL_NZ": _NZinfer
-        },
-        "NDHWC": {
-            "NDC1HWC0": _NDHWC25Dinfer,
-            "FRACTAL_NZ": _NZinfer
-        }
+        "NHWC": {"NC1HWC0": _NHWC25Dinfer, "FRACTAL_NZ": _NZinfer},
+        "NCHW": {"NC1HWC0": _NCHW25Dinfer, "FRACTAL_NZ": _NZinfer},
+        "NWC": {"NC1HWC0": _NWC25Dinfer, "FRACTAL_NZ": _NZinfer},
+        "NDHWC": {"NDC1HWC0": _NDHWC25Dinfer, "FRACTAL_NZ": _NZinfer},
     }
     if cur_format in format_transformation_map:
         if target_format in format_transformation_map[cur_format]:
             return format_transformation_map[cur_format][target_format](shape)
         else:
-            raise NotImplementedError("Cannot transform format %s to %s" % (cur_format, target_format))
+            raise NotImplementedError(f"Cannot transform format {cur_format} to {target_format}")
     else:
         raise NotImplementedError(f"Cannot transform format {cur_format} to any format including {target_format}")
 
@@ -218,28 +204,28 @@ def _25Dinfer(before_c, c, after_c):
 
 def _NHWC25Dinfer(shape: tuple):
     if not len(shape) == 4:
-        raise RuntimeError(f'4D to 5D transformation only supports 4 dimension input, but received {shape}')
+        raise RuntimeError(f"4D to 5D transformation only supports 4 dimension input, but received {shape}")
     n, h, w, c = shape
     return _25Dinfer((n,), c, (h, w))
 
 
 def _NDHWC25Dinfer(shape: tuple):
     if len(shape) != 5:
-        raise RuntimeError(f'NDHWC to 6D transformation only supports 5 dimension input, but received {shape}')
+        raise RuntimeError(f"NDHWC to 6D transformation only supports 5 dimension input, but received {shape}")
     n, d, h, w, c = shape
     return _25Dinfer((n, d), c, (h, w))
 
 
 def _NCHW25Dinfer(shape: tuple):
     if not len(shape) == 4:
-        raise RuntimeError(f'4D to 5D transformation only supports 4 dimension input, but received {shape}')
+        raise RuntimeError(f"4D to 5D transformation only supports 4 dimension input, but received {shape}")
     n, c, h, w = shape
     return _25Dinfer((n,), c, (h, w))
 
 
 def _NWC25Dinfer(shape: tuple):
     if not len(shape) == 3:
-        raise RuntimeError(f'3D to 5D transformation only supports 3 dimension input, but received {shape}')
+        raise RuntimeError(f"3D to 5D transformation only supports 3 dimension input, but received {shape}")
     n, w, c = shape
     return _25Dinfer((n,), c, (1, w))
 

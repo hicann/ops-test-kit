@@ -15,11 +15,12 @@ __all__ = ["ApiProfilingReturnStructure", "ApiComparisonResult", "ApiProfilingRe
 
 
 # Standard Packages
-from typing import Optional, Union, Tuple, List
+from typing import List, Optional, Tuple, Union
+
+from ....utilities import get_global_storage
 
 # Third-party Packages
 from ...testcase_manager import TestcaseAclnn
-from ....utilities import get_global_storage
 
 
 def _pick_api_avg_us(api_prof, api_name):

@@ -36,6 +36,7 @@ def test_infer_distribution_core_patterns(shapes, expected):
 
 # -- flatten_nested_sequence -------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "shapes, expected",
     [

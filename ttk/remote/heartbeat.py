@@ -8,6 +8,7 @@ and sends DELETE cleanup.
 
 TLS is delegated to the shared ttk.remote.tls module (ca or cert+key -> HTTPS).
 """
+
 import json
 import logging
 import os
@@ -45,10 +46,12 @@ def heartbeat_loop(endpoints, tenant_id, health_path, tls=None):
         tls: optional dict from tls.tls_from_config (ca_cert/cert/key)
     """
     from .health_file import atomic_write_json
-    log.info("HB started: tenant=%s health_path=%s n_endpoints=%d tls=%s",
-             tenant_id, health_path, len(endpoints), bool(tls))
+
+    log.info(
+        "HB started: tenant=%s health_path=%s n_endpoints=%d tls=%s", tenant_id, health_path, len(endpoints), bool(tls)
+    )
     original_ppid = os.getppid()  # parent at fork time; reparenting on parent
-                                  # death (to init OR a subreaper) is what we detect.
+    # death (to init OR a subreaper) is what we detect.
     while True:
         # Detect parent death: ppid changes when the process is reparented.
         # Comparing to the ORIGINAL parent (not ==1) is robust across non-init
@@ -56,8 +59,7 @@ def heartbeat_loop(endpoints, tenant_id, health_path, tls=None):
         # those. HB is forked (multiprocessing.Process, default ctx), so its
         # parent is the TTK process itself.
         if os.getppid() != original_ppid:
-            log.info("Parent died (ppid %d->%d), cleaning up tenant %s",
-                     original_ppid, os.getppid(), tenant_id)
+            log.info("Parent died (ppid %d->%d), cleaning up tenant %s", original_ppid, os.getppid(), tenant_id)
             _cleanup_all(endpoints, tenant_id, tls)
             return
 
@@ -68,19 +70,21 @@ def heartbeat_loop(endpoints, tenant_id, health_path, tls=None):
             # is no shared mutable state across threads (no lock needed, and no
             # latent risk if a future change adds read-modify-write).
             res = {}
-            t = threading.Thread(target=_probe_one,
-                                 args=(ep, tenant_id, res, tls), daemon=True)
+            t = threading.Thread(target=_probe_one, args=(ep, tenant_id, res, tls), daemon=True)
             t.start()
             threads.append((t, ep, res))
         for t, ep, res in threads:
             ep_key = f"{ep.host}:{ep.port}"
             t.join(timeout=HEARTBEAT_TIMEOUT_S)
-            if res:                    # thread wrote its result
+            if res:  # thread wrote its result
                 results.update(res)
-            else:                      # timed out -> mark dead
+            else:  # timed out -> mark dead
                 results[ep_key] = {
-                    "alive": False, "last_seen": None,
-                    "providers": [], "hardware": "", "ts": time.time(),
+                    "alive": False,
+                    "last_seen": None,
+                    "providers": [],
+                    "hardware": "",
+                    "ts": time.time(),
                 }
 
         atomic_write_json(health_path, {"endpoints": results})
@@ -92,8 +96,7 @@ def _probe_one(endpoint, tenant_id, out_dict, tls):
     ep_key = f"{endpoint.host}:{endpoint.port}"
     conn = None
     try:
-        conn = build_tls_connection(endpoint.host, endpoint.port,
-                                    HEARTBEAT_TIMEOUT_S, tls)
+        conn = build_tls_connection(endpoint.host, endpoint.port, HEARTBEAT_TIMEOUT_S, tls)
         conn.request("GET", f"/v1/heartbeat?tenant_id={tenant_id}")
         resp = conn.getresponse()
         raw_body = resp.read()
@@ -102,11 +105,13 @@ def _probe_one(endpoint, tenant_id, out_dict, tls):
             try:
                 body = json.loads(raw_body)
             except (json.JSONDecodeError, ValueError):
-                log.warning("probe %s: non-JSON response (status %s), marking dead",
-                            ep_key, resp.status)
+                log.warning("probe %s: non-JSON response (status %s), marking dead", ep_key, resp.status)
                 out_dict[ep_key] = {
-                    "alive": False, "last_seen": None,
-                    "providers": [], "hardware": "", "ts": time.time(),
+                    "alive": False,
+                    "last_seen": None,
+                    "providers": [],
+                    "hardware": "",
+                    "ts": time.time(),
                 }
                 return
         else:
@@ -122,13 +127,15 @@ def _probe_one(endpoint, tenant_id, out_dict, tls):
         # TLS cert/handshake failures (IP-SAN mismatch, expired, untrusted CA) are
         # config errors that won't self-heal → ERROR; transient (refused/timeout) → debug.
         if isinstance(e, ssl.SSLError):
-            log.error("probe %s TLS handshake/cert failed "
-                      "(check cert IP/SAN matches endpoint.host): %s", ep_key, e)
+            log.error("probe %s TLS handshake/cert failed (check cert IP/SAN matches endpoint.host): %s", ep_key, e)
         else:
             log.debug("probe %s failed: %s", ep_key, e)
         out_dict[ep_key] = {
-            "alive": False, "last_seen": None,
-            "providers": [], "hardware": "", "ts": time.time(),
+            "alive": False,
+            "last_seen": None,
+            "providers": [],
+            "hardware": "",
+            "ts": time.time(),
         }
     finally:
         if conn is not None:
@@ -142,8 +149,7 @@ def _cleanup_all(endpoints, tenant_id, tls):
     """Send DELETE cleanup to all endpoints (threaded with tls)."""
     for ep in endpoints:
         try:
-            conn = build_tls_connection(ep.host, ep.port,
-                                        HEARTBEAT_TIMEOUT_S, tls)
+            conn = build_tls_connection(ep.host, ep.port, HEARTBEAT_TIMEOUT_S, tls)
             conn.request("DELETE", f"/v1/tenant/{tenant_id}")
             resp = conn.getresponse()
             resp.read()

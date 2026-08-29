@@ -55,29 +55,38 @@ def test_elewise_invalid_shape_type():
         elewise(("x", "y"))
 
 
-@pytest.mark.parametrize("shape,axes,expected", [
-    ((2, 3, 4), (1,), (2, 1, 4)),
-    ((2, 3, 4), None, (-1, -1, -1)),
-    ((1, 3, 4), None, (1, -1, -1)),
-])
+@pytest.mark.parametrize(
+    "shape,axes,expected",
+    [
+        ((2, 3, 4), (1,), (2, 1, 4)),
+        ((2, 3, 4), None, (-1, -1, -1)),
+        ((1, 3, 4), None, (1, -1, -1)),
+    ],
+)
 def test_reduce(shape, axes, expected):
     assert reduce(shape, axes) == expected
 
 
-@pytest.mark.parametrize("shape,expected", [
-    ((4, 8), ((4, 4), (8, 8))),
-    ((-1, 8, -2), ((1, None), (8, 8), (1, None))),
-    (None, None),
-])
+@pytest.mark.parametrize(
+    "shape,expected",
+    [
+        ((4, 8), ((4, 4), (8, 8))),
+        ((-1, 8, -2), ((1, None), (8, 8), (1, None))),
+        (None, None),
+    ],
+)
 def test_range_inference(shape, expected):
     assert range_inference(shape) == expected
 
 
-@pytest.mark.parametrize("mode,shapes,args,expected", [
-    ("ELEWISE", ((4, 8), (4, 8)), (1, None), ((4, 8),)),
-    ("REDUCE", ((2, 3, 4),), ((1,), 1, None), ((2, 1, 4),)),
-    ("RANGE", ((4, -1),), (None,), (((4, 4), (1, None)),)),
-])
+@pytest.mark.parametrize(
+    "mode,shapes,args,expected",
+    [
+        ("ELEWISE", ((4, 8), (4, 8)), (1, None), ((4, 8),)),
+        ("REDUCE", ((2, 3, 4),), ((1,), 1, None), ((2, 1, 4),)),
+        ("RANGE", ((4, -1),), (None,), (((4, 4), (1, None)),)),
+    ],
+)
 def test_shape_inference_dispatch(mode, shapes, args, expected):
     assert shape_inference(shapes, args, mode) == expected
 
@@ -87,14 +96,17 @@ def test_shape_inference_unknown_mode():
         shape_inference(((4,),), (None,), "BOGUS")
 
 
-@pytest.mark.parametrize("shape,cur,target,expected", [
-    ((1, 8, 8, 32), "NHWC", "NC1HWC0", (1, 2, 8, 8, 16)),
-    ((1, 32, 8, 8), "NCHW", "NC1HWC0", (1, 2, 8, 8, 16)),
-    ((1, 8, 32), "NWC", "NC1HWC0", (1, 2, 1, 8, 16)),
-    ((1, 2, 8, 8, 32), "NDHWC", "NDC1HWC0", (1, 2, 2, 8, 8, 16)),
-    ((2, 3), "NHWC", "FRACTAL_NZ", (1, 1, 16, 16)),
-    ((1, 5, 2, 3), "NCHW", "FRACTAL_NZ", (1, 5, 1, 1, 16, 16)),
-])
+@pytest.mark.parametrize(
+    "shape,cur,target,expected",
+    [
+        ((1, 8, 8, 32), "NHWC", "NC1HWC0", (1, 2, 8, 8, 16)),
+        ((1, 32, 8, 8), "NCHW", "NC1HWC0", (1, 2, 8, 8, 16)),
+        ((1, 8, 32), "NWC", "NC1HWC0", (1, 2, 1, 8, 16)),
+        ((1, 2, 8, 8, 32), "NDHWC", "NDC1HWC0", (1, 2, 2, 8, 8, 16)),
+        ((2, 3), "NHWC", "FRACTAL_NZ", (1, 1, 16, 16)),
+        ((1, 5, 2, 3), "NCHW", "FRACTAL_NZ", (1, 5, 1, 1, 16, 16)),
+    ],
+)
 def test_transform_formats(shape, cur, target, expected):
     assert transform(shape, cur, target) == expected
 

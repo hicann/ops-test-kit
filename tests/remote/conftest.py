@@ -18,9 +18,8 @@ in ttk.core_modules.tbe_logging (which sets the root logger to NOTSET); forkserv
 executor children inherit that NOTSET root, so tensorflow's vlog(1) gradient-
 registration floods ~700 lines on first tf use.
 """
+
 import os
 
-_TTK_REMOTE = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "ttk", "remote"))
-os.environ["PYTHONPATH"] = os.pathsep.join(
-    p for p in (_TTK_REMOTE, os.environ.get("PYTHONPATH", "")) if p)
+_TTK_REMOTE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ttk", "remote"))
+os.environ["PYTHONPATH"] = os.pathsep.join(p for p in (_TTK_REMOTE, os.environ.get("PYTHONPATH", "")) if p)

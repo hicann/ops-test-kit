@@ -10,12 +10,14 @@
 """
 Precious Container Related Utilities
 """
+
 # Standard Packages
-import math
 import logging
-import numpy
-from typing import Any, Optional, Tuple, Sequence, Union
+import math
 from functools import reduce
+from typing import Any, Optional, Sequence, Tuple, Union
+
+import numpy
 
 # Third-Party Packages
 from .classes import SWITCHES
@@ -39,8 +41,7 @@ def get(container: Sequence, idx: int, out_of_range=None):
             if out_of_range is not None:
                 return out_of_range
             else:
-                logging.warning("Detected out of range access to container %s, "
-                                "access index is %d", str(container), idx)
+                logging.warning("Detected out of range access to container %s, access index is %d", str(container), idx)
         return container[idx]
 
 
@@ -121,7 +122,7 @@ def eliminate_scalar_shapes(args: tuple) -> tuple:
 def shape_stride(shape: Union[list, tuple]):
     if not shape:  # ()
         return ()
-    return tuple([shape_product(tuple(list(shape)[idx+1:])) for idx in range(len(shape))])
+    return tuple([shape_product(tuple(list(shape)[idx + 1 :])) for idx in range(len(shape))])
 
 
 def sum_len_of_sequences(*args) -> int:
@@ -144,7 +145,7 @@ def parse_tiling_data(tiling_data: Any) -> Tuple[Optional[bytes], Optional[tuple
     """
     # little-endian int32 Tiling data
     le_int32 = numpy.dtype(numpy.int32)
-    le_int32 = le_int32.newbyteorder('<')
+    le_int32 = le_int32.newbyteorder("<")
     if isinstance(tiling_data, tuple):
         tiling_data_np_array = numpy.array(tiling_data, dtype=le_int32)
         tiling_data_bytes = tiling_data_np_array.tobytes()
@@ -189,12 +190,12 @@ def get_str_tiling_data(dyn_tuple_tiling_data: tuple, dyn_compile_info: dict, dy
                         dyn_str_tiling_data = str(dict_tiling_data)
                     else:
                         dyn_str_tiling_data = f"Tiling data not match with compile_info _vars: {dyn_tuple_tiling_data}"
-                        logging.warning(f"Tiling data not match with sub-keys in compile_info _vars: "
-                                        f"{dyn_tuple_tiling_data} VS {tiling_data_indexes}")
+                        logging.warning(
+                            f"Tiling data not match with sub-keys in compile_info _vars: "
+                            f"{dyn_tuple_tiling_data} VS {tiling_data_indexes}"
+                        )
             else:
-                dyn_str_tiling_data = "Tiling_key %s not found in _vars key %s, treat as Tik operator" \
-                                      % (str(dyn_tiling_key),
-                                         str(tuple(_vars.keys())))
+                dyn_str_tiling_data = f"Tiling_key {str(dyn_tiling_key)} not found in _vars key {str(tuple(_vars.keys()))}, treat as Tik operator"
         else:
             dyn_str_tiling_data = f"{dyn_tuple_tiling_data}"
     else:
@@ -239,7 +240,7 @@ def adapt_pickup_by_names(params: dict, signatures: tuple) -> dict:
             params[param_with_tail] = params[param]
             del params[param]
             continue
-        if param.endswith('_in__'):
+        if param.endswith("_in__"):
             param_wo_tail = param[:-5]
             if param_wo_tail in signatures and param_wo_tail not in params:
                 params[param_wo_tail] = params[param]
@@ -360,7 +361,7 @@ def infer_list_distribution_from_nesting(nested):
 
 
 def apply_as_list(inputs: Sequence, as_list_distribution: Sequence):
-    """ fold case's input & output """
+    """fold case's input & output"""
     if as_list_distribution:
         result = []
         last_num = 0
@@ -369,7 +370,7 @@ def apply_as_list(inputs: Sequence, as_list_distribution: Sequence):
                 result.append(inputs[last_num])
                 last_num += 1
             else:
-                result.append(inputs[last_num:last_num + num])
+                result.append(inputs[last_num : last_num + num])
                 last_num += num
         if last_num < len(inputs):
             result.extend(inputs[last_num:])
@@ -378,8 +379,9 @@ def apply_as_list(inputs: Sequence, as_list_distribution: Sequence):
     return result
 
 
-def split_fused_tensors(fused_tensors: Sequence, flatten_inputs_count: int,
-                        is_dynamic: bool = True) -> Tuple[list, list]:
+def split_fused_tensors(
+    fused_tensors: Sequence, flatten_inputs_count: int, is_dynamic: bool = True
+) -> Tuple[list, list]:
     input_tensor_count = 0
     folded_inputs, folded_outputs = [], []
     for i in fused_tensors:
@@ -398,7 +400,7 @@ def split_fused_tensors(fused_tensors: Sequence, flatten_inputs_count: int,
 
 
 def input_apply_as_list(inputs: Sequence, as_list_distribution: Sequence):
-    """ fold case's input only """
+    """fold case's input only"""
     if as_list_distribution:
         result = []
         last_num = 0
@@ -409,7 +411,7 @@ def input_apply_as_list(inputs: Sequence, as_list_distribution: Sequence):
                 result.append(inputs[last_num])
                 last_num += 1
             else:
-                result.append(inputs[last_num:last_num + num])
+                result.append(inputs[last_num : last_num + num])
                 last_num += num
         if last_num < len(inputs):
             result.extend(inputs[last_num:])
@@ -419,13 +421,13 @@ def input_apply_as_list(inputs: Sequence, as_list_distribution: Sequence):
 
 
 def output_apply_as_list(outputs: Sequence, as_list_distribution: Sequence, input_count: int):
-    """ fold case's output only """
+    """fold case's output only"""
     if as_list_distribution:
         result = []
         last_num = 0
         for num in as_list_distribution:
             if last_num < input_count:
-                last_num += (1 if num == 0 else num)
+                last_num += 1 if num == 0 else num
                 continue
             if last_num >= input_count + len(outputs):
                 break
@@ -433,10 +435,10 @@ def output_apply_as_list(outputs: Sequence, as_list_distribution: Sequence, inpu
                 result.append(outputs[last_num - input_count])
                 last_num += 1
             else:
-                result.append(outputs[(last_num - input_count):(last_num - input_count + num)])
+                result.append(outputs[(last_num - input_count) : (last_num - input_count + num)])
                 last_num += num
         if last_num < input_count + len(outputs):
-            result.extend(outputs[(last_num - input_count):])
+            result.extend(outputs[(last_num - input_count) :])
     else:
         result = outputs
     return result
@@ -475,21 +477,23 @@ def table_print(data: Sequence[Tuple[str, ...]]):
     char_length = sum(cells_width) + len(cells_width) * 2 - 1
     for idx, row in enumerate(data):
         length = len(row)
-        result += '+' + char_length * '-' + '+'
-        result += '\n'
+        result += "+" + char_length * "-" + "+"
+        result += "\n"
         sub_result = []
         for sub_row_idx in range(sub_row_size[idx]):
             if length == 1:
-                sub_result.append('| ' + str(row[0]).split('\n')[sub_row_idx].ljust(
-                    sum(cells_width) + 2 * len(cells_width) - 2) + '|')
+                sub_result.append(
+                    "| " + str(row[0]).split("\n")[sub_row_idx].ljust(sum(cells_width) + 2 * len(cells_width) - 2) + "|"
+                )
             else:
-                sub_row = [str(column).split('\n')[sub_row_idx] if sub_row_idx < len(str(column).split('\n')) else ""
-                           for column in row]
-                sub_result.append('|' + '|'.join(' ' + sub_row[i].ljust(cells_width[i])
-                                                 for i in range(length)) + '|')
-        result += '\n'.join(sub_result)
-        result += '\n'
-    result += '+' + char_length * '-' + '+'
+                sub_row = [
+                    str(column).split("\n")[sub_row_idx] if sub_row_idx < len(str(column).split("\n")) else ""
+                    for column in row
+                ]
+                sub_result.append("|" + "|".join(" " + sub_row[i].ljust(cells_width[i]) for i in range(length)) + "|")
+        result += "\n".join(sub_result)
+        result += "\n"
+    result += "+" + char_length * "-" + "+"
     return result
 
 
@@ -509,14 +513,12 @@ def frameless_table_print(data: list) -> str:
     for row in data:
         for idx, col in enumerate(row):
             cols_width[idx] = max(cols_width[idx], len(str(col)))
-    result = '\n' + ' '.join([w * '-' for w in cols_width])
-    result += '\n' + ' '.join([col.rjust(cols_width[idx])
-                               for idx, col in enumerate(data[0])])
-    result += '\n' + ' '.join([w * '-' for w in cols_width])
+    result = "\n" + " ".join([w * "-" for w in cols_width])
+    result += "\n" + " ".join([col.rjust(cols_width[idx]) for idx, col in enumerate(data[0])])
+    result += "\n" + " ".join([w * "-" for w in cols_width])
     for row in data[1:]:
-        result += '\n' + ' '.join([str(col).rjust(cols_width[idx])
-                                   for idx, col in enumerate(row)])
-    result += '\n' + '-'.join([w * '-' for w in cols_width])
+        result += "\n" + " ".join([str(col).rjust(cols_width[idx]) for idx, col in enumerate(row)])
+    result += "\n" + "-".join([w * "-" for w in cols_width])
     return result
 
 

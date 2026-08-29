@@ -17,11 +17,11 @@ from unittest.mock import MagicMock
 def _make_args(**kwargs):
     """构造 args mock，只填 args_to_switches 实际读取的字段。"""
     args = MagicMock()
-    args.provider = kwargs.get('provider', None)
-    args.config = kwargs.get('config', None)
-    args.input = kwargs.get('input', "x.csv")
-    args.output = kwargs.get('output', None)
-    args.run = kwargs.get('run', 1)
+    args.provider = kwargs.get("provider", None)
+    args.config = kwargs.get("config", None)
+    args.input = kwargs.get("input", "x.csv")
+    args.output = kwargs.get("output", None)
+    args.run = kwargs.get("run", 1)
     return args
 
 
@@ -38,9 +38,11 @@ remote:
     monkeypatch.chdir(tmp_path)
 
     import ttk.config.loader as loader
+
     loader._config = None
 
     from ttk.config.loader import get_remote_config, load_config
+
     load_config()
 
     config = get_remote_config()
@@ -61,9 +63,11 @@ remote:
     monkeypatch.chdir(tmp_path)
 
     import ttk.config.loader as loader
+
     loader._config = None
 
     from ttk.config.loader import get_remote_config, load_config
+
     load_config()
 
     assert get_remote_config() is None
@@ -79,11 +83,13 @@ remote:
     monkeypatch.chdir(tmp_path)
 
     import ttk.config.loader as loader
+
     loader._config = None
 
     args = _make_args(provider="torch")
 
     from ttk.cli.bridge import args_to_switches
+
     sw = args_to_switches(args)
 
     assert sw.provider_filter == "torch"

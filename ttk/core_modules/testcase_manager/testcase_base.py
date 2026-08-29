@@ -25,7 +25,30 @@ import logging
 from functools import partial
 
 from ...utilities import get_global_storage
-from .field_parser import *
+from .field_parser import (
+    int_container,
+    process_bool,
+    process_dict,
+    process_dynamic_inferable_shapelike,
+    process_dynamic_shapelike,
+    process_eval,
+    process_float,
+    process_int,
+    process_string,
+    rangelike,
+    scalar_nested,
+    shape_stride,
+    shapelike_dyn_nested,
+    shapelike_float,
+    shapelike_float_nested,
+    shapelike_float_signed,
+    shapelike_float_signed_nested,
+    shapelike_stc,
+    shapelike_stc_ex,
+    shapelike_stc_ex_nested,
+    shapelike_stc_nested,
+    string_container,
+)
 from .field_types import FIELD_TYPES
 
 _NO_PAD = object()
@@ -59,7 +82,7 @@ type_processing_func: Dict[FIELD_TYPES, Callable] = {
 }
 
 
-class TestcaseBase(metaclass=ABCMeta):
+class TestcaseBase(metaclass=ABCMeta):  # noqa: B024
     __slots__ = (
         # === testcase valid configurations === #
         "testcase_name",
@@ -403,7 +426,6 @@ class TestcaseBase(metaclass=ABCMeta):
             return
         if not isinstance(field, (tuple, list)):
             # Bare scalar value — broadcast
-            per_param = [field] * len(dist)
             result = []
             for num in dist:
                 if num == 0:

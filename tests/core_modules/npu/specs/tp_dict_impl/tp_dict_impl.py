@@ -15,8 +15,10 @@ class AddDictImplSpec:
 
     class AddTorchImpl:
         """torch impl — called on the XPU server (spec mode)."""
+
         def __call__(self, x, y, **kwargs):
             import torch
+
             return [torch.add(x, y)]
 
     third_party = {"torch": AddTorchImpl}

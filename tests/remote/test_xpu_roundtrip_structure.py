@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """XU round-trip 结构保真看护。嵌套组合 ((A,B), C, None, (D,E)) 两个方向。"""
+
 import io
 
 import numpy as np
@@ -32,15 +33,19 @@ def _sample():
 def test_input_direction_client_to_server(tmp_path):
     """方向 1: client 序列化 → server match_params_v1 恢复嵌套+None。"""
     from ttk.remote.server.execution_container import match_params_v1
+
     A, B, C, D, E = _sample()
     inputs = [(A, B), C, None, (D, E)]
     names = ["in0", "in1", "in2", "in3"]
     schema = _build_input_schema(inputs, names)
     path = _serialize_to_file(inputs, dir=str(tmp_path))
     npz = np.load(path)
-    flat = [npz[f"a{i}"] for i in range(sum(
-        len(e["indices"]) if "indices" in e else (1 if e.get("index") is not None else 0)
-        for e in schema))]
+    flat = [
+        npz[f"a{i}"]
+        for i in range(
+            sum(len(e["indices"]) if "indices" in e else (1 if e.get("index") is not None else 0) for e in schema)
+        )
+    ]
     named = match_params_v1(schema, flat)
     assert isinstance(named["in0"], list) and len(named["in0"]) == 2
     assert np.array_equal(named["in0"][0], A) and np.array_equal(named["in0"][1], B)

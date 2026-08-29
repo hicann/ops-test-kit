@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """RandomData dtype 保持测试：小 tensor + range(-0,+0) 不得被提升成 float64。"""
+
 import numpy as np
 import pytest
 

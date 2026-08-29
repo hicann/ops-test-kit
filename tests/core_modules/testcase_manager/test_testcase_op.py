@@ -20,11 +20,14 @@ import pytest
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
-def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
-                   input_dtypes=("float16", "float16"),
-                   output_shapes=((8,),),
-                   output_dtypes=("float16",),
-                   **kwargs):
+def _make_testcase(
+    op_name="Add",
+    input_shapes=((8,), (8,)),
+    input_dtypes=("float16", "float16"),
+    output_shapes=((8,),),
+    output_dtypes=("float16",),
+    **kwargs,
+):
     case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
@@ -64,13 +67,12 @@ _DEFAULT_OP_INFO = {
 def _validate(case, op_info=_DEFAULT_OP_INFO):
     if op_info is not None and "coreType.value" not in op_info:
         op_info = {**op_info, "coreType.value": "AiCore"}
-    with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as mock:
+    with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as mock:
         mock.return_value.info_of.return_value = op_info
         case.validate()
 
 
 class TestValidateBasic:
-
     def test_valid_minimal_case(self):
         case = _make_testcase()
         _validate(case)
@@ -110,7 +112,6 @@ class TestValidateBasic:
 
 
 class TestDynPropertyDerivation:
-
     def test_dyn_inputs_and_outputs_from_stc(self):
         case = _make_testcase()
         _validate(case)
@@ -133,7 +134,6 @@ class TestDynPropertyDerivation:
 
 
 class TestReadyForProfile:
-
     def test_not_ready_initially(self):
         case = _make_testcase()
         assert not case.ready_for_profile()
@@ -150,7 +150,6 @@ class TestReadyForProfile:
 
 
 class TestCompileFailed:
-
     def _make_result(self, status):
         r = MagicMock()
         r.compile_result = status
@@ -178,9 +177,9 @@ class TestCompileFailed:
 
 
 class TestApplyCompileResult:
-
     def test_apply_dynamic(self):
         from ttk.utilities.classes import DynamicCompilationResult
+
         case = _make_testcase()
         result = DynamicCompilationResult()
         result.compile_result = "SUCC"
@@ -192,6 +191,7 @@ class TestApplyCompileResult:
 
     def test_apply_const(self):
         from ttk.utilities.classes import ConstCompilationResult
+
         case = _make_testcase()
         result = ConstCompilationResult()
         result.compile_result = "SUCC"
@@ -202,7 +202,6 @@ class TestApplyCompileResult:
 
 
 class TestTensorDict:
-
     def test_dyn_tensor_dict(self):
         case = _make_testcase()
         _validate(case)
@@ -222,7 +221,7 @@ class TestTensorDict:
             output_shapes=((3, 5),),
         )
         _validate(case, op_info=op_info)
-        with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as m:
+        with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as m:
             m.return_value.info_of.return_value = op_info
             inputs, outputs = case.bin_tensor_dict
         assert len(inputs) == 2
@@ -232,7 +231,7 @@ class TestTensorDict:
     def test_bin_tensor_dict_none_input(self):
         case = _make_testcase(input_shapes=(None, (3, 4)))
         _validate(case)
-        with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as m:
+        with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as m:
             m.return_value.info_of.return_value = None
             inputs, outputs = case.bin_tensor_dict
         assert inputs[0] is None
@@ -241,9 +240,7 @@ class TestTensorDict:
     def test_bin_tensor_dict_const_and_tensor_list_mixed(self):
         op_info = {
             "coreType.value": "AiCore",
-            "inputs": [{"name": "x", "valueDepend": "required"},
-                       {"name": "y"},
-                       {"name": "z"}],
+            "inputs": [{"name": "x", "valueDepend": "required"}, {"name": "y"}, {"name": "z"}],
             "outputs": [{"name": "out"}],
         }
         case = _make_testcase(
@@ -251,7 +248,7 @@ class TestTensorDict:
             input_dtypes=("float16", ("float16", "float16"), "float16"),
         )
         _validate(case, op_info=op_info)
-        with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as m:
+        with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as m:
             m.return_value.info_of.return_value = op_info
             inputs, outputs = case.bin_tensor_dict
         assert inputs[0]["shape"] == (-1, -1)
@@ -265,7 +262,7 @@ class TestTensorDict:
             output_shapes=((3, 6),),
         )
         _validate(case)
-        with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as m:
+        with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as m:
             m.return_value.info_of.return_value = None
             result1 = case.bin_tensor_dict
             result2 = case.bin_tensor_dict
@@ -273,7 +270,6 @@ class TestTensorDict:
 
 
 class TestConstInputIndexes:
-
     def test_no_const_indexes_no_change(self):
         case = _make_testcase()
         _validate(case)
@@ -292,7 +288,6 @@ class TestConstInputIndexes:
 
 
 class TestInputBytes:
-
     def test_input_bytes_calculation(self):
         case = _make_testcase()  # 默认 2× float16 (8,) = 2*(8*2) = 32 bytes
         _validate(case)
@@ -305,7 +300,6 @@ class TestInputBytes:
 
 
 class TestGetCompilationHash:
-
     def test_same_params_same_hash(self):
         case1 = _make_testcase()
         case2 = _make_testcase()
@@ -328,26 +322,33 @@ class TestDynamicize:
     规则：>0 的维度替换为 -1；-1/-2/0 保持；None/空保持；scalar (1,) → (-1,)。
     """
 
-    @pytest.mark.parametrize("input_shapes, expected", [
-        (((8, 16), (3, 224, 224)), ((-1, -1), (-1, -1, -1))),
-        (((-1,), (-1, -1)), ((-1,), (-1, -1))),
-        (((0,),), ((0,),)),
-        ((None,), (None,)),
-        (((8, -1, 0),), ((-1, -1, 0),)),
-        (((8,), (16, 32), (-1,)), ((-1,), (-1, -1), (-1,))),
-        ((), ()),
-    ], ids=[
-        "positive-dims-become-minus1", "already-minus1-stays",
-        "zero-stays", "none-stays", "mixed-dims",
-        "multiple-tensors", "empty-input",
-    ])
+    @pytest.mark.parametrize(
+        "input_shapes, expected",
+        [
+            (((8, 16), (3, 224, 224)), ((-1, -1), (-1, -1, -1))),
+            (((-1,), (-1, -1)), ((-1,), (-1, -1))),
+            (((0,),), ((0,),)),
+            ((None,), (None,)),
+            (((8, -1, 0),), ((-1, -1, 0),)),
+            (((8,), (16, 32), (-1,)), ((-1,), (-1, -1), (-1,))),
+            ((), ()),
+        ],
+        ids=[
+            "positive-dims-become-minus1",
+            "already-minus1-stays",
+            "zero-stays",
+            "none-stays",
+            "mixed-dims",
+            "multiple-tensors",
+            "empty-input",
+        ],
+    )
     def test_dynamicize(self, input_shapes, expected):
         """验证 _dynamicize 在各类 shape 输入下的替换结果。"""
         assert TestcaseOp._dynamicize(input_shapes) == expected
 
 
 class TestNestedShapes:
-
     def test_flat_backward_compat(self):
         case = _make_testcase()
         _validate(case)
@@ -417,6 +418,7 @@ class TestTensorApiFlatPrecision:
 
     def test_flat_precision_tolerances_nested(self):
         from ttk.core_modules.testcase_manager.testcase_tensor_api_base import TensorApiTestcaseBase
+
         case = TensorApiTestcaseBase()
         case.tensor_view_shapes = (((3, 4), (5, 4)), (8,))
         case.output_tensor_indexes = (0, 1)
@@ -427,6 +429,7 @@ class TestTensorApiFlatPrecision:
 
     def test_flat_absolute_precision_single_float(self):
         from ttk.core_modules.testcase_manager.testcase_tensor_api_base import TensorApiTestcaseBase
+
         case = TensorApiTestcaseBase()
         case.absolute_precision = 1e-5
         assert case.flat_absolute_precision == 1e-5
@@ -434,6 +437,7 @@ class TestTensorApiFlatPrecision:
 
     def test_flat_absolute_precision_nested_tuple(self):
         from ttk.core_modules.testcase_manager.testcase_tensor_api_base import TensorApiTestcaseBase
+
         case = TensorApiTestcaseBase()
         case.tensor_view_shapes = (((3, 4), (5, 4)), (8,))
         case.output_tensor_indexes = (0, 1)
@@ -447,6 +451,7 @@ class TestTensorApiFlatPrecision:
 # Original fields must be preserved; flat_* properties return flattened.
 # These tests FAIL until the refactoring is complete.
 # =====================================================================
+
 
 class TestFlatPropertiesPreserveOriginal:
     """After validate(), original nested fields must be preserved as-is."""
@@ -561,65 +566,92 @@ class TestExtractInputAttrs:
     @staticmethod
     def _extract(attrs, input_names):
         from ttk.utilities.container_utils import pickup_by_names
+
         return pickup_by_names(attrs, input_names)
 
     @staticmethod
     def _rest(attrs, result):
         return {k: v for k, v in attrs.items() if k not in result}
 
-    @pytest.mark.parametrize("names, attrs, expected_extract, expected_rest", [
-        (["x"], {}, {}, {}),
-        ([], {"axis": 0}, {}, {"axis": 0}),
-        # direct name match
-        (["input_size", "filter", "out_backprop"],
-         {"input_size": [2, 3, 18, 130, 130], "strides": [1, 1, 1, 1, 1]},
-         {"input_size": [2, 3, 18, 130, 130]},
-         {"strides": [1, 1, 1, 1, 1]}),
-        # _in__ suffix matches input name
-        (["input_size", "filter"],
-         {"input_size_in__": [2, 3, 18], "strides": [1]},
-         {"input_size_in__": [2, 3, 18]},
-         {"strides": [1]}),
-        # both direct and suffixed present
-        (["input_size", "filter"],
-         {"input_size": [2, 3], "input_size_in__": [1, 1], "strides": [1]},
-         {"input_size": [2, 3], "input_size_in__": [1, 1]},
-         {"strides": [1]}),
-        # axis/axes alias direct
-        (["x", "axes"], {"axis": 1}, {"axis": 1}, {}),
-        (["x", "axis"], {"axes": [1, 2]}, {"axes": [1, 2]}, {}),
-        # axis alias with _in__ suffix
-        (["x", "axes"], {"axis_in__": 1}, {"axis_in__": 1}, {}),
-        # no match — all attrs rest
-        (["x", "y"], {"axis": 0, "keep_dims": True}, {},
-         {"axis": 0, "keep_dims": True}),
-        # conv3d style mixed
-        (["input_size", "filter", "out_backprop"],
-         {"input_size": [2, 3, 18, 130, 130],
-          "strides": [1, 1, 1, 1, 1], "pads": [0, 0, 0, 0, 0, 0],
-          "dilations": [1, 1, 1, 1, 1], "groups": 1, "data_format": "NCDHW"},
-         {"input_size": [2, 3, 18, 130, 130]},
-         {"strides": [1, 1, 1, 1, 1], "pads": [0, 0, 0, 0, 0, 0],
-          "dilations": [1, 1, 1, 1, 1], "groups": 1, "data_format": "NCDHW"}),
-        # ctc loss style
-        (["log_probs", "targets", "input_lengths", "target_lengths"],
-         {"input_lengths": (70,) * 5, "target_lengths": (26, 11),
-          "blank": 0, "reduction": "none"},
-         {"input_lengths": (70,) * 5, "target_lengths": (26, 11)},
-         {"blank": 0, "reduction": "none"}),
-        # input name not in attrs
-        (["repeats", "x"], {"axis": 0}, {}, {"axis": 0}),
-    ], ids=[
-        "empty-attributes", "empty-input-names",
-        "direct-name-match", "in-suffix-matches-input",
-        "both-direct-and-suffixed-present",
-        "axis-axes-alias-direct", "axes-axis-alias-direct",
-        "axis-alias-with-in-suffix",
-        "no-match-all-attrs", "conv3d-style-mixed",
-        "ctc-loss-style", "input-name-not-in-attrs",
-    ])
-    def test_extract_input_attrs(self, names, attrs,
-                                 expected_extract, expected_rest):
+    @pytest.mark.parametrize(
+        "names, attrs, expected_extract, expected_rest",
+        [
+            (["x"], {}, {}, {}),
+            ([], {"axis": 0}, {}, {"axis": 0}),
+            # direct name match
+            (
+                ["input_size", "filter", "out_backprop"],
+                {"input_size": [2, 3, 18, 130, 130], "strides": [1, 1, 1, 1, 1]},
+                {"input_size": [2, 3, 18, 130, 130]},
+                {"strides": [1, 1, 1, 1, 1]},
+            ),
+            # _in__ suffix matches input name
+            (
+                ["input_size", "filter"],
+                {"input_size_in__": [2, 3, 18], "strides": [1]},
+                {"input_size_in__": [2, 3, 18]},
+                {"strides": [1]},
+            ),
+            # both direct and suffixed present
+            (
+                ["input_size", "filter"],
+                {"input_size": [2, 3], "input_size_in__": [1, 1], "strides": [1]},
+                {"input_size": [2, 3], "input_size_in__": [1, 1]},
+                {"strides": [1]},
+            ),
+            # axis/axes alias direct
+            (["x", "axes"], {"axis": 1}, {"axis": 1}, {}),
+            (["x", "axis"], {"axes": [1, 2]}, {"axes": [1, 2]}, {}),
+            # axis alias with _in__ suffix
+            (["x", "axes"], {"axis_in__": 1}, {"axis_in__": 1}, {}),
+            # no match — all attrs rest
+            (["x", "y"], {"axis": 0, "keep_dims": True}, {}, {"axis": 0, "keep_dims": True}),
+            # conv3d style mixed
+            (
+                ["input_size", "filter", "out_backprop"],
+                {
+                    "input_size": [2, 3, 18, 130, 130],
+                    "strides": [1, 1, 1, 1, 1],
+                    "pads": [0, 0, 0, 0, 0, 0],
+                    "dilations": [1, 1, 1, 1, 1],
+                    "groups": 1,
+                    "data_format": "NCDHW",
+                },
+                {"input_size": [2, 3, 18, 130, 130]},
+                {
+                    "strides": [1, 1, 1, 1, 1],
+                    "pads": [0, 0, 0, 0, 0, 0],
+                    "dilations": [1, 1, 1, 1, 1],
+                    "groups": 1,
+                    "data_format": "NCDHW",
+                },
+            ),
+            # ctc loss style
+            (
+                ["log_probs", "targets", "input_lengths", "target_lengths"],
+                {"input_lengths": (70,) * 5, "target_lengths": (26, 11), "blank": 0, "reduction": "none"},
+                {"input_lengths": (70,) * 5, "target_lengths": (26, 11)},
+                {"blank": 0, "reduction": "none"},
+            ),
+            # input name not in attrs
+            (["repeats", "x"], {"axis": 0}, {}, {"axis": 0}),
+        ],
+        ids=[
+            "empty-attributes",
+            "empty-input-names",
+            "direct-name-match",
+            "in-suffix-matches-input",
+            "both-direct-and-suffixed-present",
+            "axis-axes-alias-direct",
+            "axes-axis-alias-direct",
+            "axis-alias-with-in-suffix",
+            "no-match-all-attrs",
+            "conv3d-style-mixed",
+            "ctc-loss-style",
+            "input-name-not-in-attrs",
+        ],
+    )
+    def test_extract_input_attrs(self, names, attrs, expected_extract, expected_rest):
         """验证 pickup_by_names 在各类命名约定下的命中结果与剩余 attrs。"""
         r = self._extract(attrs, names)
         assert r == expected_extract

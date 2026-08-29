@@ -37,7 +37,7 @@ body:
       label: Related log / screenshot / 日志 / 截图 (Mandatory / 必填)
       description: 提供尽可能多的日志/结果信息
     validations:
-      required: true  
+      required: true
   - type: textarea
     attributes:
       label: Special notes for this issue/备注 (Optional / 选填)

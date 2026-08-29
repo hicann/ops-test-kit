@@ -21,16 +21,17 @@ from ttk.core_modules.npu.op.comparison import comparing
 
 @pytest.fixture(autouse=True)
 def _mock_outputs_to_numpy():
-    with patch('ttk.core_modules.npu.op.comparison.__outputs_to_numpy_arrays',
-               lambda outputs, dtypes: None):
+    with patch("ttk.core_modules.npu.op.comparison.__outputs_to_numpy_arrays", lambda outputs, dtypes: None):
         yield
 
 
 def _call_comparing(mock_compare_side_effect):
-    with patch('ttk.core_modules.comparison.custom.compare') as mock_compare:
+    with patch("ttk.core_modules.comparison.custom.compare") as mock_compare:
         mock_compare.side_effect = mock_compare_side_effect
         result = comparing(
-            "dyn_k", "cst_k", "bin_k",
+            "dyn_k",
+            "cst_k",
+            "bin_k",
             (np.array([1.0]),),
             (np.array([1.0]),),
             (np.array([1.0]),),
@@ -42,33 +43,38 @@ def _call_comparing(mock_compare_side_effect):
 
 
 class TestComparingPass:
-
     def test_all_pass(self):
-        result, _ = _call_comparing([
-            ("1.0", "", True, {}),
-            ("1.0", "", True, {}),
-            ("1.0", "", True, {}),
-        ])
+        result, _ = _call_comparing(
+            [
+                ("1.0", "", True, {}),
+                ("1.0", "", True, {}),
+                ("1.0", "", True, {}),
+            ]
+        )
         assert result.passed == "PASS"
         assert result.dyn_precision == "1.0"
         assert result.cst_precision == "1.0"
         assert result.bin_precision == "1.0"
 
     def test_dyn_fail_means_overall_fail(self):
-        result, _ = _call_comparing([
-            ("0.5", "", False, {}),
-            ("1.0", "", True, {}),
-            ("1.0", "", True, {}),
-        ])
+        result, _ = _call_comparing(
+            [
+                ("0.5", "", False, {}),
+                ("1.0", "", True, {}),
+                ("1.0", "", True, {}),
+            ]
+        )
         assert result.passed == "FAIL"
         assert result.dyn_precision == "0.5"
 
     def test_3_comparisons_made(self):
-        result, mock_compare = _call_comparing([
-            ("1.0", "", True, {}),
-            ("1.0", "", True, {}),
-            ("1.0", "", True, {}),
-        ])
+        result, mock_compare = _call_comparing(
+            [
+                ("1.0", "", True, {}),
+                ("1.0", "", True, {}),
+                ("1.0", "", True, {}),
+            ]
+        )
         assert mock_compare.call_count == 3
 
     def test_comparison_order(self):
@@ -89,10 +95,18 @@ class TestComparingPass:
         bin_out = np.array([1.0])
         golden = np.array([1.0])
 
-        with patch('ttk.core_modules.comparison.custom.compare', side_effect=track_compare):
-            comparing("dyn_k", "cst_k", "bin_k",
-                      (dyn_out,), (cst_out,), (bin_out,), (golden,),
-                      ("float32",), standards=[MagicMock()])
+        with patch("ttk.core_modules.comparison.custom.compare", side_effect=track_compare):
+            comparing(
+                "dyn_k",
+                "cst_k",
+                "bin_k",
+                (dyn_out,),
+                (cst_out,),
+                (bin_out,),
+                (golden,),
+                ("float32",),
+                standards=[MagicMock()],
+            )
 
         assert call_log == [
             "dyn_vs_golden",
@@ -101,9 +115,11 @@ class TestComparingPass:
         ]
 
     def test_exception_returns_compare_failure(self):
-        with patch('ttk.core_modules.comparison.custom.compare', side_effect=RuntimeError("boom")):
+        with patch("ttk.core_modules.comparison.custom.compare", side_effect=RuntimeError("boom")):
             result = comparing(
-                "dyn_k", "cst_k", "bin_k",
+                "dyn_k",
+                "cst_k",
+                "bin_k",
                 (np.array([1.0]),),
                 (np.array([1.0]),),
                 (np.array([1.0]),),

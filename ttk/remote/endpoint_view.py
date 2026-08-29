@@ -3,6 +3,7 @@
 Reads health file (written by HB subprocess) + resolves providers + round-robin
 load balancing. No writes. All TTK_XPU_* env READS stay in this module.
 """
+
 import logging
 import os
 import random
@@ -25,8 +26,7 @@ def _parse_provider_filter(raw: Optional[str]) -> Optional[List[str]]:
     return parsed or None
 
 
-def _wait_health_file(path: str, timeout: float = HEALTH_BARRIER_TIMEOUT_S,
-                      interval: float = 0.5) -> None:
+def _wait_health_file(path: str, timeout: float = HEALTH_BARRIER_TIMEOUT_S, interval: float = 0.5) -> None:
     """Lazy barrier: poll os.path.exists until health file appears (once per process)."""
     if not path:
         log.warning("No TTK_XPU_HEALTH_PATH set, skipping health file barrier")
@@ -44,7 +44,8 @@ class EndpointView(metaclass=Singleton):
 
     def __init__(self):
         from ttk.remote.config import get_remote_config
-        config = get_remote_config()                       # 从 load_config 缓存取
+
+        config = get_remote_config()  # 从 load_config 缓存取
         self._endpoints = config.endpoints if config else []
         self._health_path = os.environ.get("TTK_XPU_HEALTH_PATH", "")  # 保留 env
         _wait_health_file(self._health_path)
@@ -53,8 +54,9 @@ class EndpointView(metaclass=Singleton):
         random.shuffle(self._endpoints)
         self._rr_index: dict = {}  # {provider: next offset}
 
-    def resolve_providers(self, spec_providers: Optional[List[str]] = None,
-                          cli_providers: Optional[List[str]] = None) -> List[str]:
+    def resolve_providers(
+        self, spec_providers: Optional[List[str]] = None, cli_providers: Optional[List[str]] = None
+    ) -> List[str]:
         """all_effective(alive + detect∩yaml) ∩ spec_providers ∩ cli_providers.
 
         Sequential intersection. Raises RuntimeError when nothing survives
@@ -74,7 +76,8 @@ class EndpointView(metaclass=Singleton):
             ep_keys = [f"{e.host}:{e.port}" for e in self._endpoints]
             raise RuntimeError(
                 f"no usable provider (detect∩yaml∩alive empty); "
-                f"health_present={health is not None}, endpoints={ep_keys}")
+                f"health_present={health is not None}, endpoints={ep_keys}"
+            )
         candidates = set(effective)
         if spec_providers:
             candidates &= set(spec_providers)
@@ -82,8 +85,8 @@ class EndpointView(metaclass=Singleton):
             candidates &= set(cli_providers)
         if not candidates:
             raise RuntimeError(
-                f"no provider after filter (effective={sorted(effective)}, "
-                f"spec={spec_providers}, cli={cli_providers})")
+                f"no provider after filter (effective={sorted(effective)}, spec={spec_providers}, cli={cli_providers})"
+            )
         if spec_providers:
             # preserve spec insertion order = app-declared priority;
             # priority 控制权留在应用层（spec 顺序），不在 resolve 层偷偷排序
@@ -137,7 +140,6 @@ class EndpointView(metaclass=Singleton):
         if yaml_filter:
             dropped = yaml_filter - detect
             if dropped:
-                log.warning("endpoint %s: yaml %s not in detect %s, dropped",
-                            ep_key, sorted(dropped), sorted(detect))
+                log.warning("endpoint %s: yaml %s not in detect %s, dropped", ep_key, sorted(dropped), sorted(detect))
             return detect & yaml_filter
         return detect

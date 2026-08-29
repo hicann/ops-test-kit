@@ -116,7 +116,7 @@ class Backend(ABC):
 
         return copy.copy(tensor)
 
-    def restore_inplace(self, target, backup):
+    def restore_inplace(self, target, backup):  # noqa: B027
         """Restore a tensor from backup after an inplace operation. Default: no-op."""
         pass
 
@@ -132,7 +132,7 @@ class Backend(ABC):
         """Whether this backend supports NPU format cast."""
         return False
 
-    def set_deterministic_level(self, level):
+    def set_deterministic_level(self, level):  # noqa: B027
         """Set deterministic computation level. Default: no-op."""
         pass
 
@@ -175,13 +175,13 @@ class Backend(ABC):
             for r in result:
                 if r is None:
                     nps.append(None)
-                elif hasattr(r, "numpy") and callable(getattr(r, "numpy")):
+                elif hasattr(r, "numpy") and callable(r.numpy):
                     arr = self.to_numpy(r)
                     nps.append(arr.copy() if copy else arr)
                 else:
                     nps.append(np.array(r))
             return nps
-        if hasattr(result, "numpy") and callable(getattr(result, "numpy")):
+        if hasattr(result, "numpy") and callable(result.numpy):
             arr = self.to_numpy(result)
             return [arr.copy() if copy else arr]
         return [np.array(result)]

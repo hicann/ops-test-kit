@@ -7,6 +7,7 @@ Runs execute_request, prints the envelope JSON to stdout. Exit code 0 on success
 The script's directory (/executor/) is on sys.path by default, so the executor
 package is importable directly.
 """
+
 import json
 import sys
 
@@ -20,7 +21,7 @@ def main():
         print(json.dumps({"ok": False, "error": "usage: executor_main.py <kwargs.json>"}))
         sys.exit(1)
 
-    with open(sys.argv[1], "r") as f:
+    with open(sys.argv[1]) as f:
         kwargs = json.load(f)
 
     envelope = execute_request(**kwargs)

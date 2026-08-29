@@ -5,8 +5,8 @@ from typing import Dict
 from . import InvalidSpecError
 
 # Spec.tolerance 只收 2.1 四标准；框架增强/别名走 CLI --compare
-_SPEC_TOLERANCE_STANDARDS = {"stat_rel_err", "binary_equal", "cross_check", "quant"}   # 2.1 官方
-_FRAMEWORK_TOKENS = {"isclose", "close", "cosine", "bin", "binary", "requant"}          # CLI-only
+_SPEC_TOLERANCE_STANDARDS = {"stat_rel_err", "binary_equal", "cross_check", "quant"}  # 2.1 官方
+_FRAMEWORK_TOKENS = {"isclose", "close", "cosine", "bin", "binary", "requant"}  # CLI-only
 
 # Valid types for each attribute: tuple of types
 _CHECK_RULES: Dict[str, tuple] = {
@@ -51,13 +51,13 @@ def validate(spec_cls: type) -> None:
         if attr_name == "torch_graph":
             try:
                 import torch.nn as nn
+
                 ok = isinstance(value, type) and issubclass(value, nn.Module)
             except ImportError:
                 ok = isinstance(value, type)  # torch 未装:fallback 只查是类
             if not ok:
                 errors.append(
-                    f"{spec_cls.__name__}.torch_graph must be a torch.nn.Module subclass, "
-                    f"got {type(value).__name__}"
+                    f"{spec_cls.__name__}.torch_graph must be a torch.nn.Module subclass, got {type(value).__name__}"
                 )
             continue
 
@@ -111,9 +111,13 @@ def _validate_tolerance(spec_name, tolerance, errors):
         elif std in _SPEC_TOLERANCE_STANDARDS:
             pass  # 2.1 合法（cross_check/quant 即便 P1 未实现也放过，runtime 报）
         elif std in _FRAMEWORK_TOKENS:
-            errors.append(f"{spec_name}.tolerance[{dtype!r}].standard {std!r} is a framework enhancement/alias "
-                          f"(CLI-only via --compare); Spec.tolerance only accepts 2.1 standards "
-                          f"{sorted(_SPEC_TOLERANCE_STANDARDS)}")
+            errors.append(
+                f"{spec_name}.tolerance[{dtype!r}].standard {std!r} is a framework enhancement/alias "
+                f"(CLI-only via --compare); Spec.tolerance only accepts 2.1 standards "
+                f"{sorted(_SPEC_TOLERANCE_STANDARDS)}"
+            )
         else:
-            errors.append(f"{spec_name}.tolerance[{dtype!r}].standard unknown: {std!r}; "
-                          f"expected one of {sorted(_SPEC_TOLERANCE_STANDARDS)}")
+            errors.append(
+                f"{spec_name}.tolerance[{dtype!r}].standard unknown: {std!r}; "
+                f"expected one of {sorted(_SPEC_TOLERANCE_STANDARDS)}"
+            )

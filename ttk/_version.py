@@ -1,33 +1,41 @@
 import os
 import subprocess
 
-
 __version__ = "3.0.0"
 
 
 def get_build():
     try:
         from ttk._build_hash import build
+
         return build
     except ImportError:
         pass
     try:
         ttk_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=ttk_dir,
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=ttk_dir,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return "unknown"
 
 
 def _get_git_hash():
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return None
 

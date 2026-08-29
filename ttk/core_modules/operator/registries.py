@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -12,7 +11,6 @@ Interfaces to access gen_simplifiedKey_func
 Functions above are registered in libregister.so from liboptiling.so/libopmaster_rt2.0.so
 """
 
-
 __all__ = ["customize_gen_simplified_key"]
 
 
@@ -23,6 +21,7 @@ import logging
 import math
 import os
 from typing import Union
+
 # Third-Party Packages
 from ...utilities import get_ascend_scene_info
 from ...utilities.platform import get_op_impl_paths
@@ -40,7 +39,7 @@ def _load_custom_vendor_tiling(opp_impl_path):
         return
     try:
         dll = ctypes.CDLL(so_path)
-        dll.TbeLoadSoAndSaveToRegistry(str(so_path).encode('utf_8'))
+        dll.TbeLoadSoAndSaveToRegistry(str(so_path).encode("utf_8"))
     except OSError:
         pass
 
@@ -74,13 +73,13 @@ def _load_builtin_tiling(opp_impl_path):
     # 2. builtin optiling 2.0 registration (mutually exclusive)
     if os.path.isfile(master_rt_so):
         dll = ctypes.CDLL(master_rt_so)
-        dll.TbeLoadSoAndSaveToRegistry(str(master_rt_so).encode('utf_8'))
+        dll.TbeLoadSoAndSaveToRegistry(str(master_rt_so).encode("utf_8"))
     elif os.path.isfile(master_rt2_so):
         dll = ctypes.CDLL(master_rt2_so)
-        dll.TbeLoadSoAndSaveToRegistry(str(master_rt2_so).encode('utf_8'))
+        dll.TbeLoadSoAndSaveToRegistry(str(master_rt2_so).encode("utf_8"))
     elif os.path.isfile(cust_master_rt2_so):
         dll = ctypes.CDLL(cust_master_rt2_so)
-        dll.TbeLoadSoAndSaveToRegistry(str(cust_master_rt2_so).encode('utf_8'))
+        dll.TbeLoadSoAndSaveToRegistry(str(cust_master_rt2_so).encode("utf_8"))
     elif os.path.isdir(op_host_dir):
         non_legacy = []
         legacy = []
@@ -88,16 +87,16 @@ def _load_builtin_tiling(opp_impl_path):
             for f in files:
                 file_path = os.path.join(root, f)
                 if os.path.isfile(file_path) and file_path.endswith(".so"):
-                    if 'legacy' in f.lower():
+                    if "legacy" in f.lower():
                         legacy.append(file_path)
                     else:
                         non_legacy.append(file_path)
         for fp in non_legacy:
             dll = ctypes.CDLL(fp)
-            dll.TbeLoadSoAndSaveToRegistry(str(fp).encode('utf_8'))
+            dll.TbeLoadSoAndSaveToRegistry(str(fp).encode("utf_8"))
         for fp in legacy:
             dll = ctypes.CDLL(fp)
-            dll.TbeLoadSoAndSaveToRegistry(str(fp).encode('utf_8'))
+            dll.TbeLoadSoAndSaveToRegistry(str(fp).encode("utf_8"))
 
 
 def load_op_registries():
@@ -127,6 +126,7 @@ def _ensure_loaded():
         return
     load_op_registries()
     from ...utilities.cext_loader import load_cext
+
     _registry_accessor = load_cext("libttk_op_registry_accessor.so", "op_registry_accessor")
     if not hasattr(_registry_accessor, "FindGenSimplifiedKeyFuncs"):
         raise RuntimeError("Interface [FindGenSimplifiedKeyFuncs] is not found.")
@@ -136,8 +136,14 @@ def _ensure_loaded():
     _registry_accessor.FindGenSimplifiedKeyFuncs.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
     _registry_accessor.InvokeGenSimplifiedKey.restype = ctypes.c_int
     _registry_accessor.InvokeGenSimplifiedKey.argtypes = [
-        ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
-        ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+    ]
     _registries_loaded = True
 
 
@@ -148,7 +154,7 @@ def _find_funcs(op_type: str):
         return cached
     _ensure_loaded()
     handle = ctypes.c_void_p()
-    ret = _registry_accessor.FindGenSimplifiedKeyFuncs(op_type.encode('utf_8'), ctypes.byref(handle))
+    ret = _registry_accessor.FindGenSimplifiedKeyFuncs(op_type.encode("utf_8"), ctypes.byref(handle))
     if ret != 0:
         _handle_cache[op_type] = False
         return False
@@ -157,42 +163,44 @@ def _find_funcs(op_type: str):
 
 
 def customize_gen_simplified_key(simplified_key, op_type, inputs, outputs, attrs=None) -> str:
-    """ invoke customize simplified key generator.
+    """invoke customize simplified key generator.
     simplified_key = f"{op_type}/d={deterministic},p={impl_mode}/xxxxx"
     """
     handle = _find_funcs(op_type)
     if not handle:
         raise RuntimeError(f"Customized simplified key generator function is not found for op [{op_type}].")
 
-    deterministic = int(simplified_key.split('/')[1].split(',')[0].split('=')[1])
+    deterministic = int(simplified_key.split("/")[1].split(",")[0].split("=")[1])
     extra_params = {"op_name": op_type, "deterministic": deterministic}
     _inputs_pre_process(inputs)
     _attrs_pre_process(attrs)
-    op_type_c = op_type.encode('utf_8')
-    inputs_c = json.dumps(inputs).encode('utf_8')
-    outputs_c = json.dumps(outputs).encode('utf_8')
-    extra_params_c = json.dumps(extra_params).encode('utf_8')
+    op_type_c = op_type.encode("utf_8")
+    inputs_c = json.dumps(inputs).encode("utf_8")
+    outputs_c = json.dumps(outputs).encode("utf_8")
+    extra_params_c = json.dumps(extra_params).encode("utf_8")
     if not attrs:
         attrs_c = None
     else:
-        attrs_c = json.dumps(attrs).encode('utf_8')
+        attrs_c = json.dumps(attrs).encode("utf_8")
 
-    res_buf = ctypes.create_string_buffer(simplified_key.encode('utf_8'), 256)
+    res_buf = ctypes.create_string_buffer(simplified_key.encode("utf_8"), 256)
 
     invoke_fn = _registry_accessor.InvokeGenSimplifiedKey
     ret = invoke_fn(handle, op_type_c, inputs_c, outputs_c, attrs_c, extra_params_c, res_buf)
     if ret != 0:
         msg = _parse_c_return_code(ret)
-        raise RuntimeError(f"invoke customized simplified key generator for op [{op_type}] failed: {msg}. "
-                           f"Please check `plog` for more details.")
-    return res_buf.value.decode('utf-8')
+        raise RuntimeError(
+            f"invoke customized simplified key generator for op [{op_type}] failed: {msg}. "
+            f"Please check `plog` for more details."
+        )
+    return res_buf.value.decode("utf-8")
 
 
 def _parse_c_return_code(ret):
     CODE_MAP = {
         1: "Customized simplified key generator function is not found",
         2: "Parse input/output/attr/extra_info failed",
-        3: "Invoke customized simplified key generator function failed"
+        3: "Invoke customized simplified key generator function failed",
     }
     return CODE_MAP.get(ret, f"Unknown return code: [{ret}]")
 
@@ -220,7 +228,16 @@ def _attrs_pre_process(attrs):
         if not isinstance(single_attr, dict):
             continue
         attr_dtype = single_attr.get("dtype")
-        if attr_dtype not in ("float", "float32", "float64", "double", "list_float", "list_float32", "list_float64", "list_double"):
+        if attr_dtype not in (
+            "float",
+            "float32",
+            "float64",
+            "double",
+            "list_float",
+            "list_float32",
+            "list_float64",
+            "list_double",
+        ):
             continue
         attr_value = single_attr.get("value")
         if attr_value is None:

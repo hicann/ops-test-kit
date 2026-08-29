@@ -8,12 +8,16 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Tests for tolerance token validation in test_spec."""
+
 import pytest
+
 from ttk.test_spec import InvalidSpecError, validate
 
 
 def _spec(**kw):
-    class S: pass
+    class S:
+        pass
+
     for k, v in kw.items():
         setattr(S, k, v)
     return S

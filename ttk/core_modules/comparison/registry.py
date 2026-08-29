@@ -14,10 +14,11 @@ comparison method register
 # Standard Packages
 import gc
 import logging
-import numpy as np
-from abc import abstractmethod, ABCMeta
+from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Union
+
+import numpy as np
 
 
 @dataclass
@@ -67,7 +68,7 @@ class ComparisonBase(metaclass=ABCMeta):
         self.__post_init__()
         self.standard = getattr(type(self), "STANDARD_NAME", "")
 
-    def __post_init__(self):
+    def __post_init__(self):  # noqa: B027
         pass
 
     @abstractmethod
@@ -103,7 +104,7 @@ class ComparisonBase(metaclass=ABCMeta):
             precision = compare_result.precision
         else:
             precision = f"{compare_result.precision * 100}%"
-        compare_result.log += "Output %d Precision is %s\n" % (self.output_idx, precision)
+        compare_result.log += f"Output {self.output_idx} Precision is {precision}\n"
         compare_result.log += self._log_diff_output(compare_result.diff_index)
         gc.collect()
         return precision, compare_result.log, compare_result.is_pass, compare_result.metrics
@@ -122,44 +123,32 @@ class ComparisonBase(metaclass=ABCMeta):
         if diff_index is not None:
             diff_index_size = diff_index.size
             golden_size = self.golden.size
-            log += "Output %d Compare Difference length %d\n" % (self.output_idx, diff_index_size)
+            log += f"Output {self.output_idx} Compare Difference length {diff_index_size}\n"
             for idx in range(diff_index_size):
                 real_index = diff_index[idx]
                 golden_v = self.golden[real_index] if golden_size > 0 else 0
                 actual_v = self.output[real_index]
                 if golden_size <= 0:
-                    log += "Index: %03d RealIndex: %06d Expected: 0 Actual: %-14.18f, Diff: inf\n" % (
-                        idx,
-                        real_index,
-                        actual_v,
+                    log += (
+                        f"Index: {idx:03d} RealIndex: {real_index:06d} Expected: 0 "
+                        f"Actual: {float(actual_v):<14.18f}, Diff: inf\n"
                     )
                 elif any([s in str(self.golden.dtype) for s in ("float8", "float4", "hifloat8")]):
                     # out-of-range number will be nan/inf in
                     # `- (golden_v - actual_v) / golden_v`. convert to float.
                     tmp_array = np.array([float(golden_v), float(actual_v)], dtype=np.float32)
-                    log += "Index: %03d RealIndex: %06d Expected: %-14.18f Actual: %-14.18f Diff: %-14.06f\n" % (
-                        idx,
-                        real_index,
-                        golden_v,
-                        actual_v,
-                        -(tmp_array[0] - tmp_array[1]) / tmp_array[0],
+                    log += (
+                        f"Index: {idx:03d} RealIndex: {real_index:06d} Expected: {float(golden_v):<14.18f} "
+                        f"Actual: {float(actual_v):<14.18f} Diff: {float(-(tmp_array[0] - tmp_array[1]) / tmp_array[0]):<14.06f}\n"
                     )
                 elif "bool" not in str(self.golden.dtype):
                     # (golden_v - actual_v) is different with (actual_v - golden_v) in BFP16 vs FP32-Golden
-                    log += "Index: %03d RealIndex: %06d Expected: %-14.18f Actual: %-14.18f Diff: %-14.06f\n" % (
-                        idx,
-                        real_index,
-                        golden_v,
-                        actual_v,
-                        -(golden_v - actual_v) / golden_v,
+                    log += (
+                        f"Index: {idx:03d} RealIndex: {real_index:06d} Expected: {float(golden_v):<14.18f} "
+                        f"Actual: {float(actual_v):<14.18f} Diff: {float(-(golden_v - actual_v) / golden_v):<14.06f}\n"
                     )
                 else:
-                    log += "Index: %03d RealIndex: %06d Expected: %s Actual: %s Diff: FAIL\n" % (
-                        idx,
-                        real_index,
-                        str(golden_v),
-                        str(actual_v),
-                    )
+                    log += f"Index: {idx:03d} RealIndex: {real_index:06d} Expected: {str(golden_v)} Actual: {str(actual_v)} Diff: FAIL\n"
                 if idx == self.MAX_DIFF_OUTPUT:
                     break
         return log

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -11,38 +10,48 @@
 """
 Operator Compilation Interface
 """
+
 # Standard Packages
 import copy
-from contextlib import contextmanager
 import functools
 import importlib
 import inspect
 import json
 import logging
-import numpy
 import os
-import re
 import time
+from contextlib import contextmanager
+
+import numpy
+
 try:
     from collections.abc import Callable
 except ImportError:
-    from collections import Callable
+    from collections.abc import Callable
 from collections import OrderedDict
-
 from typing import Any, Optional, Sequence, Tuple, Union
 
+from ...utilities import (
+    BinaryCompilationResult,
+    DynamicCompilationResult,
+    Singleton,
+    ceil_div,
+    extract_plog_errors,
+    get,
+    get_dtype_width,
+    get_global_storage,
+    kernel_debug_compile_enabled,
+    lcm,
+    param_transformation,
+    resolve_custom_numpy_dtypes,
+    tuple_flatten,
+)
+from ...utilities.proc import _REGBASE_V2_SOURCE_DEBUG_OPTION
+from ..testcase_manager import TestcaseOp
+from .op_info_keeper import OpInfoKeeper
 
 # Third-Party Packages
 from .tbe_interface import Opc
-from .op_info_keeper import OpInfoKeeper
-from ..testcase_manager import TestcaseOp
-from ...utilities import BinaryCompilationResult, DynamicCompilationResult, Singleton
-from ...utilities import ceil_div, get, get_global_storage, lcm
-from ...utilities import param_transformation, read_file, tuple_flatten, extract_plog_errors
-from ...utilities import get_dtype_width, resolve_custom_numpy_dtypes
-from ...utilities import kernel_debug_compile_enabled
-from ...utilities.proc import _REGBASE_V2_SOURCE_DEBUG_OPTION
-
 
 _ASCENDC_COMMON_UTILITY_MODULES = (
     "asc_op_compile_base.asc_op_compiler.ascendc_common_utility",
@@ -52,8 +61,7 @@ _ASCENDC_COMMON_UTILITY_MODULES = (
 
 def _append_regbase_v2_source_debug_option(compile_options: list):
     """Complete the RegBase V2 source-debug option set produced by CANN."""
-    if ("-O0" in compile_options and "-g" in compile_options
-            and _REGBASE_V2_SOURCE_DEBUG_OPTION not in compile_options):
+    if "-O0" in compile_options and "-g" in compile_options and _REGBASE_V2_SOURCE_DEBUG_OPTION not in compile_options:
         compile_options.append(_REGBASE_V2_SOURCE_DEBUG_OPTION)
 
 
@@ -97,8 +105,6 @@ def _ascend950_source_debug_compatibility(enabled: bool):
             common_utility.check_debug_options = descriptor
 
 
-
-
 class CaseNotSupportedError(Exception):
     pass
 
@@ -117,8 +123,7 @@ class OperatorInterface(metaclass=Singleton):
         self._opc = Opc()
 
     @staticmethod
-    def prepare_operator_parameters(testcase: TestcaseOp,
-                                    mode: str) -> Tuple[tuple, tuple]:
+    def prepare_operator_parameters(testcase: TestcaseOp, mode: str) -> Tuple[tuple, tuple]:
         """
         This method is intended to construct operator input / output dict
         """
@@ -148,21 +153,30 @@ class OperatorInterface(metaclass=Singleton):
                 sub_ori = ori_shapes[sub_idx] if isinstance(ori_shapes, (tuple, list)) else ori_shapes
                 sub_ori_fmt = ori_formats[sub_idx] if isinstance(ori_formats, (tuple, list)) else ori_formats
                 sub_range = ranges[sub_idx] if isinstance(ranges, (tuple, list)) else ranges
-                group.append({"shape": sub_shape,
-                              "ori_shape": sub_ori,
-                              "range": sub_range,
-                              "dtype": sub_dtype,
-                              "format": sub_fmt,
-                              "ori_format": sub_ori_fmt})
+                group.append(
+                    {
+                        "shape": sub_shape,
+                        "ori_shape": sub_ori,
+                        "range": sub_range,
+                        "dtype": sub_dtype,
+                        "format": sub_fmt,
+                        "ori_format": sub_ori_fmt,
+                    }
+                )
         return tuple(group)
 
     @staticmethod
     def _build_tensor_dict(shape, ori_shape, dtype, fmt, ori_fmt, range_):
-        return {"shape": shape, "ori_shape": ori_shape, "range": range_,
-                "dtype": dtype, "format": fmt, "ori_format": ori_fmt}
+        return {
+            "shape": shape,
+            "ori_shape": ori_shape,
+            "range": range_,
+            "dtype": dtype,
+            "format": fmt,
+            "ori_format": ori_fmt,
+        }
 
-    def _resolve_const_value(self, ip_n, dyn_func_params, possible_const_input_dict,
-                             attributes, stc_dtypes):
+    def _resolve_const_value(self, ip_n, dyn_func_params, possible_const_input_dict, attributes, stc_dtypes):
         key = dyn_func_params[ip_n]
         if key in possible_const_input_dict:
             value = possible_const_input_dict[key]
@@ -176,14 +190,16 @@ class OperatorInterface(metaclass=Singleton):
         if isinstance(my_dtype, (tuple, list)):
             my_dtype = my_dtype[0]
         my_value = numpy.array(value, dtype=resolve_custom_numpy_dtypes([my_dtype])[0])
-        return {"shape": tuple(map(int, my_value.shape)),
-                "ori_shape": tuple(map(int, my_value.shape)),
-                "range": get(self._stc_input_ranges, ip_n),
-                "dtype": my_dtype,
-                "format": get(self._input_formats, ip_n),
-                "ori_format": get(self._input_ori_formats, ip_n),
-                "name": key,
-                "const_value": tuple_flatten(my_value.tolist())}
+        return {
+            "shape": tuple(map(int, my_value.shape)),
+            "ori_shape": tuple(map(int, my_value.shape)),
+            "range": get(self._stc_input_ranges, ip_n),
+            "dtype": my_dtype,
+            "format": get(self._input_formats, ip_n),
+            "ori_format": get(self._input_ori_formats, ip_n),
+            "name": key,
+            "const_value": tuple_flatten(my_value.tolist()),
+        }
 
     def prepare_operator_parameters_const(self, testcase: TestcaseOp) -> Tuple[tuple, tuple]:
         """
@@ -215,28 +231,34 @@ class OperatorInterface(metaclass=Singleton):
             # try const path first
             if ip_n in const_indexes:
                 const_dict = self._resolve_const_value(
-                    ip_n, dyn_func_params, possible_const_input_dict,
-                    testcase.attributes, self._input_dtypes)
+                    ip_n, dyn_func_params, possible_const_input_dict, testcase.attributes, self._input_dtypes
+                )
                 if const_dict is not None:
                     ipt.append(const_dict)
                     continue
             # normal input path
             if is_tl:
-                ipt.append(self._build_tensor_dict_group(
-                    stc_shape,
-                    get(self._input_dtypes, ip_n),
-                    get(self._input_formats, ip_n),
-                    get(stc_ori_shapes, ip_n),
-                    get(self._input_ori_formats, ip_n),
-                    get(self._stc_input_ranges, ip_n)))
+                ipt.append(
+                    self._build_tensor_dict_group(
+                        stc_shape,
+                        get(self._input_dtypes, ip_n),
+                        get(self._input_formats, ip_n),
+                        get(stc_ori_shapes, ip_n),
+                        get(self._input_ori_formats, ip_n),
+                        get(self._stc_input_ranges, ip_n),
+                    )
+                )
             else:
-                ipt.append(self._build_tensor_dict(
-                    stc_shape,
-                    get(stc_ori_shapes, ip_n),
-                    get(self._input_dtypes, ip_n),
-                    get(self._input_formats, ip_n),
-                    get(self._input_ori_formats, ip_n),
-                    get(self._stc_input_ranges, ip_n)))
+                ipt.append(
+                    self._build_tensor_dict(
+                        stc_shape,
+                        get(stc_ori_shapes, ip_n),
+                        get(self._input_dtypes, ip_n),
+                        get(self._input_formats, ip_n),
+                        get(self._input_ori_formats, ip_n),
+                        get(self._stc_input_ranges, ip_n),
+                    )
+                )
 
         # outputs
         opt = []
@@ -250,21 +272,27 @@ class OperatorInterface(metaclass=Singleton):
                     continue
                 is_tl = bool(output_dist) and op_n < len(output_dist) and output_dist[op_n] > 0
                 if is_tl:
-                    opt.append(self._build_tensor_dict_group(
-                        shape,
-                        get(testcase.output_dtypes, op_n),
-                        get(testcase.output_formats, op_n),
-                        get(stc_out_ori_shapes, op_n),
-                        get(testcase.output_ori_formats, op_n),
-                        get(testcase.dyn_output_ranges, op_n)))
+                    opt.append(
+                        self._build_tensor_dict_group(
+                            shape,
+                            get(testcase.output_dtypes, op_n),
+                            get(testcase.output_formats, op_n),
+                            get(stc_out_ori_shapes, op_n),
+                            get(testcase.output_ori_formats, op_n),
+                            get(testcase.dyn_output_ranges, op_n),
+                        )
+                    )
                 else:
-                    opt.append(self._build_tensor_dict(
-                        shape,
-                        get(stc_out_ori_shapes, op_n),
-                        get(testcase.output_dtypes, op_n),
-                        get(testcase.output_formats, op_n),
-                        get(testcase.output_ori_formats, op_n),
-                        get(testcase.dyn_output_ranges, op_n)))
+                    opt.append(
+                        self._build_tensor_dict(
+                            shape,
+                            get(stc_out_ori_shapes, op_n),
+                            get(testcase.output_dtypes, op_n),
+                            get(testcase.output_formats, op_n),
+                            get(testcase.output_ori_formats, op_n),
+                            get(testcase.dyn_output_ranges, op_n),
+                        )
+                    )
         return tuple(ipt), tuple(opt)
 
     @staticmethod
@@ -295,14 +323,13 @@ class OperatorInterface(metaclass=Singleton):
         self._opc.core_type = core_type
         return self
 
-    def compile_dynamic_shape(self, dyn_params: tuple,
-                              testcase: TestcaseOp,
-                              kernel_name: str,
-                              mode: str = "Dyn") -> Union[None, Tuple[str, dict, float, Tuple[str], str, str, str]]:
+    def compile_dynamic_shape(
+        self, dyn_params: tuple, testcase: TestcaseOp, kernel_name: str, mode: str = "Dyn"
+    ) -> Union[None, Tuple[str, dict, float, Tuple[str], str, str, str]]:
         """
         Dynamic shape operator compilation
         """
-        use_static_context = True if mode == 'Cst' else False
+        use_static_context = True if mode == "Cst" else False
         operator_func = self.get_dyn_operator(testcase)
         if operator_func is None:
             return None
@@ -315,25 +342,23 @@ class OperatorInterface(metaclass=Singleton):
 
         def _compile_dynamic_shape():
             int64_shape_enable = self._enable_shape_int64(tensor_list_list)
-            with self._opc.api_config.bit_width_64() if int64_shape_enable \
-                    else self._opc.api_config.bit_width_32():
+            with self._opc.api_config.bit_width_64() if int64_shape_enable else self._opc.api_config.bit_width_32():
                 with self._opc.op_context.OpContext("dynamic" if not use_static_context else "static") as cxt:
                     self.set_dynamic_compile_context(cxt, testcase, operator_func, kernel_name, dyn_params)
-                    compile_time = self._compile_op(mode, testcase.op_name,
-                                                    operator_func, op_func_parameters,
-                                                    tensor_list_list, op_kwargs)
+                    compile_time = self._compile_op(
+                        mode, testcase.op_name, operator_func, op_func_parameters, tensor_list_list, op_kwargs
+                    )
                     compile_info = self._opc.get_compile_info()
                     tiling_op_type = self._opc.get_tiling_op_type()
-                    logging.debug("Received op_type from operator context: %s" % tiling_op_type)
-            return (str(tiling_op_type), compile_info, compile_time,
-                    tuple(op_func_parameters))
+                    logging.debug(f"Received op_type from operator context: {tiling_op_type}")
+            return (str(tiling_op_type), compile_info, compile_time, tuple(op_func_parameters))
 
         # Call function
         return _compile_dynamic_shape()
 
-    def call_const_op_tiling(self,
-                             compile_result: Union[DynamicCompilationResult, BinaryCompilationResult],
-                             testcase: TestcaseOp) -> dict:
+    def call_const_op_tiling(
+        self, compile_result: Union[DynamicCompilationResult, BinaryCompilationResult], testcase: TestcaseOp
+    ) -> dict:
         """
         Dynamic shape op_tiling
         """
@@ -343,46 +368,48 @@ class OperatorInterface(metaclass=Singleton):
 
         final_inputs, final_outputs, attrs = self.prepare_tiling_params(testcase)
         # Call do_op_tiling
-        logging.debug("Calling Optiling with arguments: %s" % str((tiling_op_type,
-                                                                   json.dumps(compile_result.compile_info),
-                                                                   final_inputs,
-                                                                   final_outputs,
-                                                                   attrs)))
+        logging.debug(
+            f"Calling Optiling with arguments: {str((tiling_op_type, json.dumps(compile_result.compile_info), final_inputs, final_outputs, attrs))}"
+        )
         tiling_time = []
         build_cfg = self._build_compile_cfg()
         adapter_before_tiling(testcase, compile_result, final_inputs, final_outputs)
         with self._opc.build_config(**build_cfg):
-            for i in range(get_global_storage().tiling_run_time):
+            for _ in range(get_global_storage().tiling_run_time):
                 tiling_time_temp = []
                 try:
-                    tiling_result = self._opc.do_op_tiling(tiling_op_type,
-                                                           compile_result.compile_info,
-                                                           final_inputs,
-                                                           final_outputs,
-                                                           timer=tiling_time_temp,
-                                                           attrs=attrs)
+                    tiling_result = self._opc.do_op_tiling(
+                        tiling_op_type,
+                        compile_result.compile_info,
+                        final_inputs,
+                        final_outputs,
+                        timer=tiling_time_temp,
+                        attrs=attrs,
+                    )
                 except Exception as e:
-                    if 'undefined symbol' in str(e):
+                    if "undefined symbol" in str(e):
                         raise e
                     time.sleep(0.5)
                     error_logs = extract_plog_errors()
-                    raise RuntimeError(f"OPTILING_FAILURE: \n"
-                                       f"***************************************************************************\n"
-                                       f"{os.linesep.join(error_logs)}\n"
-                                       f"***************************************************************************") \
-                        from None
+                    raise RuntimeError(
+                        f"OPTILING_FAILURE: \n"
+                        f"***************************************************************************\n"
+                        f"{os.linesep.join(error_logs)}\n"
+                        f"***************************************************************************"
+                    ) from None
                 else:
                     tiling_time.extend(tiling_time_temp[:1])
         tiling_result["tiling_time"] = tuple(tiling_time)
         return tiling_result
 
-    def _construct_compile_context_op_info(self, operator_func: Optional[Callable], op_name: str,
-                                           kernel_name: str, attrs: dict):
-        op_type = OpInfoKeeper().op_type_of(op_name) or \
-                  self.get_op_type_from_source_code(operator_func)
+    def _construct_compile_context_op_info(
+        self, operator_func: Optional[Callable], op_name: str, kernel_name: str, attrs: dict
+    ):
+        op_type = OpInfoKeeper().op_type_of(op_name) or self.get_op_type_from_source_code(operator_func)
         if not op_type:
-            logging.warning("OpInfo not registered with @register_operator "
-                            "or configured in aic-*-ops-info.ini, add unknown opinfo")
+            logging.warning(
+                "OpInfo not registered with @register_operator or configured in aic-*-ops-info.ini, add unknown opinfo"
+            )
             op_type = "UNKNOWN"
         op_info = self._opc.op_info.OpInfo(op_type, op_type)
         op_info.kernel_name = kernel_name  # for RL bank search
@@ -406,36 +433,46 @@ class OperatorInterface(metaclass=Singleton):
                 compile_options["op_debug_config"] = ",".join(parts + missing)
         return compile_options
 
-    def _compile_op(self, mode: str, op_name: str,
-                    op_func: Union[Callable, str], op_func_parameters: tuple,
-                    tensor_list: list, op_kwargs: dict) -> float:
+    def _compile_op(
+        self,
+        mode: str,
+        op_name: str,
+        op_func: Union[Callable, str],
+        op_func_parameters: tuple,
+        tensor_list: list,
+        op_kwargs: dict,
+    ) -> float:
         op_impl_type = "dynamic"
         try:
-            logging.debug("Calling %s operator: %s(%s, %s)" % (op_impl_type, op_name,
-                                                               str(tensor_list)[1:-1], str(op_kwargs)[1:-1]))
+            logging.debug(
+                f"Calling {op_impl_type} operator: {op_name}({str(tensor_list)[1:-1]}, {str(op_kwargs)[1:-1]})"
+            )
             before_compile = time.time()
             if isinstance(op_func, Callable):
                 build_cfg = self._build_compile_cfg()
                 needs_debug_compatibility = (
-                    kernel_debug_compile_enabled()
-                    and self._opc.get_soc_spec("SHORT_SOC_VERSION") == "Ascend950"
+                    kernel_debug_compile_enabled() and self._opc.get_soc_spec("SHORT_SOC_VERSION") == "Ascend950"
                 )
-                with self._opc.build_config(**build_cfg), \
-                        _ascend950_source_debug_compatibility(needs_debug_compatibility):
+                with self._opc.build_config(**build_cfg), _ascend950_source_debug_compatibility(
+                    needs_debug_compatibility
+                ):
                     op_func(*copy.deepcopy(tensor_list), **copy.deepcopy(op_kwargs))
             else:
                 raise RuntimeError(f"Operator [{op_name}] implement function is not callable: {type(op_func)}")
             after_compile = time.time()
         except:
             param_print = self.print_func_params(op_func_parameters, op_kwargs, tensor_list)
-            logging.error(("%s operator compile failure, mode: %s\n" % (op_impl_type, mode)) +
-                          ("Operator: %s\n" % op_name) + "\n".join(param_print))
+            logging.error(
+                (f"{op_impl_type} operator compile failure, mode: {mode}\n")
+                + (f"Operator: {op_name}\n")
+                + "\n".join(param_print)
+            )
             raise
         else:
             return after_compile - before_compile
 
     def _switch_opc(self, opc_type: str):
-        if opc_type in ('tbe', 'asc'):
+        if opc_type in ("tbe", "asc"):
             self._opc.switch_opc(opc_type)
 
     @staticmethod
@@ -443,8 +480,7 @@ class OperatorInterface(metaclass=Singleton):
         def _exceed_int32_max(_t: dict):
             shape = _t["shape"]
             dtype = _t["dtype"]
-            shape_prod = functools.reduce(lambda x, y: x * y,
-                                          shape, 1)
+            shape_prod = functools.reduce(lambda x, y: x * y, shape, 1)
             int32_max = numpy.iinfo(numpy.int32).max
             if shape_prod <= 0:
                 return False
@@ -494,8 +530,9 @@ class OperatorInterface(metaclass=Singleton):
             param_idx += 1
         param_print = ["***Params***"]
         for param in op_param_distribution:
-            param_print.append("%s %s:\n%s" % (param, str(type(op_param_distribution[param])),
-                                               str(op_param_distribution[param])))
+            param_print.append(
+                f"{param} {str(type(op_param_distribution[param]))}:\n{str(op_param_distribution[param])}"
+            )
         param_print.append("***Params***")
         return param_print
 
@@ -536,12 +573,11 @@ class OperatorInterface(metaclass=Singleton):
                     v = possible_attrs[k]
                 else:
                     if attr["defaultValue"] is None:
-                        raise RuntimeError(f"Required attribute [{k}] is not configured "
-                                           f"in attributes.")
+                        raise RuntimeError(f"Required attribute [{k}] is not configured in attributes.")
                     v = attr["defaultValue"]
                 detected_type = detect_type_of_sequence(v)  # in case attr supports both listInt and Int
                 if detected_type:
-                    detected_type = detected_type.split('_')[:-1] + [typ.lower().replace("list", "")]
+                    detected_type = detected_type.split("_")[:-1] + [typ.lower().replace("list", "")]
                     detected_type = "_".join(detected_type)
                 else:  # in case default is [] or [[]], which will detect fail.
                     detected_type = typ.lower().replace("list", "list_")
@@ -593,26 +629,25 @@ class OperatorInterface(metaclass=Singleton):
                 private_attrs.update(ta)
         op_info.private_attrs = private_attrs
 
-    def set_common_compile_context(self, cxt, testcase: TestcaseOp,
-                                   operator_func: Optional[Callable], kernel_name: str):
+    def set_common_compile_context(
+        self, cxt, testcase: TestcaseOp, operator_func: Optional[Callable], kernel_name: str
+    ):
         cxt.add_addition("master_pid", testcase.kb_pid)
         attrs = testcase.attributes or {}
-        op_info = self._construct_compile_context_op_info(
-            operator_func, testcase.op_name,
-            kernel_name, attrs)
+        op_info = self._construct_compile_context_op_info(operator_func, testcase.op_name, kernel_name, attrs)
         cxt.add_op_info(op_info)
         self.add_addition_to_op_context(cxt, attrs, op_info)
 
-    def set_dynamic_compile_context(self, cxt, testcase: TestcaseOp,
-                                    operator_func: Optional[Callable], kernel_name: str,
-                                    dyn_params):
+    def set_dynamic_compile_context(
+        self, cxt, testcase: TestcaseOp, operator_func: Optional[Callable], kernel_name: str, dyn_params
+    ):
         self.set_common_compile_context(cxt, testcase, operator_func, kernel_name)
         if cxt.get_op_mode() == "static":
             attrs = testcase.attributes
             tiling_attrs = self.construct_optiling_attrs(testcase.op_name, attrs)
             op_info = cxt.get_op_info()[-1]
-            op_info.inputs = dyn_params[:len(testcase.dyn_inputs)]
-            op_info.outputs = dyn_params[len(testcase.dyn_inputs):]
+            op_info.inputs = dyn_params[: len(testcase.dyn_inputs)]
+            op_info.outputs = dyn_params[len(testcase.dyn_inputs) :]
             op_info.attrs = tiling_attrs
             self.add_private_attr_to_op_info(tiling_attrs, attrs, op_info)
             self.add_compile_info_to_op_context(cxt, testcase)
@@ -621,7 +656,7 @@ class OperatorInterface(metaclass=Singleton):
         op_name = testcase.op_name
         operator_func = OpInfoKeeper().get_operator_function(op_name)
         if operator_func is None:
-            logging.warning(f'Get dynamic impl function for operator [{op_name}] failed.')
+            logging.warning(f"Get dynamic impl function for operator [{op_name}] failed.")
         self._switch_opc(OpInfoKeeper().impl_type_of(op_name))
         return operator_func
 
@@ -634,7 +669,7 @@ class OperatorInterface(metaclass=Singleton):
             src_lines = inspect.getsource(operator_func).split("\n")
             for line in src_lines:
                 if "register_operator" in line:
-                    op_type = eval(line[line.index("register_operator") + 18:-1].split(",")[0])
+                    op_type = eval(line[line.index("register_operator") + 18 : -1].split(",")[0])
                     break
         except OSError:
             return None
@@ -648,9 +683,11 @@ class OperatorInterface(metaclass=Singleton):
             op_cfg_info = OpInfoKeeper().info_of(op_name)
             if not op_cfg_info:
                 raise RuntimeError(f"Operator {op_name} is not configured in aic-**-ops-info.json")
-            return tuple([pi["name"] for pi in op_cfg_info["inputs"]] +
-                         [po["name"] for po in op_cfg_info["outputs"]] +
-                         [attr["name"] for attr in op_cfg_info["attr"]])
+            return tuple(
+                [pi["name"] for pi in op_cfg_info["inputs"]]
+                + [po["name"] for po in op_cfg_info["outputs"]]
+                + [attr["name"] for attr in op_cfg_info["attr"]]
+            )
         else:
             return ()
 
@@ -666,23 +703,29 @@ class OperatorInterface(metaclass=Singleton):
             for pi in op_cfg_info["inputs"]:
                 k, param_type = pi["name"], pi["paramType"]
                 if param_type == "optional":
-                    parameters[k] = inspect.Parameter(name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                                                      default=None, annotation=dict)
+                    parameters[k] = inspect.Parameter(
+                        name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None, annotation=dict
+                    )
                 else:
-                    parameters[k] = inspect.Parameter(name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                                                      annotation=dict)
+                    parameters[k] = inspect.Parameter(
+                        name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=dict
+                    )
             for po in op_cfg_info["outputs"]:
                 k = po["name"]
-                parameters[k] = inspect.Parameter(name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                                                  annotation=dict)
+                parameters[k] = inspect.Parameter(name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=dict)
             for attr in op_cfg_info["attr"]:
                 k, attr_type = attr["name"], OperatorInterface.dtype_str_to_type(attr["type"])
                 if attr["defaultValue"] is None:
-                    parameters[k] = inspect.Parameter(name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                                                      annotation=attr_type)
+                    parameters[k] = inspect.Parameter(
+                        name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=attr_type
+                    )
                 else:
-                    parameters[k] = inspect.Parameter(name=k, kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                                                      default=attr["defaultValue"], annotation=attr_type)
+                    parameters[k] = inspect.Parameter(
+                        name=k,
+                        kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        default=attr["defaultValue"],
+                        annotation=attr_type,
+                    )
             return parameters
         else:
             return None
@@ -691,22 +734,27 @@ class OperatorInterface(metaclass=Singleton):
     def dtype_str_to_type(s):
         return list if s.startswith("list") else eval(s)
 
-def adapter_before_tiling(testcase: TestcaseOp,
-                          compile_result: Union[DynamicCompilationResult, BinaryCompilationResult],
-                          final_inputs: tuple, final_outputs: tuple):
-    if compile_result.compile_info.setdefault("tiling_type") == 'binary' and \
-            compile_result.compile_info.setdefault('op_type_list') == ['Conv2D']:
-        groups = testcase.attributes.get('groups')
-        if final_inputs[1].setdefault('format') == 'NC1HWC0':
-            inputs_filter_shape = final_inputs[1].setdefault('shape')
+
+def adapter_before_tiling(
+    testcase: TestcaseOp,
+    compile_result: Union[DynamicCompilationResult, BinaryCompilationResult],
+    final_inputs: tuple,
+    final_outputs: tuple,
+):
+    if compile_result.compile_info.setdefault("tiling_type") == "binary" and compile_result.compile_info.setdefault(
+        "op_type_list"
+    ) == ["Conv2D"]:
+        groups = testcase.attributes.get("groups")
+        if final_inputs[1].setdefault("format") == "NC1HWC0":
+            inputs_filter_shape = final_inputs[1].setdefault("shape")
             Cout, C1, H, W, C0 = inputs_filter_shape
             Cout = (Cout + C0) // 16 * 16
             final_inputs[1]["shape"] = (C1 * H * W, Cout // 16, 16, 16)
-            final_inputs[1]["format"] = 'FRACTAL_Z'
-        elif final_inputs[1].setdefault('format') == 'NCHW':
+            final_inputs[1]["format"] = "FRACTAL_Z"
+        elif final_inputs[1].setdefault("format") == "NCHW":
             CUBE_K = 16
             CUBE_N = 16
-            inputs_filter_shape = final_inputs[1].setdefault('shape')
+            inputs_filter_shape = final_inputs[1].setdefault("shape")
             Cout, Cin, H, W = inputs_filter_shape
             Cin_ori = Cin
             Cout_ori = Cout // groups
@@ -718,4 +766,4 @@ def adapter_before_tiling(testcase: TestcaseOp,
             Cout_opt = ceil_div(enlarge * Cout_ori, CUBE_N) * CUBE_N
             group_opt = ceil_div(groups, enlarge)
             final_inputs[1]["shape"] = (group_opt * (Cin_opt // CUBE_K) * H * W, Cout_opt // CUBE_N, CUBE_N, CUBE_K)
-            final_inputs[1]["format"] = 'FRACTAL_Z'
+            final_inputs[1]["format"] = "FRACTAL_Z"

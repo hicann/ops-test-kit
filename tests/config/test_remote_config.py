@@ -21,17 +21,27 @@ def _cfg(**overrides):
     return RemoteConfig.from_dict(base)
 
 
-@pytest.mark.parametrize("fields, expected", [
-    # backoff 三字段
-    ({"backoff_base_s": 0.5, "backoff_max_s": 60.0, "backoff_jitter": 0.1},
-     {"backoff_base_s": 0.5, "backoff_max_s": 60.0, "backoff_jitter": 0.1}),
-    # retry 三字段
-    ({"max_503_retries": 15, "max_conn_retries": 8, "dispatch_deadline_s": 600},
-     {"max_503_retries": 15, "max_conn_retries": 8, "dispatch_deadline_s": 600}),
-    # TLS 三字段
-    ({"tls_ca": "/path/to/ca.pem", "tls_cert": "/path/to/cert.pem", "tls_key": "/path/to/key.pem"},
-     {"tls_ca": "/path/to/ca.pem", "tls_cert": "/path/to/cert.pem", "tls_key": "/path/to/key.pem"}),
-], ids=["backoff", "retry", "tls"])
+@pytest.mark.parametrize(
+    "fields, expected",
+    [
+        # backoff 三字段
+        (
+            {"backoff_base_s": 0.5, "backoff_max_s": 60.0, "backoff_jitter": 0.1},
+            {"backoff_base_s": 0.5, "backoff_max_s": 60.0, "backoff_jitter": 0.1},
+        ),
+        # retry 三字段
+        (
+            {"max_503_retries": 15, "max_conn_retries": 8, "dispatch_deadline_s": 600},
+            {"max_503_retries": 15, "max_conn_retries": 8, "dispatch_deadline_s": 600},
+        ),
+        # TLS 三字段
+        (
+            {"tls_ca": "/path/to/ca.pem", "tls_cert": "/path/to/cert.pem", "tls_key": "/path/to/key.pem"},
+            {"tls_ca": "/path/to/ca.pem", "tls_cert": "/path/to/cert.pem", "tls_key": "/path/to/key.pem"},
+        ),
+    ],
+    ids=["backoff", "retry", "tls"],
+)
 def test_remote_config_field_groups(fields, expected):
     """backoff / retry / TLS 三组字段从 yaml dict 正确解析到 RemoteConfig。"""
     config = _cfg(**fields)
@@ -55,15 +65,23 @@ def test_remote_config_defaults():
 
 def test_remote_config_all_fields_together():
     """全字段 + 多 endpoint 组合配置。"""
-    config = RemoteConfig.from_dict({
-        "endpoints": [
-            {"host": "127.0.0.1", "port": 9090},
-            {"host": "192.168.1.1", "port": 8080},
-        ],
-        "backoff_base_s": 1.0, "backoff_max_s": 30.0, "backoff_jitter": 0.05,
-        "max_503_retries": 20, "max_conn_retries": 10, "dispatch_deadline_s": 900,
-        "tls_ca": "/etc/ssl/ca.crt", "tls_cert": "/etc/ssl/client.crt", "tls_key": "/etc/ssl/client.key",
-    })
+    config = RemoteConfig.from_dict(
+        {
+            "endpoints": [
+                {"host": "127.0.0.1", "port": 9090},
+                {"host": "192.168.1.1", "port": 8080},
+            ],
+            "backoff_base_s": 1.0,
+            "backoff_max_s": 30.0,
+            "backoff_jitter": 0.05,
+            "max_503_retries": 20,
+            "max_conn_retries": 10,
+            "dispatch_deadline_s": 900,
+            "tls_ca": "/etc/ssl/ca.crt",
+            "tls_cert": "/etc/ssl/client.crt",
+            "tls_key": "/etc/ssl/client.key",
+        }
+    )
     assert len(config.endpoints) == 2
     assert config.backoff_base_s == 1.0 and config.backoff_max_s == 30.0 and config.backoff_jitter == 0.05
     assert config.max_503_retries == 20 and config.max_conn_retries == 10 and config.dispatch_deadline_s == 900

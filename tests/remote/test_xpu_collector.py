@@ -12,16 +12,29 @@
 import pytest
 
 
-@pytest.mark.parametrize("raw, expected_status, has_perf", [
-    ({"torch": {"status": "PASS", "api": "torch.add", "outputs": [],
-                "perf": {"device_us": 120.0, "peak_memory_mb": 8.5}}},
-     "PASS", True),
-    ({"tf": {"status": "FAIL", "api": "tf.raw.ops.Add", "error": "import failed"}},
-     "FAIL", False),
-], ids=["pass-with-perf", "fail-no-perf"])
+@pytest.mark.parametrize(
+    "raw, expected_status, has_perf",
+    [
+        (
+            {
+                "torch": {
+                    "status": "PASS",
+                    "api": "torch.add",
+                    "outputs": [],
+                    "perf": {"device_us": 120.0, "peak_memory_mb": 8.5},
+                }
+            },
+            "PASS",
+            True,
+        ),
+        ({"tf": {"status": "FAIL", "api": "tf.raw.ops.Add", "error": "import failed"}}, "FAIL", False),
+    ],
+    ids=["pass-with-perf", "fail-no-perf"],
+)
 def test_format_xpu_metrics(raw, expected_status, has_perf):
     """_format_xpu_metrics: PASS 带 perf / FAIL 不带 perf。"""
     from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
+
     result = _format_xpu_metrics(raw)
     for provider in raw:
         assert result[provider]["status"] == expected_status

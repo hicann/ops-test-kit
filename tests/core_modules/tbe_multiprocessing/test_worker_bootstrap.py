@@ -19,16 +19,11 @@ def test_worker_bootstrap_loads_config_from_switches(tmp_path, monkeypatch):
     # 测试。worker_bootstrap 的核心是 load_config，logging 非本测试关注点。
     import ttk.core_modules.tbe_multiprocessing.pool as pool
     from ttk.utilities.classes import SWITCHES
+
     monkeypatch.setattr(pool, "default_logging_config", lambda **kw: None)
 
     yaml_path = tmp_path / "worker-test.yaml"
-    yaml_path.write_text(
-        'remote:\n'
-        '  tls_ca: "/fake/ca.crt"\n'
-        '  endpoints:\n'
-        '    - host: 10.0.0.1\n'
-        '      port: 9090\n'
-    )
+    yaml_path.write_text('remote:\n  tls_ca: "/fake/ca.crt"\n  endpoints:\n    - host: 10.0.0.1\n      port: 9090\n')
     saved = loader._config
     loader._config = None  # 模拟 forkserver worker：干净的 _config
     try:
@@ -37,6 +32,7 @@ def test_worker_bootstrap_loads_config_from_switches(tmp_path, monkeypatch):
         sw.logging_to_file = False
 
         from ttk.core_modules.tbe_multiprocessing.pool import worker_bootstrap
+
         worker_bootstrap(sw)
 
         rc = loader.get_remote_config()
@@ -53,6 +49,7 @@ def test_worker_bootstrap_without_config_path_loads_defaults(monkeypatch):
     import ttk.config.loader as loader
     import ttk.core_modules.tbe_multiprocessing.pool as pool
     from ttk.utilities.classes import SWITCHES
+
     monkeypatch.setattr(pool, "default_logging_config", lambda **kw: None)
     saved = loader._config
     loader._config = None
@@ -61,6 +58,7 @@ def test_worker_bootstrap_without_config_path_loads_defaults(monkeypatch):
         sw.config_path = None
         sw.logging_to_file = False
         from ttk.core_modules.tbe_multiprocessing.pool import worker_bootstrap
+
         worker_bootstrap(sw)
         cfg = loader.get_config()
         assert "remote" in cfg  # default.yaml 有 remote 段

@@ -7,8 +7,6 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-from __future__ import annotations
-
 """TorchBackend: torch-generic intermediate layer.
 
 Holds the shared torch implementation (numpy<->torch conversion, device move via
@@ -20,10 +18,12 @@ Holds the shared torch implementation (numpy<->torch conversion, device move via
 override (no ``torch.cpu.get_device_name`` exists).
 """
 
+from __future__ import annotations
+
 import torch
 
-from .base import Backend
 from ....utilities import numpy_to_torch_tensor, torch_to_numpy_tensor
+from .base import Backend
 
 
 class TorchBackend(Backend):

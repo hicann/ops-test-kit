@@ -38,11 +38,13 @@ __all__ = ["SpecNotFoundError", "InvalidSpecError", "validate", "get_spec_attr",
 
 class SpecNotFoundError(Exception):
     """找不到规范类"""
+
     pass
 
 
 class InvalidSpecError(Exception):
     """属性类型不符合约定，validate 失败时抛出（fail-fast）"""
+
     pass
 
 
@@ -50,11 +52,14 @@ class InvalidSpecError(Exception):
 def __getattr__(name):
     if name == "get_spec_attr":
         from .manager import get_spec_attr
+
         return get_spec_attr
     if name == "get_spec_class_meta":
         from .manager import get_spec_class_meta
+
         return get_spec_class_meta
     if name == "validate":
         from .validator import validate
+
         return validate
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -8,6 +8,7 @@
 
 See ``docs/NPUSim/npusim_design.md`` for the design.
 """
+
 from .sim_profiling import run_aclnn_sim, run_kernel_sim
 
 __all__ = ["run_kernel_sim", "run_aclnn_sim"]

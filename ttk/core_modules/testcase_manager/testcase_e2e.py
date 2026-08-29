@@ -12,9 +12,9 @@ Testcase structure for framework_api tests.
 
 import logging
 
-from ttk.core_modules.testcase_manager.testcase_tensor_api_base import TensorApiTestcaseBase
 from ttk.core_modules.testcase_manager.field_types import FIELD_TYPES
 from ttk.core_modules.testcase_manager.param_plan import ParamPlan, match_overload
+from ttk.core_modules.testcase_manager.testcase_tensor_api_base import TensorApiTestcaseBase
 from ttk.utilities import get, shape_stride
 from ttk.utilities.container_utils import flatten_nested_sequence
 
@@ -374,7 +374,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
         if self.device_ids is not None and isinstance(self.device_ids, str):
             raw = self.device_ids.strip()
             if raw:
-                self.device_ids = tuple(int(d.strip()) for d in raw.split(',') if d.strip())
+                self.device_ids = tuple(int(d.strip()) for d in raw.split(",") if d.strip())
             else:
                 self.device_ids = None
         if self.device_ids is not None and not isinstance(self.device_ids, tuple):
@@ -483,8 +483,9 @@ class TestcaseE2e(TensorApiTestcaseBase):
         top_count = len(self.tensor_view_shapes or ())
         # Match get_param_plan logic: filter None tensors (placeholders for optional
         # params not used in this case) in addition to output tensors.
-        input_count = sum(1 for i in range(top_count)
-                          if i not in out_indices and self.tensor_view_shapes[i] is not None)
+        input_count = sum(
+            1 for i in range(top_count) if i not in out_indices and self.tensor_view_shapes[i] is not None
+        )
         # If any overload has a VAR_POSITIONAL tensor param, it can accept
         # any number of tensors — skip the count check entirely.
         has_var_pos = any(

@@ -18,7 +18,7 @@ from typing import Tuple, Union
 import numpy
 
 # Third-party Packages
-from ....utilities import get, resolve_custom_numpy_dtypes, unpack_4bits, is_4bit_dtype
+from ....utilities import get, is_4bit_dtype, resolve_custom_numpy_dtypes, unpack_4bits
 from ...comparison.custom import compare_with_hooks
 from .profiling_structure import ComparisonResult
 

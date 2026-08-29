@@ -12,20 +12,29 @@
 覆盖字段存在性：各结构（ComparisonResult / ProfilingReturnStructure /
 GeirReturnStructure）均应含 precision_metrics（或 ComparisonResult 的 metrics）字段。
 """
+
 import pytest
 
 from ttk.core_modules.geir.geir_struct import GeirReturnStructure
 from ttk.core_modules.npu.op.profiling_structure import ComparisonResult, ProfilingReturnStructure
 
 
-@pytest.mark.parametrize("cls, factory, field_name, is_geir", [
-    pytest.param(ComparisonResult, lambda: ComparisonResult(None), "metrics", False,
-                 id="comparison_result"),
-    pytest.param(ProfilingReturnStructure, lambda: ProfilingReturnStructure(), "precision_metrics",
-                 False, id="profiling_structure"),
-    pytest.param(GeirReturnStructure, lambda: GeirReturnStructure(), "precision_metrics", True,
-                 id="geir_structure"),
-])
+@pytest.mark.parametrize(
+    "cls, factory, field_name, is_geir",
+    [
+        pytest.param(ComparisonResult, lambda: ComparisonResult(None), "metrics", False, id="comparison_result"),
+        pytest.param(
+            ProfilingReturnStructure,
+            lambda: ProfilingReturnStructure(),
+            "precision_metrics",
+            False,
+            id="profiling_structure",
+        ),
+        pytest.param(
+            GeirReturnStructure, lambda: GeirReturnStructure(), "precision_metrics", True, id="geir_structure"
+        ),
+    ],
+)
 def test_precision_metrics_slot_exists(cls, factory, field_name, is_geir):
     """各结构均应含 precision_metrics（或 ComparisonResult 的 metrics）字段。
 

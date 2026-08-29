@@ -10,12 +10,13 @@
 """
 quantization comparison —— 量化输出精度判据
 """
+
 import numpy as np
 
-from .registry import ComparisonBase, EachCompareResult, register_comparison, FAIL_REASONS
+from .registry import FAIL_REASONS, ComparisonBase, EachCompareResult, register_comparison
 
 
-@register_comparison('quant')
+@register_comparison("quant")
 class QuantComparison(ComparisonBase):
     """量化输出判据：**绝对误差 <= 1**（1 LSB = 1 ULP），单标杆比对，不做三方。
 
@@ -53,15 +54,16 @@ class QuantComparison(ComparisonBase):
         ptol = self._ptol()
         is_pass = (1 - precision) <= ptol
 
-        metrics = {"standard": self.STANDARD_NAME,
-                   "precision": f"{precision * 100}%",
-                   "abs_err_limit": 1,
-                   "exceed_count": int(bad_size),
-                   "pass": bool(is_pass)}
+        metrics = {
+            "standard": self.STANDARD_NAME,
+            "precision": f"{precision * 100}%",
+            "abs_err_limit": 1,
+            "exceed_count": int(bad_size),
+            "pass": bool(is_pass),
+        }
         if not is_pass:
             metrics["reason"] = FAIL_REASONS.get("precision_exceeded", "precision exceeded")
-        return EachCompareResult(precision, bad, is_pass=is_pass,
-                                 standard=self.STANDARD_NAME, metrics=metrics)
+        return EachCompareResult(precision, bad, is_pass=is_pass, standard=self.STANDARD_NAME, metrics=metrics)
 
     def _ptol(self):
         """允许超差的元素占比。默认 0——标准是绝对误差 <= 1，超出即缺陷。

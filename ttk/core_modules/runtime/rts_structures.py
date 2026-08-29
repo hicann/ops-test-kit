@@ -10,14 +10,16 @@
 """
 Structures used by RTS
 """
+
 # Standard Packages
 import ctypes
-from enum import Enum
-import numpy
 import struct
-from functools import reduce
-from typing import List, Union, Tuple, Optional, Any
 from dataclasses import dataclass, field
+from enum import Enum
+from functools import reduce
+from typing import Any, List, Optional, Tuple, Union
+
+import numpy
 
 # Third-Party Packages
 from . import rts_info
@@ -28,10 +30,13 @@ class RtDevBinary(ctypes.Structure):
     """
     Device Binary structure
     """
-    _fields_ = [('magic', ctypes.c_uint32),
-                ('version', ctypes.c_uint32),
-                ('data', ctypes.c_char_p),
-                ('length', ctypes.c_uint64)]
+
+    _fields_ = [
+        ("magic", ctypes.c_uint32),
+        ("version", ctypes.c_uint32),
+        ("data", ctypes.c_char_p),
+        ("length", ctypes.c_uint64),
+    ]
 
 
 # For profiler
@@ -39,28 +44,32 @@ class RtCommandHandleParams(ctypes.Structure):
     """
     Profiling switch structure
     """
-    _fields_ = [('pathLen', ctypes.c_uint32),
-                ('storageLimit', ctypes.c_uint32),
-                ('profDataLen', ctypes.c_uint32),
-                ('path', ctypes.c_char * (rts_info.RT_PROF_PATH_LEN_MAX + 1)),
-                ('profData', ctypes.c_char * (rts_info.RT_PROF_PARAM_LEN_MAX + 1))]
+
+    _fields_ = [
+        ("pathLen", ctypes.c_uint32),
+        ("storageLimit", ctypes.c_uint32),
+        ("profDataLen", ctypes.c_uint32),
+        ("path", ctypes.c_char * (rts_info.RT_PROF_PATH_LEN_MAX + 1)),
+        ("profData", ctypes.c_char * (rts_info.RT_PROF_PARAM_LEN_MAX + 1)),
+    ]
 
 
 class RtProfCommandHandle(ctypes.Structure):
     """
     Profiling switch structure
     """
-    _fields_ = [('prof_switch', ctypes.c_uint64),
-                ('prof_switch_hi', ctypes.c_uint64),
-                ('dev_nums', ctypes.c_uint32),
-                ('dev_id_list', ctypes.c_uint32 * rts_info.RT_PROF_MAX_DEV_NUM),
-                ('model_id', ctypes.c_uint32),
-                ('cmd_type', ctypes.c_uint32),
-                ('cmd_handle_params', RtCommandHandleParams)]
 
-    def __init__(self, prof_switch: ctypes.c_uint64,
-                 cmd_type: int, c_dev_ids: Any,
-                 dev_num: int = 1):
+    _fields_ = [
+        ("prof_switch", ctypes.c_uint64),
+        ("prof_switch_hi", ctypes.c_uint64),
+        ("dev_nums", ctypes.c_uint32),
+        ("dev_id_list", ctypes.c_uint32 * rts_info.RT_PROF_MAX_DEV_NUM),
+        ("model_id", ctypes.c_uint32),
+        ("cmd_type", ctypes.c_uint32),
+        ("cmd_handle_params", RtCommandHandleParams),
+    ]
+
+    def __init__(self, prof_switch: ctypes.c_uint64, cmd_type: int, c_dev_ids: Any, dev_num: int = 1):
         super().__init__()
         self.prof_switch = prof_switch
         self.prof_switch_hi = 0
@@ -75,18 +84,19 @@ class RtProfCommandHandleV2(ctypes.Structure):
     """
     Profiling switch structure
     """
-    _fields_ = [('prof_switch', ctypes.c_uint64),
-                ('prof_switch_hi', ctypes.c_uint64),
-                ('dev_nums', ctypes.c_uint32),
-                ('dev_id_list', ctypes.c_uint32 * rts_info.RT_PROF_MAX_DEV_NUM),
-                ('model_id', ctypes.c_uint32),
-                ('cmd_type', ctypes.c_uint32),
-                ('cache_flag', ctypes.c_uint32),
-                ('cmd_handle_params', RtCommandHandleParams)]
 
-    def __init__(self, prof_switch: ctypes.c_uint64,
-                 cmd_type: int, c_dev_ids: Any,
-                 dev_num: int = 1):
+    _fields_ = [
+        ("prof_switch", ctypes.c_uint64),
+        ("prof_switch_hi", ctypes.c_uint64),
+        ("dev_nums", ctypes.c_uint32),
+        ("dev_id_list", ctypes.c_uint32 * rts_info.RT_PROF_MAX_DEV_NUM),
+        ("model_id", ctypes.c_uint32),
+        ("cmd_type", ctypes.c_uint32),
+        ("cache_flag", ctypes.c_uint32),
+        ("cmd_handle_params", RtCommandHandleParams),
+    ]
+
+    def __init__(self, prof_switch: ctypes.c_uint64, cmd_type: int, c_dev_ids: Any, dev_num: int = 1):
         super().__init__()
         self.prof_switch = prof_switch
         self.prof_switch_hi = 0
@@ -100,8 +110,8 @@ class RtProfCommandHandleV2(ctypes.Structure):
 
 class RtHostInputInfo(ctypes.Structure):
     """rtHostInputInfo_t"""
-    _fields_ = [('addr_offset', ctypes.c_uint16),
-                ('data_offset', ctypes.c_uint16)]
+
+    _fields_ = [("addr_offset", ctypes.c_uint16), ("data_offset", ctypes.c_uint16)]
 
     def __init__(self, addr_offset: int, data_offset: int):
         super().__init__()
@@ -111,8 +121,8 @@ class RtHostInputInfo(ctypes.Structure):
 
 class RtHostInputInfoV2(ctypes.Structure):
     """rtHostInputInfo_t"""
-    _fields_ = [('addr_offset', ctypes.c_uint32),
-                ('data_offset', ctypes.c_uint32)]
+
+    _fields_ = [("addr_offset", ctypes.c_uint32), ("data_offset", ctypes.c_uint32)]
 
     def __init__(self, addr_offset: int, data_offset: int):
         super().__init__()
@@ -120,23 +130,23 @@ class RtHostInputInfoV2(ctypes.Structure):
         self.data_offset = data_offset
 
 
-RT_HOST_INPUT_INFO_VER = {
-    "": RtHostInputInfo,
-    "V2": RtHostInputInfoV2
-}
+RT_HOST_INPUT_INFO_VER = {"": RtHostInputInfo, "V2": RtHostInputInfoV2}
 
 
 class RtArgsEx(ctypes.Structure):
     """rtArgsEx_t"""
-    _fields_ = [('args', ctypes.c_void_p),
-                ('host_input', ctypes.c_void_p),
-                ('args_size', ctypes.c_uint32),
-                ('tiling_addr_offset', ctypes.c_uint16),
-                ('tiling_data_offset', ctypes.c_uint16),
-                ('host_input_num', ctypes.c_uint16),
-                ('has_tiling', ctypes.c_uint8),
-                ('no_need_h2d_copy', ctypes.c_uint8),
-                ('reserved', ctypes.c_uint8 * 4)]
+
+    _fields_ = [
+        ("args", ctypes.c_void_p),
+        ("host_input", ctypes.c_void_p),
+        ("args_size", ctypes.c_uint32),
+        ("tiling_addr_offset", ctypes.c_uint16),
+        ("tiling_data_offset", ctypes.c_uint16),
+        ("host_input_num", ctypes.c_uint16),
+        ("has_tiling", ctypes.c_uint8),
+        ("no_need_h2d_copy", ctypes.c_uint8),
+        ("reserved", ctypes.c_uint8 * 4),
+    ]
 
     def __init__(self):
         super().__init__()
@@ -176,15 +186,18 @@ class RtArgsEx(ctypes.Structure):
 
 class RtArgsExV2(ctypes.Structure):
     """rtArgsEx_t"""
-    _fields_ = [('args', ctypes.c_void_p),
-                ('host_input', ctypes.c_void_p),
-                ('args_size', ctypes.c_uint32),
-                ('tiling_addr_offset', ctypes.c_uint32),
-                ('tiling_data_offset', ctypes.c_uint32),
-                ('host_input_num', ctypes.c_uint16),
-                ('has_tiling', ctypes.c_uint8),
-                ('no_need_h2d_copy', ctypes.c_uint8),
-                ('reserved', ctypes.c_uint8 * 4)]
+
+    _fields_ = [
+        ("args", ctypes.c_void_p),
+        ("host_input", ctypes.c_void_p),
+        ("args_size", ctypes.c_uint32),
+        ("tiling_addr_offset", ctypes.c_uint32),
+        ("tiling_data_offset", ctypes.c_uint32),
+        ("host_input_num", ctypes.c_uint16),
+        ("has_tiling", ctypes.c_uint8),
+        ("no_need_h2d_copy", ctypes.c_uint8),
+        ("reserved", ctypes.c_uint8 * 4),
+    ]
 
     def __init__(self):
         super().__init__()
@@ -225,24 +238,23 @@ class RtArgsExV2(ctypes.Structure):
             self.host_input = ctypes.c_void_p(ctypes.addressof(self._host_ipt_info_array))
 
 
-RT_ARGS_VER = {
-    "": RtArgsEx,
-    "V2": RtArgsExV2
-}
+RT_ARGS_VER = {"": RtArgsEx, "V2": RtArgsExV2}
 
 
 class RtTaskCfgInfoBranch0903(ctypes.Structure):
     """rtTaskCfgInfo_t"""
-    _fields_ = [('qos', ctypes.c_uint8),
-                ('part_id', ctypes.c_uint8),
-                ('schedule_mode', ctypes.c_uint8),  # 0:normal;1:batch;2:sync
-                ('res', ctypes.c_uint8),
-                ('block_dim_offset', ctypes.c_uint32),
-                ('dynamic_share_mem_size', ctypes.c_uint32),
-                ('dump_flag', ctypes.c_uint8)]
 
-    def __init__(self, dynamic_share_mem_size: int,
-                 schedule_mode: int = 0):
+    _fields_ = [
+        ("qos", ctypes.c_uint8),
+        ("part_id", ctypes.c_uint8),
+        ("schedule_mode", ctypes.c_uint8),  # 0:normal;1:batch;2:sync
+        ("res", ctypes.c_uint8),
+        ("block_dim_offset", ctypes.c_uint32),
+        ("dynamic_share_mem_size", ctypes.c_uint32),
+        ("dump_flag", ctypes.c_uint8),
+    ]
+
+    def __init__(self, dynamic_share_mem_size: int, schedule_mode: int = 0):
         super().__init__()
         self.schedule_mode = schedule_mode
         self.qos = 0
@@ -255,17 +267,19 @@ class RtTaskCfgInfoBranch0903(ctypes.Structure):
 
 class RtTaskCfgInfo(ctypes.Structure):
     """rtTaskCfgInfo_t"""
-    _fields_ = [('qos', ctypes.c_uint8),
-                ('part_id', ctypes.c_uint8),
-                ('schedule_mode', ctypes.c_uint8),  # 0:normal;1:batch;2:sync
-                ('d2d_cross_flag', ctypes.c_bool),
-                ('block_dim_offset', ctypes.c_uint32),
-                ('dump_flag', ctypes.c_uint8),
-                ('rev', ctypes.c_uint8 * 3),
-                ('dynamic_share_mem_size', ctypes.c_uint32)]
 
-    def __init__(self, dynamic_share_mem_size: int,
-                 schedule_mode: int = 0):
+    _fields_ = [
+        ("qos", ctypes.c_uint8),
+        ("part_id", ctypes.c_uint8),
+        ("schedule_mode", ctypes.c_uint8),  # 0:normal;1:batch;2:sync
+        ("d2d_cross_flag", ctypes.c_bool),
+        ("block_dim_offset", ctypes.c_uint32),
+        ("dump_flag", ctypes.c_uint8),
+        ("rev", ctypes.c_uint8 * 3),
+        ("dynamic_share_mem_size", ctypes.c_uint32),
+    ]
+
+    def __init__(self, dynamic_share_mem_size: int, schedule_mode: int = 0):
         super().__init__()
         self.schedule_mode = schedule_mode
         self.qos = 0
@@ -292,28 +306,36 @@ class RtLaunchAttributeId(Enum):
 
 
 class RtLaunchAttributeGroup(ctypes.Structure):
-    _fields_ = [("group_dim", ctypes.c_uint32),
-                ("group_block_dim", ctypes.c_uint32)]
+    _fields_ = [("group_dim", ctypes.c_uint32), ("group_block_dim", ctypes.c_uint32)]
 
 
 class RtLaunchAttributeValue(ctypes.Union):
-    __slots__ = ["block_dim", "dynamic_share_mem_size", "group",
-                 "qos", "part_id", "schedule_mode",
-                 "block_dim_offset", "dump_flag"]
-    _fields_ = [("block_dim", ctypes.c_uint32),
-                ("dynamic_share_mem_size", ctypes.c_uint32),
-                ("group", RtLaunchAttributeGroup),
-                ("qos", ctypes.c_uint8),
-                ("part_id", ctypes.c_uint8),
-                ("schedule_mode", ctypes.c_uint8),
-                ("block_dim_offset", ctypes.c_uint32),
-                ("dump_flag", ctypes.c_uint8)]
+    __slots__ = [
+        "block_dim",
+        "dynamic_share_mem_size",
+        "group",
+        "qos",
+        "part_id",
+        "schedule_mode",
+        "block_dim_offset",
+        "dump_flag",
+    ]
+    _fields_ = [
+        ("block_dim", ctypes.c_uint32),
+        ("dynamic_share_mem_size", ctypes.c_uint32),
+        ("group", RtLaunchAttributeGroup),
+        ("qos", ctypes.c_uint8),
+        ("part_id", ctypes.c_uint8),
+        ("schedule_mode", ctypes.c_uint8),
+        ("block_dim_offset", ctypes.c_uint32),
+        ("dump_flag", ctypes.c_uint8),
+    ]
 
 
 class RtLaunchAttribute(ctypes.Structure):
     """rtLaunchConfig_t"""
-    _fields_ = [('id', ctypes.c_int),
-                ('value', RtLaunchAttributeValue)]
+
+    _fields_ = [("id", ctypes.c_int), ("value", RtLaunchAttributeValue)]
 
     def __init__(self, attr_id: RtLaunchAttributeId, attr_val, **kargs):
         super().__init__()
@@ -328,33 +350,38 @@ class RtLaunchAttribute(ctypes.Structure):
 
 class RtLaunchConfig(ctypes.Structure):
     """rtLaunchConfig_t"""
-    _fields_ = [("attrs", ctypes.c_void_p),
-                ("attr_num", ctypes.c_uint32)]
+
+    _fields_ = [("attrs", ctypes.c_void_p), ("attr_num", ctypes.c_uint32)]
 
 
 class RtLaunchArgs(ctypes.Structure):
     """rtLaunchArgs_t"""
-    _fields_ = [("args_info", RtArgsEx),
-                ("args_addr_offset", ctypes.c_uint16),
-                ("args_data_offset", ctypes.c_uint16),
-                ("host_info_max_num", ctypes.c_uint16),
-                ("args_host_input_offset", ctypes.c_uint16)]
+
+    _fields_ = [
+        ("args_info", RtArgsEx),
+        ("args_addr_offset", ctypes.c_uint16),
+        ("args_data_offset", ctypes.c_uint16),
+        ("host_info_max_num", ctypes.c_uint16),
+        ("args_host_input_offset", ctypes.c_uint16),
+    ]
 
 
 class RtLaunchArgsV2(ctypes.Structure):
     """rtLaunchArgs_t"""
-    _fields_ = [("args_info", RtArgsExV2),
-                ("args_addr_offset", ctypes.c_uint16),
-                ("args_data_offset", ctypes.c_uint16),
-                ("host_info_max_num", ctypes.c_uint16),
-                ("args_host_input_offset", ctypes.c_uint16)]
+
+    _fields_ = [
+        ("args_info", RtArgsExV2),
+        ("args_addr_offset", ctypes.c_uint16),
+        ("args_data_offset", ctypes.c_uint16),
+        ("host_info_max_num", ctypes.c_uint16),
+        ("args_host_input_offset", ctypes.c_uint16),
+    ]
 
 
 class RtArgsSizeInfo(ctypes.Structure):
     MAGIC = 0xABCDEF09
     """rtArgsSizeInfo"""
-    _fields_ = [("info_addr", ctypes.c_void_p),
-                ("atomic_index", ctypes.c_uint32)]
+    _fields_ = [("info_addr", ctypes.c_void_p), ("atomic_index", ctypes.c_uint32)]
 
     def __init__(self, info_addr: ctypes.c_void_p):
         super().__init__()
@@ -370,69 +397,76 @@ class RtArgsSizeInfo(ctypes.Structure):
 
 class RtExceptionArgsInfo(ctypes.Structure):
     """rtExceptionArgsInfo"""
-    _fields_ = [("arg_size", ctypes.c_uint32),
-                ("arg_addr", ctypes.c_void_p),
-                ("size_info", RtArgsSizeInfo)]
+
+    _fields_ = [("arg_size", ctypes.c_uint32), ("arg_addr", ctypes.c_void_p), ("size_info", RtArgsSizeInfo)]
 
 
 class RtDoorBellInfo(ctypes.Structure):
     """rtDoorBellInfo"""
+
     _fields_ = [("reserve", ctypes.c_uint8 * 6)]
 
 
 class RtDoorBellExDetailInfo(ctypes.Structure):
     """rtDoorBellExDetailInfo"""
-    _fields_ = [("doorbell_num", ctypes.c_uint8),
-                ("info", RtDoorBellInfo * 4)]
+
+    _fields_ = [("doorbell_num", ctypes.c_uint8), ("info", RtDoorBellInfo * 4)]
 
 
 class RtDirectWqeExDetailInfo(ctypes.Structure):
     """rtDirectWqeExDetailInfo"""
+
     _fields_ = [("reserve", ctypes.c_uint8 * 4)]
 
 
 class RtFftsPlusExDetailInfo(ctypes.Structure):
     """rtFftsPlusExDetailInfo"""
+
     _fields_ = [("reserve", ctypes.c_uint16 * 2)]
 
 
 class UnionRtExpandInfoDetail(ctypes.Union):
-    _fields_ = [
-        ("ffts_plus_info", RtFftsPlusExDetailInfo)]
+    _fields_ = [("ffts_plus_info", RtFftsPlusExDetailInfo)]
 
 
 class UnionRtExpandInfoDetailV2(ctypes.Union):
     _fields_ = [
         ("ffts_plus_info", RtFftsPlusExDetailInfo),
         ("direct_wqe_info", RtDirectWqeExDetailInfo),
-        ("door_bell_info", RtDoorBellExDetailInfo)
+        ("door_bell_info", RtDoorBellExDetailInfo),
     ]
 
 
 class RtExceptionExpandInfo(ctypes.Structure):
     """rtExceptionExpandInfo_t"""
-    _fields_ = [("type", ctypes.c_uint32),
-                ("u", UnionRtExpandInfoDetail)]
+
+    _fields_ = [("type", ctypes.c_uint32), ("u", UnionRtExpandInfoDetail)]
 
 
 class RtExceptionExpandInfoV2(ctypes.Structure):
     """rtExceptionExpandInfo_t"""
-    _fields_ = [("type", ctypes.c_uint32),
-                ("u", UnionRtExpandInfoDetailV2)]
+
+    _fields_ = [("type", ctypes.c_uint32), ("u", UnionRtExpandInfoDetailV2)]
 
 
 class RtExceptionInfo(ctypes.Structure):
     """rtExceptionInfo_t"""
-    _fields_ = [("reserve", ctypes.c_uint32 * 5),
-                ("expand_info", RtExceptionExpandInfo),
-                ("exception_args", RtExceptionArgsInfo)]
+
+    _fields_ = [
+        ("reserve", ctypes.c_uint32 * 5),
+        ("expand_info", RtExceptionExpandInfo),
+        ("exception_args", RtExceptionArgsInfo),
+    ]
 
 
 class RtExceptionInfoV2(ctypes.Structure):
     """rtExceptionInfo_t"""
-    _fields_ = [("reserve", ctypes.c_uint32 * 5),
-                ("expand_info", RtExceptionExpandInfoV2),
-                ("exception_args", RtExceptionArgsInfo)]
+
+    _fields_ = [
+        ("reserve", ctypes.c_uint32 * 5),
+        ("expand_info", RtExceptionExpandInfoV2),
+        ("exception_args", RtExceptionArgsInfo),
+    ]
 
 
 class TensorShapeInfo:
@@ -463,8 +497,7 @@ class DynamicTensorInfo:
         p = [self._device_address_offset]
         for x in self._tensor_shapes:
             p.extend(x.pack_uint64())
-        p.extend([addr.value if isinstance(addr, ctypes.c_void_p)
-                  else addr for addr in self._tensor_addresses])
+        p.extend([addr.value if isinstance(addr, ctypes.c_void_p) else addr for addr in self._tensor_addresses])
         return p
 
     def _all_shape_bytes(self):
@@ -506,8 +539,7 @@ class LaunchKernelArgs:
         RtArgsCls = RT_ARGS_VER[rt_args_version]
         rt_args = RtArgsCls()
 
-        host_data_offset = (C_POINTER_BYTES *
-                            (len(self.op_args) + len(self.dfx_args)))
+        host_data_offset = C_POINTER_BYTES * (len(self.op_args) + len(self.dfx_args))
 
         has_tiling = self.tiling_data is not None and len(self.tiling_data) > 0
 
@@ -516,9 +548,8 @@ class LaunchKernelArgs:
             tiling_ptr_offset = len(self.op_args) * C_POINTER_BYTES  # bytes
             tiling_data_size = 32 * ((len(self.tiling_data) + 31) // 32)  # 32 bytes align
             self.op_args.append(0)  # placeholder for tiling.
-            rt_args.add_tiling(addr_offset=tiling_ptr_offset,
-                               data_offset=host_data_offset + C_POINTER_BYTES)
-            host_data_offset += (C_POINTER_BYTES + tiling_data_size)
+            rt_args.add_tiling(addr_offset=tiling_ptr_offset, data_offset=host_data_offset + C_POINTER_BYTES)
+            host_data_offset += C_POINTER_BYTES + tiling_data_size
 
         self._total_args.extend(self.op_args)
         self._total_args.extend(self.dfx_args)
@@ -527,8 +558,7 @@ class LaunchKernelArgs:
         for idx, arg in enumerate(self._total_args):
             if not isinstance(arg, DynamicTensorInfo):
                 continue
-            hi = RtHostInputInfoCls(addr_offset=idx * C_POINTER_BYTES,
-                                    data_offset=host_data_offset)
+            hi = RtHostInputInfoCls(addr_offset=idx * C_POINTER_BYTES, data_offset=host_data_offset)
             self._host_ipt_infos.append(hi)
             # update
             if self._first_host_ipt_data_offset == 0:
@@ -543,28 +573,27 @@ class LaunchKernelArgs:
 
         return rt_args
 
-    def _build_rt_args_buf(self, rt_args: Union[RtArgsEx, RtArgsExV2],
-                           args_size: int):
+    def _build_rt_args_buf(self, rt_args: Union[RtArgsEx, RtArgsExV2], args_size: int):
         c_buf_ptr = rt_args.alloc_buf(args_size)
         # # args
         if self._total_args:
             ArgArray = ctypes.c_uint64 * len(self._total_args)
-            arg_array = ArgArray(*[arg
-                                   if not isinstance(arg, ctypes.c_void_p)
-                                   else (0 if arg.value is None else arg.value)
-                                   for arg in self._total_args])
-            ctypes.memmove(c_buf_ptr,
-                           ctypes.byref(arg_array),
-                           ctypes.sizeof(arg_array))
+            arg_array = ArgArray(
+                *[
+                    arg if not isinstance(arg, ctypes.c_void_p) else (0 if arg.value is None else arg.value)
+                    for arg in self._total_args
+                ]
+            )
+            ctypes.memmove(c_buf_ptr, ctypes.byref(arg_array), ctypes.sizeof(arg_array))
         # # tiling
         if rt_args.tiling_data_offset > 0:
-            ctypes.memmove(c_buf_ptr + rt_args.tiling_data_offset,
-                           self.tiling_data,
-                           len(self.tiling_data))
+            ctypes.memmove(c_buf_ptr + rt_args.tiling_data_offset, self.tiling_data, len(self.tiling_data))
         # # host inputs
         if self._host_ipt_data:
             HostIptArray = ctypes.c_uint64 * len(self._host_ipt_data)
             host_ipt_array = HostIptArray(*self._host_ipt_data)
-            ctypes.memmove(c_buf_ptr + self._first_host_ipt_data_offset,
-                           ctypes.byref(host_ipt_array),
-                           ctypes.sizeof(host_ipt_array))
+            ctypes.memmove(
+                c_buf_ptr + self._first_host_ipt_data_offset,
+                ctypes.byref(host_ipt_array),
+                ctypes.sizeof(host_ipt_array),
+            )

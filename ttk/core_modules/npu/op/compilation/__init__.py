@@ -11,7 +11,6 @@
 npu compilation package
 """
 
-
 __all__ = ["compilation_process"]
 
 

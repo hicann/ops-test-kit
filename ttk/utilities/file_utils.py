@@ -23,19 +23,22 @@ __all__ = [
 ]
 
 
-from ctypes import CDLL
 import csv
 import hashlib
-import numpy
 import os
 import shutil
 import zipfile
+from ctypes import CDLL
 from subprocess import check_output
-from typing import Union, Optional
+from typing import TYPE_CHECKING, Optional, Union
+
+import numpy
 
 from .container_utils import shape_product
-from .dtypes import unpack_4bits, pack_4bits, is_4bit_dtype
-from .dtypes import numpy_to_torch_tensor, torch_to_numpy_tensor
+from .dtypes import is_4bit_dtype, numpy_to_torch_tensor, pack_4bits, torch_to_numpy_tensor, unpack_4bits
+
+if TYPE_CHECKING:
+    import torch
 
 
 def get_file_md5(file_path: str):
@@ -184,8 +187,6 @@ def _dump_binary_data(data, dtype, file_format, npy_file_abspath, pt_file_abspat
 def _dump_bin(data, bin_file_abspath):
     """Dump numpy/torch/bytes data to binary file."""
     if "torch.Tensor" in str(type(data)):
-        import torch
-
         data = torch_to_numpy_tensor(data)
     if isinstance(data, numpy.ndarray):
         if is_4bit_dtype(data.dtype):
@@ -211,7 +212,7 @@ def dump_to_file(
         npy_file_abspath = os.path.abspath(os.path.join(file_path, f"{file_name}.npy"))
         pt_file_abspath = os.path.abspath(os.path.join(file_path, f"{file_name}.pt"))
     if file_format == "pt":
-        import torch
+        pass
     if file_format in ("npy", "print", "pt"):
         if isinstance(data, (numpy.ndarray,)) or "torch.Tensor" in str(type(data)):
             if file_format == "npy":
@@ -234,7 +235,7 @@ def read_file(file_path: str, size_limit: int = 1024 * 1024 * 1024) -> bytes:
     """
     file_size = os.stat(file_path).st_size
     if file_size > size_limit:
-        raise IOError("File is too large! Size of %s exceeds the limit: %s" % (file_path, size_limit))
+        raise OSError(f"File is too large! Size of {file_path} exceeds the limit: {size_limit}")
     with open(file_path, "rb") as file:
         file_content = file.read()
     return file_content
@@ -273,7 +274,7 @@ def delete_files_in_folder(folder_path: str, include_fn=None, exclude_fn=None):
                         os.unlink(file_path)
                 else:
                     os.unlink(file_path)
-            except:
+            except Exception:
                 pass
 
 
@@ -286,12 +287,12 @@ def extract_csv_cells(filename, extract_cols, col_name_mapping: dict = None, cmp
     results = []
     if col_name_mapping is None:
         col_name_mapping = {}
-    with open(filename, "r") as f:
+    with open(filename) as f:
         reader = csv.DictReader(f)
         for row in reader:
             if cmp is None or cmp(row):
                 data_dict = {}
-                for idx, c in enumerate(extract_cols):
+                for _, c in enumerate(extract_cols):
                     map_name = col_name_mapping.get(c, c)
                     try:
                         data_dict.update({map_name: float(row[c])})

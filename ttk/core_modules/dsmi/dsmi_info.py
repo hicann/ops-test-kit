@@ -10,6 +10,7 @@
 """
 DSMI Info
 """
+
 # Standard Packages
 from enum import Enum
 
@@ -39,7 +40,7 @@ class DSMI_HEALTH_STATE(Enum):
     WARNING = 1
     IMPORTANT = 2
     CRITICAL = 3
-    OFF = 0xffffffff
+    OFF = 0xFFFFFFFF
 
 
 class DSMI_FREQ_DEVICE_TYPE(Enum):
@@ -97,4 +98,4 @@ class DSMI_ECC_DEVICE_TYPE(Enum):
     HBM = 2
     HBM_RECORDED_SINGLE_ADDR = 3
     HBM_RECORDED_MULTI_ADDR = 4
-    NONE = 0xff
+    NONE = 0xFF

@@ -13,6 +13,7 @@
 canndev op_proto/inc 中确有这样写的算子（FfnWorkerBatching）。解析器不认这种写法时，
 表现为 "GEIR op source generation failed"，会被误判成算子缺陷。
 """
+
 import pytest
 
 from ttk.core_modules.geir.proto_loader import ProtoLoader
@@ -45,10 +46,10 @@ def _parse(tmp_path, reg_sp="", end_sp=""):
 @pytest.mark.parametrize(
     "reg_sp, end_sp",
     [
-        ("", ""),        # 常规写法
-        (" ", ""),       # FfnWorkerBatching 的实际写法：仅 REG_OP 后有空格
-        (" ", " "),      # 两处都有空格
-        ("\t", "\t"),    # 制表符
+        ("", ""),  # 常规写法
+        (" ", ""),  # FfnWorkerBatching 的实际写法：仅 REG_OP 后有空格
+        (" ", " "),  # 两处都有空格
+        ("\t", "\t"),  # 制表符
     ],
 )
 def test_reg_op_accepts_whitespace_before_paren(tmp_path, reg_sp, end_sp):

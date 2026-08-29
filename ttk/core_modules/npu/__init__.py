@@ -10,6 +10,8 @@
 """
 Dynamic Shape NPU Profiling Module
 """
-from .op import profiling, rts_sequence
-from .op.profiling_structure import ProfilingReturnStructure
-from .instance_refactor import NpuInstance
+
+from .instance_refactor import NpuInstance as NpuInstance  # noqa: F401
+from .op import profiling as profiling  # noqa: F401
+from .op import rts_sequence as rts_sequence
+from .op.profiling_structure import ProfilingReturnStructure as ProfilingReturnStructure  # noqa: F401

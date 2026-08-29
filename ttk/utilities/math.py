@@ -11,10 +11,15 @@
 math utils
 """
 
-
-__all__ = ["ceil_div", "align", "lcm",
-           "is_negative_zero", "is_positive_zero",
-           "positive_zero_in_array", "negative_zero_in_array"]
+__all__ = [
+    "ceil_div",
+    "align",
+    "lcm",
+    "is_negative_zero",
+    "is_positive_zero",
+    "positive_zero_in_array",
+    "negative_zero_in_array",
+]
 
 
 # Standard Packages

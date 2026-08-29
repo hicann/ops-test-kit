@@ -10,25 +10,37 @@
 """
 DRV Interface
 """
+
 # Standard Packages
 import ctypes
 import logging
-from typing import Tuple
-from typing import Union
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 # Third-Party Packages
-from ...utilities import get_loaded_so_path, longest_match, Singleton
-from .dsmi_info import DSMI_ECC_DEVICE_TYPE, DSMI_ERROR_CODE, DSMI_FREQ_DEVICE_TYPE, DSMI_HEALTH_STATE
-from .dsmi_info import DSMI_UTIL_DEVICE_TYPE, DsmiUtilSupportedType, DsmiFreqSupportedType
-from .dsmi_structures import dsmi_chip_info_stru, dsmi_aicpu_info_stru, dsmi_ecc_info_stru
-from .dsmi_structures import dsmi_hbm_info_stru, dsmi_memory_info_stru
+from ...utilities import Singleton, get_loaded_so_path, longest_match
+from .dsmi_info import (
+    DSMI_ECC_DEVICE_TYPE,
+    DSMI_ERROR_CODE,
+    DSMI_FREQ_DEVICE_TYPE,
+    DSMI_HEALTH_STATE,
+    DSMI_UTIL_DEVICE_TYPE,
+    DsmiFreqSupportedType,
+    DsmiUtilSupportedType,
+)
+from .dsmi_structures import (
+    dsmi_aicpu_info_stru,
+    dsmi_chip_info_stru,
+    dsmi_ecc_info_stru,
+    dsmi_hbm_info_stru,
+    dsmi_memory_info_stru,
+)
 
 
 class DSMIInterface(metaclass=Singleton):
     """
     DRV Function Wrappers
     """
+
     prof_online: dict = {}
     dsmi_util_cache_short_soc: dict = {}
     dsmi_freq_cache_short_soc: dict = {}
@@ -49,7 +61,7 @@ class DSMIInterface(metaclass=Singleton):
         """
         Print a debug message for libruntime.so path
         """
-        logging.debug("Using libdrvdsmi_host.so from %s" % get_loaded_so_path(self.dsmidll))
+        logging.debug(f"Using libdrvdsmi_host.so from {get_loaded_so_path(self.dsmidll)}")
 
     def get_device_count(self) -> int:
         device_count = (ctypes.c_int * 1)()
@@ -104,8 +116,9 @@ class DSMIInterface(metaclass=Singleton):
         device_errorcode = ctypes.c_uint(error_code)
         device_perrorinfo = (ctypes.c_char * 256)()
         self.dsmidll.dsmi_query_errorstring.restype = ctypes.c_int
-        error_code = self.dsmidll.dsmi_query_errorstring(device_id, device_errorcode, device_perrorinfo,
-                                                         ctypes.c_int(256))
+        error_code = self.dsmidll.dsmi_query_errorstring(
+            device_id, device_errorcode, device_perrorinfo, ctypes.c_int(256)
+        )
         if self._parse_error(error_code, "dsmi_query_errorstring"):
             return None
         return bytes(device_perrorinfo)
@@ -148,23 +161,25 @@ class DSMIInterface(metaclass=Singleton):
             return None
         return result_struct
 
-    def get_ecc_info(self, device_id: int, device_type: Union[int, DSMI_ECC_DEVICE_TYPE]) -> \
-            Optional[dsmi_ecc_info_stru]:
+    def get_ecc_info(
+        self, device_id: int, device_type: Union[int, DSMI_ECC_DEVICE_TYPE]
+    ) -> Optional[dsmi_ecc_info_stru]:
         if isinstance(device_type, int):
             device_type = DSMI_ECC_DEVICE_TYPE(device_type)
         device_id = ctypes.c_int(device_id)
         result_struct = dsmi_ecc_info_stru()
         self.dsmidll.dsmi_get_ecc_info.restype = ctypes.c_int
-        error_code = self.dsmidll.dsmi_get_ecc_info(device_id, device_type.value,
-                                                    ctypes.c_void_p(ctypes.addressof(result_struct)))
+        error_code = self.dsmidll.dsmi_get_ecc_info(
+            device_id, device_type.value, ctypes.c_void_p(ctypes.addressof(result_struct))
+        )
         if self._parse_error(error_code, "dsmi_get_ecc_info"):
             return None
         return result_struct
 
-    def get_device_frequency(self, device_id: int, device_type: Union[int, DSMI_FREQ_DEVICE_TYPE],
-                             soc: str = None) -> Optional[int]:
-        if not self._supported(soc, self.dsmi_freq_cache_short_soc,
-                               DsmiFreqSupportedType, device_type):
+    def get_device_frequency(
+        self, device_id: int, device_type: Union[int, DSMI_FREQ_DEVICE_TYPE], soc: str = None
+    ) -> Optional[int]:
+        if not self._supported(soc, self.dsmi_freq_cache_short_soc, DsmiFreqSupportedType, device_type):
             return None
         if self.device_frequency_invoke_ok is not None and not self.device_frequency_invoke_ok:
             return None
@@ -198,10 +213,10 @@ class DSMIInterface(metaclass=Singleton):
             return None
         return ptemperature[0]
 
-    def get_device_util(self, device_id: int, device_type: Union[int, DSMI_UTIL_DEVICE_TYPE],
-                        soc: str = None) -> Optional[int]:
-        if not self._supported(soc, self.dsmi_util_cache_short_soc,
-                               DsmiUtilSupportedType, device_type):
+    def get_device_util(
+        self, device_id: int, device_type: Union[int, DSMI_UTIL_DEVICE_TYPE], soc: str = None
+    ) -> Optional[int]:
+        if not self._supported(soc, self.dsmi_util_cache_short_soc, DsmiUtilSupportedType, device_type):
             return None
         if self.device_utilization_invoke_ok is not None and not self.device_utilization_invoke_ok:
             return None
@@ -220,9 +235,7 @@ class DSMIInterface(metaclass=Singleton):
         return putil[0]
 
     @staticmethod
-    def _supported(soc,
-                   detected_soc_map, soc_support_map: dict,
-                   device_type):
+    def _supported(soc, detected_soc_map, soc_support_map: dict, device_type):
         if not soc:
             return True
         if soc == "ERR":
@@ -240,7 +253,7 @@ class DSMIInterface(metaclass=Singleton):
     def _parse_error(error_code: int, function_name: str, allow_positive=False) -> bool:
         if error_code != 0:
             if allow_positive and error_code > 0:
-                logging.debug("DRV API Call %s() Success with return code %d" % (function_name, error_code))
+                logging.debug(f"DRV API Call {function_name}() Success with return code {error_code}")
             else:
                 try:
                     logging.error(f"DSMI API Call {function_name} failed: {DSMI_ERROR_CODE(error_code).name}")
@@ -250,5 +263,5 @@ class DSMIInterface(metaclass=Singleton):
                 logging.error(f"DSMI API Call {function_name} failed with unknown code: {error_code}")
                 return True
         else:
-            logging.debug("DSMI API Call %s() Success" % function_name)
+            logging.debug(f"DSMI API Call {function_name}() Success")
         return False

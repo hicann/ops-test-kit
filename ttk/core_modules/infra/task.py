@@ -11,19 +11,19 @@
 Profiling Task
 """
 
-
 __all__ = ["TaskType", "TaskA", "TaskKeeper"]
 
 
 # Standard Packages
 from dataclasses import dataclass, field
 from enum import Enum, auto
+
 try:
     from collections.abc import Callable
 except ImportError:
-    from collections import Callable
+    from collections.abc import Callable
 from collections import defaultdict
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 # Third-Party Packages
 from ..testcase_manager import TestcaseBase
@@ -40,7 +40,7 @@ class TaskA:
     func: Callable
     params: tuple
     type: TaskType = TaskType.PROFILE
-    sub_type: str = ''
+    sub_type: str = ""
     proc_options: dict = field(default_factory=dict)
     device_ids: Optional[list] = None
 

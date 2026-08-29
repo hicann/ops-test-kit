@@ -16,6 +16,7 @@ NOTE: This test targets the PRODUCTION build (csrc/op_registry_accessor/)
 which uses a JSON-based API (7 params). It does NOT work with the mock
 standalone build (tools/registry_accessor/) which uses a struct-based API.
 """
+
 import ctypes
 import os
 import sys
@@ -27,8 +28,8 @@ if not ASCEND_HOME:
 
 BUILD_DIR = os.environ.get(
     "REGISTRY_ACCESSOR_BUILD",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "..", "..", "csrc", "op_registry_accessor", "build"))
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "csrc", "op_registry_accessor", "build"),
+)
 
 
 def main():
@@ -38,8 +39,9 @@ def main():
     print("=== libregistry_accessor.so Split API Test ===\n")
 
     # Step 1: Load op_host to register operators
-    op_host_dir = os.path.join(ASCEND_HOME, "opp", "built-in", "op_impl",
-                               "ai_core", "tbe", "op_host", "lib", "linux", "aarch64")
+    op_host_dir = os.path.join(
+        ASCEND_HOME, "opp", "built-in", "op_impl", "ai_core", "tbe", "op_host", "lib", "linux", "aarch64"
+    )
     loaded = False
     for name in ["libophost_nn.so", "libophost_math.so"]:
         path = os.path.join(op_host_dir, name)
@@ -56,7 +58,7 @@ def main():
     # Step 2: Load libregistry_accessor
     lib = os.path.join(BUILD_DIR, "libregistry_accessor.so")
     if not os.path.isfile(lib):
-        print("[FAIL] %s not found. Run build.sh first." % lib)
+        print(f"[FAIL] {lib} not found. Run build.sh first.")
         return 1
     acc = ctypes.CDLL(lib)
 
@@ -66,10 +68,15 @@ def main():
 
     invoke_fn = acc.InvokeGenSimplifiedKey
     invoke_fn.restype = ctypes.c_int
-    invoke_fn.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
-                          ctypes.c_char_p, ctypes.c_char_p,
-                          ctypes.c_void_p, ctypes.c_char_p,
-                          ctypes.c_char_p]
+    invoke_fn.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+    ]
 
     # Step 3: Test FindFuncs -- operators with gen_simplifiedkey
     ops_with_key = [
@@ -87,25 +94,22 @@ def main():
                 inputs_json = b'[{"dtype":"float16","format":"ND"}]'
                 outputs_json = b'[{"dtype":"float16","format":"ND"}]'
                 buf = ctypes.create_string_buffer(256)
-                iret = invoke_fn(handle, op, inputs_json, outputs_json, None, b'{}', buf)
+                iret = invoke_fn(handle, op, inputs_json, outputs_json, None, b"{}", buf)
                 if iret == 0 and buf.value:
-                    print("[PASS] %-15s find=0 invoke=0 key='%s'" % (
-                        op.decode(), buf.value.decode()[:60]))
+                    print(f"[PASS] {op.decode():<15} find=0 invoke=0 key='{buf.value.decode()[:60]}'")
                     passed += 1
                 else:
-                    print("[FAIL] %-15s find=0 invoke=%d" % (op.decode(), iret))
+                    print(f"[FAIL] {op.decode():<15} find=0 invoke={iret}")
                     failed += 1
             else:
-                print("[FAIL] %-15s expected gen_simplifiedkey but find returned %d" % (
-                    op.decode(), ret))
+                print(f"[FAIL] {op.decode():<15} expected gen_simplifiedkey but find returned {ret}")
                 failed += 1
         else:
             if ret != 0:
-                print("[PASS] %-15s no gen_simplifiedkey (find returned %d)" % (
-                    op.decode(), ret))
+                print(f"[PASS] {op.decode():<15} no gen_simplifiedkey (find returned {ret})")
                 passed += 1
             else:
-                print("[INFO] %-15s has gen_simplifiedkey (find=0)" % op.decode())
+                print(f"[INFO] {op.decode():<15} has gen_simplifiedkey (find=0)")
                 passed += 1
 
     # Step 4: Test param validation
@@ -114,7 +118,7 @@ def main():
         print("[PASS] FindFuncs(null, null) -> 1")
         passed += 1
     else:
-        print("[FAIL] FindFuncs(null, null) -> %d expected 1" % r1)
+        print(f"[FAIL] FindFuncs(null, null) -> {r1} expected 1")
         failed += 1
 
     buf = ctypes.create_string_buffer(b"x", 256)
@@ -123,10 +127,10 @@ def main():
         print("[PASS] InvokeFuncs(null handle) -> 1")
         passed += 1
     else:
-        print("[FAIL] InvokeFuncs(null handle) -> %d expected 1" % r2)
+        print(f"[FAIL] InvokeFuncs(null handle) -> {r2} expected 1")
         failed += 1
 
-    print("\n=== %d passed, %d failed ===" % (passed, failed))
+    print(f"\n=== {passed} passed, {failed} failed ===")
     return failed
 
 

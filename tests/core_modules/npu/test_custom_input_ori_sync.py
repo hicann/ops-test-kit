@@ -32,7 +32,7 @@ from ttk.core_modules.npu.op import input_generation as _in_gen
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 from ttk.utilities.classes import SWITCHES
 
-_gen_input = getattr(_in_gen, '__gen_input')
+_gen_input = getattr(_in_gen, "__gen_input")
 
 
 def _kernel_case(name="custom_input_sync"):

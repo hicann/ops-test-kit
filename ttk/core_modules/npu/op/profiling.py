@@ -255,7 +255,9 @@ def _load_manual_case(context: TestcaseOp, switches, process_ctx, manual_mode):
         return None, manual_mode, None
     try:
         manual_case = load_manual_data_case(
-            context, "kernel", switches,
+            context,
+            "kernel",
+            switches,
             before_load=lambda: process_ctx.notify_status("OnLoadManualData"),
         )
         if manual_case is not None:
@@ -303,15 +305,22 @@ def _resolve_tolerance(context: TestcaseOp):
         output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
         input_dtypes = resolve_custom_numpy_dtypes(context.flat_input_dtypes)
         standards = _resolve_tolerance(
-            tolerance, context.flat_precision_tolerances, context.flat_absolute_precision,
-            output_dtypes, switches.compare_method, input_dtypes=input_dtypes,
+            tolerance,
+            context.flat_precision_tolerances,
+            context.flat_absolute_precision,
+            output_dtypes,
+            switches.compare_method,
+            input_dtypes=input_dtypes,
         )
         need_3party = any(s.token == "cross_check" for s in standards)
         if need_3party:
             context.golden_mode_override = "Promote"
         return SimpleNamespace(
-            tolerance=tolerance, pre_compare=pre_compare, custom_compare=custom_compare,
-            standards=standards, need_3party=need_3party,
+            tolerance=tolerance,
+            pre_compare=pre_compare,
+            custom_compare=custom_compare,
+            standards=standards,
+            need_3party=need_3party,
         ), None
     except ValueError as e:
         logging.error("[%s] tolerance invalid: %s", context.op_name, e)
@@ -328,7 +337,8 @@ def _generate_golden(context: TestcaseOp, manual_case, tol_state):
         try:
             process_ctx.notify_status("OnLoadManualGolden")
             stored_goldens = manual_case.load_goldens(
-                shapes=context.flat_output_shapes, dtypes=context.flat_output_dtypes,
+                shapes=context.flat_output_shapes,
+                dtypes=context.flat_output_dtypes,
             )
         except Exception as exc:
             logging.exception("Manual Kernel golden loading failure")
@@ -350,9 +360,12 @@ def _generate_golden(context: TestcaseOp, manual_case, tol_state):
         output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
         input_dtypes = resolve_custom_numpy_dtypes(context.flat_input_dtypes)
         tol_state.standards = _resolve_tolerance(
-            tol_state.tolerance, context.flat_precision_tolerances,
-            context.flat_absolute_precision, output_dtypes,
-            switches.compare_method, input_dtypes=input_dtypes,
+            tol_state.tolerance,
+            context.flat_precision_tolerances,
+            context.flat_absolute_precision,
+            output_dtypes,
+            switches.compare_method,
+            input_dtypes=input_dtypes,
         )
     return None
 
@@ -363,7 +376,10 @@ def _write_manual_prepare(context: TestcaseOp, prepare_store, prepared_inputs):
     try:
         process_ctx.notify_status("OnWriteManualData")
         case_dir = prepare_store.write_case(
-            context, "kernel", prepared_inputs, context.golden_arrays,
+            context,
+            "kernel",
+            prepared_inputs,
+            context.golden_arrays,
             file_format=switches.dump_config.file_format,
         )
     except Exception as exc:
@@ -389,11 +405,14 @@ def _run_xpu_and_workspace(context: TestcaseOp, need_3party):
     third_parties = list(deep_flatten(third_parties_nested)) if third_parties_nested is not None else None
     process_ctx.notify_status("OnGenWorkspace")
     context.dyn_workspace_arrays = __gen_workspaces(
-        context.dyn_compile_result.workspaces, context.dyn_compile_result.debug_buf_size)
+        context.dyn_compile_result.workspaces, context.dyn_compile_result.debug_buf_size
+    )
     context.cst_workspace_arrays = __gen_workspaces(
-        context.cst_compile_result.workspaces, context.cst_compile_result.debug_buf_size)
+        context.cst_compile_result.workspaces, context.cst_compile_result.debug_buf_size
+    )
     context.bin_workspace_arrays = __gen_workspaces(
-        context.bin_compile_result.workspaces, context.bin_compile_result.debug_buf_size)
+        context.bin_compile_result.workspaces, context.bin_compile_result.debug_buf_size
+    )
     process_ctx.notify_status("OnDumpInputDataIfRequired")
     __dump_input(context)
     process_ctx.notify_status("OnDumpGoldenDataIfRequired")
@@ -408,7 +427,9 @@ def _device_profiling(context: TestcaseOp, dev_id, device_grant_events, device_g
     device_id = [dev_id]
     use_device = switches.mode.has_device()
     with DeviceLock(
-        process_ctx, dev_id, use_device=use_device,
+        process_ctx,
+        dev_id,
+        use_device=use_device,
         grant_event=device_grant_events.get(dev_id),
         granted_idx=device_granted_indices.get(dev_id),
     ):
@@ -530,7 +551,7 @@ def __compile_only_end_print(context: TestcaseOp):
         if isinstance(tiling_time, (tuple, list)):
             tiling_time = numpy.median(tiling_time[1:]) if len(tiling_time) > 1 else tiling_time[0]
         return (
-            "%.3f" % compile_time if isinstance(compile_time, float) else compile_time,
+            f"{compile_time:.3f}" if isinstance(compile_time, float) else compile_time,
             tiling_time,
             tiling_key,
             block_dim,
@@ -585,7 +606,7 @@ def __parse_binary_tiling_data(context: TestcaseOp):
             context.bin_compile_result.compile_info,
             context.bin_compile_result.tiling_key,
         )
-    except:
+    except Exception:
         logging.exception("Binary tiling data parsing failure")
         context.bin_compile_result.compile_result = "TILING_PARSE_FAILURE"
 
@@ -601,7 +622,7 @@ def __parse_dynamic_tiling_data(context: TestcaseOp):
             context.dyn_compile_result.compile_info,
             context.dyn_compile_result.tiling_key,
         )
-    except:
+    except Exception:
         logging.exception("Dynamic tiling data parsing failure")
         context.dyn_compile_result.compile_result = "TILING_PARSE_FAILURE"
 
@@ -817,7 +838,7 @@ def do_profiling(context: TestcaseOp, mode: str) -> RTSProfilingResult:
     """
     RTS Profiling wrapper
     """
-    logging.debug("Entering profiling sequence with %s mode" % mode)
+    logging.debug(f"Entering profiling sequence with {mode} mode")
     switches = get_global_storage()
     op_name = context.op_name
     output_placeholder: bool = OpInfoKeeper().op_output_defined(op_name)
@@ -835,8 +856,8 @@ def do_profiling(context: TestcaseOp, mode: str) -> RTSProfilingResult:
             try:
                 device = _get_rts_interface(context.device_id, context.testcase_name, mode)
                 result = rts_profiling(device, param)
-            except:
-                raise RuntimeError("Profiling Sequence of mode %s failed" % mode)
+            except Exception as e:
+                raise RuntimeError(f"Profiling Sequence of mode {mode} failed") from e
             finally:
                 os.chdir(switches.root_path)
     else:
@@ -925,12 +946,11 @@ def handle_profiling_result(context: TestcaseOp):
                 _cycle_f = "RTS_PROF_INVALID"
             else:
                 _passed = "PASS"
-        except:
+        except Exception:
             _cycle_f = "RTS_PROF_INVALID"
-        finally:
-            if _passed == "PASS":
-                result.cycle = _cycle_f
-            return _passed
+        if _passed == "PASS":
+            result.cycle = _cycle_f
+        return _passed
 
     dyn_pass = _get_cycle(context.dyn_prof_result, fake_fail)
     cst_pass = _get_cycle(context.cst_prof_result, fake_fail)

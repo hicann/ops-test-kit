@@ -10,39 +10,39 @@
 """
 Dynamic Shape NPU Profiling Structure
 """
+
 # Standard Packages
 import logging
 import math
-import numpy
 import os
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import Optional, Tuple, Union
+
+import numpy
+
+from ....utilities import BaseCompilationResult, align, get_global_storage, input_apply_as_list, output_apply_as_list
+
 # Third-party Packages
 from ...testcase_manager import TestcaseOp
-from ....utilities import BaseCompilationResult
-from ....utilities import (
-    get_global_storage,
-    align,
-    input_apply_as_list,
-    output_apply_as_list
-)
 
 
 class RTSProfilingParam:
-    def __init__(self,
-                 compile_result: BaseCompilationResult,
-                 input_arrays: tuple,
-                 output_arrays: tuple,
-                 workspace_arrays: tuple,
-                 tiling_data_bytes: bytes,
-                 output_placeholder: bool,
-                 clear_atomic: bool,
-                 switch: bool,
-                 is_valid: bool,
-                 fail_reason: str,
-                 tensor_list_distribution: Optional[tuple],
-                 testcase_name: str,
-                 run_mode: str,
-                 op_name: str = ""):
+    def __init__(
+        self,
+        compile_result: BaseCompilationResult,
+        input_arrays: tuple,
+        output_arrays: tuple,
+        workspace_arrays: tuple,
+        tiling_data_bytes: bytes,
+        output_placeholder: bool,
+        clear_atomic: bool,
+        switch: bool,
+        is_valid: bool,
+        fail_reason: str,
+        tensor_list_distribution: Optional[tuple],
+        testcase_name: str,
+        run_mode: str,
+        op_name: str = "",
+    ):
         self.compile_result = compile_result.compile_result
         self.tiling_key: Optional[int] = compile_result.tiling_key
         self.kernel_name = compile_result.kernel_name
@@ -62,10 +62,8 @@ class RTSProfilingParam:
         self.workspace_arrays: Tuple[numpy.ndarray] = workspace_arrays
         self.flatten_input_arrays = input_arrays
         self.flatten_output_arrays = output_arrays
-        if self.is_valid and self.block_dim > 0 and self.compile_result == 'SUCC':
-            self.flatten_output_arrays = tuple([
-                input_arrays[o] if isinstance(o, int) else o
-                for o in output_arrays])
+        if self.is_valid and self.block_dim > 0 and self.compile_result == "SUCC":
+            self.flatten_output_arrays = tuple([input_arrays[o] if isinstance(o, int) else o for o in output_arrays])
         # private params
         self._tiling_data_bytes = tiling_data_bytes
         self._clear_atomic = clear_atomic
@@ -73,8 +71,7 @@ class RTSProfilingParam:
         self._dfx_arrays: Optional[tuple] = None
         self._input_arrays: Optional[tuple] = None
         self._output_arrays: Optional[tuple] = None
-        self._ipt_ids = [id(i) for i in self.flatten_input_arrays
-                         if isinstance(i, numpy.ndarray)]
+        self._ipt_ids = [id(i) for i in self.flatten_input_arrays if isinstance(i, numpy.ndarray)]
 
     @property
     def kernel_main_func_name(self) -> str:
@@ -88,12 +85,8 @@ class RTSProfilingParam:
             return None
 
         # handle tensor list.
-        if (
-            self.kernel_json_info.dynamic_param_is_folded() and
-            self._tensor_list_distribution
-        ):
-            input_arrays = input_apply_as_list(self.flatten_input_arrays,
-                                               self._tensor_list_distribution)
+        if self.kernel_json_info.dynamic_param_is_folded() and self._tensor_list_distribution:
+            input_arrays = input_apply_as_list(self.flatten_input_arrays, self._tensor_list_distribution)
         else:
             input_arrays = self.flatten_input_arrays
 
@@ -112,13 +105,10 @@ class RTSProfilingParam:
             return None
 
         # handle tensor list.
-        if (
-            self.kernel_json_info.dynamic_param_is_folded() and
-            self._tensor_list_distribution
-        ):
-            output_arrays = output_apply_as_list(self.flatten_output_arrays,
-                                                 self._tensor_list_distribution,
-                                                 input_count=len(self.flatten_input_arrays))
+        if self.kernel_json_info.dynamic_param_is_folded() and self._tensor_list_distribution:
+            output_arrays = output_apply_as_list(
+                self.flatten_output_arrays, self._tensor_list_distribution, input_count=len(self.flatten_input_arrays)
+            )
         else:
             output_arrays = self.flatten_output_arrays
 
@@ -138,12 +128,12 @@ class RTSProfilingParam:
                 if op_original_para_size > 0 and tiling_data_len < op_original_para_size:
                     tiling_data_len = op_original_para_size
                 align_size = align(tiling_data_len, 8)
-                tiling_data = self._tiling_data_bytes.ljust(align_size, b'\x00')
+                tiling_data = self._tiling_data_bytes.ljust(align_size, b"\x00")
                 import struct
+
                 tensors_size = self._construct_kernel_asan_info()
-                tiling_data += struct.pack('<' + 'q' * len(tensors_size), *tensors_size)
-                logging.debug(f"Tiling data with oom info is :\n"
-                              f"{numpy.frombuffer(tiling_data, dtype=numpy.int64)}")
+                tiling_data += struct.pack("<" + "q" * len(tensors_size), *tensors_size)
+                logging.debug(f"Tiling data with oom info is :\n{numpy.frombuffer(tiling_data, dtype=numpy.int64)}")
                 return tiling_data
             else:
                 return self._tiling_data_bytes
@@ -163,12 +153,9 @@ class RTSProfilingParam:
         return self._dfx_arrays
 
     def has_tensor_list(self) -> bool:
-        return (any(True for i in self.input_arrays
-                    if isinstance(i, (list, tuple)))
-                or
-                any(True for o in self.output_arrays
-                    if isinstance(o, (list, tuple)))
-                )
+        return any(True for i in self.input_arrays if isinstance(i, (list, tuple))) or any(
+            True for o in self.output_arrays if isinstance(o, (list, tuple))
+        )
 
     def clear_atomic_output_workspace(self):
         self._init_outputs()
@@ -182,17 +169,11 @@ class RTSProfilingParam:
         output_arrays_num = len(self.output_arrays) if self.output_placeholder else 0
         ws_num = len(self.workspace_arrays)
 
-        actual_param_num = (input_arrays_num
-                            + output_arrays_num
-                            + ws_num
-                            + (1 if self._tiling_data_bytes is not None else 0)
-                            )
-        if (
-            expected_param_num != 0 and
-            (actual_param_num - expected_param_num) not in (0, knl_json_ws_num)
-        ):
-            logging.warning(f"CCE Expects {expected_param_num} arguments, "
-                            f"received {actual_param_num}")
+        actual_param_num = (
+            input_arrays_num + output_arrays_num + ws_num + (1 if self._tiling_data_bytes is not None else 0)
+        )
+        if expected_param_num != 0 and (actual_param_num - expected_param_num) not in (0, knl_json_ws_num):
+            logging.warning(f"CCE Expects {expected_param_num} arguments, received {actual_param_num}")
 
         if not self._clear_atomic:
             return
@@ -202,22 +183,21 @@ class RTSProfilingParam:
             for idx, p in enumerate(self.kernel_json_info.parameters):
                 if idx < input_arrays_num:
                     if isinstance(p, dict) or p == 1:
-                        logging.warning("Compile JSON gives input array atomic sign, "
-                                        "something must be wrong here!")
+                        logging.warning("Compile JSON gives input array atomic sign, something must be wrong here!")
                 elif idx < input_arrays_num + output_arrays_num:
                     output_idx = idx - input_arrays_num
                     if not isinstance(p, dict) and p != 1:
                         pass
                     elif isinstance(self.output_arrays[output_idx], (list, tuple)):
                         # tensor list
-                        logging.warning("Compile JSON gives tensor list atomic sign, "
-                                        "something must be wrong here!")
+                        logging.warning("Compile JSON gives tensor list atomic sign, something must be wrong here!")
                     elif (
-                        isinstance(self.output_arrays[output_idx], numpy.ndarray) and
-                        id(self.output_arrays[output_idx]) in self._ipt_ids  # reference.
+                        isinstance(self.output_arrays[output_idx], numpy.ndarray)
+                        and id(self.output_arrays[output_idx]) in self._ipt_ids  # reference.
                     ):
-                        logging.warning("Compile JSON gives inplace output array atomic sign, "
-                                        "something must be wrong here!")
+                        logging.warning(
+                            "Compile JSON gives inplace output array atomic sign, something must be wrong here!"
+                        )
                     else:
                         atomic_value = 0 if not isinstance(p, dict) else p.get("init_value", 0)
                         atomic_value = self.output_arrays[output_idx].dtype.type(atomic_value)
@@ -231,8 +211,7 @@ class RTSProfilingParam:
                         atomic_value = self.workspace_arrays[workspace_idx].dtype.type(atomic_value)
                         self.workspace_arrays[workspace_idx].fill(atomic_value)
                 elif isinstance(p, dict) or p == 1:
-                    logging.warning("Compile JSON gives tiling_data array atomic sign, "
-                                    "something terrible happens!")
+                    logging.warning("Compile JSON gives tiling_data array atomic sign, something terrible happens!")
                 else:
                     pass
 
@@ -240,14 +219,14 @@ class RTSProfilingParam:
         if tensor is None:
             return 0
         else:
-            return align(tensor.nbytes if ("int4" not in tensor.dtype.name
-                                           and "float4" not in tensor.dtype.name)
-                         else int(math.ceil(tensor.nbytes / 2)),
-                         32)
+            return align(
+                tensor.nbytes
+                if ("int4" not in tensor.dtype.name and "float4" not in tensor.dtype.name)
+                else int(math.ceil(tensor.nbytes / 2)),
+                32,
+            )
 
-    def _append_xput_asan_info(self,
-                               xputs: Union[list, tuple],
-                               tensors_size: list):
+    def _append_xput_asan_info(self, xputs: Union[list, tuple], tensors_size: list):
         for x in xputs:
             if x is None:
                 tensors_size.append(0)
@@ -302,15 +281,13 @@ class RTSProfilingResult:
 
     @classmethod
     def fail(cls, fail_result: str) -> "RTSProfilingResult":
-        return cls(fail_result,
-                   (fail_result,),
-                   "UNKNOWN")
+        return cls(fail_result, (fail_result,), "UNKNOWN")
 
     @property
     def oob_status(self):
         if not self.oob:
             return "PASS"
-        oob_lst = self.oob.split(',')
+        oob_lst = self.oob.split(",")
         return "FAIL" if "FAIL" in oob_lst else "PASS"
 
 
@@ -320,8 +297,7 @@ def _format_xpu_metrics(xpu_results):
         return {}
     metrics = {}
     for provider, entry in xpu_results.items():
-        m = {"status": entry.get("status", "FAIL"),
-             "api": entry.get("api", "")}
+        m = {"status": entry.get("status", "FAIL"), "api": entry.get("api", "")}
         if entry.get("perf"):
             m["device_us"] = entry["perf"].get("device_us", "NA")
             m["peak_memory_mb"] = entry["perf"].get("peak_memory_mb", "NA")
@@ -336,41 +312,43 @@ class ProfilingReturnStructure:
     Structure for Return
     """
 
-    __slots__ = ("dyn_tiling_time_us",
-                 "bin_tiling_time_us",
-                 "dyn_kernel_name",
-                 "cst_kernel_name",
-                 "bin_kernel_name",
-                 "dyn_block_dim",
-                 "cst_block_dim",
-                 "bin_block_dim",
-                 "dyn_perf_us",
-                 "cst_perf_us",
-                 "bin_perf_us",
-                 "dyn_compile_s",
-                 "cst_compile_s",
-                 "bin_compile_s",
-                 "perf_status",
-                 "dyn_precision",
-                 "cst_precision",
-                 "bin_precision",
-                 "precision_status",
-                 "dyn_oob_result",
-                 "cst_oob_result",
-                 "bin_oob_result",
-                 "memory_oob_status",
-                 "dyn_tiling_key",
-                 "dyn_tiling_data",
-                 "bin_tiling_key",
-                 "bin_tiling_data",
-                 "dyn_workspaces",
-                 "cst_workspaces",
-                 "bin_workspaces",
-                 "data_input_size_b",
-                 "data_output_size_b",
-                 "soc",
-                 "xpu_metrics",
-                 "precision_metrics")
+    __slots__ = (
+        "dyn_tiling_time_us",
+        "bin_tiling_time_us",
+        "dyn_kernel_name",
+        "cst_kernel_name",
+        "bin_kernel_name",
+        "dyn_block_dim",
+        "cst_block_dim",
+        "bin_block_dim",
+        "dyn_perf_us",
+        "cst_perf_us",
+        "bin_perf_us",
+        "dyn_compile_s",
+        "cst_compile_s",
+        "bin_compile_s",
+        "perf_status",
+        "dyn_precision",
+        "cst_precision",
+        "bin_precision",
+        "precision_status",
+        "dyn_oob_result",
+        "cst_oob_result",
+        "bin_oob_result",
+        "memory_oob_status",
+        "dyn_tiling_key",
+        "dyn_tiling_data",
+        "bin_tiling_key",
+        "bin_tiling_data",
+        "dyn_workspaces",
+        "cst_workspaces",
+        "bin_workspaces",
+        "data_input_size_b",
+        "data_output_size_b",
+        "soc",
+        "xpu_metrics",
+        "precision_metrics",
+    )
 
     def __init__(self, default_value=None):
         self.dyn_tiling_time_us = default_value
@@ -418,13 +396,10 @@ class ProfilingReturnStructure:
         self.precision_metrics = default_value
 
     # noinspection DuplicatedCode
-    def construct(self, context: TestcaseOp,
-                  compare_result: "ComparisonResult",
-                  passed):
+    def construct(self, context: TestcaseOp, compare_result: "ComparisonResult", passed):
         """Construct the structure with context"""
         # Check prof_results and construct one if necessary
         input_size, output_size = context.input_bytes, context.output_bytes
-        total_size = input_size + output_size
         if not isinstance(context.dyn_prof_result, RTSProfilingResult):
             context.dyn_prof_result = RTSProfilingResult(passed, None)
         if not isinstance(context.cst_prof_result, RTSProfilingResult):
@@ -435,24 +410,33 @@ class ProfilingReturnStructure:
         self.bin_tiling_time_us = context.bin_compile_result.tiling_result.tiling_time
         # DYN
         self.dyn_kernel_name = context.dyn_compile_result.kernel_name
-        self.dyn_block_dim = str(context.dyn_compile_result.block_dim) \
-            if context.dyn_compile_result.block_dim != 0 else context.dyn_prof_result.cycle
+        self.dyn_block_dim = (
+            str(context.dyn_compile_result.block_dim)
+            if context.dyn_compile_result.block_dim != 0
+            else context.dyn_prof_result.cycle
+        )
         self.dyn_perf_us = context.dyn_prof_result.cycle
         self.dyn_compile_s = context.dyn_compile_result.compile_time
         self.dyn_precision = compare_result.dyn_precision
         self.dyn_oob_result = context.dyn_prof_result.oob
         # CST
         self.cst_kernel_name = context.cst_compile_result.kernel_name
-        self.cst_block_dim = str(context.cst_compile_result.block_dim) \
-            if context.cst_compile_result.block_dim != 0 else context.cst_prof_result.cycle
+        self.cst_block_dim = (
+            str(context.cst_compile_result.block_dim)
+            if context.cst_compile_result.block_dim != 0
+            else context.cst_prof_result.cycle
+        )
         self.cst_perf_us = context.cst_prof_result.cycle
         self.cst_compile_s = context.cst_compile_result.compile_time
         self.cst_precision = compare_result.cst_precision
         self.cst_oob_result = context.cst_prof_result.oob
         # BIN
         self.bin_kernel_name = context.bin_compile_result.kernel_name
-        self.bin_block_dim = str(context.bin_compile_result.block_dim) \
-            if context.bin_compile_result.block_dim != 0 else context.bin_prof_result.cycle
+        self.bin_block_dim = (
+            str(context.bin_compile_result.block_dim)
+            if context.bin_compile_result.block_dim != 0
+            else context.bin_prof_result.cycle
+        )
         self.bin_perf_us = context.bin_prof_result.cycle
         self.bin_compile_s = context.bin_compile_result.compile_time
         self.bin_precision = compare_result.bin_precision
@@ -460,8 +444,11 @@ class ProfilingReturnStructure:
 
         self.perf_status = passed
         self.precision_status = compare_result.passed
-        self.memory_oob_status = "PASS" if all(getattr(getattr(context, f"{x}_prof_result"), "oob_status") == "PASS"
-                                               for x in ("dyn", "cst", "bin")) else "FAIL"
+        self.memory_oob_status = (
+            "PASS"
+            if all(getattr(context, f"{x}_prof_result").oob_status == "PASS" for x in ("dyn", "cst", "bin"))
+            else "FAIL"
+        )
         self.data_input_size_b = input_size
         self.data_output_size_b = output_size
         self.dyn_tiling_data = context.dyn_str_tiling_data
@@ -472,16 +459,16 @@ class ProfilingReturnStructure:
         self.cst_workspaces = context.cst_compile_result.workspaces
         self.bin_workspaces = context.bin_compile_result.workspaces
 
-        self.xpu_metrics = _format_xpu_metrics(
-            getattr(context, "xpu_results", None))
+        self.xpu_metrics = _format_xpu_metrics(getattr(context, "xpu_results", None))
 
         self.precision_metrics = compare_result.metrics or {}
 
     @staticmethod
     def get_titles(custom: bool = False) -> Tuple[str]:
         if get_global_storage().custom_columns and custom:
-            result_titles = tuple(title for title in get_global_storage().custom_columns
-                                  if title in ProfilingReturnStructure.__slots__)
+            result_titles = tuple(
+                title for title in get_global_storage().custom_columns if title in ProfilingReturnStructure.__slots__
+            )
         else:
             result_titles = ProfilingReturnStructure.__slots__
         if len(result_titles) < 1:
@@ -497,31 +484,34 @@ class ProfilingReturnStructure:
 
     def kernel_execute_failed(self):
         for typ in ("dyn", "cst", "bin"):
-            perf_us = str(getattr(self, f"{typ}_perf_us")).split(',')
+            perf_us = str(getattr(self, f"{typ}_perf_us")).split(",")
             for p in perf_us:
-                if p in ("RTS_BINARY_FAILURE", "RTS_FUNCTION_FAILURE", "LAUNCH_FAILED",
-                         "TRAP", "AIC_ERROR", "VEC_ERROR", "TIMEOUT",
-                         "UNKNOWN_RTS_ERROR"):
+                if p in (
+                    "RTS_BINARY_FAILURE",
+                    "RTS_FUNCTION_FAILURE",
+                    "LAUNCH_FAILED",
+                    "TRAP",
+                    "AIC_ERROR",
+                    "VEC_ERROR",
+                    "TIMEOUT",
+                    "UNKNOWN_RTS_ERROR",
+                ):
                     return True
         return False
 
     def pick_data(self, titles: Tuple[str]) -> tuple:
-        """ Pick result data via titles """
+        """Pick result data via titles"""
         data = []
         for t in titles:
             if hasattr(self, t):
                 data.append(getattr(self, t))
             else:
-                data.append('')
+                data.append("")
         return tuple(data)
 
 
 class ComparisonResult:
-    __slots__ = ("dyn_precision",
-                 "cst_precision",
-                 "bin_precision",
-                 "passed",
-                 "metrics")
+    __slots__ = ("dyn_precision", "cst_precision", "bin_precision", "passed", "metrics")
 
     def __init__(self, default_value):
         self.dyn_precision = default_value

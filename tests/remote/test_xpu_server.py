@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """xpu_server 集成测试：heartbeat/tenant/run 端点。"""
+
 import json
 import subprocess
 import sys
@@ -20,11 +21,13 @@ import pytest
 def xpu_server():
     """启动 dry-run xpu_server 子进程（端口 19090），等待 heartbeat 就绪。"""
     proc = subprocess.Popen(
-        [sys.executable, "-m", "server.xpu_server",
-         "--port", "19090", "--dry-run"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        [sys.executable, "-m", "server.xpu_server", "--port", "19090", "--dry-run"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     # Wait for server to become ready (framework detection may be slow)
     import http.client
+
     for _ in range(30):
         try:
             conn = http.client.HTTPConnection("127.0.0.1", 19090, timeout=1)
@@ -49,6 +52,7 @@ def xpu_server():
 def http_conn():
     """提供到 19090 端口的 HTTP 连接。"""
     import http.client
+
     conn = http.client.HTTPConnection("127.0.0.1", 19090, timeout=5)
     yield conn
     conn.close()

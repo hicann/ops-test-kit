@@ -21,11 +21,14 @@ from ttk.core_modules.operator.op_interface import OperatorInterface
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
-def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
-                   input_dtypes=("float16", "float16"),
-                   output_shapes=((8,),),
-                   output_dtypes=("float16",),
-                   **kwargs):
+def _make_testcase(
+    op_name="Add",
+    input_shapes=((8,), (8,)),
+    input_dtypes=("float16", "float16"),
+    output_shapes=((8,),),
+    output_dtypes=("float16",),
+    **kwargs,
+):
     case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
@@ -68,8 +71,9 @@ def _validate(case, op_info=None):
     mock_gs.op_impl_mode = None
     mock_gs.kernel_meta = "/tmp"
     mock_gs.short_soc_version = "Ascend910B2"
-    with patch('ttk.core_modules.testcase_manager.testcase_op.get_global_storage', return_value=mock_gs), \
-         patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as mock:
+    with patch("ttk.core_modules.testcase_manager.testcase_op.get_global_storage", return_value=mock_gs), patch(
+        "ttk.core_modules.operator.op_info_keeper.OpInfoKeeper"
+    ) as mock:
         mock.return_value.info_of.return_value = op_info
         case.validate()
 
@@ -103,7 +107,6 @@ def _mock_compile_result(has_kernel_json=True, clear_atomic=False):
 
 
 class TestClearAtomicProperties:
-
     def test_dyn_clear_atomic_from_compile_result(self):
         case = _make_testcase()
         case.dyn_compile_result = _mock_compile_result(clear_atomic=True)
@@ -132,43 +135,49 @@ class TestShapeInference:
 
     _EXACT = object()  # sentinel: 精确匹配 expected；否则仅断言非 None
 
-    @pytest.mark.parametrize("input_shapes, output_shapes, attributes, expected", [
-        (((8,), (8,)), "ELEWISE", {}, ((8,),)),
-        (((8, 16),), "REDUCE", {"axis": (1,)}, _EXACT),
-        (((8, 16, 32),), "REDUCE", {"axes": (1, 2)}, _EXACT),
-        (((8, 16),), "REDUCE", {}, _EXACT),
-        (((8,), (8,)), "ELEWISE(1, None)", {}, _EXACT),
-    ], ids=["elewise", "reduce-with-axis", "reduce-with-axes",
-            "reduce-no-axis", "elewise-with-args"])
-    def test_inference_returns_value(self, input_shapes, output_shapes,
-                                     attributes, expected):
+    @pytest.mark.parametrize(
+        "input_shapes, output_shapes, attributes, expected",
+        [
+            (((8,), (8,)), "ELEWISE", {}, ((8,),)),
+            (((8, 16),), "REDUCE", {"axis": (1,)}, _EXACT),
+            (((8, 16, 32),), "REDUCE", {"axes": (1, 2)}, _EXACT),
+            (((8, 16),), "REDUCE", {}, _EXACT),
+            (((8,), (8,)), "ELEWISE(1, None)", {}, _EXACT),
+        ],
+        ids=["elewise", "reduce-with-axis", "reduce-with-axes", "reduce-no-axis", "elewise-with-args"],
+    )
+    def test_inference_returns_value(self, input_shapes, output_shapes, attributes, expected):
         """验证 ELEWISE/REDUCE 各场景推导出非 None 结果（ELEWISE 还检查精确值）。"""
-        result = TestcaseOp._do_shape_inference(
-            input_shapes, output_shapes, attributes)
+        result = TestcaseOp._do_shape_inference(input_shapes, output_shapes, attributes)
         if expected is self._EXACT:
             assert result is not None
         else:
             assert result == expected
 
-    @pytest.mark.parametrize("input_shapes, output_shapes, match", [
-        ((None,), "ELEWISE", "None input"),
-        (((8,),), "INVALID_TYPE", "Invalid"),
-    ], ids=["none-in-inputs-raises", "invalid-inference-raises"])
+    @pytest.mark.parametrize(
+        "input_shapes, output_shapes, match",
+        [
+            ((None,), "ELEWISE", "None input"),
+            (((8,),), "INVALID_TYPE", "Invalid"),
+        ],
+        ids=["none-in-inputs-raises", "invalid-inference-raises"],
+    )
     def test_inference_raises(self, input_shapes, output_shapes, match):
         """验证 None 输入或非法类型 → ValueError。"""
         with pytest.raises(ValueError, match=match):
-            TestcaseOp._do_shape_inference(
-                input_shapes, output_shapes, {})
+            TestcaseOp._do_shape_inference(input_shapes, output_shapes, {})
 
 
 class TestExpandIndices:
-
-    @pytest.mark.parametrize("count, distribution, indices, expected", [
-        (3, (), [0, 1, 2], [0, 1, 2]),
-        (3, (), [0, None, 2], [0, None, 2]),
-    ], ids=["simple-expand", "with-none"])
-    def test_expand_indices_returns_list(self, count, distribution,
-                                         indices, expected):
+    @pytest.mark.parametrize(
+        "count, distribution, indices, expected",
+        [
+            (3, (), [0, 1, 2], [0, 1, 2]),
+            (3, (), [0, None, 2], [0, None, 2]),
+        ],
+        ids=["simple-expand", "with-none"],
+    )
+    def test_expand_indices_returns_list(self, count, distribution, indices, expected):
         """验证无 distribution 时 _expand_indices 原样返回列表。"""
         assert TestcaseOp._expand_indices(count, distribution, indices) == expected
 
@@ -179,7 +188,6 @@ class TestExpandIndices:
 
 
 class TestAutoSetInplaceIndexes:
-
     def test_no_inplace(self):
         op_info = {
             "coreType.value": "AiCore",
@@ -193,8 +201,7 @@ class TestAutoSetInplaceIndexes:
     def test_with_inplace(self):
         op_info = {
             "coreType.value": "AiCore",
-            "inputs": [{"name": "x", "paramType": "default"},
-                       {"name": "y", "paramType": "default"}],
+            "inputs": [{"name": "x", "paramType": "default"}, {"name": "y", "paramType": "default"}],
             "outputs": [{"name": "x", "paramType": "default"}],
         }
         case = _make_testcase()
@@ -204,8 +211,7 @@ class TestAutoSetInplaceIndexes:
     def test_param_type_mismatch(self):
         op_info = {
             "coreType.value": "AiCore",
-            "inputs": [{"name": "x", "paramType": "dynamic"},
-                       {"name": "y", "paramType": "default"}],
+            "inputs": [{"name": "x", "paramType": "dynamic"}, {"name": "y", "paramType": "default"}],
             "outputs": [{"name": "x", "paramType": "default"}],
         }
         case = _make_testcase()
@@ -214,36 +220,32 @@ class TestAutoSetInplaceIndexes:
 
 
 class TestConstInputIndexesOpInfo:
-
     def test_value_depend_required(self):
         op_info = {
             "coreType.value": "AiCore",
-            "inputs": [{"name": "x", "valueDepend": "required"},
-                       {"name": "y"}],
+            "inputs": [{"name": "x", "valueDepend": "required"}, {"name": "y"}],
             "outputs": [{"name": "z"}],
         }
         case = _make_testcase()
         _validate(case, op_info=op_info)
-        with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as m:
+        with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as m:
             m.return_value.info_of.return_value = op_info
             assert case.const_input_indexes == (0,)
 
     def test_no_value_depend(self):
         op_info = {
             "coreType.value": "AiCore",
-            "inputs": [{"name": "x", "valueDepend": "ignore"},
-                       {"name": "y"}],
+            "inputs": [{"name": "x", "valueDepend": "ignore"}, {"name": "y"}],
             "outputs": [{"name": "z"}],
         }
         case = _make_testcase()
         _validate(case, op_info=op_info)
-        with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as m:
+        with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as m:
             m.return_value.info_of.return_value = op_info
             assert case.const_input_indexes == ()
 
 
 class TestSupportedRerunTitle:
-
     def test_returns_expected_titles(self):
         titles = TestcaseOp.supported_rerun_title()
         assert "dyn_perf_us" in titles
@@ -251,7 +253,6 @@ class TestSupportedRerunTitle:
 
 
 class TestSetCaseCoreType:
-
     def test_core_type_from_global_storage(self):
         case = _make_testcase()
         _validate(case)
@@ -274,7 +275,6 @@ class TestSetCaseCoreType:
 
 
 class TestStcShapeSizeCheck:
-
     def test_shape_out_of_bound(self):
         case = _make_testcase(input_shapes=((999999999,),), input_dtypes=("float32",))
         mock_gs = MagicMock()
@@ -283,8 +283,9 @@ class TestStcShapeSizeCheck:
         mock_gs.op_impl_mode = None
         mock_gs.kernel_meta = "/tmp"
         mock_gs.short_soc_version = "Ascend910B2"
-        with patch('ttk.core_modules.testcase_manager.testcase_op.get_global_storage', return_value=mock_gs), \
-             patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.testcase_manager.testcase_op.get_global_storage", return_value=mock_gs), patch(
+            "ttk.core_modules.operator.op_info_keeper.OpInfoKeeper"
+        ) as mock_oi:
             mock_oi.return_value.info_of.return_value = {
                 "coreType.value": "AiCore",
                 "inputs": [{"name": "x"}],
@@ -296,7 +297,6 @@ class TestStcShapeSizeCheck:
 
 
 class TestGetDynFuncParamName:
-
     def test_basic(self):
         case = _make_testcase()
         case.dyn_func_params = ("x", "y", "axis")
@@ -323,11 +323,10 @@ def _clear_caches():
 
 
 class TestPrepareOperatorParameters:
-
     def test_dyn_mode(self):
         case = _make_testcase()
         _validate(case)
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi:
             mock_oi.return_value.op_output_defined.return_value = True
             ipt, opt = OperatorInterface.prepare_operator_parameters(case, "dyn")
         assert len(ipt) == 2
@@ -336,8 +335,9 @@ class TestPrepareOperatorParameters:
     def test_bin_mode(self):
         case = _make_testcase()
         _validate(case)
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi, \
-             patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as mock_oi2:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi, patch(
+            "ttk.core_modules.operator.op_info_keeper.OpInfoKeeper"
+        ) as mock_oi2:
             mock_oi.return_value.op_output_defined.return_value = True
             mock_oi2.return_value.info_of.return_value = None
             ipt, opt = OperatorInterface.prepare_operator_parameters(case, "bin")
@@ -351,16 +351,15 @@ class TestPrepareOperatorParameters:
     def test_op_output_not_defined(self):
         case = _make_testcase()
         _validate(case)
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi:
             mock_oi.return_value.op_output_defined.return_value = False
             ipt, opt = OperatorInterface.prepare_operator_parameters(case, "dyn")
         assert opt == ()
 
 
 class TestConstructOptilingAttrs:
-
     def test_from_attr_dictionary_no_op_info(self):
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi:
             mock_oi.return_value.info_of.return_value = None
             result = OperatorInterface.construct_optiling_attrs("Add", {"axis": 1, "keep_dims": True})
         assert len(result) == 2
@@ -374,7 +373,7 @@ class TestConstructOptilingAttrs:
                 {"name": "keep_dims", "type": "Bool", "defaultValue": False},
             ]
         }
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi:
             mock_oi.return_value.info_of.return_value = op_info
             result = OperatorInterface.construct_optiling_attrs("Add", {"axis": 1})
         assert len(result) == 2
@@ -386,19 +385,19 @@ class TestConstructOptilingAttrs:
                 {"name": "axis", "type": "Int", "defaultValue": None},
             ]
         }
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi:
             mock_oi.return_value.info_of.return_value = op_info
             with pytest.raises(RuntimeError, match="Required attribute"):
                 OperatorInterface.construct_optiling_attrs("Add", {})
 
     def test_private_attrs(self):
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi:
             mock_oi.return_value.info_of.return_value = None
             result = OperatorInterface.construct_optiling_attrs("Add", {"@private_key": 42})
         assert any(r["name"] == "private_key" for r in result)
 
     def test_skip_special_prefixes(self):
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi:
             mock_oi.return_value.info_of.return_value = None
             result = OperatorInterface.construct_optiling_attrs("Add", {"!skip": 1, "#skip": 2, "keep": 3})
         assert len(result) == 1
@@ -406,10 +405,10 @@ class TestConstructOptilingAttrs:
 
 
 class TestGetOpFuncParams:
-
     def test_from_callable(self):
         def my_op(x, y, axis):
             pass
+
         result = OperatorInterface.get_op_func_params(operator_func=my_op)
         assert result == ("x", "y", "axis")
 
@@ -419,7 +418,7 @@ class TestGetOpFuncParams:
             "outputs": [{"name": "z"}],
             "attr": [{"name": "axis"}],
         }
-        with patch('ttk.core_modules.operator.op_interface.OpInfoKeeper') as mock_oi:
+        with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as mock_oi:
             mock_oi.return_value.info_of.return_value = op_info
             result = OperatorInterface.get_op_func_params(op_name="Add")
         assert result == ("x", "y", "z", "axis")
@@ -430,7 +429,6 @@ class TestGetOpFuncParams:
 
 
 class TestOpTypeFromSourceCode:
-
     def test_not_callable(self):
         assert OperatorInterface.get_op_type_from_source_code("not_a_func") is None
 
@@ -438,18 +436,21 @@ class TestOpTypeFromSourceCode:
 class TestEnableShapeInt64:
     """Tests for _enable_shape_int64 — 短 shape / None / 嵌套列表均返回 False。"""
 
-    @pytest.mark.parametrize("tensors", [
-        [{"shape": (8,), "dtype": "float16"}],
-        [None],
-        [[{"shape": (8,), "dtype": "float16"}]],
-    ], ids=["small-shape", "none-tensor", "list-of-tensors"])
+    @pytest.mark.parametrize(
+        "tensors",
+        [
+            [{"shape": (8,), "dtype": "float16"}],
+            [None],
+            [[{"shape": (8,), "dtype": "float16"}]],
+        ],
+        ids=["small-shape", "none-tensor", "list-of-tensors"],
+    )
     def test_enable_shape_int64_returns_false(self, tensors):
         """验证短 shape / None / 嵌套列表场景下 _enable_shape_int64 返回 False。"""
         assert OperatorInterface._enable_shape_int64(tensors) is False
 
 
 class TestPrintFuncParams:
-
     def test_basic(self):
         result = OperatorInterface.print_func_params(("x", "y"), {"axis": 1}, [{"shape": (8,)}])
         assert len(result) > 2
@@ -457,7 +458,6 @@ class TestPrintFuncParams:
 
 
 class TestAddCompileInfoToOpContext:
-
     def test_dict_context(self):
         cxt = {}
         case = _make_testcase()
@@ -480,11 +480,11 @@ class TestAddCompileInfoToOpContext:
 
 # ============= static_compilation.py tests =============
 
-class TestStaticCompilation:
 
-    @patch('ttk.core_modules.npu.op.compilation.static_compilation.get_process_context')
-    @patch('ttk.core_modules.npu.op.compilation.static_compilation.get_global_storage')
-    @patch('ttk.core_modules.npu.op.compilation.static_compilation.OperatorInterface')
+class TestStaticCompilation:
+    @patch("ttk.core_modules.npu.op.compilation.static_compilation.get_process_context")
+    @patch("ttk.core_modules.npu.op.compilation.static_compilation.get_global_storage")
+    @patch("ttk.core_modules.npu.op.compilation.static_compilation.OperatorInterface")
     def test_switch_disabled(self, mock_oi_cls, mock_gs, mock_pc):
         mock_gs.return_value.kernel_meta = "/tmp/test_kernel_meta"
         mock_sw = MagicMock()
@@ -493,13 +493,14 @@ class TestStaticCompilation:
         mock_pc.return_value.notify_status = MagicMock()
 
         from ttk.core_modules.npu.op.compilation.static_compilation import static_compilation
+
         case = _make_testcase()
         result = static_compilation(case, "Cst")
         assert result.compile_result == "CST_OFF"
 
-    @patch('ttk.core_modules.npu.op.compilation.static_compilation.get_process_context')
-    @patch('ttk.core_modules.npu.op.compilation.static_compilation.get_global_storage')
-    @patch('ttk.core_modules.npu.op.compilation.static_compilation.OperatorInterface')
+    @patch("ttk.core_modules.npu.op.compilation.static_compilation.get_process_context")
+    @patch("ttk.core_modules.npu.op.compilation.static_compilation.get_global_storage")
+    @patch("ttk.core_modules.npu.op.compilation.static_compilation.OperatorInterface")
     def test_cst_dyn_invalid(self, mock_oi_cls, mock_gs, mock_pc):
         mock_gs.return_value.kernel_meta = "/tmp/test_kernel_meta"
         mock_sw = MagicMock()
@@ -509,6 +510,7 @@ class TestStaticCompilation:
         mock_pc.return_value.notify_status = MagicMock()
 
         from ttk.core_modules.npu.op.compilation.static_compilation import static_compilation
+
         case = _make_testcase()
         case.is_valid = False
         case.fail_reason = "DYN_INPUT_MISSING"
@@ -519,17 +521,23 @@ class TestStaticCompilation:
 class TestNormalizeMode:
     """Tests for normalize_mode — 大小写归一化为 'Cst'，非法模式抛 NotImplementedError。"""
 
-    @pytest.mark.parametrize("mode, expected", [
-        ("cst", "Cst"),
-        ("CST", "Cst"),
-    ], ids=["lowercase", "uppercase"])
+    @pytest.mark.parametrize(
+        "mode, expected",
+        [
+            ("cst", "Cst"),
+            ("CST", "Cst"),
+        ],
+        ids=["lowercase", "uppercase"],
+    )
     def test_normalize_mode(self, mode, expected):
         """验证 cst/CST 均归一化为 'Cst'。"""
         from ttk.core_modules.npu.op.compilation.common import normalize_mode
+
         assert normalize_mode(mode) == expected
 
     def test_invalid_raises(self):
         """非法 mode → NotImplementedError。"""
         from ttk.core_modules.npu.op.compilation.common import normalize_mode
+
         with pytest.raises(NotImplementedError):
             normalize_mode("invalid_long")

@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """resolve_tolerance 单元测试：dtype→standard 路由 + threshold 解析（表默认/spec override/override 优先级）。"""
+
 from ttk.core_modules.comparison.resolve import resolve_tolerance
 
 
@@ -39,14 +40,16 @@ def test_normal_float_defaults_stat_rel_err():
 
 def test_normal_float_cli_wins():
     """CLI 指定优先于 Spec.tolerance。"""
-    assert _tokens(resolve_tolerance(
-        {"float32": {"standard": "binary_equal"}}, None, None, ["float32"], "close")) == ["close"]
+    assert _tokens(resolve_tolerance({"float32": {"standard": "binary_equal"}}, None, None, ["float32"], "close")) == [
+        "close"
+    ]
 
 
 def test_normal_float_spec_binary_equal():
     """Spec.tolerance 可将 float16 改为 binary_equal。"""
-    assert _tokens(resolve_tolerance(
-        {"float16": {"standard": "binary_equal"}}, None, None, ["float16"], None)) == ["binary_equal"]
+    assert _tokens(resolve_tolerance({"float16": {"standard": "binary_equal"}}, None, None, ["float16"], None)) == [
+        "binary_equal"
+    ]
 
 
 def test_multi_output_mixed():

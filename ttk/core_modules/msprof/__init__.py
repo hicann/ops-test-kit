@@ -11,8 +11,7 @@
 MsProfiler
 """
 
-__all__ = ["MsProfiler",
-           "TtkMsProfType", "AclProfType", "MsProfOpDfx"]
+__all__ = ["MsProfiler", "TtkMsProfType", "AclProfType", "MsProfOpDfx"]
 
-from .desc import TtkMsProfType, AclProfType, MsProfOpDfx
+from .desc import AclProfType, MsProfOpDfx, TtkMsProfType
 from .profiler import MsProfiler

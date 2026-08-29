@@ -1,5 +1,5 @@
 # ttk/test_spec/manager.py
-from typing import Any, Optional, List, Set
+from typing import Any, List, Optional, Set
 
 from ..utilities import Singleton
 from .loader import SpecLoader
@@ -107,5 +107,4 @@ def get_spec_class_meta(op_name: str, plugin_path):
     cls = TestSpecManager(search_paths=paths).load(op_name)
     if cls is None:
         return None
-    return {"spec_file": getattr(cls, "__ttk_spec_file__", None),
-            "class_name": cls.__name__}
+    return {"spec_file": getattr(cls, "__ttk_spec_file__", None), "class_name": cls.__name__}

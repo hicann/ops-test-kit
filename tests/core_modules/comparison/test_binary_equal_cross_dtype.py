@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """binary_equal 跨 dtype 比对测试：整数跨宽度相等、bool/int 互认、int4 二进制一致、浮点跨 dtype 拒绝、空数组。"""
+
 import numpy as np
 import pytest
 
@@ -42,10 +43,13 @@ def test_isclose_alias_registered():
     assert _cls("isclose") is _cls("close")
 
 
-@pytest.mark.parametrize("actual_vals, actual_dtype, golden_vals, golden_dtype, check_metrics", [
-    pytest.param([1, 2, 3], "int32", [1, 2, 3], "int64", True, id="int32_int64_equal"),
-    pytest.param([False, True], "bool", [0, 1], "int32", False, id="bool_vs_int"),
-])
+@pytest.mark.parametrize(
+    "actual_vals, actual_dtype, golden_vals, golden_dtype, check_metrics",
+    [
+        pytest.param([1, 2, 3], "int32", [1, 2, 3], "int64", True, id="int32_int64_equal"),
+        pytest.param([False, True], "bool", [0, 1], "int32", False, id="bool_vs_int"),
+    ],
+)
 def test_cross_dtype_pass(actual_vals, actual_dtype, golden_vals, golden_dtype, check_metrics):
     """跨 dtype 一致 → PASS（int32/int64、bool/int32、int4/int4 二进制一致）。"""
     actual = _arr(actual_vals, actual_dtype)
@@ -58,13 +62,16 @@ def test_cross_dtype_pass(actual_vals, actual_dtype, golden_vals, golden_dtype, 
         assert metrics["standard"] == "binary_equal" and metrics["pass"] is True
 
 
-@pytest.mark.parametrize("actual_vals, actual_dtype, golden_vals, golden_dtype", [
-    pytest.param([1, 2], "int32", [1, 3], "int64", id="int32_int64_different"),
-    pytest.param([1, 2, 3], "int4", [1, 9, 3], "int4", id="int4_different"),
-    pytest.param([1.0], "float32", [1.0], "float64", id="float_cross_dtype"),
-    pytest.param([1], "int32", [1.0], "float32", id="int_vs_float"),
-    pytest.param([1], "uint64", [1], "int32", id="uint64_int32_precision_loss"),
-])
+@pytest.mark.parametrize(
+    "actual_vals, actual_dtype, golden_vals, golden_dtype",
+    [
+        pytest.param([1, 2], "int32", [1, 3], "int64", id="int32_int64_different"),
+        pytest.param([1, 2, 3], "int4", [1, 9, 3], "int4", id="int4_different"),
+        pytest.param([1.0], "float32", [1.0], "float64", id="float_cross_dtype"),
+        pytest.param([1], "int32", [1.0], "float32", id="int_vs_float"),
+        pytest.param([1], "uint64", [1], "int32", id="uint64_int32_precision_loss"),
+    ],
+)
 def test_cross_dtype_fail(actual_vals, actual_dtype, golden_vals, golden_dtype):
     """跨 dtype 不一致/不可比 → FAIL（值不同、浮点跨 dtype、int/float 混合、uint64/int32 精度损失）。"""
     actual = _arr(actual_vals, actual_dtype)
@@ -74,10 +81,13 @@ def test_cross_dtype_fail(actual_vals, actual_dtype, golden_vals, golden_dtype):
     assert is_pass is False
 
 
-@pytest.mark.parametrize("actual, golden, dtype, expected_pass", [
-    pytest.param(np.array([]), np.array([]), "int32", True, id="empty_both"),
-    pytest.param(np.array([1], np.int32), np.array([], np.int32), "int32", False, id="empty_one"),
-])
+@pytest.mark.parametrize(
+    "actual, golden, dtype, expected_pass",
+    [
+        pytest.param(np.array([]), np.array([]), "int32", True, id="empty_both"),
+        pytest.param(np.array([1], np.int32), np.array([], np.int32), "int32", False, id="empty_one"),
+    ],
+)
 def test_empty_cases(actual, golden, dtype, expected_pass):
     """空数组场景：双方空 → PASS，一方空 → FAIL。"""
     c = _cls("binary_equal")(actual, golden, 0, dtype, {})
@@ -87,8 +97,9 @@ def test_empty_cases(actual, golden, dtype, expected_pass):
 
 def test_isclose_populates_metrics():
     """isclose 比对填充 standard/pass/precision metrics。"""
-    c = _cls("isclose")(np.array([1.0, 2.0]), np.array([1.0, 2.0]), 0, "float32",
-                        {"rtol": [1e-3], "atol": [1e-8], "ptol": [1e-3]})
+    c = _cls("isclose")(
+        np.array([1.0, 2.0]), np.array([1.0, 2.0]), 0, "float32", {"rtol": [1e-3], "atol": [1e-8], "ptol": [1e-3]}
+    )
     _p, _l, is_pass, metrics = c.compare()
     assert metrics["standard"] == "isclose"
     assert metrics["pass"] is True

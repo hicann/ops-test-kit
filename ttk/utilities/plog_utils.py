@@ -10,8 +10,8 @@ Ascend plog error extraction utilities.
 
 __all__ = ["extract_plog_errors"]
 
-import os
 import glob
+import os
 
 from .file_utils import read_file
 
@@ -49,6 +49,5 @@ def extract_plog_errors(max_lines=5, pid=None):
         else:
             error_lines.extend(content[-max_lines:])
     else:
-        error_lines.append("No plog file found for current process, "
-                           "please check ascend log manually for details")
+        error_lines.append("No plog file found for current process, please check ascend log manually for details")
     return error_lines

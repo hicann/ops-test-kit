@@ -4,6 +4,7 @@ Used by the heartbeat subprocess (writer) and EndpointView (reader).
 Health file schema is a plain dict: {"endpoints": {"host:port": {alive, last_seen,
 providers, hardware, ts}}} — written by heartbeat_loop, read by EndpointView.
 """
+
 import json
 import os
 import tempfile
@@ -42,7 +43,7 @@ def read_health_file(path: str = "") -> Optional[dict]:
     if not path:
         return None
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, PermissionError, OSError):
         return None

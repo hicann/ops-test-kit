@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -16,7 +15,6 @@ __all__ = ["OpApiInfoKeeper", "OpApiInfo"]
 
 # Standard Packages
 import glob
-import logging
 import os
 import re
 import subprocess
@@ -26,9 +24,7 @@ from typing import Dict, List, Optional
 
 # Third-Party Packages
 from ...utilities import Singleton
-from ...utilities.platform import (get_opp_paths, get_ascend_scene_info,
-                                   get_ascend_lib64_path)
-
+from ...utilities.platform import get_ascend_lib64_path, get_ascend_scene_info, get_opp_paths
 
 # Module-level built-in SO path resolution (lazy, nm scanning)
 _builtin_api_so_map: Optional[Dict[str, str]] = None
@@ -39,20 +35,18 @@ def _ensure_builtin_so_map():
     if _builtin_api_so_map is not None:
         return
     lib64 = get_ascend_lib64_path()
-    so_files = sorted(glob.glob(f"{lib64}/libopapi.so")) + \
-               sorted(glob.glob(f"{lib64}/libopapi_*.so"))
+    so_files = sorted(glob.glob(f"{lib64}/libopapi.so")) + sorted(glob.glob(f"{lib64}/libopapi_*.so"))
     _builtin_api_so_map = {}
     for so_path in so_files:
         try:
-            output = subprocess.check_output(
-                ["nm", "-D", so_path], text=True, stderr=subprocess.DEVNULL)
+            output = subprocess.check_output(["nm", "-D", so_path], text=True, stderr=subprocess.DEVNULL)
         except (subprocess.CalledProcessError, FileNotFoundError):
             continue
         for line in output.splitlines():
             if "GetWorkspaceSize" not in line:
                 continue
             symbol = line.strip().split()[-1]
-            name = symbol[:-len("GetWorkspaceSize")]
+            name = symbol[: -len("GetWorkspaceSize")]
             _builtin_api_so_map[name] = so_path
 
 
@@ -95,15 +89,16 @@ class OpApiInfoKeeper(metaclass=Singleton):
     Singleton Class to keep op api info
     """
 
-    FUNC_PATTERN = r'\b([A-Za-z0-9_]+)\s+\b([A-Za-z0-9_]+)\s*\(([^){]*?)\)(?=\s*\;)'
-    PARAM_PATTERN = r'(\w+[\s\*\s]*)(\w+)(\s*=\s*(.*?))?(,|$)'
+    FUNC_PATTERN = r"\b([A-Za-z0-9_]+)\s+\b([A-Za-z0-9_]+)\s*\(([^){]*?)\)(?=\s*\;)"
+    PARAM_PATTERN = r"(\w+[\s\*\s]*)(\w+)(\s*=\s*(.*?))?(,|$)"
 
     def __init__(self):
         self._api_info = None
         self._hdr_dirs: list = self._collect_header_dirs()
         if not self._hdr_dirs:
-            raise RuntimeError(f"OpApi header file path does not exist. "
-                               f"Make sure opp-kernel package has been installed !!!")
+            raise RuntimeError(
+                "OpApi header file path does not exist. Make sure opp-kernel package has been installed !!!"
+            )
 
     def _collect_header_dirs(self) -> list:
         """Collect header directories in priority order: built-in → vendors(reversed) → custom(reversed).
@@ -164,9 +159,7 @@ class OpApiInfoKeeper(metaclass=Singleton):
         os_scene, os_arch = get_ascend_scene_info()
         if not os_scene:
             return None
-        hdr_path = os.path.abspath(
-            os.path.join(opp_path, "..", f"{os_arch}-{os_scene}",
-                         "include", "aclnnop"))
+        hdr_path = os.path.abspath(os.path.join(opp_path, "..", f"{os_arch}-{os_scene}", "include", "aclnnop"))
         return hdr_path if os.path.isdir(hdr_path) else None
 
     @property
@@ -184,24 +177,25 @@ class OpApiInfoKeeper(metaclass=Singleton):
     def _parse_op_api_header_files(self) -> dict:
         api_dict: Dict[str, OpApiInfo] = {}
         for category, hdr_path, opp_root in self._hdr_dirs:
-            files = [f for f in os.listdir(hdr_path)
-                     if os.path.isfile(os.path.join(hdr_path, f))
-                     and f.endswith((".h", ".hpp"))]
+            files = [
+                f
+                for f in os.listdir(hdr_path)
+                if os.path.isfile(os.path.join(hdr_path, f)) and f.endswith((".h", ".hpp"))
+            ]
             for f in files:
-                with open(os.path.join(hdr_path, f), 'r') as hf:
+                with open(os.path.join(hdr_path, f)) as hf:
                     content = hf.read()
                 for match in re.finditer(self.FUNC_PATTERN, content):
                     func_name = match.group(2).strip()
-                    if not (func_name.startswith('aclnn') and
-                            func_name.endswith('GetWorkspaceSize')):
+                    if not (func_name.startswith("aclnn") and func_name.endswith("GetWorkspaceSize")):
                         continue
                     api_name = func_name[:-16]
-                    func_params = re.sub(r'\bconst\b(?!_)', '', match.group(3).strip())
+                    func_params = re.sub(r"\bconst\b(?!_)", "", match.group(3).strip())
                     params = OrderedDict({})
                     for param_match in re.finditer(self.PARAM_PATTERN, func_params):
-                        param_type = param_match.group(1).strip().replace(' ', '')
+                        param_type = param_match.group(1).strip().replace(" ", "")
                         param_name = param_match.group(2).strip()
-                        if param_name in ('workspaceSize', 'executor'):
+                        if param_name in ("workspaceSize", "executor"):
                             break
                         default = param_match.group(4)
                         params.update({param_name: {"type": param_type, "default": default}})

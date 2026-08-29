@@ -10,9 +10,10 @@
 """
 Base class for RtsInterface
 """
+
 from abc import ABCMeta
 
 
-class RTSInterfaceBase(metaclass=ABCMeta):
+class RTSInterfaceBase(metaclass=ABCMeta):  # noqa: B024
     def __init__(self):
         self.device_id = None

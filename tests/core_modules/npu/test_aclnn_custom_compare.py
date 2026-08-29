@@ -45,11 +45,11 @@ def _run(context, spec_attrs, builtin_compare=None):
         return spec_attrs.get(attr_name)
 
     storage = SimpleNamespace(compare_method=None, plugin_path="/tmp/test-plugin")
-    with patch("ttk.core_modules.npu.op_api.comparison.get_global_storage", return_value=storage), \
-            patch("ttk.core_modules.npu.op_api.comparison.get_spec_attr", side_effect=get_attr), \
-            patch.object(Comparator, "_output_bytes_to_tensors"), \
-            patch("ttk.core_modules.npu.op_api.comparison.compare",
-                  side_effect=builtin_compare) as fallback:
+    with patch("ttk.core_modules.npu.op_api.comparison.get_global_storage", return_value=storage), patch(
+        "ttk.core_modules.npu.op_api.comparison.get_spec_attr", side_effect=get_attr
+    ), patch.object(Comparator, "_output_bytes_to_tensors"), patch(
+        "ttk.core_modules.npu.op_api.comparison.compare", side_effect=builtin_compare
+    ) as fallback:
         result = Comparator(context).compare()
     return result, fallback
 
@@ -128,9 +128,9 @@ __spec__ = {
     )
     storage = SimpleNamespace(compare_method=None, plugin_path=str(tmp_path))
 
-    with patch("ttk.core_modules.npu.op_api.comparison.get_global_storage", return_value=storage), \
-            patch.object(Comparator, "_output_bytes_to_tensors"), \
-            patch("ttk.core_modules.npu.op_api.comparison.compare") as fallback:
+    with patch("ttk.core_modules.npu.op_api.comparison.get_global_storage", return_value=storage), patch.object(
+        Comparator, "_output_bytes_to_tensors"
+    ), patch("ttk.core_modules.npu.op_api.comparison.compare") as fallback:
         result = Comparator(context).compare()
 
     assert result.precision == "SPEC_LOADED"

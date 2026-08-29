@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """UT for compare() 接口（comparison.py 核心分发逻辑）。"""
+
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -21,10 +22,13 @@ def _stds(n):
 
 
 class TestOutputSentinels:
-    @pytest.mark.parametrize("sentinel, check_precision", [
-        pytest.param("DYN_OFF", True, id="dyn_off"),
-        pytest.param("BIN_OFF", False, id="bin_off"),
-    ])
+    @pytest.mark.parametrize(
+        "sentinel, check_precision",
+        [
+            pytest.param("DYN_OFF", True, id="dyn_off"),
+            pytest.param("BIN_OFF", False, id="bin_off"),
+        ],
+    )
     def test_pass_sentinels(self, sentinel, check_precision):
         """各 fake-pass 哨兵 output → is_pass=True。"""
         r = compare([sentinel], [np.array([1.0])], ("float32",), standards=_stds(1))
@@ -32,10 +36,13 @@ class TestOutputSentinels:
         if check_precision:
             assert sentinel in r[0]
 
-    @pytest.mark.parametrize("output, expected_precision_substr", [
-        pytest.param(None, "NO_OUTPUT", id="none_output"),
-        pytest.param("SOMETHING_ELSE", None, id="non_fake_string"),
-    ])
+    @pytest.mark.parametrize(
+        "output, expected_precision_substr",
+        [
+            pytest.param(None, "NO_OUTPUT", id="none_output"),
+            pytest.param("SOMETHING_ELSE", None, id="non_fake_string"),
+        ],
+    )
     def test_fail_sentinels(self, output, expected_precision_substr):
         """非 fake-pass output → is_pass=False。"""
         r = compare([output], [np.array([1.0])], ("float32",), standards=_stds(1))
@@ -47,24 +54,25 @@ class TestOutputSentinels:
 class TestMultiOutput:
     def test_mix_dyn_off_and_none_fails(self):
         """多输出混合 fake-pass 与 None → 整体 FAIL。"""
-        r = compare(["DYN_OFF", None], [np.array([1.0]), np.array([2.0])],
-                    ("float32", "float32"), standards=_stds(2))
+        r = compare(["DYN_OFF", None], [np.array([1.0]), np.array([2.0])], ("float32", "float32"), standards=_stds(2))
         assert r[2] is False
 
 
 class TestThirdPartyCount:
     def test_none_third_parties_ok(self):
         """third_parties=None → 正常流程（不报错）。"""
-        r = compare(["DYN_OFF"], [np.array([1.0])],
-                    ("float32",), standards=_stds(1))
+        r = compare(["DYN_OFF"], [np.array([1.0])], ("float32",), standards=_stds(1))
         assert r[2] is True
 
 
 class TestFilterFakeFail:
-    @pytest.mark.parametrize("token, expected", [
-        pytest.param("DYN_OFF", True, id="DYN_OFF"),
-        pytest.param("PASS", False, id="PASS"),
-    ])
+    @pytest.mark.parametrize(
+        "token, expected",
+        [
+            pytest.param("DYN_OFF", True, id="DYN_OFF"),
+            pytest.param("PASS", False, id="PASS"),
+        ],
+    )
     def test_filter_fake_fail(self, token, expected):
         """_filter_fake_fail: fake-pass token → True，其余 → False。"""
         assert _filter_fake_fail(token) is expected

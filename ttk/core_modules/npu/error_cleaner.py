@@ -21,8 +21,8 @@ __all__ = ["clear_error_manager"]
 
 import ctypes
 import logging
-from ...utilities.cext_loader import load_cext
 
+from ...utilities.cext_loader import load_cext
 
 _cleaner = None
 

@@ -7,13 +7,13 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-from __future__ import annotations
-
 """TfBackend: TF-generic intermediate layer.
 
 Holds the shared TF implementation (numpy<->tf conversion, device move via
 ``tf.device``). Hardware-specific subclasses override ``is_npu`` only.
 """
+
+from __future__ import annotations
 
 import numpy as np
 
@@ -49,6 +49,7 @@ class TfBackend(Backend):
 
     def from_numpy(self, arr):
         import tensorflow as tf
+
         from ttk.utilities.dtypes import normalize_to_tf_dtype
 
         if arr is None:

@@ -11,7 +11,6 @@
 Process Group
 """
 
-
 __all__ = ["ProcessGroup"]
 
 
@@ -21,20 +20,18 @@ import time
 from multiprocessing.context import BaseContext
 from typing import Dict
 
+from ..tbe_multiprocessing import SimpleCommandProcess
+
 # Third-Party Packages
 from .task import TaskA, TaskType
-from ..tbe_multiprocessing import SimpleCommandProcess
 
 
 class ProcessGroup:
-    def __init__(self, dev_id: int, process_per_device: int,
-                 mp_context: BaseContext,
-                 timeout: int = 0):
+    def __init__(self, dev_id: int, process_per_device: int, mp_context: BaseContext, timeout: int = 0):
         self.dev_id = dev_id
-        self.processes = tuple(SimpleCommandProcess(mp_context,
-                                                    name=f"D{dev_id}P{i}",
-                                                    timeout=timeout)
-                               for i in range(process_per_device))
+        self.processes = tuple(
+            SimpleCommandProcess(mp_context, name=f"D{dev_id}P{i}", timeout=timeout) for i in range(process_per_device)
+        )
         self.process_to_task: Dict[SimpleCommandProcess, TaskA] = {}
 
     def is_ready(self):
@@ -56,13 +53,14 @@ class ProcessGroup:
         for proc in self.processes:
             proc.close()
 
-    def push(self, task: TaskA, is_multi_device: bool = False,
-             rank_dev_id: int = None):
+    def push(self, task: TaskA, is_multi_device: bool = False, rank_dev_id: int = None):
         for proc in self.processes:
             if proc.is_idle():
-                logging.debug(f"Sending {task.type.name} task {task.sub_type} "
-                              f"of testcase {task.testcase.testcase_name} "
-                              f"to process pid {proc.get_pid()}")
+                logging.debug(
+                    f"Sending {task.type.name} task {task.sub_type} "
+                    f"of testcase {task.testcase.testcase_name} "
+                    f"to process pid {proc.get_pid()}"
+                )
                 self.process_to_task[proc] = task
                 kwargs = {"dev_id": rank_dev_id if rank_dev_id is not None else self.dev_id}
                 if is_multi_device:
@@ -71,8 +69,7 @@ class ProcessGroup:
                 proc.send_action(task.func, task.params, kwargs)
                 break
         else:
-            raise RuntimeError(f"[BUG] no idle process in device{self.dev_id}. "
-                               f"It maybe a BUG of TTK.")
+            raise RuntimeError(f"[BUG] no idle process in device{self.dev_id}. It maybe a BUG of TTK.")
 
     def has_prof_tasks(self):
         for proc in self.processes:
@@ -94,9 +91,12 @@ class ProcessGroup:
         return tuple(ret)
 
     def info(self) -> str:
-        return '\n'.join(f"{proc.get_pid()} "
-                         f"{proc.name.ljust(16) if len(proc.name) < 16 else proc.name[-16:]} "
-                         f"{proc.current_stage().ljust(20)} "
-                         f"{proc.status.name.ljust(8)} "
-                         f"{int(time.time() - proc.process_status_timestamp)}s"
-                         for proc in self.processes if not proc.is_dead())
+        return "\n".join(
+            f"{proc.get_pid()} "
+            f"{proc.name.ljust(16) if len(proc.name) < 16 else proc.name[-16:]} "
+            f"{proc.current_stage().ljust(20)} "
+            f"{proc.status.name.ljust(8)} "
+            f"{int(time.time() - proc.process_status_timestamp)}s"
+            for proc in self.processes
+            if not proc.is_dead()
+        )

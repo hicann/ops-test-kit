@@ -23,16 +23,22 @@ def _parse_from_yaml(yaml_path):
 
 # -- yaml 解析 --------------------------------------------------------------
 
-@pytest.mark.parametrize("yaml_text, check", [
-    # 正常解析 2 endpoint + hardware 字段
-    ("remote:\n  endpoints:\n"
-     "    - host: 10.0.0.100\n      port: 9091\n"
-     "    - host: 10.0.0.101\n      port: 9090\n      hardware: gpu\n",
-     lambda c: len(c.endpoints) == 2 and c.endpoints[1].hardware == "gpu"),
-    # 空 endpoints
-    ("remote:\n  endpoints: []\n",
-     lambda c: c.endpoints == []),
-], ids=["two-endpoints", "empty-endpoints"])
+
+@pytest.mark.parametrize(
+    "yaml_text, check",
+    [
+        # 正常解析 2 endpoint + hardware 字段
+        (
+            "remote:\n  endpoints:\n"
+            "    - host: 10.0.0.100\n      port: 9091\n"
+            "    - host: 10.0.0.101\n      port: 9090\n      hardware: gpu\n",
+            lambda c: len(c.endpoints) == 2 and c.endpoints[1].hardware == "gpu",
+        ),
+        # 空 endpoints
+        ("remote:\n  endpoints: []\n", lambda c: c.endpoints == []),
+    ],
+    ids=["two-endpoints", "empty-endpoints"],
+)
 def test_yaml_parsing(tmp_path, yaml_text, check):
     """yaml 解析：多 endpoint + hardware 字段 / 空 endpoints。"""
     yaml_file = tmp_path / "ttk.conf.yaml"

@@ -26,6 +26,7 @@ if _has_torch_npu and _has_tf:
 def test_torch_resolve_snake():
     """torch snake op_name 命中（torch.add）。"""
     from ttk.remote.server import executor
+
     f, name = executor._resolve_3party_api("add", "Add", "torch")
     assert callable(f)
     assert name == "add"
@@ -34,6 +35,7 @@ def test_torch_resolve_snake():
 def test_tf_resolve_camel():
     """tf resolves relu（op_name first）。"""
     from ttk.remote.server import executor
+
     f, name = executor._resolve_3party_api("relu", "Relu", "tf")
     assert callable(f)
 
@@ -41,5 +43,6 @@ def test_tf_resolve_camel():
 def test_aclnn_resolve_strips_prefix_and_finds_torch():
     """aclnnAdd → strip aclnn → add → torch.add。"""
     from ttk.remote.server import executor
+
     f, name = executor._resolve_3party_api("Add", "aclnnAdd", "aclnn")
     assert callable(f)

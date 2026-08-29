@@ -20,7 +20,6 @@ from ttk.core_modules.npu.op.profiling_structure import (
 
 
 class TestComparisonResult:
-
     def test_set_and_get(self):
         cr = ComparisonResult(None)
         result = cr.set("d", "c", "b", "PASS")
@@ -32,13 +31,15 @@ class TestComparisonResult:
 
 
 class TestRTSProfilingResult:
-
-    @pytest.mark.parametrize("oob_value, expected_status", [
-        pytest.param("", "PASS", id="empty"),
-        pytest.param(None, "PASS", id="none"),
-        pytest.param("PASS,SOMETHING", "PASS", id="pass_normal"),
-        pytest.param("FAIL,SOMETHING", "FAIL", id="fail"),
-    ])
+    @pytest.mark.parametrize(
+        "oob_value, expected_status",
+        [
+            pytest.param("", "PASS", id="empty"),
+            pytest.param(None, "PASS", id="none"),
+            pytest.param("PASS,SOMETHING", "PASS", id="pass_normal"),
+            pytest.param("FAIL,SOMETHING", "FAIL", id="fail"),
+        ],
+    )
     def test_oob_status(self, oob_value, expected_status):
         """oob_status 属性：空/None/PASS 开头返回 PASS，FAIL 开头返回 FAIL。"""
         r = RTSProfilingResult(oob=oob_value)

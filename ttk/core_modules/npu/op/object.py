@@ -11,7 +11,6 @@
 OP profile object
 """
 
-
 __all__ = ["OpProfileObject"]
 
 
@@ -19,23 +18,27 @@ __all__ = ["OpProfileObject"]
 import logging
 import time
 from multiprocessing.context import BaseContext
-from typing import Optional, Iterable, Any
+from typing import Any, Iterable, Optional
+
+from ....utilities import (
+    BaseCompilationResult,
+    compilation_result,
+    construct_crash_compilation_result,
+)
+from ....utilities.proc import msdebug_runtime_injection_enabled
+from ...comparison.compare_log import (
+    compare_log_size,
+    print_compare_log_failures,
+    read_compare_log_failures,
+)
+from ...infra import ProfileObject, TaskA, TaskKeeper, TaskType
+from ...operator import knowledge_base_sequence
+from ...tbe_multiprocessing import SimpleCommandProcess
+from ...testcase_manager import TestcaseOp
 
 # Third-Party Packages
 from .compilation import compilation_process
-from .profiling import profile_process, ProfilingReturnStructure
-from ...testcase_manager import TestcaseOp
-from ...operator import knowledge_base_sequence
-from ...tbe_multiprocessing import SimpleCommandProcess
-from ...infra import TaskA, TaskType, TaskKeeper, ProfileObject
-from ....utilities import append_ld_library_path, construct_crash_compilation_result
-from ....utilities import BaseCompilationResult, compilation_result
-from ...comparison.compare_log import (
-    compare_log_size,
-    read_compare_log_failures,
-    print_compare_log_failures,
-)
-from ....utilities.proc import msdebug_runtime_injection_enabled
+from .profiling import ProfilingReturnStructure, profile_process
 
 
 class OpProfileObject(ProfileObject):
@@ -52,11 +55,11 @@ class OpProfileObject(ProfileObject):
         self._launch_knowledge_server(self.mp_context)
 
     def possible_result_titles(self) -> tuple:
-        """ return all possible result titles """
+        """return all possible result titles"""
         return ProfilingReturnStructure.get_titles()
 
     def result_titles(self) -> tuple:
-        """ return all result titles as per current command options """
+        """return all result titles as per current command options"""
         return ProfilingReturnStructure.get_titles()
 
     def init_tasks(self, testcases: Iterable[TestcaseOp]):
@@ -67,11 +70,10 @@ class OpProfileObject(ProfileObject):
             is_first = True
             for t in cases:
                 compile_tasks = []
-                for mode in ('Dyn', 'Cst', 'Bin'):
+                for mode in ("Dyn", "Cst", "Bin"):
                     switch = getattr(self.switches, f"{mode.lower()}_switches")
                     if switch.enabled:
-                        compile_tasks.append(TaskA(t, compilation_process, (t, mode),
-                                                   TaskType.COMPILE, mode))
+                        compile_tasks.append(TaskA(t, compilation_process, (t, mode), TaskType.COMPILE, mode))
                     else:
                         result = compilation_result(mode)
                         result.all_set(f"{mode.upper()}_OFF")
@@ -96,23 +98,18 @@ class OpProfileObject(ProfileObject):
                 time.sleep(1)
             self.kb.close()
 
-    def apply_compile_fail_result(self, testcase: TestcaseOp,
-                                  fail_info: str, task_sub_type: str):
+    def apply_compile_fail_result(self, testcase: TestcaseOp, fail_info: str, task_sub_type: str):
         result = construct_crash_compilation_result(fail_info, task_sub_type)
         testcase.apply_compile_result(result)
 
-    def apply_compile_success_result(self, testcase: TestcaseOp,
-                                     result: Any):
+    def apply_compile_success_result(self, testcase: TestcaseOp, result: Any):
         if not isinstance(result, BaseCompilationResult):
-            raise RuntimeError(f"Only subtype of BaseCompilationResult is valid. "
-                               f"But got {type(result)}")
+            raise RuntimeError(f"Only subtype of BaseCompilationResult is valid. But got {type(result)}")
         testcase.apply_compile_result(result)
 
-    def apply_profile_success_result(self, testcase: TestcaseOp,
-                                     result: Any) -> tuple:
+    def apply_profile_success_result(self, testcase: TestcaseOp, result: Any) -> tuple:
         if not isinstance(result, ProfilingReturnStructure):
-            raise RuntimeError(f"Only ProfilingReturnStructure is valid. "
-                               f"But got {type(result)}")
+            raise RuntimeError(f"Only ProfilingReturnStructure is valid. But got {type(result)}")
         self._print_new_compare_failures(testcase.testcase_name)
         # if profiling fail, check to restart process to clear ErrorMessage
         return result.pick_data(self.case_result_title), result.kernel_execute_failed()
@@ -134,8 +131,7 @@ class OpProfileObject(ProfileObject):
             self._compile_invalid_case(task)
             return self.compile_done(task.testcase)
         else:
-            raise RuntimeError("Profile result is None which should not happen. "
-                               "Maybe it is a BUG of TTK !!!")
+            raise RuntimeError("Profile result is None which should not happen. Maybe it is a BUG of TTK !!!")
 
     def _launch_knowledge_server(self, mp_context: BaseContext):
         logging.info("Launching knowledge base Server process")
@@ -146,8 +142,9 @@ class OpProfileObject(ProfileObject):
             logging.info(f"Process KnowledgeBaseServer status is {self.kb.status} !!! Update ...")
             self.kb.update()
             if self.kb.is_dead():
-                raise RuntimeError(f"Process KnowledgeBaseServer is DEAD. "
-                                   f"Please check exception raised by KnowledgeBaseServer.")
+                raise RuntimeError(
+                    "Process KnowledgeBaseServer is DEAD. Please check exception raised by KnowledgeBaseServer."
+                )
             time.sleep(1)
         logging.info(f"Knowledge base Server Pid: {self.kb.get_pid()}")
 
@@ -155,18 +152,19 @@ class OpProfileObject(ProfileObject):
     def _compile_invalid_case(task: TaskA):
         # only when testcase is invalid
         if not isinstance(task.testcase, TestcaseOp):
-            raise RuntimeError(f"Only TestcaseOp instance is valid. "
-                               f"But got {type(task.testcase)}")
+            raise RuntimeError(f"Only TestcaseOp instance is valid. But got {type(task.testcase)}")
         testcase: TestcaseOp = task.testcase
         reason = testcase.fail_reason
-        logging.warning(f"Compilation process of mode {task.sub_type} skipped for "
-                        f"testcase {testcase.testcase_name} because of {reason}")
+        logging.warning(
+            f"Compilation process of mode {task.sub_type} skipped for "
+            f"testcase {testcase.testcase_name} because of {reason}"
+        )
         result = construct_crash_compilation_result(reason, task.sub_type)
         testcase.apply_compile_result(result)
 
     def _send_to_profiling(self, testcase: TestcaseOp):
         grant_events = SimpleCommandProcess._device_grant_events
         granted_indices = SimpleCommandProcess._device_granted_indices
-        self.task_keeper.append(TaskA(testcase, profile_process,
-                                      (testcase, grant_events, granted_indices),
-                                      TaskType.PROFILE))
+        self.task_keeper.append(
+            TaskA(testcase, profile_process, (testcase, grant_events, granted_indices), TaskType.PROFILE)
+        )

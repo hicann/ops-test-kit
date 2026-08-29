@@ -19,16 +19,16 @@ import contextlib
 import copy
 import csv
 import ctypes
+import logging
 import math
 import os
-import logging
-import numpy
 import pathlib
 import shutil
-import tempfile
 import threading
 import time
-from typing import Tuple, Optional, Dict, List
+from typing import Dict, List, Optional
+
+import numpy
 
 try:
     from contextlib import nullcontext
@@ -43,33 +43,39 @@ except ImportError:
     nullcontext = NULLCXT
 
 # Third-Party Packages
-from .input_generation import InputGenerator
-from .golden_generation import GoldenGenerator
-from .profiling_structure import ApiComparisonResult, ApiProfilingReturnStructure, ApiProfilingResult
-from .comparison import Comparator
+from ....test_spec import get_spec_attr
+from ....utilities import (
+    apply_as_list,
+    dump_to_file,
+    extract_plog_errors,
+    frameless_table_print,
+    get,
+    get_dtype_width,
+    get_global_storage,
+    resolve_custom_numpy_dtypes,
+    waiting_for_memory,
+)
+from ...aclnn import AclInterface, OpApiInfoKeeper
 from ...manual_data import (
     load_manual_data_case,
     prepare_manual_data_store,
     snapshot_manual_values,
 )
-from ...testcase_manager import TestcaseAclnn
-from ...tbe_multiprocessing import get_process_context, DeviceLock
-from ...tbe_logging import build_single_log_dir, default_logging_config
-from ...tbe_multiprocessing import MultiDeviceLock
-from ...aclnn import AclInterface, OpApiInfoKeeper, OpApiInfo
 from ...msprof import MsProfiler, TtkMsProfType
 from ...npu_preprocess import invoke_npu_preprocess, resolve_npu_preprocess
-from ....utilities import get_global_storage, get, waiting_for_memory, frameless_table_print, get_dtype_width
-from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, dump_to_file, extract_plog_errors
-from ....test_spec import get_spec_attr
+from ...tbe_logging import build_single_log_dir, default_logging_config
+from ...tbe_multiprocessing import DeviceLock, MultiDeviceLock, get_process_context
+from ...testcase_manager import TestcaseAclnn
 from ..op.profiling_structure import _format_xpu_metrics
+from .comparison import Comparator
+from .golden_generation import GoldenGenerator
+from .input_generation import InputGenerator
 from .mc2_dispatcher import (
     __golden_multi_device_compare,
-    get_gmm_exp_token_nums,
-    generate_gmm_alltoallv_matrix,
     patch_gmm_rank_attributes,
     patch_gmm_weight_transpose,
 )
+from .profiling_structure import ApiComparisonResult, ApiProfilingResult, ApiProfilingReturnStructure
 
 
 def __profiling_end_print(context: TestcaseAclnn, compare_result: ApiComparisonResult):
@@ -263,6 +269,7 @@ class Phase1ParamBuilder:
         csv_view_shapes = self._ctx.flat_tensor_view_shapes
         csv_dtypes = self._ctx.flat_tensor_dtypes
         from ttk.utilities.dtypes import DATA_TYPE_DICT
+
         for idx, tt in enumerate(self._ctx.flatten_tensors):
             if tt is None:
                 ptr_lst.append(None)
@@ -272,18 +279,20 @@ class Phase1ParamBuilder:
                 view_override = None
                 dtype_override = None
                 csv_dt = get(csv_dtypes, idx)
-                csv_dt_name = str(csv_dt) if csv_dt else ''
-                if 'float4' in csv_dt_name or 'fp4' in csv_dt_name:
+                csv_dt_name = str(csv_dt) if csv_dt else ""
+                if "float4" in csv_dt_name or "fp4" in csv_dt_name:
                     csv_vs = get(csv_view_shapes, idx)
                     if csv_vs:
                         view_override = tuple(csv_vs)
-                    dt_key = csv_dt_name.split('.')[-1] if '.' in csv_dt_name else csv_dt_name
-                    dt_norm = 'float4_e2m1' if 'e2m1' in dt_key else ('float4_e1m2' if 'e1m2' in dt_key else dt_key)
+                    dt_key = csv_dt_name.split(".")[-1] if "." in csv_dt_name else csv_dt_name
+                    dt_norm = "float4_e2m1" if "e2m1" in dt_key else ("float4_e1m2" if "e1m2" in dt_key else dt_key)
                     if dt_norm in DATA_TYPE_DICT:
                         dtype_override = DATA_TYPE_DICT[dt_norm]
-                ptr_lst.append(self._dvc.create_acl_tensor(tt, fmt, ss,
-                                                           view_shape_override=view_override,
-                                                           acl_dtype_override=dtype_override))
+                ptr_lst.append(
+                    self._dvc.create_acl_tensor(
+                        tt, fmt, ss, view_shape_override=view_override, acl_dtype_override=dtype_override
+                    )
+                )
         self._flatten_acl_tensor = tuple(ptr_lst)
         dist = self._ctx.tensor_list_dist
         if not dist:
@@ -353,10 +362,8 @@ class AclOpExecutor:
 
     def do(self, stream: ctypes.c_void_p = None, skip_context_creation: bool = False):
         if skip_context_creation and stream is not None:
-            output_byte_arrays, output_view_shapes, success, _, _ = self._acl_sequence(
-                stream, skip_profiler=True)
-            return ApiProfilingResult(success, "UNKNOWN", "UNKNOWN",
-                                      output_byte_arrays, output_view_shapes)
+            output_byte_arrays, output_view_shapes, success, _, _ = self._acl_sequence(stream, skip_profiler=True)
+            return ApiProfilingResult(success, "UNKNOWN", "UNKNOWN", output_byte_arrays, output_view_shapes)
         with self.rts_context():
             self._dvc.warmup(self._switches)
             with self.rts_stream() as stm:
@@ -368,19 +375,24 @@ class AclOpExecutor:
             else:
                 api_prof, op_prof = self._process_total_cycles()
             return ApiProfilingResult(
-                success, api_prof, op_prof, output_byte_arrays, output_view_shapes,
-                deterministic_status=det_status, npu_memory=npu_memory,
+                success,
+                api_prof,
+                op_prof,
+                output_byte_arrays,
+                output_view_shapes,
+                deterministic_status=det_status,
+                npu_memory=npu_memory,
             )
 
     @staticmethod
     def _extract_csv_cell(filename, extract_cols, cmp=None) -> list:
         results = []
-        with open(filename, "r") as f:
+        with open(filename) as f:
             reader = csv.DictReader(f)
             for row in reader:
                 if cmp is None or cmp(row):
                     data_dict = {}
-                    for idx, c in enumerate(extract_cols):
+                    for _idx, c in enumerate(extract_cols):
                         try:
                             data_dict.update({c: float(row[c])})
                         except ValueError:
@@ -388,8 +400,7 @@ class AclOpExecutor:
                     results.append(data_dict)
         return results
 
-    def _acl_sequence(self, stream: Optional[ctypes.c_void_p] = None,
-                      skip_profiler: bool = False):
+    def _acl_sequence(self, stream: Optional[ctypes.c_void_p] = None, skip_profiler: bool = False):
         output_byte_arrays = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         output_view_shapes = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         status = "NOK"
@@ -399,21 +410,27 @@ class AclOpExecutor:
         npu_memory = None
         try:
             prof_start_at = 1 if self._run_time > 1 else 0
-            profiler_ctx = MsProfiler(
-                self._dvc.device_id,
-                result_path=self._prof_result_path,
-                ttk_prof_type=self._prof_type,
-                start_step=prof_start_at,
-                is_model=self._dvc.is_model(),
-            ) if not skip_profiler else nullcontext()
+            profiler_ctx = (
+                MsProfiler(
+                    self._dvc.device_id,
+                    result_path=self._prof_result_path,
+                    ttk_prof_type=self._prof_type,
+                    start_step=prof_start_at,
+                    is_model=self._dvc.is_model(),
+                )
+                if not skip_profiler
+                else nullcontext()
+            )
             with profiler_ctx as profiler:
                 for repeat_idx in range(self._run_time):
                     if not skip_profiler and profiler:
                         profiler.step()
                     self._dvc.clear_l1(self._switches)
                     self._dvc.clear_ub(self._switches)
-                    logging.debug(f"[AclOpExecutor dev={self._dvc.device_id}] building phase1 params, "
-                                  f"group={self._ctx.attributes.get('group', 'N/A')}")
+                    logging.debug(
+                        f"[AclOpExecutor dev={self._dvc.device_id}] building phase1 params, "
+                        f"group={self._ctx.attributes.get('group', 'N/A')}"
+                    )
                     phase1_params = self._phase1_param_builder.build()
                     logging.debug(f"[AclOpExecutor dev={self._dvc.device_id}] calling acl_get_workspace")
                     try:
@@ -517,10 +534,10 @@ class AclOpExecutor:
                 [
                     [
                         item["API Name"],
-                        "%.2f" % item["Time(us)"],
-                        "%.2f" % item["Avg(us)"],
-                        "%.2f" % item["Min(us)"],
-                        "%.2f" % item["Max(us)"],
+                        "{:.2f}".format(item["Time(us)"]),
+                        "{:.2f}".format(item["Avg(us)"]),
+                        "{:.2f}".format(item["Min(us)"]),
+                        "{:.2f}".format(item["Max(us)"]),
                         int(item["Count"]),
                     ]
                     for item in api_prof
@@ -531,10 +548,10 @@ class AclOpExecutor:
                 [
                     [
                         item["OP Type"],
-                        "%.2f" % item["Total Time(us)"],
-                        "%.2f" % item["Avg Time(us)"],
-                        "%.2f" % item["Min Time(us)"],
-                        "%.2f" % item["Max Time(us)"],
+                        "{:.2f}".format(item["Total Time(us)"]),
+                        "{:.2f}".format(item["Avg Time(us)"]),
+                        "{:.2f}".format(item["Min Time(us)"]),
+                        "{:.2f}".format(item["Max Time(us)"]),
                         int(item["Count"]),
                     ]
                     for item in op_prof
@@ -557,8 +574,8 @@ def do_profiling(context: TestcaseAclnn, dev_id: int) -> ApiProfilingResult:
         try:
             device = __get_aclnn_device(dev_id)
             return AclOpExecutor(context, device).do()
-        except:
-            raise RuntimeError("Profiling Sequence of mode %s failed" % switches.mode)
+        except Exception as e:
+            raise RuntimeError(f"Profiling Sequence of mode {switches.mode} failed") from e
         finally:
             os.chdir(switches.root_path)
 
@@ -621,7 +638,7 @@ def __dump_output(context: TestcaseAclnn, force: bool = False):
     dump_output_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_output_enabled():
         output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
-        logging.info(f"Dump Output data....")
+        logging.info("Dump Output data....")
         output_bytes = context.prof_result.output_bytes
         for idx, _output in enumerate(output_bytes):
             __dump_to_file(_output, f"{dump_output_name}_output_{idx}", get(output_dtypes, idx))
@@ -630,7 +647,7 @@ def __dump_output(context: TestcaseAclnn, force: bool = False):
 def __dump_golden(context: TestcaseAclnn, force: bool = False):
     dump_golden_name = context.dump_file_prefix or context.testcase_name
     if force or get_global_storage().dump_config.is_golden_enabled():
-        logging.info(f"Dump Golden data....")
+        logging.info("Dump Golden data....")
         for idx, golden in enumerate(context.golden_tensors):
             __dump_to_file(golden, f"{dump_golden_name}_golden_{idx}")
 
@@ -671,18 +688,18 @@ def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
 
     # --- non-quant path: x2 already handled by weight_shared regeneration ---
     # Only act on quant cases (x1 is fp8/hif8).
-    x1_dtype_str = str(flat_dtypes[0]) if flat_dtypes[0] else ''
-    is_quant_x1 = any(d in x1_dtype_str for d in ('float8', 'hifloat8', 'fp8', 'hif8', 'float4', 'fp4'))
+    x1_dtype_str = str(flat_dtypes[0]) if flat_dtypes[0] else ""
+    is_quant_x1 = any(d in x1_dtype_str for d in ("float8", "hifloat8", "fp8", "hif8", "float4", "fp4"))
     if not is_quant_x1:
         return
 
-    if not hasattr(thread_ctx, '_flat_tensors') or thread_ctx._flat_tensors is None:
+    if not hasattr(thread_ctx, "_flat_tensors") or thread_ctx._flat_tensors is None:
         thread_ctx._flat_tensors = list(thread_ctx.flatten_tensors)
     else:
         thread_ctx._flat_tensors = list(thread_ctx._flat_tensors)
 
     # --- per_tensor / per_block path: share x2 + x2scale across ranks ---
-    if x1s_dtype not in ('fp8_e8m0', 'float8_e8m0'):
+    if x1s_dtype not in ("fp8_e8m0", "float8_e8m0"):
         # x1scale/x2scale are fp32 scalar/block (not e8m0). InputGenerator used
         # per_rank_seed so x2/x1scale/x2scale differ per rank, but NPU
         # all_gather_matmul expects x2 and both scales to be shared (weight).
@@ -692,33 +709,43 @@ def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
         if thread_ctx.flatten_tensors[x1s_idx] is None:
             return
         # flatten_tensors/np_storages may be a tuple (rebased upstream); make mutable
-        if not hasattr(thread_ctx, '_flat_tensors') or thread_ctx._flat_tensors is None:
+        if not hasattr(thread_ctx, "_flat_tensors") or thread_ctx._flat_tensors is None:
             thread_ctx._flat_tensors = list(thread_ctx.flatten_tensors)
         else:
             thread_ctx._flat_tensors = list(thread_ctx._flat_tensors)
         if thread_ctx.np_storages is not None and not isinstance(thread_ctx.np_storages, list):
             thread_ctx.np_storages = list(thread_ctx.np_storages)
         from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
+
         dtypes = resolve_custom_numpy_dtypes(flat_dtypes)
         view_shapes = thread_ctx.flat_tensor_view_shapes
-        x2_view_shape = (list(view_shapes[1]) if len(view_shapes) > 1 and view_shapes[1] is not None
-                         else list(thread_ctx.flat_storage_shape(x2_idx)))
-        x2s_view_shape = (list(view_shapes[x2s_idx])
-                          if len(view_shapes) > x2s_idx and view_shapes[x2s_idx] is not None
-                          else list(thread_ctx.flat_storage_shape(x2s_idx)))
-        x1s_view_shape = (list(view_shapes[x1s_idx])
-                          if len(view_shapes) > x1s_idx and view_shapes[x1s_idx] is not None
-                          else list(thread_ctx.flat_storage_shape(x1s_idx)))
+        x2_view_shape = (
+            list(view_shapes[1])
+            if len(view_shapes) > 1 and view_shapes[1] is not None
+            else list(thread_ctx.flat_storage_shape(x2_idx))
+        )
+        x2s_view_shape = (
+            list(view_shapes[x2s_idx])
+            if len(view_shapes) > x2s_idx and view_shapes[x2s_idx] is not None
+            else list(thread_ctx.flat_storage_shape(x2s_idx))
+        )
+        x1s_view_shape = (
+            list(view_shapes[x1s_idx])
+            if len(view_shapes) > x1s_idx and view_shapes[x1s_idx] is not None
+            else list(thread_ctx.flat_storage_shape(x1s_idx))
+        )
         x2_dtype = dtypes[1] if len(dtypes) > 1 else None
         x2s_dtype_np = dtypes[x2s_idx] if len(dtypes) > x2s_idx else None
         x1s_dtype_np = dtypes[x1s_idx] if len(dtypes) > x1s_idx else None
         # ranges from CSV
         ranges = thread_ctx.flat_input_data_ranges or ()
+
         def _get_range(idx, default=1.0):
             r = ranges[idx] if len(ranges) > idx and ranges[idx] else (None, None)
             low = r[0] if r[0] is not None else -default
             high = r[1] if r[1] is not None else default
             return low, high
+
         x2_low, x2_high = _get_range(x2_idx)
         x2s_low, x2s_high = _get_range(x2s_idx)
         x1s_low, x1s_high = _get_range(x1s_idx)
@@ -740,26 +767,29 @@ def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
         np_x1s = rng_x1s.uniform(x1s_low, x1s_high, x1s_ss).astype(x1s_dtype_np, copy=False)
         thread_ctx.np_storages[x1s_idx] = np_x1s
         thread_ctx._flat_tensors[x1s_idx] = np_x1s.reshape(x1s_view_shape) if len(x1s_view_shape) else np_x1s
-        logging.info(f"[Thread dev={thread_ctx.my_rank}] V2 per_tensor/per_block regenerated "
-                     f"shared x2 (shape {np_x2.shape}), x1scale (shape {np_x1s.shape}), x2scale (shape {np_x2s.shape})")
+        logging.info(
+            f"[Thread dev={thread_ctx.my_rank}] V2 per_tensor/per_block regenerated "
+            f"shared x2 (shape {np_x2.shape}), x1scale (shape {np_x1s.shape}), x2scale (shape {np_x2s.shape})"
+        )
         return
 
     # --- mxfp path (e8m0 scale): full mx_quantize for x1+x1scale and x2+x2scale ---
     if thread_ctx.flatten_tensors[x1s_idx] is None or thread_ctx.flatten_tensors[x2s_idx] is None:
         return
     # flatten_tensors may be a tuple (rebased upstream property); make mutable
-    if not hasattr(thread_ctx, '_flat_tensors') or thread_ctx._flat_tensors is None:
+    if not hasattr(thread_ctx, "_flat_tensors") or thread_ctx._flat_tensors is None:
         thread_ctx._flat_tensors = list(thread_ctx.flatten_tensors)
     else:
         thread_ctx._flat_tensors = list(thread_ctx._flat_tensors)
     if thread_ctx.np_storages is not None and not isinstance(thread_ctx.np_storages, list):
         thread_ctx.np_storages = list(thread_ctx.np_storages)
     from ttk.utilities.dtypes import mx_quantize, resolve_custom_numpy_dtypes
+
     dtypes = resolve_custom_numpy_dtypes(flat_dtypes)
     # Map fp8 dtype class to mx_ele_dtype name expected by mx_quantize
     fp8_dtype_map = {
-        'float8_e4m3fn': 'float8_e4m3fn',
-        'float8_e5m2': 'float8_e5m2',
+        "float8_e4m3fn": "float8_e4m3fn",
+        "float8_e5m2": "float8_e5m2",
     }
     # view_shapes: x1 is (M, K), x2 is (K, N) for trans_b=1 (CSV convention).
     # For trans_b=0, x2 view is already (K, N) (no transpose needed).
@@ -767,43 +797,49 @@ def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
     # 直接传 unpacked K 给 aclnn，aclnn 按 fp4 dtype 算字节 numel*0.5)。
     # 数据 storage 是 packed bytes (K//2)，view shape 用 unpacked K。
     view_shapes = thread_ctx.flat_tensor_view_shapes
-    x1_view_shape = (list(view_shapes[0]) if len(view_shapes) > 0 and view_shapes[0] is not None
-                     else list(thread_ctx.flat_storage_shape(0)))
-    x2_view_shape = (list(view_shapes[1]) if len(view_shapes) > 1 and view_shapes[1] is not None
-                     else list(thread_ctx.flat_storage_shape(1)))
+    x1_view_shape = (
+        list(view_shapes[0])
+        if len(view_shapes) > 0 and view_shapes[0] is not None
+        else list(thread_ctx.flat_storage_shape(0))
+    )
+    x2_view_shape = (
+        list(view_shapes[1])
+        if len(view_shapes) > 1 and view_shapes[1] is not None
+        else list(thread_ctx.flat_storage_shape(1))
+    )
     # transposeX2 从 attrs 获取（N=K 时不能靠 shape 推断 x2 layout）
-    transpose_x2_attr = bool(thread_ctx.attributes.get('transposeX2', 0))
+    transpose_x2_attr = bool(thread_ctx.attributes.get("transposeX2", 0))
     x1_dtype = dtypes[0] if len(dtypes) > 0 else None
-    x1_dtype_name = str(x1_dtype) if x1_dtype is not None else 'float8_e4m3fn'
+    x1_dtype_name = str(x1_dtype) if x1_dtype is not None else "float8_e4m3fn"
     if "'" in x1_dtype_name:
-        x1_dtype_name = x1_dtype_name.split("'")[1].split('.')[-1]
+        x1_dtype_name = x1_dtype_name.split("'")[1].split(".")[-1]
     x2_dtype = dtypes[1] if len(dtypes) > 1 else None
-    x2_dtype_name = str(x2_dtype) if x2_dtype is not None else 'float8_e4m3fn'
+    x2_dtype_name = str(x2_dtype) if x2_dtype is not None else "float8_e4m3fn"
     if "'" in x2_dtype_name:
-        x2_dtype_name = x2_dtype_name.split("'")[1].split('.')[-1]
-    is_fp4_x1 = 'float4' in x1_dtype_name or 'fp4' in x1_dtype_name
-    is_fp4_x2 = 'float4' in x2_dtype_name or 'fp4' in x2_dtype_name
+        x2_dtype_name = x2_dtype_name.split("'")[1].split(".")[-1]
+    is_fp4_x1 = "float4" in x1_dtype_name or "fp4" in x1_dtype_name
+    is_fp4_x2 = "float4" in x2_dtype_name or "fp4" in x2_dtype_name
     m_dim = x1_view_shape[0]
     k_dim = x1_view_shape[1]  # CSV fp4 K 已是 unpacked 元素数，直接用
-    n_dim = x2_view_shape[1] if len(x2_view_shape) > 1 else None
+    x2_view_shape[1] if len(x2_view_shape) > 1 else None
     # Generate x1 (M, K) + x1scale (M, K/64, 2): quantize along K (axis=-1).
     fp8_dtype_map = {
-        'float8_e4m3fn': 'float8_e4m3fn',
-        'float8_e5m2': 'float8_e5m2',
-        'float4_e2m1': 'float4_e2m1',
-        'float4_e1m2': 'float4_e1m2',
+        "float8_e4m3fn": "float8_e4m3fn",
+        "float8_e5m2": "float8_e5m2",
+        "float4_e2m1": "float4_e2m1",
+        "float4_e1m2": "float4_e1m2",
     }
-    mx_ele_dtype_x1 = fp8_dtype_map.get(x1_dtype_name, 'float8_e4m3fn')
+    mx_ele_dtype_x1 = fp8_dtype_map.get(x1_dtype_name, "float8_e4m3fn")
     seed_x1 = base_seed + rank_idx * 1000
     rng_x1 = numpy.random.RandomState(seed_x1)
     fp32_x1 = rng_x1.uniform(-1.0, 1.0, (m_dim, k_dim)).astype(numpy.float32)
-    scale_x1, ele_x1 = mx_quantize(fp32_x1, mx_ele_dtype=mx_ele_dtype_x1,
-                                    axis=-1, block_size=32, round_mode="rint")
+    scale_x1, ele_x1 = mx_quantize(fp32_x1, mx_ele_dtype=mx_ele_dtype_x1, axis=-1, block_size=32, round_mode="rint")
     # ele_x1 (M, K_unpacked) fp4/fp8, scale_x1 (M, K_unpacked/64, 2) e8m0.
     # fp4: mx_quantize 返回 unpacked (M, K_unpacked)，NPU 需要 packed (M, K_unpacked//2)。
     # 对齐 mc2_test 行 95-98: pack_int4 + reshape(K>>1)。
     if is_fp4_x1:
         from ttk.utilities.dtypes import pack_4bits
+
         ele_x1 = pack_4bits(ele_x1.reshape(-1)).reshape(m_dim, k_dim // 2)
     thread_ctx.np_storages[x1_idx] = ele_x1
     thread_ctx.np_storages[x1s_idx] = numpy.ascontiguousarray(scale_x1)
@@ -813,7 +849,7 @@ def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
     # CSV x2 view_shape 对 trans_b=1 是 (N, K_unpacked)，对 trans_b=0 是 (K_unpacked, N)。
     # mx_quantize 沿 K 维量化：trans_b=1 时 axis=-1（最后一维 K），trans_b=0 时 axis=0。
     # fp4: CSV K 是 unpacked 元素数，mx_quantize 直接用，结果 pack_4bits 回 K//2 bytes。
-    mx_ele_dtype_x2 = fp8_dtype_map.get(x2_dtype_name, 'float8_e4m3fn')
+    mx_ele_dtype_x2 = fp8_dtype_map.get(x2_dtype_name, "float8_e4m3fn")
     seed_x2 = base_seed + 1  # shared across ranks (weight)
     rng_x2 = numpy.random.RandomState(seed_x2)
     # 判断 x2 layout: trans_b=1 时 view (N, K) axis=-1，trans_b=0 时 view (K, N) axis=0
@@ -827,11 +863,13 @@ def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
         x2_fp32_shape = (k_dim, x2_view_shape[1])
         mx_axis = 0
     fp32_x2 = rng_x2.uniform(-1.0, 1.0, x2_fp32_shape).astype(numpy.float32)
-    scale_x2, ele_x2 = mx_quantize(fp32_x2, mx_ele_dtype=mx_ele_dtype_x2,
-                                    axis=mx_axis, block_size=32, round_mode="rint")
+    scale_x2, ele_x2 = mx_quantize(
+        fp32_x2, mx_ele_dtype=mx_ele_dtype_x2, axis=mx_axis, block_size=32, round_mode="rint"
+    )
     # fp4 x2: pack 到 K 维减半（storage bytes = numel*0.5，view shape 仍 unpacked）
     if is_fp4_x2:
         from ttk.utilities.dtypes import pack_4bits
+
         if mx_axis == -1:
             ele_x2 = pack_4bits(ele_x2.reshape(-1)).reshape(x2_view_shape[0], k_dim // 2)
         else:
@@ -843,9 +881,11 @@ def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
     thread_ctx.np_storages[x2s_idx] = numpy.ascontiguousarray(scale_x2)
     thread_ctx._flat_tensors[x2_idx] = ele_x2
     thread_ctx._flat_tensors[x2s_idx] = numpy.ascontiguousarray(scale_x2)
-    logging.info(f"[Thread dev={thread_ctx.my_rank}] V2 mxfp regenerated "
-                 f"x1+scale (shape {ele_x1.shape}/{scale_x1.shape}) and "
-                 f"x2+scale (shape {ele_x2.shape}/{scale_x2.shape}) via mx_quantize")
+    logging.info(
+        f"[Thread dev={thread_ctx.my_rank}] V2 mxfp regenerated "
+        f"x1+scale (shape {ele_x1.shape}/{scale_x1.shape}) and "
+        f"x2+scale (shape {ele_x2.shape}/{scale_x2.shape}) via mx_quantize"
+    )
 
 
 def __regenerate_v4_quant_inputs(thread_ctx, rank_idx: int, base_seed: int):
@@ -867,8 +907,8 @@ def __regenerate_v4_quant_inputs(thread_ctx, rank_idx: int, base_seed: int):
     x1_idx, x2_idx, x1s_idx, x2s_idx = 0, 1, 4, 5
     if len(thread_ctx.flatten_tensors) <= x2s_idx:
         return
-    x1_dtype_str = str(flat_dtypes[0]) if flat_dtypes[0] else ''
-    is_quant_x1 = any(d in x1_dtype_str for d in ('float8', 'hifloat8', 'fp8', 'hif8', 'float4', 'fp4'))
+    x1_dtype_str = str(flat_dtypes[0]) if flat_dtypes[0] else ""
+    is_quant_x1 = any(d in x1_dtype_str for d in ("float8", "hifloat8", "fp8", "hif8", "float4", "fp4"))
     if not is_quant_x1:
         return
 
@@ -878,7 +918,7 @@ def __regenerate_v4_quant_inputs(thread_ctx, rank_idx: int, base_seed: int):
     if thread_ctx.flatten_tensors[x2_idx] is None:
         return
 
-    if not hasattr(thread_ctx, '_flat_tensors') or thread_ctx._flat_tensors is None:
+    if not hasattr(thread_ctx, "_flat_tensors") or thread_ctx._flat_tensors is None:
         thread_ctx._flat_tensors = list(thread_ctx.flatten_tensors)
     else:
         thread_ctx._flat_tensors = list(thread_ctx._flat_tensors)
@@ -886,34 +926,40 @@ def __regenerate_v4_quant_inputs(thread_ctx, rank_idx: int, base_seed: int):
         thread_ctx.np_storages = list(thread_ctx.np_storages)
 
     # --- mxfp path (e8m0 scale): full mx_quantize ---
-    if x1s_dtype in ('fp8_e8m0', 'float8_e8m0'):
-        from ttk.utilities.dtypes import mx_quantize, resolve_custom_numpy_dtypes, pack_4bits
+    if x1s_dtype in ("fp8_e8m0", "float8_e8m0"):
+        from ttk.utilities.dtypes import mx_quantize, pack_4bits, resolve_custom_numpy_dtypes
+
         dtypes = resolve_custom_numpy_dtypes(flat_dtypes)
         view_shapes = thread_ctx.flat_tensor_view_shapes
-        x1_view_shape = (list(view_shapes[0]) if len(view_shapes) > 0 and view_shapes[0] is not None
-                         else list(thread_ctx.flat_storage_shape(x1_idx)))
-        x2_view_shape = (list(view_shapes[1]) if len(view_shapes) > 1 and view_shapes[1] is not None
-                         else list(thread_ctx.flat_storage_shape(x2_idx)))
-        is_trans_b = 'is_trans_b=True' in (thread_ctx.remark or '')
+        x1_view_shape = (
+            list(view_shapes[0])
+            if len(view_shapes) > 0 and view_shapes[0] is not None
+            else list(thread_ctx.flat_storage_shape(x1_idx))
+        )
+        x2_view_shape = (
+            list(view_shapes[1])
+            if len(view_shapes) > 1 and view_shapes[1] is not None
+            else list(thread_ctx.flat_storage_shape(x2_idx))
+        )
         x1_dtype = dtypes[0] if len(dtypes) > 0 else None
-        x1_dtype_name = str(x1_dtype) if x1_dtype is not None else 'float8_e4m3fn'
+        x1_dtype_name = str(x1_dtype) if x1_dtype is not None else "float8_e4m3fn"
         if "'" in x1_dtype_name:
-            x1_dtype_name = x1_dtype_name.split("'")[1].split('.')[-1]
+            x1_dtype_name = x1_dtype_name.split("'")[1].split(".")[-1]
         x2_dtype = dtypes[1] if len(dtypes) > 1 else None
-        x2_dtype_name = str(x2_dtype) if x2_dtype is not None else 'float8_e4m3fn'
+        x2_dtype_name = str(x2_dtype) if x2_dtype is not None else "float8_e4m3fn"
         if "'" in x2_dtype_name:
-            x2_dtype_name = x2_dtype_name.split("'")[1].split('.')[-1]
-        is_fp4_x1 = 'float4' in x1_dtype_name or 'fp4' in x1_dtype_name
-        is_fp4_x2 = 'float4' in x2_dtype_name or 'fp4' in x2_dtype_name
+            x2_dtype_name = x2_dtype_name.split("'")[1].split(".")[-1]
+        is_fp4_x1 = "float4" in x1_dtype_name or "fp4" in x1_dtype_name
+        is_fp4_x2 = "float4" in x2_dtype_name or "fp4" in x2_dtype_name
         m_dim = x1_view_shape[0]
         k_dim = x1_view_shape[-1]
         fp8_dtype_map = {
-            'float8_e4m3fn': 'float8_e4m3fn',
-            'float8_e5m2': 'float8_e5m2',
-            'float4_e2m1': 'float4_e2m1',
-            'float4_e1m2': 'float4_e1m2',
+            "float8_e4m3fn": "float8_e4m3fn",
+            "float8_e5m2": "float8_e5m2",
+            "float4_e2m1": "float4_e2m1",
+            "float4_e1m2": "float4_e1m2",
         }
-        mx_ele_dtype_x1 = fp8_dtype_map.get(x1_dtype_name, 'float8_e4m3fn')
+        mx_ele_dtype_x1 = fp8_dtype_map.get(x1_dtype_name, "float8_e4m3fn")
         seed_x1 = base_seed + rank_idx * 1000
         rng_x1 = numpy.random.RandomState(seed_x1)
         # 3D x1 [B, S, K] → 2D [B*S, K] for mx_quantize
@@ -921,8 +967,7 @@ def __regenerate_v4_quant_inputs(thread_ctx, rank_idx: int, base_seed: int):
             m_dim = x1_view_shape[0] * x1_view_shape[1]
             k_dim = x1_view_shape[2]
         fp32_x1 = rng_x1.uniform(-1.0, 1.0, (m_dim, k_dim)).astype(numpy.float32)
-        scale_x1, ele_x1 = mx_quantize(fp32_x1, mx_ele_dtype=mx_ele_dtype_x1,
-                                        axis=-1, block_size=32, round_mode="rint")
+        scale_x1, ele_x1 = mx_quantize(fp32_x1, mx_ele_dtype=mx_ele_dtype_x1, axis=-1, block_size=32, round_mode="rint")
         if is_fp4_x1:
             ele_x1 = pack_4bits(ele_x1.reshape(-1)).reshape(m_dim, k_dim // 2)
         # 3D x1: reshape ele_x1 and scale_x1 back to 3D view
@@ -938,7 +983,7 @@ def __regenerate_v4_quant_inputs(thread_ctx, rank_idx: int, base_seed: int):
         thread_ctx._flat_tensors[x1s_idx] = numpy.ascontiguousarray(scale_x1)
 
         # x2 (K, N) + x2scale (K/64, N, 2): quantize along K
-        mx_ele_dtype_x2 = fp8_dtype_map.get(x2_dtype_name, 'float8_e4m3fn')
+        mx_ele_dtype_x2 = fp8_dtype_map.get(x2_dtype_name, "float8_e4m3fn")
         seed_x2 = base_seed + 1
         rng_x2 = numpy.random.RandomState(seed_x2)
         # V4 x2 view: trans_b=1 时 xlsx 存 (N, K) → CSV 转成 (K, N)；
@@ -946,40 +991,53 @@ def __regenerate_v4_quant_inputs(thread_ctx, rank_idx: int, base_seed: int):
         x2_fp32_shape = (k_dim, x2_view_shape[-1])
         mx_axis = 0
         fp32_x2 = rng_x2.uniform(-1.0, 1.0, x2_fp32_shape).astype(numpy.float32)
-        scale_x2, ele_x2 = mx_quantize(fp32_x2, mx_ele_dtype=mx_ele_dtype_x2,
-                                        axis=mx_axis, block_size=32, round_mode="rint")
+        scale_x2, ele_x2 = mx_quantize(
+            fp32_x2, mx_ele_dtype=mx_ele_dtype_x2, axis=mx_axis, block_size=32, round_mode="rint"
+        )
         if is_fp4_x2:
             ele_x2 = pack_4bits(ele_x2.reshape(-1)).reshape(k_dim // 2, x2_view_shape[-1])
         thread_ctx.np_storages[x2_idx] = ele_x2
         thread_ctx.np_storages[x2s_idx] = numpy.ascontiguousarray(scale_x2)
         thread_ctx._flat_tensors[x2_idx] = ele_x2
         thread_ctx._flat_tensors[x2s_idx] = numpy.ascontiguousarray(scale_x2)
-        logging.info(f"[Thread dev={thread_ctx.my_rank}] V4 mxfp regenerated "
-                     f"x1+scale (shape {ele_x1.shape}/{scale_x1.shape}) and "
-                     f"x2+scale (shape {ele_x2.shape}/{scale_x2.shape}) via mx_quantize")
+        logging.info(
+            f"[Thread dev={thread_ctx.my_rank}] V4 mxfp regenerated "
+            f"x1+scale (shape {ele_x1.shape}/{scale_x1.shape}) and "
+            f"x2+scale (shape {ele_x2.shape}/{scale_x2.shape}) via mx_quantize"
+        )
         return
 
     # --- per_block / per_tile / hf8 / int8 path: share x2 + x2scale + x1scale ---
     from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
+
     dtypes = resolve_custom_numpy_dtypes(flat_dtypes)
     view_shapes = thread_ctx.flat_tensor_view_shapes
-    x2_view_shape = (list(view_shapes[1]) if len(view_shapes) > 1 and view_shapes[1] is not None
-                     else list(thread_ctx.flat_storage_shape(x2_idx)))
-    x2s_view_shape = (list(view_shapes[x2s_idx])
-                      if len(view_shapes) > x2s_idx and view_shapes[x2s_idx] is not None
-                      else list(thread_ctx.flat_storage_shape(x2s_idx)))
-    x1s_view_shape = (list(view_shapes[x1s_idx])
-                      if len(view_shapes) > x1s_idx and view_shapes[x1s_idx] is not None
-                      else list(thread_ctx.flat_storage_shape(x1s_idx)))
+    x2_view_shape = (
+        list(view_shapes[1])
+        if len(view_shapes) > 1 and view_shapes[1] is not None
+        else list(thread_ctx.flat_storage_shape(x2_idx))
+    )
+    x2s_view_shape = (
+        list(view_shapes[x2s_idx])
+        if len(view_shapes) > x2s_idx and view_shapes[x2s_idx] is not None
+        else list(thread_ctx.flat_storage_shape(x2s_idx))
+    )
+    x1s_view_shape = (
+        list(view_shapes[x1s_idx])
+        if len(view_shapes) > x1s_idx and view_shapes[x1s_idx] is not None
+        else list(thread_ctx.flat_storage_shape(x1s_idx))
+    )
     x2_dtype = dtypes[1] if len(dtypes) > 1 else None
     x2s_dtype_np = dtypes[x2s_idx] if len(dtypes) > x2s_idx else None
     x1s_dtype_np = dtypes[x1s_idx] if len(dtypes) > x1s_idx else None
     ranges = thread_ctx.flat_input_data_ranges or ()
+
     def _get_range(idx, default=1.0):
         r = ranges[idx] if len(ranges) > idx and ranges[idx] else (None, None)
         low = r[0] if r[0] is not None else -default
         high = r[1] if r[1] is not None else default
         return low, high
+
     x2_low, x2_high = _get_range(x2_idx)
     x2s_low, x2s_high = _get_range(x2s_idx)
     x1s_low, x1s_high = _get_range(x1s_idx)
@@ -998,8 +1056,10 @@ def __regenerate_v4_quant_inputs(thread_ctx, rank_idx: int, base_seed: int):
     np_x1s = rng_x1s.uniform(x1s_low, x1s_high, x1s_ss).astype(x1s_dtype_np, copy=False)
     thread_ctx.np_storages[x1s_idx] = np_x1s
     thread_ctx._flat_tensors[x1s_idx] = np_x1s.reshape(x1s_view_shape) if len(x1s_view_shape) else np_x1s
-    logging.info(f"[Thread dev={thread_ctx.my_rank}] V4 per_block/per_tile/hf8 regenerated "
-                 f"shared x2 (shape {np_x2.shape}), x1scale (shape {np_x1s.shape}), x2scale (shape {np_x2s.shape})")
+    logging.info(
+        f"[Thread dev={thread_ctx.my_rank}] V4 per_block/per_tile/hf8 regenerated "
+        f"shared x2 (shape {np_x2.shape}), x1scale (shape {np_x1s.shape}), x2scale (shape {np_x2s.shape})"
+    )
 
 
 def __regenerate_quant_allreduce_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
@@ -1019,12 +1079,12 @@ def __regenerate_quant_allreduce_mxfp_inputs(thread_ctx, rank_idx: int, base_see
         return
     x_idx, s_idx = 0, 1
     scales_dtype = flat_dtypes[s_idx]
-    if scales_dtype not in ('fp8_e8m0', 'float8_e8m0'):
+    if scales_dtype not in ("fp8_e8m0", "float8_e8m0"):
         return
     if thread_ctx.flatten_tensors[x_idx] is None or thread_ctx.flatten_tensors[s_idx] is None:
         return
 
-    if not hasattr(thread_ctx, '_flat_tensors') or thread_ctx._flat_tensors is None:
+    if not hasattr(thread_ctx, "_flat_tensors") or thread_ctx._flat_tensors is None:
         thread_ctx._flat_tensors = list(thread_ctx.flatten_tensors)
     else:
         thread_ctx._flat_tensors = list(thread_ctx._flat_tensors)
@@ -1032,20 +1092,24 @@ def __regenerate_quant_allreduce_mxfp_inputs(thread_ctx, rank_idx: int, base_see
         thread_ctx.np_storages = list(thread_ctx.np_storages)
 
     from ttk.utilities.dtypes import mx_quantize, resolve_custom_numpy_dtypes
+
     dtypes = resolve_custom_numpy_dtypes(flat_dtypes)
     view_shapes = thread_ctx.flat_tensor_view_shapes
-    x_view_shape = list(view_shapes[x_idx]) if len(view_shapes) > x_idx and view_shapes[x_idx] is not None \
+    x_view_shape = (
+        list(view_shapes[x_idx])
+        if len(view_shapes) > x_idx and view_shapes[x_idx] is not None
         else list(thread_ctx.flat_storage_shape(x_idx))
+    )
     x_dtype = dtypes[x_idx] if len(dtypes) > x_idx else None
-    x_dtype_name = str(x_dtype) if x_dtype is not None else 'float8_e4m3fn'
+    x_dtype_name = str(x_dtype) if x_dtype is not None else "float8_e4m3fn"
     if "'" in x_dtype_name:
-        x_dtype_name = x_dtype_name.split("'")[1].split('.')[-1]
+        x_dtype_name = x_dtype_name.split("'")[1].split(".")[-1]
 
     fp8_dtype_map = {
-        'float8_e4m3fn': 'float8_e4m3fn',
-        'float8_e5m2': 'float8_e5m2',
+        "float8_e4m3fn": "float8_e4m3fn",
+        "float8_e5m2": "float8_e5m2",
     }
-    mx_ele_dtype = fp8_dtype_map.get(x_dtype_name, 'float8_e4m3fn')
+    mx_ele_dtype = fp8_dtype_map.get(x_dtype_name, "float8_e4m3fn")
 
     # 3D x [B, S, H] → 2D [B*S, H] for mx_quantize
     if len(x_view_shape) == 3:
@@ -1068,8 +1132,7 @@ def __regenerate_quant_allreduce_mxfp_inputs(thread_ctx, rank_idx: int, base_see
     seed_x = base_seed + rank_idx * 1000
     rng_x = numpy.random.RandomState(seed_x)
     fp32_x = rng_x.uniform(x_low, x_high, (m_dim, k_dim)).astype(numpy.float32)
-    scale_x, ele_x = mx_quantize(fp32_x, mx_ele_dtype=mx_ele_dtype,
-                                 axis=-1, block_size=32, round_mode="rint")
+    scale_x, ele_x = mx_quantize(fp32_x, mx_ele_dtype=mx_ele_dtype, axis=-1, block_size=32, round_mode="rint")
 
     # 3D x: reshape ele_x and scale_x back to 3D view
     if len(x_view_shape) == 3:
@@ -1084,8 +1147,10 @@ def __regenerate_quant_allreduce_mxfp_inputs(thread_ctx, rank_idx: int, base_see
     thread_ctx.np_storages[s_idx] = numpy.ascontiguousarray(scale_x)
     thread_ctx._flat_tensors[x_idx] = numpy.ascontiguousarray(ele_x)
     thread_ctx._flat_tensors[s_idx] = numpy.ascontiguousarray(scale_x)
-    logging.info(f"[Thread dev={thread_ctx.my_rank}] QuantAllReduce/QuantReduceScatter mxfp regenerated "
-                 f"x (shape {ele_x.shape}) + scales (shape {scale_x.shape}) via mx_quantize")
+    logging.info(
+        f"[Thread dev={thread_ctx.my_rank}] QuantAllReduce/QuantReduceScatter mxfp regenerated "
+        f"x (shape {ele_x.shape}) + scales (shape {scale_x.shape}) via mx_quantize"
+    )
 
 
 def __trans_quant_dequant_scale(thread_ctx, dev_id, ds_slot=4):
@@ -1105,6 +1170,7 @@ def __trans_quant_dequant_scale(thread_ctx, dev_id, ds_slot=4):
     """
     import torch
     import torch_npu  # noqa: F401
+
     # ds_slot: V1/V2/V3 dequantScale 在 slot 4; V4/V5 x2Scale 在 slot 5。
     ds_idx = ds_slot
     out_idx_list = list(thread_ctx.output_tensor_indexes or ())
@@ -1112,13 +1178,16 @@ def __trans_quant_dequant_scale(thread_ctx, dev_id, ds_slot=4):
     if ds_idx >= len(flat_dtypes):
         return
     ds_dtype = flat_dtypes[ds_idx]
-    if ds_dtype is None or str(ds_dtype).lower() not in ('float32', 'fp32'):
+    if ds_dtype is None or str(ds_dtype).lower() not in ("float32", "fp32"):
         return  # bf16 / int64 / uint64 无需转换
     # output dtype 判断（flat_output_dtypes 或 flat_tensor_dtypes[out_idx]）
     out_dtypes = thread_ctx.flat_output_dtypes if thread_ctx.flat_output_dtypes else []
-    out_dtype_str = out_dtypes[0] if len(out_dtypes) > 0 else (
-        flat_dtypes[out_idx_list[0]] if out_idx_list and out_idx_list[0] < len(flat_dtypes) else '')
-    if str(out_dtype_str).lower() not in ('float16', 'fp16'):
+    out_dtype_str = (
+        out_dtypes[0]
+        if len(out_dtypes) > 0
+        else (flat_dtypes[out_idx_list[0]] if out_idx_list and out_idx_list[0] < len(flat_dtypes) else "")
+    )
+    if str(out_dtype_str).lower() not in ("float16", "fp16"):
         return  # bf16 output 走 bf16 dequantScale，无需转换
     if ds_idx >= len(thread_ctx.flatten_tensors) or thread_ctx.flatten_tensors[ds_idx] is None:
         return
@@ -1139,47 +1208,52 @@ def __trans_quant_dequant_scale(thread_ctx, dev_id, ds_slot=4):
     # 保留 fp32 原值给 CPU golden（mc2_dispatcher 读 attributes['_qm_dequant_scale_fp32']）。
     # 用 attributes dict 存（TestcaseAclnn 用 __slots__，不能加自定义属性；
     # Phase1ParamBuilder.build 只读 group/reduceOp 等已知 key，多余 key 被忽略）。
-    thread_ctx.attributes['_qm_dequant_scale_fp32'] = ds_tensor.float().clone()
+    thread_ctx.attributes["_qm_dequant_scale_fp32"] = ds_tensor.float().clone()
     # NPU 侧转换 fp32 → int64
     ds_npu = ds_tensor.npu()
     ds_int64 = torch_npu.npu_trans_quant_param(ds_npu).cpu()
     # 更新 flatten_tensors / np_storages / flat_tensor_dtypes
-    if not hasattr(thread_ctx, '_flat_tensors') or thread_ctx._flat_tensors is None:
+    if not hasattr(thread_ctx, "_flat_tensors") or thread_ctx._flat_tensors is None:
         thread_ctx._flat_tensors = list(thread_ctx.flatten_tensors)
     else:
         thread_ctx._flat_tensors = list(thread_ctx._flat_tensors)
     thread_ctx._flat_tensors[ds_idx] = ds_int64.contiguous()
     # flat_tensor_dtypes 是 property，需写私有 slot _flat_tensor_dtypes
     new_dtypes = list(flat_dtypes)
-    new_dtypes[ds_idx] = 'int64'
+    new_dtypes[ds_idx] = "int64"
     thread_ctx._flat_tensor_dtypes = tuple(new_dtypes)
     # np_storages 同步（golden 比对时按 int64 dtype 解析 output bytes，需一致）
     if thread_ctx.np_storages is not None:
-        storages = list(thread_ctx.np_storages) if not isinstance(thread_ctx.np_storages, list) \
-            else thread_ctx.np_storages
+        storages = (
+            list(thread_ctx.np_storages) if not isinstance(thread_ctx.np_storages, list) else thread_ctx.np_storages
+        )
         if ds_idx < len(storages):
             storages[ds_idx] = ds_int64.numpy().astype(numpy.int64, copy=False)
             thread_ctx.np_storages = storages
-    logging.info(f"[Thread dev={dev_id}] QuantMatmulAllReduce: converted fp32 dequantScale "
-                 f"(shape {tuple(ds_tensor.shape)}) to int64 via npu_trans_quant_param")
+    logging.info(
+        f"[Thread dev={dev_id}] QuantMatmulAllReduce: converted fp32 dequantScale "
+        f"(shape {tuple(ds_tensor.shape)}) to int64 via npu_trans_quant_param"
+    )
 
 
-def __launch_one_thread(context: TestcaseAclnn,
-                         dev_id: int,
-                         rank_idx: int,
-                         ndev: int,
-                         hccl_comm_val: int,
-                         c_context_val: int,
-                         c_stream_val: int,
-                         results: Dict[int, ApiProfilingResult],
-                         thread_contexts: Dict[int, TestcaseAclnn],
-                         errors: Dict[int, Exception],
-                         main_device: 'AclInterface',
-                         ep_comm_val: int = 0,
-                         tp_comm_val: int = 0,
-                         pre_exec_barrier: threading.Barrier = None,
-                         post_exec_barrier: threading.Barrier = None,
-                         comm_destroyed_set: Optional[set] = None):
+def __launch_one_thread(
+    context: TestcaseAclnn,
+    dev_id: int,
+    rank_idx: int,
+    ndev: int,
+    hccl_comm_val: int,
+    c_context_val: int,
+    c_stream_val: int,
+    results: Dict[int, ApiProfilingResult],
+    thread_contexts: Dict[int, TestcaseAclnn],
+    errors: Dict[int, Exception],
+    main_device: "AclInterface",
+    ep_comm_val: int = 0,
+    tp_comm_val: int = 0,
+    pre_exec_barrier: threading.Barrier = None,
+    post_exec_barrier: threading.Barrier = None,
+    comm_destroyed_set: Optional[set] = None,
+):
     try:
         logging.info(f"[Thread dev={dev_id}] starting, rank_idx={rank_idx}")
         acl_dll = ctypes.CDLL("libascendcl.so")
@@ -1192,31 +1266,31 @@ def __launch_one_thread(context: TestcaseAclnn,
         ret = hccl_dll.HcclGetCommName(ctypes.c_void_p(hccl_comm_val), hcom_name_buf)
         if ret != 0:
             raise RuntimeError(f"HcclGetCommName failed with ret={ret} for dev {dev_id}")
-        hcom_name = hcom_name_buf.value.decode('utf-8')
+        hcom_name = hcom_name_buf.value.decode("utf-8")
         logging.info(f"[Thread dev={dev_id}] HcclGetCommName = '{hcom_name}'")
         thread_ctx = copy.deepcopy(context)
         thread_ctx.my_rank = dev_id
-        if 'group' in thread_ctx.attributes:
-            thread_ctx.attributes['group'] = hcom_name
+        if "group" in thread_ctx.attributes:
+            thread_ctx.attributes["group"] = hcom_name
         # MC2 APIs may name the EP/TP communicator separately.  When no
         # topology-specific sub-group was requested, the primary world
         # communicator is the valid fallback for both names.
-        if 'groupEp' in thread_ctx.attributes and ep_comm_val == 0:
-            thread_ctx.attributes['groupEp'] = hcom_name
-        if 'groupTp' in thread_ctx.attributes and tp_comm_val == 0:
-            thread_ctx.attributes['groupTp'] = hcom_name
+        if "groupEp" in thread_ctx.attributes and ep_comm_val == 0:
+            thread_ctx.attributes["groupEp"] = hcom_name
+        if "groupTp" in thread_ctx.attributes and tp_comm_val == 0:
+            thread_ctx.attributes["groupTp"] = hcom_name
         if ep_comm_val != 0 or tp_comm_val != 0:
             if ep_comm_val != 0:
                 ep_name_buf = ctypes.create_string_buffer(128)
                 ret = hccl_dll.HcclGetCommName(ctypes.c_void_p(ep_comm_val), ep_name_buf)
                 if ret == 0:
-                    thread_ctx.attributes['groupEp'] = ep_name_buf.value.decode('utf-8')
+                    thread_ctx.attributes["groupEp"] = ep_name_buf.value.decode("utf-8")
                     logging.info(f"[Thread dev={dev_id}] groupEp = '{thread_ctx.attributes['groupEp']}'")
             if tp_comm_val != 0:
                 tp_name_buf = ctypes.create_string_buffer(128)
                 ret = hccl_dll.HcclGetCommName(ctypes.c_void_p(tp_comm_val), tp_name_buf)
                 if ret == 0:
-                    thread_ctx.attributes['groupTp'] = tp_name_buf.value.decode('utf-8')
+                    thread_ctx.attributes["groupTp"] = tp_name_buf.value.decode("utf-8")
                     logging.info(f"[Thread dev={dev_id}] groupTp = '{thread_ctx.attributes['groupTp']}'")
         switches = get_global_storage()
         base_seed = switches.random_seed or 0
@@ -1224,43 +1298,53 @@ def __launch_one_thread(context: TestcaseAclnn,
         numpy.random.seed(per_rank_seed)
         logging.info(f"[Thread dev={dev_id}] using seed={per_rank_seed} for input generation")
         patch_gmm_rank_attributes(thread_ctx, rank_idx, ndev)
-        api_name = thread_ctx.api_name or ''
-        exclude_ops = ("BatchMatMulReduceScatter", "AlltoAllAllGather",
-                       "GroupedMatMul", "AlltoAllvGrouped")
+        api_name = thread_ctx.api_name or ""
+        exclude_ops = ("BatchMatMulReduceScatter", "AlltoAllAllGather", "GroupedMatMul", "AlltoAllvGrouped")
         if any(kw in api_name for kw in exclude_ops):
             needs_shared_weight = False
         else:
-            weight_shared_ops = ("MatmulReduceScatter", "AllGatherMatmul",
-                                 "MatmulAllReduce", "MatmulAlltoAll",
-                                 "AlltoAllMatmul", "MatmulReduceScatterV2",
-                                 "QuantMatmulAllReduce")
+            weight_shared_ops = (
+                "MatmulReduceScatter",
+                "AllGatherMatmul",
+                "MatmulAllReduce",
+                "MatmulAlltoAll",
+                "AlltoAllMatmul",
+                "MatmulReduceScatterV2",
+                "QuantMatmulAllReduce",
+            )
             needs_shared_weight = any(kw in api_name for kw in weight_shared_ops)
             # V2 quant (fp8/hif8 x1) needs x1+scale correlated; weight_shared
             # regeneration breaks that correlation. Skip regeneration for V2 quant.
-            if needs_shared_weight and 'AllGatherMatmulV2' in api_name:
+            if needs_shared_weight and "AllGatherMatmulV2" in api_name:
                 v2_dtypes = resolve_custom_numpy_dtypes(thread_ctx.flat_tensor_dtypes)
-                x1_dtype_str = str(v2_dtypes[0]) if v2_dtypes and len(v2_dtypes) > 0 else ''
-                if any(d in x1_dtype_str for d in ('float8', 'hifloat8', 'fp8', 'hif8')):
+                x1_dtype_str = str(v2_dtypes[0]) if v2_dtypes and len(v2_dtypes) > 0 else ""
+                if any(d in x1_dtype_str for d in ("float8", "hifloat8", "fp8", "hif8")):
                     needs_shared_weight = False
-                    logging.info(f"[Thread dev={dev_id}] V2 quant detected (x1 dtype={x1_dtype_str}), "
-                                 f"skip weight_shared regeneration")
+                    logging.info(
+                        f"[Thread dev={dev_id}] V2 quant detected (x1 dtype={x1_dtype_str}), "
+                        f"skip weight_shared regeneration"
+                    )
             # V4/V5 quant (fp8/hif8/fp4 x1) needs x1+scale and x2+scale correlated;
             # weight_shared regeneration breaks that correlation.
             # __regenerate_v4_quant_inputs handles shared weight semantics.
-            if needs_shared_weight and ('QuantMatmulAllReduceV4' in api_name
-                                        or 'QuantMatmulAllReduceV5' in api_name):
+            if needs_shared_weight and ("QuantMatmulAllReduceV4" in api_name or "QuantMatmulAllReduceV5" in api_name):
                 v4_dtypes = resolve_custom_numpy_dtypes(thread_ctx.flat_tensor_dtypes)
-                x1_dtype_str = str(v4_dtypes[0]) if v4_dtypes and len(v4_dtypes) > 0 else ''
-                if any(d in x1_dtype_str for d in ('float8', 'hifloat8', 'fp8', 'hif8', 'float4', 'fp4')):
+                x1_dtype_str = str(v4_dtypes[0]) if v4_dtypes and len(v4_dtypes) > 0 else ""
+                if any(d in x1_dtype_str for d in ("float8", "hifloat8", "fp8", "hif8", "float4", "fp4")):
                     needs_shared_weight = False
-                    logging.info(f"[Thread dev={dev_id}] V4/V5 quant detected (x1 dtype={x1_dtype_str}), "
-                                 f"skip weight_shared regeneration")
+                    logging.info(
+                        f"[Thread dev={dev_id}] V4/V5 quant detected (x1 dtype={x1_dtype_str}), "
+                        f"skip weight_shared regeneration"
+                    )
         try:
             InputGenerator(thread_ctx).gen()
-            if (needs_shared_weight and len(thread_ctx.flatten_tensors) > 1
-                    and thread_ctx.flatten_tensors[1] is not None):
+            if (
+                needs_shared_weight
+                and len(thread_ctx.flatten_tensors) > 1
+                and thread_ctx.flatten_tensors[1] is not None
+            ):
                 # flatten_tensors/np_storages may be a tuple (rebased upstream); make mutable
-                if not hasattr(thread_ctx, '_flat_tensors') or thread_ctx._flat_tensors is None:
+                if not hasattr(thread_ctx, "_flat_tensors") or thread_ctx._flat_tensors is None:
                     thread_ctx._flat_tensors = list(thread_ctx.flatten_tensors)
                 else:
                     thread_ctx._flat_tensors = list(thread_ctx._flat_tensors)
@@ -1272,8 +1356,11 @@ def __launch_one_thread(context: TestcaseAclnn,
                         continue
                     ss = thread_ctx.flat_storage_shape(t_idx)
                     dtype = dtypes[t_idx] if t_idx < len(dtypes) else None
-                    data_range = ((thread_ctx.flat_input_data_ranges or ())[t_idx]
-                                  if t_idx < len(thread_ctx.flat_input_data_ranges or ()) else (None, None))
+                    data_range = (
+                        (thread_ctx.flat_input_data_ranges or ())[t_idx]
+                        if t_idx < len(thread_ctx.flat_input_data_ranges or ())
+                        else (None, None)
+                    )
                     low = data_range[0] if data_range[0] is not None else -1.0
                     high = data_range[1] if data_range[1] is not None else 1.0
                     rng = numpy.random.RandomState(base_seed + t_idx)
@@ -1281,6 +1368,7 @@ def __launch_one_thread(context: TestcaseAclnn,
                     thread_ctx.np_storages[t_idx] = np_arr
                     if thread_ctx.is_torch_dtype_support():
                         from ttk.utilities.dtypes import numpy_to_torch_tensor
+
                         complex32 = "complex32" in str(dtype)
                         t = numpy_to_torch_tensor(np_arr, is_complex32=complex32)
                         thread_ctx._flat_tensors[t_idx] = t.reshape(ss)
@@ -1292,16 +1380,16 @@ def __launch_one_thread(context: TestcaseAclnn,
             # (scale_array = 2^share_exp from the same mx_quantize pass).
             # Default InputGenerator produces independent random data which causes
             # errno 561002 (tiling failure).
-            if 'AllGatherMatmulV2' in api_name or 'QuantMatmulAlltoAll' in api_name:
+            if "AllGatherMatmulV2" in api_name or "QuantMatmulAlltoAll" in api_name:
                 __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx, base_seed)
             # aclnnQuantMatmulAllReduceV4/V5: mxfp 需 correlated x1+x1scale, x2+x2scale;
             # per_block/per_tile/hf8 需 share x2+x2scale+x1scale across ranks (weight 语义)。
             # V4/V5 slot 4=x1Scale, slot 5=x2Scale（与 V2 slot 3/4 不同）。
-            if ('QuantMatmulAllReduceV4' in api_name or 'QuantMatmulAllReduceV5' in api_name):
+            if "QuantMatmulAllReduceV4" in api_name or "QuantMatmulAllReduceV5" in api_name:
                 __regenerate_v4_quant_inputs(thread_ctx, rank_idx, base_seed)
             # aclnnQuantAllReduce/aclnnQuantReduceScatter: mxfp 需 correlated x+scales
             # via mx_quantize (NPU tiling requires correlated fp8 x + e8m0 scales)。
-            if api_name in ('aclnnQuantAllReduce', 'aclnnQuantReduceScatter'):
+            if api_name in ("aclnnQuantAllReduce", "aclnnQuantReduceScatter"):
                 __regenerate_quant_allreduce_mxfp_inputs(thread_ctx, rank_idx, base_seed)
             # aclnnQuantMatmulAllReduce (V1/V2/V3): A5 tiling 规则要求
             #   y=fp16 且无 pertokenScale 时 dequantScale 必须为 int64/uint64
@@ -1310,13 +1398,16 @@ def __launch_one_thread(context: TestcaseAclnn,
             # 转 int64（op_class/aclnnQuantMatmulAllReduce.py 行 79-81）。
             # V1/V2/V3 ds_slot=4; V4/V5 int8 路径 ds_slot=5（x2Scale）。
             # V4/V5 fp8/fp4/per_block/mxfp/per_tile 路径不转换（x2Scale 语义不同）。
-            if ('QuantMatmulAllReduce' in api_name and 'Weight' not in api_name
-                    and 'QuantMatmulAlltoAll' not in api_name):
-                if 'QuantMatmulAllReduceV4' in api_name or 'QuantMatmulAllReduceV5' in api_name:
+            if (
+                "QuantMatmulAllReduce" in api_name
+                and "Weight" not in api_name
+                and "QuantMatmulAlltoAll" not in api_name
+            ):
+                if "QuantMatmulAllReduceV4" in api_name or "QuantMatmulAllReduceV5" in api_name:
                     # V4/V5: 仅 int8 路径（x1 dtype == int8）需要转换
                     v4_dtypes = resolve_custom_numpy_dtypes(thread_ctx.flat_tensor_dtypes)
-                    v4_x1_dtype = str(v4_dtypes[0]) if v4_dtypes and len(v4_dtypes) > 0 else ''
-                    if 'int8' in v4_x1_dtype.lower():
+                    v4_x1_dtype = str(v4_dtypes[0]) if v4_dtypes and len(v4_dtypes) > 0 else ""
+                    if "int8" in v4_x1_dtype.lower():
                         __trans_quant_dequant_scale(thread_ctx, dev_id, ds_slot=5)
                 else:
                     __trans_quant_dequant_scale(thread_ctx, dev_id)
@@ -1343,25 +1434,25 @@ def __launch_one_thread(context: TestcaseAclnn,
         # stream/context handles that the main thread then double-freed, causing
         # a SIGSEGV (exit code -11) on A5 during cleanup.
         thread_device._suppress_reset = True
-        from ...runtime.rts_interface import RTSInterface
-        from ...aclnn.op_api_info_keeper import OpApiInfoKeeper, _builtin_api_so_map, _ensure_builtin_so_map
         from ....utilities.platform import get_ascend_lib64_path
-        opp = os.environ.get('ASCEND_OPP_PATH', '')
-        ld = os.environ.get('LD_LIBRARY_PATH', '')
-        home = os.environ.get('ASCEND_HOME_PATH', '')
+        from ...aclnn.op_api_info_keeper import OpApiInfoKeeper, _builtin_api_so_map, _ensure_builtin_so_map
+        from ...runtime.rts_interface import RTSInterface
+
+        opp = os.environ.get("ASCEND_OPP_PATH", "")
+        ld = os.environ.get("LD_LIBRARY_PATH", "")
+        home = os.environ.get("ASCEND_HOME_PATH", "")
         logging.info(
-            f"[Thread dev={dev_id}] env: ASCEND_OPP_PATH='{opp[:60]}' "
-            f"LD_HAS_ASCEND={'ascend' in ld} HOME='{home[:60]}'")
+            f"[Thread dev={dev_id}] env: ASCEND_OPP_PATH='{opp[:60]}' LD_HAS_ASCEND={'ascend' in ld} HOME='{home[:60]}'"
+        )
         # Resolve arch-specific lib64 dir (x86_64-linux on x86, aarch64-linux on arm).
         # Previously hardcoded 'aarch64-linux', which broke on x86_64 hosts:
         # resolved_so became '' and info._so_path was overwritten to empty,
         # causing "SO path is empty" errors and HCCL deadlock on multi-device ops.
         # get_ascend_lib64_path() reads scene.info and returns the correct
         # <arch>-<os>/lib64 path (same helper used by op_api_info_keeper builtin).
-        lib64_dir = get_ascend_lib64_path() if opp else ''
-        so_candidates = [os.path.join(lib64_dir, f) for f in
-                         ('libopapi_transformer.so', 'libopapi.so') if lib64_dir]
-        resolved_so = next((p for p in so_candidates if os.path.isfile(p)), '')
+        lib64_dir = get_ascend_lib64_path() if opp else ""
+        so_candidates = [os.path.join(lib64_dir, f) for f in ("libopapi_transformer.so", "libopapi.so") if lib64_dir]
+        resolved_so = next((p for p in so_candidates if os.path.isfile(p)), "")
         logging.info(f"[Thread dev={dev_id}] lib64_dir={lib64_dir} so={resolved_so}")
         if resolved_so:
             info = OpApiInfoKeeper().info_of(thread_ctx.api_name)
@@ -1382,11 +1473,12 @@ def __launch_one_thread(context: TestcaseAclnn,
                 _ensure_builtin_so_map()
                 logging.info(
                     f"[Thread dev={dev_id}] info=None, builtin_map_keys="
-                    f"{list(_builtin_api_so_map.keys())[:5] if _builtin_api_so_map else 'None'}")
+                    f"{list(_builtin_api_so_map.keys())[:5] if _builtin_api_so_map else 'None'}"
+                )
         thread_rts = main_device._rts_interface.__dict__.copy()
-        thread_rts['memory_manager'] = {}
-        thread_rts['_device_id'] = dev_id
-        thread_rts['_acl_inited'] = True
+        thread_rts["memory_manager"] = {}
+        thread_rts["_device_id"] = dev_id
+        thread_rts["_acl_inited"] = True
         thread_device._rts_interface = RTSInterface.__new__(RTSInterface)
         thread_device._rts_interface.__dict__ = thread_rts
         c_stream = ctypes.c_void_p(c_stream_val)
@@ -1395,15 +1487,15 @@ def __launch_one_thread(context: TestcaseAclnn,
             pre_exec_barrier.wait()
             logging.info(f"[Thread dev={dev_id}] passed pre-exec barrier")
         thread_ctx.prof_result = AclOpExecutor(thread_ctx, thread_device).do(
-            stream=c_stream, skip_context_creation=True)
+            stream=c_stream, skip_context_creation=True
+        )
         logging.info(f"[Thread dev={dev_id}] execution done, success={not thread_ctx.prof_result.failed()}")
         thread_contexts[dev_id] = thread_ctx
         results[dev_id] = thread_ctx.prof_result
         # 透传 HCCL comm/context/stream 给 golden 阶段（真级联需要）。
         # 由主线程在 golden 完成后统一 HcclCommDestroy + DestroyStream + DestroyContext + ResetDevice。
         # 原代码在子线程末尾立即 destroy，导致 golden 阶段拿不到 comm。
-        thread_ctx._hccl_handles = (hccl_comm_val, c_context_val, c_stream_val,
-                                     ep_comm_val, tp_comm_val)
+        thread_ctx._hccl_handles = (hccl_comm_val, c_context_val, c_stream_val, ep_comm_val, tp_comm_val)
     except Exception as e:
         logging.exception(f"[Thread dev={dev_id}] failed:")
         errors[dev_id] = e
@@ -1420,12 +1512,11 @@ def __init_hccl_comm_for_ranks(hccl_dll, rank_list):
     handles = []
     for i in range(n):
         v = c_comms[i]
-        handles.append(v if isinstance(v, int) else v.value if hasattr(v, 'value') else 0)
+        handles.append(v if isinstance(v, int) else v.value if hasattr(v, "value") else 0)
     return handles
 
 
-def __profile_multi_device(context: TestcaseAclnn, device_ids: List[int],
-                           device: AclInterface) -> ApiProfilingResult:
+def __profile_multi_device(context: TestcaseAclnn, device_ids: List[int], device: AclInterface) -> ApiProfilingResult:
     """
     Single-process multi-device execution via threads.
     Each thread gets its own context copy with rank-specific seed.
@@ -1453,24 +1544,23 @@ def __profile_multi_device(context: TestcaseAclnn, device_ids: List[int],
     ret = hccl_dll.HcclCommInitAll(ctypes.c_uint32(ndev), c_devices, hccl_comms)
     if ret != 0:
         raise RuntimeError(f"HcclCommInitAll failed with ret={ret}")
-    logging.info(f"Multi-device: HcclCommInitAll success")
+    logging.info("Multi-device: HcclCommInitAll success")
     comm_handles = []
     for i in range(ndev):
         v = hccl_comms[i]
-        comm_handles.append(v if isinstance(v, int) else v.value
-                           if hasattr(v, 'value') else 0)
+        comm_handles.append(v if isinstance(v, int) else v.value if hasattr(v, "value") else 0)
 
     ep_comm_map = {}
     tp_comm_map = {}
     all_extra_comms = []
     if is_dual_comm:
         attrs = context.attributes
-        ep_ws = int(attrs.get('epWorldSize', 0))
-        tp_ws = int(attrs.get('tpWorldSize', 0))
+        ep_ws = int(attrs.get("epWorldSize", 0))
+        tp_ws = int(attrs.get("tpWorldSize", 0))
         if ep_ws <= 0 or tp_ws <= 0 or ndev % ep_ws or ndev % tp_ws:
             raise ValueError(
-                f"Invalid dual-comm topology: device_count={ndev}, "
-                f"epWorldSize={ep_ws}, tpWorldSize={tp_ws}")
+                f"Invalid dual-comm topology: device_count={ndev}, epWorldSize={ep_ws}, tpWorldSize={tp_ws}"
+            )
         n_ep_groups = ndev // ep_ws
         n_tp_groups = ndev // tp_ws
 
@@ -1504,8 +1594,7 @@ def __profile_multi_device(context: TestcaseAclnn, device_ids: List[int],
                 for i, r in enumerate(group_ranks):
                     tp_comm_map[r] = handles[i]
                 all_extra_comms.extend(handles)
-        logging.info(f"Dual-comm: ep_groups={n_ep_groups} tp_groups={n_tp_groups} "
-                     f"ep_ws={ep_ws} tp_ws={tp_ws}")
+        logging.info(f"Dual-comm: ep_groups={n_ep_groups} tp_groups={n_tp_groups} ep_ws={ep_ws} tp_ws={tp_ws}")
 
     c_contexts = [ctypes.c_void_p() for _ in range(ndev)]
     c_streams = [ctypes.c_void_p() for _ in range(ndev)]
@@ -1525,39 +1614,55 @@ def __profile_multi_device(context: TestcaseAclnn, device_ids: List[int],
     for idx, rank_id in enumerate(device_ids):
         ep_h = ep_comm_map.get(idx, 0)
         tp_h = tp_comm_map.get(idx, 0)
-        t = threading.Thread(target=__launch_one_thread,
-                             args=(context, rank_id, idx, ndev,
-                                   comm_handles[idx], ctx_vals[idx], stm_vals[idx],
-                                   thread_results, thread_contexts, thread_errors, device,
-                                   ep_h, tp_h, pre_exec_barrier, None, comm_destroyed_by_thread))
+        t = threading.Thread(
+            target=__launch_one_thread,
+            args=(
+                context,
+                rank_id,
+                idx,
+                ndev,
+                comm_handles[idx],
+                ctx_vals[idx],
+                stm_vals[idx],
+                thread_results,
+                thread_contexts,
+                thread_errors,
+                device,
+                ep_h,
+                tp_h,
+                pre_exec_barrier,
+                None,
+                comm_destroyed_by_thread,
+            ),
+        )
         threads.append(t)
         t.start()
     for t in threads:
         t.join()
-    logging.info(f"Multi-device: all threads joined")
+    logging.info("Multi-device: all threads joined")
     if thread_errors:
         # 执行失败：立即清理（fail-fast），避免泄漏
-        __cleanup_multi_device_resources(hccl_dll, acl_dll, device_ids,
-                                          comm_handles, ctx_vals, stm_vals,
-                                          all_extra_comms, set())
+        __cleanup_multi_device_resources(
+            hccl_dll, acl_dll, device_ids, comm_handles, ctx_vals, stm_vals, all_extra_comms, set()
+        )
         first_err_dev = min(thread_errors.keys())
         raise thread_errors[first_err_dev]
     # 成功：保留 comm/context/stream 透传给 golden 阶段做真级联，
     # 由 profile_process 在 golden 完成后调用 __cleanup_multi_device_resources。
     context._multi_device_thread_contexts = thread_contexts
     context._multi_device_hccl_handles = {
-        'comm_handles': comm_handles,
-        'ctx_vals': ctx_vals,
-        'stm_vals': stm_vals,
-        'extra_comms': all_extra_comms,
+        "comm_handles": comm_handles,
+        "ctx_vals": ctx_vals,
+        "stm_vals": stm_vals,
+        "extra_comms": all_extra_comms,
     }
     primary_result = thread_results.get(device_ids[0], ApiProfilingResult.fail("UNKNOWN"))
     return primary_result
 
 
-def __cleanup_multi_device_resources(hccl_dll, acl_dll, device_ids,
-                                      comm_handles, ctx_vals, stm_vals,
-                                      extra_comms, comm_destroyed_set):
+def __cleanup_multi_device_resources(
+    hccl_dll, acl_dll, device_ids, comm_handles, ctx_vals, stm_vals, extra_comms, comm_destroyed_set
+):
     """统一清理 HCCL comm / stream / context / device。
     comm_destroyed_set 中的 comm 已被销毁，跳过避免 double-destroy SIGSEGV。
     """
@@ -1611,7 +1716,7 @@ def __cleanup_multi_device_resources(hccl_dll, acl_dll, device_ids,
 
 def __release_retained_multi_device_resources(context: TestcaseAclnn, device_ids: List[int]):
     """Release resources retained for the MC2 golden cascade."""
-    handles = getattr(context, '_multi_device_hccl_handles', None)
+    handles = getattr(context, "_multi_device_hccl_handles", None)
     if handles is None:
         return
     try:
@@ -1619,10 +1724,10 @@ def __release_retained_multi_device_resources(context: TestcaseAclnn, device_ids
             ctypes.CDLL("libhcomm.so"),
             ctypes.CDLL("libascendcl.so"),
             device_ids,
-            handles['comm_handles'],
-            handles['ctx_vals'],
-            handles['stm_vals'],
-            handles['extra_comms'],
+            handles["comm_handles"],
+            handles["ctx_vals"],
+            handles["stm_vals"],
+            handles["extra_comms"],
             set(),
         )
     except Exception:
@@ -1643,9 +1748,7 @@ def _invoke_aclnn_npu_preprocess(context, switches, process_ctx, dev_id):
     plan = context.get_param_plan()
     args, attributes = plan.build_args(context.tensors, context.scalars, context.attributes)
     process_ctx.notify_status("OnNpuPreprocess")
-    return invoke_npu_preprocess(
-        context, switches, plan, args, attributes, func=func
-    )
+    return invoke_npu_preprocess(context, switches, plan, args, attributes, func=func)
 
 
 def _run_aclnn_npu_preprocess(context, switches, process_ctx, dev_id):
@@ -1659,12 +1762,14 @@ def _run_aclnn_npu_preprocess(context, switches, process_ctx, dev_id):
     return None
 
 
-def profile_process(context: TestcaseAclnn,
-                    device_grant_events: dict,
-                    device_granted_indices: dict,
-                    dev_id: int,
-                    is_multi_device: bool = False,
-                    device_ids: list = None):
+def profile_process(
+    context: TestcaseAclnn,
+    device_grant_events: dict,
+    device_granted_indices: dict,
+    dev_id: int,
+    is_multi_device: bool = False,
+    device_ids: list = None,
+):
     """
     Op Api Testcase Profiling Entrance
     """
@@ -1739,9 +1844,7 @@ def profile_process(context: TestcaseAclnn,
         if manual_mode == "prepare":
             try:
                 prepared_inputs = snapshot_manual_values(context.np_storages, "input")
-                prepared_scalars = snapshot_manual_values(
-                    context.flatten_scalars or (), "scalar"
-                )
+                prepared_scalars = snapshot_manual_values(context.flatten_scalars or (), "scalar")
                 write_goldens = switches.dump_config.is_golden_enabled()
                 if write_goldens:
                     process_ctx.notify_status("OnGenGolden")
@@ -1770,9 +1873,13 @@ def profile_process(context: TestcaseAclnn,
     process_ctx.notify_status("OnAcquireLock")
     use_device = switches.mode.has_device()
     if is_multi_device and device_ids:
-        with MultiDeviceLock(process_ctx, device_ids, use_device=use_device,
-                             grant_events=device_grant_events,
-                             granted_indices=device_granted_indices):
+        with MultiDeviceLock(
+            process_ctx,
+            device_ids,
+            use_device=use_device,
+            grant_events=device_grant_events,
+            granted_indices=device_granted_indices,
+        ):
             process_ctx.notify_status("OnProfilingPrint")
             __profiling_print(context, dev_id)
             process_ctx.notify_status("OnProfiling")
@@ -1783,12 +1890,14 @@ def profile_process(context: TestcaseAclnn,
                 logging.exception("Multi-device profiling failed:")
                 context.prof_result = ApiProfilingResult.fail("MULTI_DEVICE_FAILED")
     else:
-        with DeviceLock(process_ctx, dev_id, use_device=use_device,
-                        grant_event=device_grant_events.get(dev_id),
-                        granted_idx=device_granted_indices.get(dev_id)):
-            preprocess_error = _run_aclnn_npu_preprocess(
-                context, switches, process_ctx, dev_id
-            )
+        with DeviceLock(
+            process_ctx,
+            dev_id,
+            use_device=use_device,
+            grant_event=device_grant_events.get(dev_id),
+            granted_idx=device_granted_indices.get(dev_id),
+        ):
+            preprocess_error = _run_aclnn_npu_preprocess(context, switches, process_ctx, dev_id)
             if preprocess_error:
                 return prof_end(context, preprocess_error)
             process_ctx.notify_status("OnProfilingPrint")
@@ -1813,10 +1922,9 @@ def profile_process(context: TestcaseAclnn,
         return return_structure
     else:
         if is_multi_device and device_ids and switches.golden_mode == "Disable":
-            thread_contexts = getattr(context, '_multi_device_thread_contexts', {})
+            thread_contexts = getattr(context, "_multi_device_thread_contexts", {})
             all_passed = all(
-                did in thread_contexts and not thread_contexts[did].prof_result.failed()
-                for did in device_ids
+                did in thread_contexts and not thread_contexts[did].prof_result.failed() for did in device_ids
             )
             __release_retained_multi_device_resources(context, device_ids)
             compare_result = ApiComparisonResult(None)
@@ -1846,7 +1954,7 @@ def profile_process(context: TestcaseAclnn,
         if need_3party:
             context.golden_mode_override = "Promote"
         try:
-            if is_multi_device and device_ids and hasattr(context, '_multi_device_thread_contexts'):
+            if is_multi_device and device_ids and hasattr(context, "_multi_device_thread_contexts"):
                 thread_contexts = context._multi_device_thread_contexts
                 all_passed = True
                 all_precision = []
@@ -1863,28 +1971,28 @@ def profile_process(context: TestcaseAclnn,
                     # Plugin-first: check for per-operator golden in TestSpec.
                     # If the operator's spec.py declares a golden callable,
                     # delegate to it; otherwise fall back to the built-in mc2_dispatcher dispatcher.
-                    _plugin_golden = get_spec_attr(
-                        context.api_name, "golden",
-                        getattr(switches, "plugin_path", None))
+                    _plugin_golden = get_spec_attr(context.api_name, "golden", getattr(switches, "plugin_path", None))
                     if _plugin_golden is not None:
                         # Inject proc_timeout into thread_contexts attributes so
                         # cascade workers can read it via _get_timeout().
-                        _timeout_val = int(
-                            getattr(switches, "proc_timeout", 0) or 3600)
+                        _timeout_val = int(getattr(switches, "proc_timeout", 0) or 3600)
                         for _did in device_ids:
                             _tc = thread_contexts.get(_did)
                             if _tc and hasattr(_tc, "attributes"):
                                 _tc.attributes["proc_timeout"] = _timeout_val
                         logging.info(
                             f"Multi-device: cascade timeout = {_timeout_val}s, "
-                            f"using plugin golden for {context.api_name}")
+                            f"using plugin golden for {context.api_name}"
+                        )
                         _plugin_golden(thread_contexts, device_ids, all_precision)
                     else:
                         __golden_multi_device_compare(thread_contexts, device_ids, all_precision)
                     has_fail = any("FAIL" in p or "EXCEPTION" in p for p in all_precision)
                     compare_result = ApiComparisonResult(None)
-                    compare_result.set(",".join(all_precision) if all_precision else "MULTI_DEVICE_COMPARE_FAILURE",
-                                       "PASS" if not has_fail else "FAIL")
+                    compare_result.set(
+                        ",".join(all_precision) if all_precision else "MULTI_DEVICE_COMPARE_FAILURE",
+                        "PASS" if not has_fail else "FAIL",
+                    )
                     process_ctx.notify_status("OnReturning")
                     return_structure = ApiProfilingReturnStructure()
                     return_structure.construct(context, compare_result)
@@ -1908,7 +2016,7 @@ def profile_process(context: TestcaseAclnn,
                     GoldenGenerator(context).gen()
                     process_ctx.notify_status("OnDumpGoldenDataIfRequired")
                     __dump_golden(context)
-                except:
+                except Exception:
                     logging.exception("Golden data generation failure")
         finally:
             if hasattr(context, "golden_mode_override"):
@@ -1918,7 +2026,7 @@ def profile_process(context: TestcaseAclnn,
     third_parties = None
     xpu_results = None
     if not context.prof_result.failed():
-        from ttk.remote.client import xpu_mode_of, collect_third_party
+        from ttk.remote.client import collect_third_party, xpu_mode_of
 
         xpu_mode = xpu_mode_of(switches, need_3party)
         if xpu_mode:

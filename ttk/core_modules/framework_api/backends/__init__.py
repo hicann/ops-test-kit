@@ -13,8 +13,8 @@ import importlib
 import logging
 from typing import Optional
 
-from .base import Backend
 from ....config.loader import get_hardware_config
+from .base import Backend
 
 _log = logging.getLogger(__name__)
 

@@ -12,6 +12,7 @@
 Validates end-to-end flow: config -> heartbeat -> dispatch -> verify -> cleanup.
 Uses port 19094 to avoid conflicts with other test suites.
 """
+
 import http.client
 import json
 import os
@@ -37,6 +38,7 @@ def xpu_server():
 
     # Create a config file for the server
     import yaml
+
     tmp_dir = tempfile.mkdtemp(prefix="ttk_tmp_integration_")
     config_file = os.path.join(tempfile.gettempdir(), "xpu_server_integration.yaml")
     config_data = {
@@ -49,9 +51,9 @@ def xpu_server():
         yaml.dump(config_data, f)
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "server.xpu_server",
-         "--port", "19094", "--dry-run", "--config", config_file],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        [sys.executable, "-m", "server.xpu_server", "--port", "19094", "--dry-run", "--config", config_file],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         env=os.environ.copy(),
     )
     # Wait for server readiness

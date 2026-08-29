@@ -225,11 +225,11 @@ def coerce_value(raw, target_type):
         if isinstance(raw, str):
             try:
                 return float(raw)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as err:
                 result = safe_eval_division(raw)
                 if result is not None:
                     return result
-                raise ValueError(f"Cannot coerce {raw!r} to {target_type}: not a numeric value")
+                raise ValueError(f"Cannot coerce {raw!r} to {target_type}: not a numeric value") from err
         return float(raw)
     if target_type == "str":
         if (

@@ -24,6 +24,7 @@ Covers:
 
 No NPU needed — this tests the XPU dispatch chain, not the kernel compile.
 """
+
 import http.client
 
 # Dynamic capability check (find_spec = no import, no TF flood).
@@ -51,8 +52,9 @@ has_tf = _ilu.find_spec("tensorflow") is not None
 if has_tf:
     # find_spec 只看包存在；CI 的 tf 可能装了但 import 崩溃（protobuf 不兼容 / C 扩展 segfault）
     try:
-        has_tf = subprocess.run([sys.executable, "-c", "import tensorflow"],
-                                capture_output=True, timeout=90).returncode == 0
+        has_tf = (
+            subprocess.run([sys.executable, "-c", "import tensorflow"], capture_output=True, timeout=90).returncode == 0
+        )
     except Exception:
         has_tf = False
 
@@ -78,14 +80,14 @@ def xpu_server():
     """Start a standalone XPU-Server (CPU stub, same as production deploy)."""
     port = _free_port()
     env = dict(os.environ)
-    ttk_remote = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "ttk", "remote"))
-    env["PYTHONPATH"] = os.pathsep.join(
-        p for p in (ttk_remote, env.get("PYTHONPATH", "")) if p)
+    ttk_remote = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "ttk", "remote"))
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (ttk_remote, env.get("PYTHONPATH", "")) if p)
     proc = subprocess.Popen(
-        [sys.executable, "-m", "server.xpu_server",
-         "--port", str(port), "--devices", "cpu"],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        [sys.executable, "-m", "server.xpu_server", "--port", str(port), "--devices", "cpu"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     # Task 6 removed /health; readiness now probes GET /v1/heartbeat (merged
     # health+detect+register). tenant_id=e2e_xpu matches collect_xpu_results.
     for _ in range(20):
@@ -138,9 +140,9 @@ def _dispatch(xpu_port, tmp_path, monkeypatch, spec_subdir=None, cli_providers=N
     ep_key = f"127.0.0.1:{xpu_port}"
     os.makedirs(os.path.dirname(health_path), exist_ok=True)
     with open(health_path, "w") as f:
-        json.dump({"endpoints": {
-            ep_key: {"alive": True, "providers": providers,
-                     "hardware": hardware, "ts": time.time()}}}, f)
+        json.dump(
+            {"endpoints": {ep_key: {"alive": True, "providers": providers, "hardware": hardware, "ts": time.time()}}}, f
+        )
 
     # 3. Wire env + RemoteConfig + clear Singleton EVERY call so the
     #    EndpointView constructed inside collect_xpu_results binds to THIS
@@ -150,9 +152,9 @@ def _dispatch(xpu_port, tmp_path, monkeypatch, spec_subdir=None, cli_providers=N
     # set_remote_config override (both removed in Task 6/7). Write a temp yaml
     # with this endpoint and load it so get_remote_config() sees it.
     yaml_path = tmp_path / "ttk.conf.yaml"
-    yaml_path.write_text(
-        f"remote:\n  endpoints:\n    - host: 127.0.0.1\n      port: {xpu_port}\n")
+    yaml_path.write_text(f"remote:\n  endpoints:\n    - host: 127.0.0.1\n      port: {xpu_port}\n")
     from ttk.config.loader import load_config
+
     load_config(str(yaml_path))
     # cli_providers is passed directly to resolve_providers below (and into
     # collect_xpu_results); TTK_XPU_PROVIDER env is no longer read by production
@@ -179,9 +181,13 @@ def _dispatch(xpu_port, tmp_path, monkeypatch, spec_subdir=None, cli_providers=N
     x = np.random.randn(4, 8).astype(np.float32)
     y = np.random.randn(4, 8).astype(np.float32)
     results = collect_xpu_results(
-        specs, inputs=[x, y], input_names=["x", "y"],
-        mode=DATA | PERF, tenant_id=_TENANT_ID,
-        op_name="add", op_type="Add",
+        specs,
+        inputs=[x, y],
+        input_names=["x", "y"],
+        mode=DATA | PERF,
+        tenant_id=_TENANT_ID,
+        op_name="add",
+        op_type="Add",
     )
     # priority = first resolved provider (spec order when a spec is given); DATA goes to it.
     return results, (x, y), (resolved[0] if resolved else None)
@@ -203,11 +209,11 @@ def _assert_priority_output(results, x, y, priority):
     assert priority is not None, "no provider resolved (priority unknown)"
     outs = results[priority].get("outputs")
     assert outs, f"priority {priority} has no outputs (expected DATA for priority)"
-    np.testing.assert_allclose(outs[0], np.add(x, y), rtol=1e-5,
-                                err_msg=f"priority {priority} output mismatch")
+    np.testing.assert_allclose(outs[0], np.add(x, y), rtol=1e-5, err_msg=f"priority {priority} output mismatch")
 
 
 # ---- No-spec scenarios ----
+
 
 @needs_both
 def test_no_spec_discovery_both_providers(xpu_server, tmp_path, monkeypatch):
@@ -220,10 +226,10 @@ def test_no_spec_discovery_both_providers(xpu_server, tmp_path, monkeypatch):
 
 # ---- Spec scenarios: all third_party styles ----
 
+
 @needs_torch
 def test_spec_tp_str(xpu_server, tmp_path, monkeypatch):
     """third_party = 'torch.add' (single API string); torch is priority."""
-    results, (x, y), priority = _dispatch(xpu_server, tmp_path, monkeypatch,
-                                          spec_subdir="tp_str")
+    results, (x, y), priority = _dispatch(xpu_server, tmp_path, monkeypatch, spec_subdir="tp_str")
     _assert_pass(results, "torch")
     _assert_priority_output(results, x, y, priority)

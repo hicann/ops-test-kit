@@ -4,6 +4,7 @@ Dispatcher - Worker-side remote execution dispatch.
 Sends numpy inputs to xpu_server, handles 424 dependency retry with automatic
 /v1/sync upload, returns numpy outputs.
 """
+
 import base64
 import hashlib
 import http.client
@@ -52,6 +53,7 @@ class RemoteResult:
     ``api`` carries the server-resolved API (X-API header) so the collector
     can show the real API rather than a client-side guess.
     """
+
     outputs: list
     perf: Optional[dict] = None
     api: Optional[str] = None
@@ -63,6 +65,7 @@ def _parse_client_mode(raw) -> int:
     Accepts 'data', 'data_perf', or None. Defaults to DATA mode.
     """
     from ttk.remote import DATA, PERF
+
     if isinstance(raw, int):
         return raw
     if isinstance(raw, str):
@@ -91,10 +94,9 @@ def _parse_api_header(raw):
     return raw.strip() or None
 
 
-def _backoff_delay(n: int, base: float, max_delay: float, jitter: float,
-                   rng=random.uniform) -> float:
+def _backoff_delay(n: int, base: float, max_delay: float, jitter: float, rng=random.uniform) -> float:
     """Exponential backoff with jitter: min(base*2**n, max_delay) * (1 ± jitter)."""
-    capped = min(base * (2 ** n), max_delay)
+    capped = min(base * (2**n), max_delay)
     return capped * (1 + rng(-jitter, jitter))
 
 
@@ -110,10 +112,11 @@ def _cfg(field: str, default, cast=float):
         Config value cast to specified type, or default
     """
     from ttk.remote.config import get_remote_config
+
     config = get_remote_config()
     val = getattr(config, field, default) if config else default
     v = val if val is not None else default
-    if field == 'backoff_jitter':
+    if field == "backoff_jitter":
         return cast(max(0.0, min(float(v), 1.0)))
     return cast(v)
 
@@ -136,7 +139,8 @@ def _serialize_to_file(inputs: list, dir=None) -> str:
 
 
 def _reinterpret_dtype(arr, dtype_name):
-    from ..utilities.dtypes import numpy_bfloat16, numpy_float8_e5m2, numpy_float8_e4m3fn, numpy_float8_e8m0
+    from ..utilities.dtypes import numpy_bfloat16, numpy_float8_e4m3fn, numpy_float8_e5m2, numpy_float8_e8m0
+
     try:
         if dtype_name == "bfloat16":
             return arr.view(numpy_bfloat16())
@@ -221,9 +225,9 @@ def _build_input_schema(inputs: list, input_names: list, input_formats: Optional
     if not input_names:
         return []
 
-    assert len(inputs) <= len(input_names), \
-        f"inputs({len(inputs)}) > names({len(input_names)}): " \
-        f"slots/names 长度不匹配（caller 构造 bug）"
+    assert len(inputs) <= len(input_names), (
+        f"inputs({len(inputs)}) > names({len(input_names)}): slots/names 长度不匹配（caller 构造 bug）"
+    )
 
     fmts = list(input_formats) if input_formats else []
     fi = 0
@@ -234,18 +238,20 @@ def _build_input_schema(inputs: list, input_names: list, input_formats: Optional
             schema.append({"name": name, "index": None, "dtype": None, "format": fmt})
         elif isinstance(slot, (list, tuple)):
             leaves = [x for x in deep_flatten(slot) if x is not None]
-            schema.append({
-                "name": name,
-                "indices": [fi + i for i in range(len(leaves))],
-                "dtype": _dtype_name(leaves[0]) if leaves else None,
-                "format": fmt,
-            })
+            schema.append(
+                {
+                    "name": name,
+                    "indices": [fi + i for i in range(len(leaves))],
+                    "dtype": _dtype_name(leaves[0]) if leaves else None,
+                    "format": fmt,
+                }
+            )
             fi += len(leaves)
         else:  # ndarray（含 0-d）/ numpy 标量 —— 单叶子,直接用 slot
             schema.append({"name": name, "index": fi, "dtype": _dtype_name(slot), "format": fmt})
             fi += 1
     # names 多于 inputs:尾部补 index:null
-    for name in input_names[len(inputs):]:
+    for name in input_names[len(inputs) :]:
         schema.append({"name": name, "index": None, "dtype": None, "format": None})
     return schema
 
@@ -256,9 +262,7 @@ def _schema_leaf_count(schema: list) -> int:
     `dispatch_to_remote` 内 `effective_count` 用此派生 header，使 X-Input-Count
     按构造等于 schema 叶子数（非第三个独立 deep_flatten 表达式）。
     """
-    return sum(len(e["indices"]) if "indices" in e
-               else (1 if e.get("index") is not None else 0)
-               for e in schema)
+    return sum(len(e["indices"]) if "indices" in e else (1 if e.get("index") is not None else 0) for e in schema)
 
 
 def _find_spec_file(module_name: str, search_roots: list) -> Optional[str]:
@@ -295,9 +299,9 @@ def _read_file_with_hash(file_path: str) -> tuple:
     return base64.b64encode(raw).decode(), hashlib.sha256(raw).hexdigest()
 
 
-def _do_http_sync(missing: str, search_roots: list,
-                  endpoint_host: str, endpoint_port: int,
-                  tenant_id: str, timeout: int) -> bool:
+def _do_http_sync(
+    missing: str, search_roots: list, endpoint_host: str, endpoint_port: int, tenant_id: str, timeout: int
+) -> bool:
     """Find and sync a missing dependency file to xpu_server.
 
     Returns True if the file was found and synced successfully.
@@ -310,18 +314,13 @@ def _do_http_sync(missing: str, search_roots: list,
     rel_path = os.path.basename(file_path)
     content_b64, file_hash = _read_file_with_hash(file_path)
 
-    sync_body = json.dumps({
-        "files": {
-            rel_path: {"content": content_b64, "hash": file_hash}
-        }
-    })
+    sync_body = json.dumps({"files": {rel_path: {"content": content_b64, "hash": file_hash}}})
 
     try:
-        conn = _create_connection(
-            endpoint_host, endpoint_port, timeout=timeout)
-        conn.request("POST", "/v1/sync", body=sync_body,
-                     headers={"Content-Type": "application/json",
-                              "X-Tenant-ID": tenant_id})
+        conn = _create_connection(endpoint_host, endpoint_port, timeout=timeout)
+        conn.request(
+            "POST", "/v1/sync", body=sync_body, headers={"Content-Type": "application/json", "X-Tenant-ID": tenant_id}
+        )
         resp = conn.getresponse()
         resp.read()
         conn.close()
@@ -336,9 +335,9 @@ def _do_http_sync(missing: str, search_roots: list,
         return False
 
 
-def _sync_missing_dependency(missing: str, search_roots: list,
-                              endpoint_host: str, endpoint_port: int,
-                              tenant_id: str, timeout: int) -> bool:
+def _sync_missing_dependency(
+    missing: str, search_roots: list, endpoint_host: str, endpoint_port: int, tenant_id: str, timeout: int
+) -> bool:
     """Sync a missing dependency, serialized across workers by semaphore.
 
     The first worker to acquire the per-(endpoint, module) lock performs the
@@ -346,17 +345,16 @@ def _sync_missing_dependency(missing: str, search_roots: list,
     avoiding duplicate uploads and concurrent-write races on xpu_server.
     """
     from ttk.core_modules.tbe_multiprocessing.pool import get_process_context
+
     ctx = get_process_context()
     if ctx is None:
         # Single-process mode (no pool): sync directly — no concurrent dedup needed.
-        return _do_http_sync(missing, search_roots, endpoint_host,
-                             endpoint_port, tenant_id, timeout)
+        return _do_http_sync(missing, search_roots, endpoint_host, endpoint_port, tenant_id, timeout)
     sync_id = f"xpu_sync_{endpoint_host}:{endpoint_port}:{missing}"
 
     if ctx.acquire_semaphore(sync_id):
         try:
-            ok = _do_http_sync(missing, search_roots, endpoint_host,
-                               endpoint_port, tenant_id, timeout)
+            ok = _do_http_sync(missing, search_roots, endpoint_host, endpoint_port, tenant_id, timeout)
             ctx.set_semaphore(sync_id, "ok" if ok else "fail")
             return ok
         except Exception as e:
@@ -369,14 +367,13 @@ def _sync_missing_dependency(missing: str, search_roots: list,
     # the holder process crashed. The timeout below is a last-resort safety
     # net for edge cases where neither path fires (e.g. holder stuck in
     # zombie state, pool detection delayed).
-    logging.debug(f"424: waiting for another worker to sync '{missing}' "
-                  f"({sync_id})")
+    logging.debug(f"424: waiting for another worker to sync '{missing}' ({sync_id})")
     wait_deadline = time.monotonic() + timeout
     while (result := ctx.get_semaphore(sync_id)) is None:
         if time.monotonic() >= wait_deadline:
             raise RemoteExecutionError(
-                f"timed out waiting for sync of '{missing}' "
-                f"(holder may have crashed); sync_id={sync_id}")
+                f"timed out waiting for sync of '{missing}' (holder may have crashed); sync_id={sync_id}"
+            )
         time.sleep(0.5)
     return result == "ok"
 
@@ -384,7 +381,8 @@ def _sync_missing_dependency(missing: str, search_roots: list,
 def _create_connection(host, port, timeout):
     """HTTP or HTTPS connection based on RemoteConfig TLS fields (shared tls module)."""
     from ttk.remote.config import get_remote_config
-    from ttk.remote.tls import tls_from_config, build_tls_connection
+    from ttk.remote.tls import build_tls_connection, tls_from_config
+
     return build_tls_connection(host, port, timeout, tls_from_config(get_remote_config()))
 
 
@@ -462,12 +460,11 @@ def dispatch_to_remote(
         headers["X-Op-Type"] = op_type
 
     def _done(outputs, perf, api=None):
-        return (RemoteResult(outputs=outputs, perf=perf, api=api)
-                if return_result else outputs)
+        return RemoteResult(outputs=outputs, perf=perf, api=api) if return_result else outputs
 
-    deadline_at = time.monotonic() + _cfg('dispatch_deadline_s', 300.0, int)
-    budget_503 = _cfg('max_503_retries', 10.0, int)
-    budget_conn = _cfg('max_conn_retries', 5.0, int)
+    deadline_at = time.monotonic() + _cfg("dispatch_deadline_s", 300.0, int)
+    budget_503 = _cfg("max_503_retries", 10.0, int)
+    budget_conn = _cfg("max_conn_retries", 5.0, int)
     budget_424 = max_retries
     used_503 = 0
     used_conn = 0
@@ -480,12 +477,10 @@ def dispatch_to_remote(
         tmp_path = _serialize_to_file(inputs, dir=req_dir)
         while True:
             if time.monotonic() >= deadline_at:
-                raise RemoteExecutionError(
-                    f"dispatch deadline ({_cfg('dispatch_deadline_s', 300.0, int)}s) exceeded")
+                raise RemoteExecutionError(f"dispatch deadline ({_cfg('dispatch_deadline_s', 300.0, int)}s) exceeded")
             conn = None
             try:
-                conn = _create_connection(
-                    endpoint_host, endpoint_port, timeout=timeout)
+                conn = _create_connection(endpoint_host, endpoint_port, timeout=timeout)
                 file_size = os.path.getsize(tmp_path)
                 headers["Content-Length"] = str(file_size)
                 conn.putrequest("POST", "/v1/run")
@@ -521,10 +516,9 @@ def dispatch_to_remote(
                     budget_424 -= 1
                     if budget_424 < 0:
                         raise RemoteExecutionError(
-                            f"424 dependency retries ({max_retries}) exceeded: "
-                            f"{resp_body.decode()}")
-                    logging.warning(f"424 retry ({max_retries - budget_424}/{max_retries}): "
-                                    f"{resp_body.decode()}")
+                            f"424 dependency retries ({max_retries}) exceeded: {resp_body.decode()}"
+                        )
+                    logging.warning(f"424 retry ({max_retries - budget_424}/{max_retries}): {resp_body.decode()}")
                     try:
                         missing_info = json.loads(resp_body)
                         missing_module = missing_info.get("missing", "")
@@ -538,46 +532,53 @@ def dispatch_to_remote(
                             raise RemoteExecutionError(
                                 f"server requires module '{missing_module}' which is not "
                                 f"in spec search paths; likely a server-side "
-                                f"environment dependency (pip install) is missing")
+                                f"environment dependency (pip install) is missing"
+                            )
                         synced = _sync_missing_dependency(
-                            missing_module, spec_search_roots,
-                            endpoint_host, endpoint_port, tenant_id, timeout)
+                            missing_module, spec_search_roots, endpoint_host, endpoint_port, tenant_id, timeout
+                        )
                         if not synced:
                             logging.warning(
                                 f"Could not sync '{missing_module}', "
-                                f"retrying ({max_retries - budget_424}/{max_retries})")
-                    continue                                # does NOT touch 503 budget
+                                f"retrying ({max_retries - budget_424}/{max_retries})"
+                            )
+                    continue  # does NOT touch 503 budget
 
                 if resp.status == 503:
                     resp.read()
                     if used_503 >= budget_503:
-                        raise RemoteBusyError(
-                            f"server busy (503), retry budget ({budget_503}) exhausted")
+                        raise RemoteBusyError(f"server busy (503), retry budget ({budget_503}) exhausted")
                     used_503 += 1
-                    time.sleep(_backoff_delay(used_503 - 1,
-                                              _cfg('backoff_base_s', 0.5),
-                                              _cfg('backoff_max_s', 10.0),
-                                              _cfg('backoff_jitter', 0.25)))
-                    continue                                # does NOT touch 424 budget
+                    time.sleep(
+                        _backoff_delay(
+                            used_503 - 1,
+                            _cfg("backoff_base_s", 0.5),
+                            _cfg("backoff_max_s", 10.0),
+                            _cfg("backoff_jitter", 0.25),
+                        )
+                    )
+                    continue  # does NOT touch 424 budget
 
                 # 400 / 500 / other -> genuine failure, do not retry.
                 resp_body = resp.read()
-                raise RemoteExecutionError(
-                    f"Server returned {resp.status}: {resp_body.decode()}")
+                raise RemoteExecutionError(f"Server returned {resp.status}: {resp_body.decode()}")
 
             except RemoteExecutionError:
                 raise
             except (http.client.HTTPException, ConnectionRefusedError, OSError) as e:
                 # _mark_endpoint_dead removed: round-robin + HB 11s eviction replace it
                 if used_conn >= budget_conn:
-                    raise RemoteConnectionError(
-                        f"connection retries ({budget_conn}) exhausted: {e}") from e
+                    raise RemoteConnectionError(f"connection retries ({budget_conn}) exhausted: {e}") from e
                 used_conn += 1
                 logging.warning(f"conn error, retry ({used_conn}/{budget_conn}): {e}")
-                time.sleep(_backoff_delay(used_conn - 1,
-                                          _cfg('backoff_base_s', 0.5),
-                                          _cfg('backoff_max_s', 10.0),
-                                          _cfg('backoff_jitter', 0.25)))
+                time.sleep(
+                    _backoff_delay(
+                        used_conn - 1,
+                        _cfg("backoff_base_s", 0.5),
+                        _cfg("backoff_max_s", 10.0),
+                        _cfg("backoff_jitter", 0.25),
+                    )
+                )
                 continue
             finally:
                 if conn:

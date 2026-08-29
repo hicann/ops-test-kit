@@ -11,10 +11,9 @@
 Profiling Instance Base Module
 """
 
-
 __all__ = ["InstanceBase", "TaskA", "TaskType", "TaskKeeper", "ProfileObject"]
 
 
 from .instance_base import InstanceBase
-from .task import TaskA, TaskType, TaskKeeper
 from .profile_object import ProfileObject
+from .task import TaskA, TaskKeeper, TaskType

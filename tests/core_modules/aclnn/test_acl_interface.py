@@ -89,6 +89,7 @@ def test_acl_init_tracks_external_runtime(monkeypatch):
     device = AclInterface.__new__(AclInterface)
     device._acl_inited = False
     device._owns_acl_runtime = False
+
     def _noop():
         pass
 
@@ -96,13 +97,15 @@ def test_acl_init_tracks_external_runtime(monkeypatch):
     call = {}
 
     def record_call(kind, api_name, extra_log, *args, accepted_errors=()):
-        call.update({
-            "kind": kind,
-            "api_name": api_name,
-            "extra_log": extra_log,
-            "args": args,
-            "accepted_errors": accepted_errors,
-        })
+        call.update(
+            {
+                "kind": kind,
+                "api_name": api_name,
+                "extra_log": extra_log,
+                "args": args,
+                "accepted_errors": accepted_errors,
+            }
+        )
         return ACL_ERROR_REPEAT_INITIALIZE
 
     monkeypatch.setattr(device, "_api_call", record_call)
@@ -121,8 +124,7 @@ def test_acl_init_tracks_external_runtime(monkeypatch):
 
 
 @pytest.mark.parametrize("owns_runtime, expected_reset_calls", [(False, 0), (True, 1)])
-def test_reset_only_resets_owned_runtime_device(
-        monkeypatch, owns_runtime, expected_reset_calls):
+def test_reset_only_resets_owned_runtime_device(monkeypatch, owns_runtime, expected_reset_calls):
     device = AclInterface.__new__(AclInterface)
     device._owns_acl_runtime = owns_runtime
     device._device_id = 0
@@ -145,8 +147,7 @@ def test_reset_only_resets_owned_runtime_device(
 
 
 @pytest.mark.parametrize("owns_runtime, expected_finalize_calls", [(False, 0), (True, 1)])
-def test_finalize_only_finalizes_owned_runtime(
-        monkeypatch, owns_runtime, expected_finalize_calls):
+def test_finalize_only_finalizes_owned_runtime(monkeypatch, owns_runtime, expected_finalize_calls):
     device = AclInterface.__new__(AclInterface)
     device._acl_inited = True
     device._owns_acl_runtime = owns_runtime
@@ -168,9 +169,7 @@ def test_finalize_only_finalizes_owned_runtime(
 
 def test_create_acl_tensor_from_numpy_copies_complete_storage_with_offset():
     storage = numpy.arange(64, dtype=numpy.uint8).reshape(4, 16)
-    view = np_as_strided_safe(
-        storage.ravel()[3:], shape=(2, 2, 4), strides=(16, 4, 1)
-    )
+    view = np_as_strided_safe(storage.ravel()[3:], shape=(2, 2, 4), strides=(16, 4, 1))
     device, captured = make_numpy_tensor_device()
 
     device.create_acl_tensor(view, "ND", storage.shape)
@@ -187,9 +186,7 @@ def test_create_acl_tensor_from_numpy_rejects_ambiguous_parent_storage():
     parent = numpy.arange(128, dtype=numpy.uint8)
     storage_shape = (4, 16)
     # The 93-byte tail and 128-byte parent are both larger than the declared storage.
-    view = np_as_strided_safe(
-        parent[35:], shape=(2, 2, 4), strides=(16, 4, 1)
-    )
+    view = np_as_strided_safe(parent[35:], shape=(2, 2, 4), strides=(16, 4, 1))
     device, _ = make_numpy_tensor_device()
 
     with pytest.raises(ValueError, match="exact contiguous numpy storage"):

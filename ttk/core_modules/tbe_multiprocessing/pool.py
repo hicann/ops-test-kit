@@ -11,32 +11,30 @@
 Custom Pool Classes
 """
 
-
 __all__ = ["get_process_context", "SimpleCommandProcess", "DeviceLock", "MultiDeviceLock"]
 
 
 # Standard Packages
 import atexit
 import gc
+import importlib
+import logging
+import multiprocessing as mp
 import os
+import re
 import sys
 import time
-import logging
 import traceback
-import re
-import subprocess
-import importlib
-import multiprocessing as mp
-import numpy
 from enum import Enum, auto
 from queue import SimpleQueue
-from typing import Any, Dict, List, Optional, NoReturn, Callable
+from typing import Any, Callable, Dict, List, NoReturn, Optional
+
+import numpy
 
 # Third-Party Packages
 import psutil
 
-from ...utilities import set_process_name, set_thread_name, signal_registered
-from ...utilities import set_global_storage, get_global_storage
+from ...utilities import get_global_storage, set_global_storage, set_process_name, set_thread_name, signal_registered
 from ..tbe_logging import default_logging_config
 
 
@@ -73,6 +71,7 @@ process_context = None
 
 class DeviceLockManager:
     """Parent-side device lock state manager."""
+
     lock_holders: Dict[int, "SimpleCommandProcess"] = {}
     pending: Dict[int, List["SimpleCommandProcess"]] = {}
 
@@ -86,8 +85,7 @@ class DeviceLockManager:
             cls.pending.setdefault(device_id, []).append((proc, lock_id))
 
     @classmethod
-    def try_grant_multi(cls, proc, device_ids, lock_id,
-                        grant_events, granted_indices):
+    def try_grant_multi(cls, proc, device_ids, lock_id, grant_events, granted_indices):
         for dev_id in device_ids:
             if cls.lock_holders.get(dev_id) is not None:
                 for d in device_ids:
@@ -110,8 +108,7 @@ class DeviceLockManager:
         for dev_id in device_ids:
             if cls.lock_holders.get(dev_id) is proc:
                 cls.lock_holders[dev_id] = None
-                cls._grant_next(dev_id, grant_events[dev_id],
-                                granted_indices[dev_id])
+                cls._grant_next(dev_id, grant_events[dev_id], granted_indices[dev_id])
 
     @classmethod
     def on_process_dead(cls, proc, grant_events, granted_indices):
@@ -149,8 +146,7 @@ class DeviceLock:
         granted_idx: Manager().Value('i', -1) for grant identity verification
     """
 
-    def __init__(self, process_ctx, device_id, use_device=True,
-                 grant_event=None, granted_idx=None):
+    def __init__(self, process_ctx, device_id, use_device=True, grant_event=None, granted_idx=None):
         self.process_ctx = process_ctx
         self.device_id = device_id
         self.use_device = use_device
@@ -161,8 +157,7 @@ class DeviceLock:
     def __enter__(self):
         if not self.use_device:
             return self
-        self.process_ctx.get_lock(self.device_id, self._lock_id,
-                                  self.grant_event, self.granted_idx)
+        self.process_ctx.get_lock(self.device_id, self._lock_id, self.grant_event, self.granted_idx)
         self.grant_event.wait()
         while self.granted_idx.value != self._lock_id:
             self.grant_event.wait()
@@ -185,8 +180,7 @@ class MultiDeviceLock:
     device_id order and release in descending order.
     """
 
-    def __init__(self, process_ctx, device_ids, use_device=True,
-                 grant_events=None, granted_indices=None):
+    def __init__(self, process_ctx, device_ids, use_device=True, grant_events=None, granted_indices=None):
         self.process_ctx = process_ctx
         self.device_ids = sorted(device_ids)
         self.use_device = use_device
@@ -197,15 +191,12 @@ class MultiDeviceLock:
     def __enter__(self):
         if not self.use_device:
             return self
-        sorted_events = {d: self.grant_events[d] for d in self.device_ids
-                         if d in self.grant_events}
-        sorted_indices = {d: self.granted_indices[d] for d in self.device_ids
-                          if d in self.granted_indices}
+        sorted_events = {d: self.grant_events[d] for d in self.device_ids if d in self.grant_events}
+        sorted_indices = {d: self.granted_indices[d] for d in self.device_ids if d in self.granted_indices}
         for dev_id in self.device_ids:
             if dev_id not in sorted_events or dev_id not in sorted_indices:
                 raise RuntimeError(f"MultiDeviceLock: no grant event/idx for device {dev_id}")
-        self.process_ctx.get_multi_lock(
-            self.device_ids, self._lock_id, sorted_events, sorted_indices)
+        self.process_ctx.get_multi_lock(self.device_ids, self._lock_id, sorted_events, sorted_indices)
         for dev_id in self.device_ids:
             evt = sorted_events[dev_id]
             evt.wait()
@@ -291,6 +282,7 @@ def worker_bootstrap(global_storage):
     """
     set_global_storage(global_storage)
     from ttk.config.loader import load_config  # lazy import（函数体内，避循环依赖）
+
     load_config(global_storage.config_path)
     default_logging_config(file_handler=global_storage.logging_to_file)
     if global_storage.random_seed:
@@ -308,10 +300,10 @@ def intermediate_func(pipe: "mp.connection.Connection", global_storage) -> NoRet
         # noinspection PyBroadException
         try:
             message = pipe.recv()
-        except:
+        except Exception:
             # Silently suicide
             on_exit()
-            raise RuntimeError("Subprocess is still alive but main process is dead.")
+            raise RuntimeError("Subprocess is still alive but main process is dead.") from None
         if isinstance(message, tuple):
             rpc_command = message[0]
             if rpc_command == PROCESS_RPC.EXECUTE_FUNCTION:
@@ -325,7 +317,7 @@ def intermediate_func(pipe: "mp.connection.Connection", global_storage) -> NoRet
                 try:
                     function_return = func(*func_args, **func_kwargs)
                     process_context.rpc_call((PROCESS_RPC.FUNCTION_RETURN, (function_return,)))
-                except:
+                except Exception:
                     process_context.notify_status("OnExceptionReport")
                     function_return = RuntimeError(traceback.format_exc())
                     process_context.rpc_call((PROCESS_RPC.FUNCTION_RETURN, (function_return,)))
@@ -350,7 +342,7 @@ def intermediate_func(pipe: "mp.connection.Connection", global_storage) -> NoRet
 
 class ProcessContext:
     def __init__(self, pipe):
-        self.pipe: "mp.connection.Connection" = pipe
+        self.pipe: mp.connection.Connection = pipe
         self.storage = {}
 
     def report_status(self, status: PROCESS_STATUS_CODE):
@@ -395,8 +387,7 @@ class ProcessContext:
         self.pipe.send((PROCESS_RPC.RELEASE_LOCK, (device_id,)))
 
     def get_multi_lock(self, device_ids, lock_id, grant_events, granted_indices):
-        self.pipe.send((PROCESS_RPC.GET_MULTI_LOCK,
-                        (device_ids, lock_id, grant_events, granted_indices)))
+        self.pipe.send((PROCESS_RPC.GET_MULTI_LOCK, (device_ids, lock_id, grant_events, granted_indices)))
 
     def release_multi_lock(self, device_ids):
         self.pipe.send((PROCESS_RPC.RELEASE_MULTI_LOCK, (device_ids,)))
@@ -415,8 +406,7 @@ class SimpleCommandProcess:
     _device_grant_events: Dict[int, Any] = {}
     _device_granted_indices: Dict[int, Any] = {}
 
-    def __init__(self, context=mp, name="TBESimpleCommandProcess", daemon=None,
-                 timeout: int = 0):
+    def __init__(self, context=mp, name="TBESimpleCommandProcess", daemon=None, timeout: int = 0):
         self.original_input_params = (context, name, daemon, timeout)
         self.status: PROCESS_STATUS_CODE = PROCESS_STATUS_CODE.CREATED
         self.rpc_queue: SimpleQueue = SimpleQueue()
@@ -427,9 +417,9 @@ class SimpleCommandProcess:
         self.parent_pipe, self.child_pipe = context.Pipe()
         self.name = name
         self.timeout = timeout
-        self.parent = context.Process(target=intermediate_func, name=name, args=(self.child_pipe,
-                                                                                 get_global_storage()),
-                                      daemon=daemon)
+        self.parent = context.Process(
+            target=intermediate_func, name=name, args=(self.child_pipe, get_global_storage()), daemon=daemon
+        )
         self.all_processes.append(self)
         self.parent.start()
         logging.debug(f"Process created with name {self.parent.name}")
@@ -439,7 +429,7 @@ class SimpleCommandProcess:
         """Create Event+Value per device and initialize DeviceLockManager."""
         for dev_id in available_devices:
             cls._device_grant_events[dev_id] = mp_manager.Event()
-            cls._device_granted_indices[dev_id] = mp_manager.Value('i', -1)
+            cls._device_granted_indices[dev_id] = mp_manager.Value("i", -1)
         DeviceLockManager.initialize(available_devices)
 
     @staticmethod
@@ -451,7 +441,7 @@ class SimpleCommandProcess:
             # noinspection PyBroadException
             try:
                 lock.release()
-            except:
+            except Exception:
                 logging.exception("Lock releasing failure:")
         elif isinstance(lock, mp.synchronize.RLock):
             raise RuntimeError("Subprocess dead while holding RLock")
@@ -472,13 +462,10 @@ class SimpleCommandProcess:
                 raise RuntimeError(f"SimpleCommandProcess received invalid command: {message}")
         if self.get_exitcode() is not None:
             raise EOFError()
-        if (
-                0 < self.timeout < int(time.time() - self.process_status_timestamp) and
-                (
-                    'Profiling' in self.current_stage() or
-                    'Compilation' in self.current_stage() or
-                    'Gen' in self.current_stage()
-                )
+        if 0 < self.timeout < int(time.time() - self.process_status_timestamp) and (
+            "Profiling" in self.current_stage()
+            or "Compilation" in self.current_stage()
+            or "Gen" in self.current_stage()
         ):
             raise TimeoutError()
 
@@ -505,7 +492,7 @@ class SimpleCommandProcess:
             name: str = rpc_args[0]
             value = rpc_args[1]
             self.data[name] = value
-            if name == 'stage':
+            if name == "stage":
                 self._update_timestamp()
         elif rpc_command == PROCESS_RPC.GET_DATA:
             name: str = rpc_args[0]
@@ -563,23 +550,27 @@ class SimpleCommandProcess:
         elif rpc_command == PROCESS_RPC.RELEASE_LOCK:
             device_id = rpc_args[0]
             logging.debug(f"Release lock for device {device_id}")
-            DeviceLockManager.release(self, device_id,
-                                      SimpleCommandProcess._device_grant_events[device_id],
-                                      SimpleCommandProcess._device_granted_indices[device_id])
+            DeviceLockManager.release(
+                self,
+                device_id,
+                SimpleCommandProcess._device_grant_events[device_id],
+                SimpleCommandProcess._device_granted_indices[device_id],
+            )
         elif rpc_command == PROCESS_RPC.GET_MULTI_LOCK:
             device_ids, lock_id, grant_events, granted_indices = rpc_args
             logging.debug(f"Get multi-lock for devices {device_ids}")
-            DeviceLockManager.try_grant_multi(self, device_ids, lock_id,
-                                              grant_events, granted_indices)
+            DeviceLockManager.try_grant_multi(self, device_ids, lock_id, grant_events, granted_indices)
         elif rpc_command == PROCESS_RPC.RELEASE_MULTI_LOCK:
             device_ids = rpc_args[0]
             logging.debug(f"Release multi-lock for devices {device_ids}")
-            DeviceLockManager.release_multi(self, device_ids,
-                                            SimpleCommandProcess._device_grant_events,
-                                            SimpleCommandProcess._device_granted_indices)
+            DeviceLockManager.release_multi(
+                self,
+                device_ids,
+                SimpleCommandProcess._device_grant_events,
+                SimpleCommandProcess._device_granted_indices,
+            )
         else:
-            raise NotImplementedError(f"SimpleCommandProcess Master received invalid rpc call: "
-                                      f"{rpc_command, rpc_args}")
+            raise NotImplementedError(f"SimpleCommandProcess Master received invalid rpc call: {rpc_command, rpc_args}")
 
     def _semaphore_dead_sequence(self, value):
         if self in self.holder_to_semaphores:
@@ -653,22 +644,21 @@ class SimpleCommandProcess:
                     self.kill()
             else:
                 logging.warning(f"Process {self.name} Timeout")
-                exception = SystemError(f"Process Timeout")
+                exception = SystemError("Process Timeout")
                 self.rpc_results.put(exception)
             for lock in self.locks:
                 # noinspection PyBroadException
                 try:
                     lock.release()
-                except:
+                except Exception:
                     logging.exception("Release lock failed")
             # Release device locks held by dead process
             DeviceLockManager.on_process_dead(
-                self,
-                SimpleCommandProcess._device_grant_events,
-                SimpleCommandProcess._device_granted_indices)
+                self, SimpleCommandProcess._device_grant_events, SimpleCommandProcess._device_granted_indices
+            )
             self._semaphore_dead_sequence(exception)
             self.close(True)
-        except:
+        except Exception:
             self.close(True)
             raise
         if self.status == PROCESS_STATUS_CODE.IDLE and not self.rpc_queue.empty():

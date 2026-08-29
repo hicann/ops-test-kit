@@ -132,5 +132,5 @@ def test_maybe_promote_sets_promote_then_restores():
         out = generate_golden_maybe_promote(testcase, [], _Switches(), "cpu", [np.ones(2)])
 
     assert out == ["golden"]
-    assert seen["mode"] == "Promote"              # 生成期间已抬升
+    assert seen["mode"] == "Promote"  # 生成期间已抬升
     assert testcase.golden_mode_override == "Enable"  # 结束后恢复原值

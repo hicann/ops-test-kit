@@ -16,16 +16,23 @@ __all__ = ["InputGenerator"]
 
 # Standard Packages
 import logging
+from typing import List, Optional
+
 import numpy
-import os
-from typing import Optional, List
+
+from ....utilities import (
+    RandomData,
+    apply_as_list,
+    get,
+    get_global_storage,
+    numpy_to_torch_tensor,
+    resolve_custom_numpy_dtypes,
+)
+from ...aclnn import OpApiInfo, OpApiInfoKeeper
+from ...plugin_loader import get_plugin_function
 
 # Third-party Packages
 from ...testcase_manager import TestcaseAclnn
-from ...aclnn import OpApiInfoKeeper, OpApiInfo
-from ....utilities import apply_as_list, resolve_custom_numpy_dtypes, numpy_to_torch_tensor, tuple_flatten
-from ....utilities import get, get_global_storage, RandomData
-from ...plugin_loader import get_plugin_function
 
 
 class InputGenerator:

@@ -16,12 +16,15 @@ import pytest
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
-def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
-                   input_dtypes=("float16", "float16"),
-                   output_shapes=((8,),),
-                   output_dtypes=("float16",),
-                   const_input_indexes=None,
-                   **kwargs):
+def _make_testcase(
+    op_name="Add",
+    input_shapes=((8,), (8,)),
+    input_dtypes=("float16", "float16"),
+    output_shapes=((8,),),
+    output_dtypes=("float16",),
+    const_input_indexes=None,
+    **kwargs,
+):
     case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
@@ -56,7 +59,7 @@ def _mock_op_info(monkeypatch):
 def _validate(case):
     n_in = len(case.input_shapes) if case.input_shapes else 0
     n_out = len(case.output_shapes) if case.output_shapes and not isinstance(case.output_shapes, str) else 0
-    with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as mock:
+    with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as mock:
         mock.return_value.info_of.return_value = {
             "coreType.value": "AiCore",
             "inputs": [{"name": f"i{i}"} for i in range(n_in)],
@@ -69,8 +72,8 @@ def _validate(case):
 # Distribution computation
 # =====================================================================
 
-class TestDistributionComputation:
 
+class TestDistributionComputation:
     def test_input_dist_nested(self):
         case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)))
         _validate(case)
@@ -99,8 +102,8 @@ class TestDistributionComputation:
 # _normalize_scalar_field_by_dist — string/scalar fields
 # =====================================================================
 
-class TestNormalizeFieldByDist:
 
+class TestNormalizeFieldByDist:
     def test_compressed_broadcast(self):
         """('float16',) broadcasts to match distribution."""
         case = _make_testcase(
@@ -163,8 +166,8 @@ class TestNormalizeFieldByDist:
 # _normalize_shape_field_by_dist — shape fields
 # =====================================================================
 
-class TestNormalizeShapeField:
 
+class TestNormalizeShapeField:
     def test_compressed_shape_broadcast(self):
         """Single shape broadcasts to all positions."""
         case = _make_testcase(
@@ -206,8 +209,8 @@ class TestNormalizeShapeField:
 # _normalize_range_field_by_dist — range/pair fields
 # =====================================================================
 
-class TestNormalizeRangeField:
 
+class TestNormalizeRangeField:
     def test_compressed_range_broadcast(self):
         """Single range broadcasts to all tensors in TensorList."""
         case = _make_testcase(
@@ -268,8 +271,8 @@ class TestNormalizeRangeField:
 # flat_* properties after normalize
 # =====================================================================
 
-class TestFlatPropertiesAfterNormalize:
 
+class TestFlatPropertiesAfterNormalize:
     def test_flat_input_dtypes_compressed(self):
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,)),
@@ -301,8 +304,8 @@ class TestFlatPropertiesAfterNormalize:
 # ELEWISE/REDUCE resolution order
 # =====================================================================
 
-class TestInferenceResolutionOrder:
 
+class TestInferenceResolutionOrder:
     def test_elewise_resolves_before_output_dist(self):
         """output_shapes='ELEWISE' resolved before output_distribution computed."""
         case = _make_testcase(
@@ -345,8 +348,8 @@ class TestInferenceResolutionOrder:
 # Edge cases
 # =====================================================================
 
-class TestNormalizeEdgeCases:
 
+class TestNormalizeEdgeCases:
     def test_empty_input_shapes(self):
         case = _make_testcase(input_shapes=(), input_dtypes=(), input_ori_shapes=())
         _validate(case)
@@ -402,6 +405,7 @@ class TestNormalizeEdgeCases:
 # =====================================================================
 # Per-TensorList compressed broadcast
 # =====================================================================
+
 
 class TestPerTensorListCompressed:
     """TensorList position has compressed (len-1) value that needs broadcast."""
@@ -472,6 +476,7 @@ class TestPerTensorListCompressed:
 # Non-TensorList multi-output compressed broadcast
 # =====================================================================
 
+
 class TestNonTensorListMultiOutputCompressed:
     """Flat (non-nested) outputs with compressed single dtype/value."""
 
@@ -527,8 +532,8 @@ class TestNonTensorListMultiOutputCompressed:
 # _is_field_already_nested — prevent double-normalize
 # =====================================================================
 
-class TestIsFieldAlreadyNested:
 
+class TestIsFieldAlreadyNested:
     def _assert_already_nested_scalar(self, field, dist):
         case = TestcaseOp()
         case.is_valid = True
@@ -553,20 +558,19 @@ class TestIsFieldAlreadyNested:
         assert case.input_data_ranges == field
 
     def test_fully_nested_matches_dist(self):
-        self._assert_already_nested_scalar(
-            (("float16", "float16"), "float16"), (2, 0))
+        self._assert_already_nested_scalar((("float16", "float16"), "float16"), (2, 0))
 
     def test_compressed_not_nested(self):
         self._assert_not_already_nested_scalar(("float16",), (2, 0))
 
     def test_range_fully_nested(self):
-        self._assert_already_nested_range(
-            (((0.0, 1.0), (0.5, 1.0)), (0.0, 5.0)), (2, 0))
+        self._assert_already_nested_range((((0.0, 1.0), (0.5, 1.0)), (0.0, 5.0)), (2, 0))
 
 
 # =====================================================================
 # _flatten_by_distribution — per-TensorList broadcast
 # =====================================================================
+
 
 class TestFlattenByDistribution:
     """Tests for _flatten_by_distribution static method.
@@ -575,14 +579,17 @@ class TestFlattenByDistribution:
     expected 为展平后的扁平结果。
     """
 
-    @pytest.mark.parametrize("field, dist, expected", [
-        (("a", "b"), (0, 0), ("a", "b")),
-        (("a", ("b", "c")), (0, 2), ("a", "b", "c")),
-        (("a", ("b",)), (0, 2), ("a", "b", "b")),
-        (("a", "b"), (2, 0), ("a", "a", "b")),
-        ((("x", "y"), "z"), (2, 0), ("x", "y", "z")),
-    ], ids=["flat-flat-dist", "expand-tuple-list", "broadcast-single-in-list",
-            "scalar-to-tensorlist", "mixed"])
+    @pytest.mark.parametrize(
+        "field, dist, expected",
+        [
+            (("a", "b"), (0, 0), ("a", "b")),
+            (("a", ("b", "c")), (0, 2), ("a", "b", "c")),
+            (("a", ("b",)), (0, 2), ("a", "b", "b")),
+            (("a", "b"), (2, 0), ("a", "a", "b")),
+            ((("x", "y"), "z"), (2, 0), ("x", "y", "z")),
+        ],
+        ids=["flat-flat-dist", "expand-tuple-list", "broadcast-single-in-list", "scalar-to-tensorlist", "mixed"],
+    )
     def test_flatten_by_distribution(self, field, dist, expected):
         """验证 _flatten_by_distribution 在不同 field/dist 组合下的展平结果。"""
         assert TestcaseOp._flatten_by_distribution(field, dist) == expected
@@ -591,6 +598,7 @@ class TestFlattenByDistribution:
 # =====================================================================
 # Normalize is idempotent (no double-normalize)
 # =====================================================================
+
 
 class TestNormalizeIdempotent:
     """Verify that normalize on already-normalized fields is a no-op."""
@@ -620,6 +628,7 @@ class TestNormalizeIdempotent:
 # =====================================================================
 # append_output_dtype — interface test
 # =====================================================================
+
 
 class TestAppendOutputMetadata:
     """Tests for append_output_metadata: encapsulates metadata append with cache consistency."""
@@ -688,6 +697,7 @@ class TestAppendOutputMetadata:
 # _normalize_manual_binaries
 # =====================================================================
 
+
 class TestNormalizeManualBinaries:
     """Tests for _normalize_manual_binaries.
 
@@ -704,116 +714,112 @@ class TestNormalizeManualBinaries:
     _TL_DTYPES = (("float16", "float16"), "float32")
     _TL_NONE_SHAPES = (((3, 4), None), (8,))
 
-    @pytest.mark.parametrize("input_shapes, input_dtypes, value, expected", [
-        # empty / None / single string / flat / nested / 'None' string conversion
-        (_DEFAULT_SHAPES, _DEFAULT_DTYPES, (), ()),
-        (_DEFAULT_SHAPES, _DEFAULT_DTYPES, None, None),
-        (((8,),), ("float16",), 'ax.csv', ('ax.csv',)),
-        (((8,), (8,), (8,)),
-         ("float16", "float16", "float16"),
-         ('ax.csv', 'ay.csv', 'az.csv'),
-         ('ax.csv', 'ay.csv', 'az.csv')),
-        # None unquoted preserved (TensorList scenario via dtypes)
-        (((8,), None, (8,)),
-         (("float16", "float16"), "float32"),
-         ('ax.csv', None, 'az.csv'),
-         ('ax.csv', None, 'az.csv')),
-        # 'None' quoted string converted to None
-        (((8,), None, (8,)),
-         ("float16", "float16", "float32"),
-         ('ax.csv', 'None', 'az.csv'),
-         ('ax.csv', None, 'az.csv')),
-        # nested tuple preserved
-        (_TL_SHAPES, _TL_DTYPES,
-         (('ax.csv', 'ay.csv'), 'az.csv'),
-         (('ax.csv', 'ay.csv'), 'az.csv')),
-        # nested with 'None' quoted → converted
-        (_TL_NONE_SHAPES, _TL_DTYPES,
-         (('ax.csv', 'None'), 'az.csv'),
-         (('ax.csv', None), 'az.csv')),
-        # nested with None unquoted preserved
-        (_TL_NONE_SHAPES, _TL_DTYPES,
-         (('ax.csv', None), 'az.csv'),
-         (('ax.csv', None), 'az.csv')),
-        # flat with None input + explicit None binary ok
-        (((8,), None, (8,)),
-         (("float16", "float16"), "float32"),
-         ('ax.csv', None, 'az.csv'),
-         ('ax.csv', None, 'az.csv')),
-        # nested with optional None input ok
-        (_TL_NONE_SHAPES, _TL_DTYPES,
-         (('ax.csv', None), 'az.csv'),
-         (('ax.csv', None), 'az.csv')),
-        # flat binaries for TensorList inputs → reshaped to nested
-        (_TL_SHAPES, _TL_DTYPES,
-         ('ax.csv', 'ay.csv', 'az.csv'),
-         (('ax.csv', 'ay.csv'), 'az.csv')),
-        # flat binaries with None → reshaped and padded to nested
-        (_TL_NONE_SHAPES, _TL_DTYPES,
-         ('ax.csv', None, 'az.csv'),
-         (('ax.csv', None), 'az.csv')),
-        # no TensorList → stays flat
-        (((8,), (8,)), ("float16", "float16"),
-         ('ax.csv', 'ay.csv'), ('ax.csv', 'ay.csv')),
-        # single input stays single
-        (((8,),), ("float16",), 'ax.csv', ('ax.csv',)),
-        # all-None inputs + all-None binaries
-        ((None, None), ("float16", "float16"),
-         (None, None), (None, None)),
-        # flat trailing None input preserved
-        (((8,), (8,), None),
-         ("float16", "float16", "float16"),
-         ('ax.csv', 'ay.csv', None),
-         ('ax.csv', 'ay.csv', None)),
-        # TensorList group None mixed nested preserved
-        (_TL_NONE_SHAPES, _TL_DTYPES,
-         (('ax.csv', None), 'az.csv'),
-         (('ax.csv', None), 'az.csv')),
-        # trailing None inputs → binaries padded with None
-        (((8,), None, None),
-         ("float16", "float16", "float16"),
-         ('ax.csv',),
-         ('ax.csv', None, None)),
-    ], ids=[
-        "empty-not-modified", "none-not-modified", "single-string-wrapped",
-        "flat-tuple-preserved", "none-unquoted-preserved",
-        "none-quoted-converted", "nested-tuple-preserved",
-        "nested-with-none-quoted", "nested-with-none-unquoted",
-        "flat-with-none-input-explicit-none-ok",
-        "nested-with-optional-input-none-ok",
-        "flat-input-reshaped-to-nested",
-        "flat-with-none-padded-to-nested",
-        "no-tensor-list-stays-flat", "single-input-stays-single",
-        "flat-all-none-inputs-all-none-binaries",
-        "flat-trailing-none-input",
-        "tensor-list-group-none-mixed-nested",
-        "trailing-none-inputs-implicit-none-binaries",
-    ])
-    def test_normalize_preserves_value(self, input_shapes, input_dtypes,
-                                       value, expected):
+    @pytest.mark.parametrize(
+        "input_shapes, input_dtypes, value, expected",
+        [
+            # empty / None / single string / flat / nested / 'None' string conversion
+            (_DEFAULT_SHAPES, _DEFAULT_DTYPES, (), ()),
+            (_DEFAULT_SHAPES, _DEFAULT_DTYPES, None, None),
+            (((8,),), ("float16",), "ax.csv", ("ax.csv",)),
+            (
+                ((8,), (8,), (8,)),
+                ("float16", "float16", "float16"),
+                ("ax.csv", "ay.csv", "az.csv"),
+                ("ax.csv", "ay.csv", "az.csv"),
+            ),
+            # None unquoted preserved (TensorList scenario via dtypes)
+            (
+                ((8,), None, (8,)),
+                (("float16", "float16"), "float32"),
+                ("ax.csv", None, "az.csv"),
+                ("ax.csv", None, "az.csv"),
+            ),
+            # 'None' quoted string converted to None
+            (
+                ((8,), None, (8,)),
+                ("float16", "float16", "float32"),
+                ("ax.csv", "None", "az.csv"),
+                ("ax.csv", None, "az.csv"),
+            ),
+            # nested tuple preserved
+            (_TL_SHAPES, _TL_DTYPES, (("ax.csv", "ay.csv"), "az.csv"), (("ax.csv", "ay.csv"), "az.csv")),
+            # nested with 'None' quoted → converted
+            (_TL_NONE_SHAPES, _TL_DTYPES, (("ax.csv", "None"), "az.csv"), (("ax.csv", None), "az.csv")),
+            # nested with None unquoted preserved
+            (_TL_NONE_SHAPES, _TL_DTYPES, (("ax.csv", None), "az.csv"), (("ax.csv", None), "az.csv")),
+            # flat with None input + explicit None binary ok
+            (
+                ((8,), None, (8,)),
+                (("float16", "float16"), "float32"),
+                ("ax.csv", None, "az.csv"),
+                ("ax.csv", None, "az.csv"),
+            ),
+            # nested with optional None input ok
+            (_TL_NONE_SHAPES, _TL_DTYPES, (("ax.csv", None), "az.csv"), (("ax.csv", None), "az.csv")),
+            # flat binaries for TensorList inputs → reshaped to nested
+            (_TL_SHAPES, _TL_DTYPES, ("ax.csv", "ay.csv", "az.csv"), (("ax.csv", "ay.csv"), "az.csv")),
+            # flat binaries with None → reshaped and padded to nested
+            (_TL_NONE_SHAPES, _TL_DTYPES, ("ax.csv", None, "az.csv"), (("ax.csv", None), "az.csv")),
+            # no TensorList → stays flat
+            (((8,), (8,)), ("float16", "float16"), ("ax.csv", "ay.csv"), ("ax.csv", "ay.csv")),
+            # single input stays single
+            (((8,),), ("float16",), "ax.csv", ("ax.csv",)),
+            # all-None inputs + all-None binaries
+            ((None, None), ("float16", "float16"), (None, None), (None, None)),
+            # flat trailing None input preserved
+            (
+                ((8,), (8,), None),
+                ("float16", "float16", "float16"),
+                ("ax.csv", "ay.csv", None),
+                ("ax.csv", "ay.csv", None),
+            ),
+            # TensorList group None mixed nested preserved
+            (_TL_NONE_SHAPES, _TL_DTYPES, (("ax.csv", None), "az.csv"), (("ax.csv", None), "az.csv")),
+            # trailing None inputs → binaries padded with None
+            (((8,), None, None), ("float16", "float16", "float16"), ("ax.csv",), ("ax.csv", None, None)),
+        ],
+        ids=[
+            "empty-not-modified",
+            "none-not-modified",
+            "single-string-wrapped",
+            "flat-tuple-preserved",
+            "none-unquoted-preserved",
+            "none-quoted-converted",
+            "nested-tuple-preserved",
+            "nested-with-none-quoted",
+            "nested-with-none-unquoted",
+            "flat-with-none-input-explicit-none-ok",
+            "nested-with-optional-input-none-ok",
+            "flat-input-reshaped-to-nested",
+            "flat-with-none-padded-to-nested",
+            "no-tensor-list-stays-flat",
+            "single-input-stays-single",
+            "flat-all-none-inputs-all-none-binaries",
+            "flat-trailing-none-input",
+            "tensor-list-group-none-mixed-nested",
+            "trailing-none-inputs-implicit-none-binaries",
+        ],
+    )
+    def test_normalize_preserves_value(self, input_shapes, input_dtypes, value, expected):
         """验证 validate 后 manual_input_binaries 等于 expected。"""
-        case = _make_testcase(input_shapes=input_shapes,
-                              input_dtypes=input_dtypes)
+        case = _make_testcase(input_shapes=input_shapes, input_dtypes=input_dtypes)
         case.manual_input_binaries = value
         _validate(case)
         assert case.manual_input_binaries == expected
 
-    @pytest.mark.parametrize("input_shapes, input_dtypes, value, expected, "
-                             "inner_index", [
-        # top-level list → tuple
-        (_DEFAULT_SHAPES, _DEFAULT_DTYPES,
-         ['ax.csv', 'ay.csv'],
-         ('ax.csv', 'ay.csv'), None),
-        # nested list → tuple (inner element converted)
-        (_TL_SHAPES, _TL_DTYPES,
-         (['ax.csv', 'ay.csv'], 'az.csv'),
-         (('ax.csv', 'ay.csv'), 'az.csv'), 0),
-    ], ids=["list-converted-to-tuple", "nested-list-converted-to-tuple"])
-    def test_list_converted_to_tuple(self, input_shapes, input_dtypes,
-                                     value, expected, inner_index):
+    @pytest.mark.parametrize(
+        "input_shapes, input_dtypes, value, expected, inner_index",
+        [
+            # top-level list → tuple
+            (_DEFAULT_SHAPES, _DEFAULT_DTYPES, ["ax.csv", "ay.csv"], ("ax.csv", "ay.csv"), None),
+            # nested list → tuple (inner element converted)
+            (_TL_SHAPES, _TL_DTYPES, (["ax.csv", "ay.csv"], "az.csv"), (("ax.csv", "ay.csv"), "az.csv"), 0),
+        ],
+        ids=["list-converted-to-tuple", "nested-list-converted-to-tuple"],
+    )
+    def test_list_converted_to_tuple(self, input_shapes, input_dtypes, value, expected, inner_index):
         """验证 list 被 normalize 转换为 tuple（包括嵌套场景的内层转换）。"""
-        case = _make_testcase(input_shapes=input_shapes,
-                              input_dtypes=input_dtypes)
+        case = _make_testcase(input_shapes=input_shapes, input_dtypes=input_dtypes)
         case.manual_input_binaries = value
         _validate(case)
         assert case.manual_input_binaries == expected
@@ -821,66 +827,58 @@ class TestNormalizeManualBinaries:
         if inner_index is not None:
             assert isinstance(case.manual_input_binaries[inner_index], tuple)
 
-    @pytest.mark.parametrize("input_shapes, input_dtypes, value", [
-        # nested rejected without TensorList
-        (((8,), (8,)), ("float16", "float16"),
-         (('ax.csv', 'ay.csv'), 'az.csv')),
-        # mixed nested/flat rejected
-        (_TL_SHAPES, _TL_DTYPES, ('ax.csv', ('az.csv',))),
-        # flat count exceeds inputs
-        (((8,), (8,)), ("float16", "float16"),
-         ('ax.csv', 'ay.csv', 'az.csv')),
-        # flat missing required input
-        (((8,), (8,), (8,)),
-         ("float16", "float16", "float16"),
-         ('ax.csv', 'ay.csv')),
-        # flat file for None input rejected
-        (((8,), None, (8,)),
-         ("float16", "float16", "float32"),
-         ('ax.csv', 'unexpected.csv', 'az.csv')),
-        # nested group count exceeds inputs
-        (_TL_SHAPES, _TL_DTYPES,
-         (('ax.csv', 'ay.csv', 'extra.csv'), 'az.csv')),
-        # nested missing required input (1 file for 2 non-None inputs)
-        (_TL_SHAPES, _TL_DTYPES, (('ax.csv',), 'az.csv')),
-        # flat binaries exceed non-TensorList inputs (None, None not TensorList)
-        (((None, None), (8,)),
-         (("float16", "float16"), "float32"),
-         (None, None, 'az.csv')),
-        # nested top-level count mismatch
-        (_TL_SHAPES, _TL_DTYPES, (('ax.csv', 'ay.csv'),)),
-        # nested TensorList position is str instead of tuple
-        (_TL_SHAPES, _TL_DTYPES, ('ax.csv', 'az.csv')),
-        # nested non-TensorList position is tuple
-        (_TL_SHAPES, _TL_DTYPES,
-         (('ax.csv', 'ay.csv'), ('az.csv',))),
-        # invalid type
-        (((8,),), ("float16",), 123),
-        # file for None in TensorList group rejected
-        (_TL_NONE_SHAPES, _TL_DTYPES,
-         (('ax.csv', 'unexpected.csv'), 'az.csv')),
-        # missing file for non-None in TensorList group rejected
-        (_TL_SHAPES, _TL_DTYPES, (('ax.csv', None), 'az.csv')),
-    ], ids=[
-        "nested-rejected-without-tensor-list",
-        "mixed-nested-flat-rejected",
-        "flat-count-exceeds-inputs-rejected",
-        "flat-missing-required-input-rejected",
-        "flat-file-for-none-input-rejected",
-        "nested-group-count-exceeds-inputs-rejected",
-        "nested-missing-required-input-rejected",
-        "flat-binaries-exceed-non-tensor-list-inputs-rejected",
-        "nested-top-level-count-mismatch-rejected",
-        "nested-tensor-list-position-is-str-rejected",
-        "nested-non-tensor-list-position-is-tuple-rejected",
-        "invalid-type-rejected",
-        "file-for-none-in-tensor-list-group-rejected",
-        "missing-file-for-non-none-in-tensor-list-group-rejected",
-    ])
+    @pytest.mark.parametrize(
+        "input_shapes, input_dtypes, value",
+        [
+            # nested rejected without TensorList
+            (((8,), (8,)), ("float16", "float16"), (("ax.csv", "ay.csv"), "az.csv")),
+            # mixed nested/flat rejected
+            (_TL_SHAPES, _TL_DTYPES, ("ax.csv", ("az.csv",))),
+            # flat count exceeds inputs
+            (((8,), (8,)), ("float16", "float16"), ("ax.csv", "ay.csv", "az.csv")),
+            # flat missing required input
+            (((8,), (8,), (8,)), ("float16", "float16", "float16"), ("ax.csv", "ay.csv")),
+            # flat file for None input rejected
+            (((8,), None, (8,)), ("float16", "float16", "float32"), ("ax.csv", "unexpected.csv", "az.csv")),
+            # nested group count exceeds inputs
+            (_TL_SHAPES, _TL_DTYPES, (("ax.csv", "ay.csv", "extra.csv"), "az.csv")),
+            # nested missing required input (1 file for 2 non-None inputs)
+            (_TL_SHAPES, _TL_DTYPES, (("ax.csv",), "az.csv")),
+            # flat binaries exceed non-TensorList inputs (None, None not TensorList)
+            (((None, None), (8,)), (("float16", "float16"), "float32"), (None, None, "az.csv")),
+            # nested top-level count mismatch
+            (_TL_SHAPES, _TL_DTYPES, (("ax.csv", "ay.csv"),)),
+            # nested TensorList position is str instead of tuple
+            (_TL_SHAPES, _TL_DTYPES, ("ax.csv", "az.csv")),
+            # nested non-TensorList position is tuple
+            (_TL_SHAPES, _TL_DTYPES, (("ax.csv", "ay.csv"), ("az.csv",))),
+            # invalid type
+            (((8,),), ("float16",), 123),
+            # file for None in TensorList group rejected
+            (_TL_NONE_SHAPES, _TL_DTYPES, (("ax.csv", "unexpected.csv"), "az.csv")),
+            # missing file for non-None in TensorList group rejected
+            (_TL_SHAPES, _TL_DTYPES, (("ax.csv", None), "az.csv")),
+        ],
+        ids=[
+            "nested-rejected-without-tensor-list",
+            "mixed-nested-flat-rejected",
+            "flat-count-exceeds-inputs-rejected",
+            "flat-missing-required-input-rejected",
+            "flat-file-for-none-input-rejected",
+            "nested-group-count-exceeds-inputs-rejected",
+            "nested-missing-required-input-rejected",
+            "flat-binaries-exceed-non-tensor-list-inputs-rejected",
+            "nested-top-level-count-mismatch-rejected",
+            "nested-tensor-list-position-is-str-rejected",
+            "nested-non-tensor-list-position-is-tuple-rejected",
+            "invalid-type-rejected",
+            "file-for-none-in-tensor-list-group-rejected",
+            "missing-file-for-non-none-in-tensor-list-group-rejected",
+        ],
+    )
     def test_normalize_rejects_invalid(self, input_shapes, input_dtypes, value):
         """验证非法结构被标记为 MANUAL_BINARIES_INVALID。"""
-        case = _make_testcase(input_shapes=input_shapes,
-                              input_dtypes=input_dtypes)
+        case = _make_testcase(input_shapes=input_shapes, input_dtypes=input_dtypes)
         case.manual_input_binaries = value
         _validate(case)
         assert case.is_valid is False
@@ -891,29 +889,27 @@ class TestNormalizeManualBinaries:
 # flat_manual_input_binaries property
 # =====================================================================
 
+
 class TestFlatManualInputBinaries:
     """Tests for flat_manual_input_binaries — uses deep_flatten."""
 
     def test_flat_no_dist(self):
-        case = _make_testcase(input_shapes=((8,), (8,)),
-                              input_dtypes=("float16", "float16"))
-        case.manual_input_binaries = ('a.csv', 'b.csv')
+        case = _make_testcase(input_shapes=((8,), (8,)), input_dtypes=("float16", "float16"))
+        case.manual_input_binaries = ("a.csv", "b.csv")
         _validate(case)
-        assert case.flat_manual_input_binaries == ('a.csv', 'b.csv')
+        assert case.flat_manual_input_binaries == ("a.csv", "b.csv")
 
     def test_nested_tensorlist(self):
-        case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=(("float16", "float16"), "float32"))
-        case.manual_input_binaries = (('a.csv', 'b.csv'), 'c.csv')
+        case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)), input_dtypes=(("float16", "float16"), "float32"))
+        case.manual_input_binaries = (("a.csv", "b.csv"), "c.csv")
         _validate(case)
-        assert case.flat_manual_input_binaries == ('a.csv', 'b.csv', 'c.csv')
+        assert case.flat_manual_input_binaries == ("a.csv", "b.csv", "c.csv")
 
     def test_nested_with_none(self):
-        case = _make_testcase(input_shapes=(((3, 4), None), (8,)),
-                              input_dtypes=(("float16", "float16"), "float32"))
-        case.manual_input_binaries = (('a.csv', None), 'c.csv')
+        case = _make_testcase(input_shapes=(((3, 4), None), (8,)), input_dtypes=(("float16", "float16"), "float32"))
+        case.manual_input_binaries = (("a.csv", None), "c.csv")
         _validate(case)
-        assert case.flat_manual_input_binaries == ('a.csv', None, 'c.csv')
+        assert case.flat_manual_input_binaries == ("a.csv", None, "c.csv")
 
     def test_none_when_not_set(self):
         case = _make_testcase()
@@ -928,17 +924,17 @@ class TestFlatManualInputBinaries:
 
     def test_flat_reshaped_to_nested_then_flat(self):
         """Flat binaries → reshape to nested → flat property returns flat."""
-        case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)),
-                              input_dtypes=(("float16", "float16"), "float32"))
-        case.manual_input_binaries = ('a.csv', 'b.csv', 'c.csv')
+        case = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)), input_dtypes=(("float16", "float16"), "float32"))
+        case.manual_input_binaries = ("a.csv", "b.csv", "c.csv")
         _validate(case)
-        assert case.manual_input_binaries == (('a.csv', 'b.csv'), 'c.csv')
-        assert case.flat_manual_input_binaries == ('a.csv', 'b.csv', 'c.csv')
+        assert case.manual_input_binaries == (("a.csv", "b.csv"), "c.csv")
+        assert case.flat_manual_input_binaries == ("a.csv", "b.csv", "c.csv")
 
 
 # =====================================================================
 # Unified _normalize_field_by_dist — TDD tests
 # =====================================================================
+
 
 class TestIsScalarGroup:
     """Tests for _is_scalar_group classmethod.
@@ -946,14 +942,18 @@ class TestIsScalarGroup:
     每行参数：value 为待判定值，expected 为是否被识别为标量组（tuple/list 视为组）。
     """
 
-    @pytest.mark.parametrize("value, expected", [
-        (('NCHW', 'NHWC'), True),
-        (['NCHW', 'NHWC'], True),
-        ('NCHW', False),
-        (42, False),
-        (1e-5, False),
-        ((), True),
-    ], ids=["tuple", "list", "string", "int", "float", "empty-tuple"])
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            (("NCHW", "NHWC"), True),
+            (["NCHW", "NHWC"], True),
+            ("NCHW", False),
+            (42, False),
+            (1e-5, False),
+            ((), True),
+        ],
+        ids=["tuple", "list", "string", "int", "float", "empty-tuple"],
+    )
     def test_is_scalar_group(self, value, expected):
         """验证 _is_scalar_group 对各类输入的判定结果。"""
         assert TestcaseOp._is_scalar_group(value) is expected
@@ -966,22 +966,24 @@ class TestIsRangeGroup:
     （元素必须为二元 range 元组才算组；单个 (low, high) 不算组）。
     """
 
-    @pytest.mark.parametrize("value, expected", [
-        (((0.0, 1.0), (0.5, 1.0)), True),
-        ((0.0, 1.0), False),
-        (('NCHW', 'NHWC'), False),
-        ((), False),
-        (((0.0, 1.0),), True),
-        ((1, 2), False),
-    ], ids=["range-list", "single-range", "string-tuple", "empty",
-            "single-element-range-list", "int-tuple"])
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            (((0.0, 1.0), (0.5, 1.0)), True),
+            ((0.0, 1.0), False),
+            (("NCHW", "NHWC"), False),
+            ((), False),
+            (((0.0, 1.0),), True),
+            ((1, 2), False),
+        ],
+        ids=["range-list", "single-range", "string-tuple", "empty", "single-element-range-list", "int-tuple"],
+    )
     def test_is_range_group(self, value, expected):
         """验证 _is_range_group 对各类输入的判定结果。"""
         assert TestcaseOp._is_range_group(value) is expected
 
 
 class TestNormalizeFieldAlreadyNested:
-
     def test_scalar_and_range_fully_nested_skip(self):
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,)),
@@ -1002,7 +1004,6 @@ class TestNormalizeFieldAlreadyNested:
 
 
 class TestNormalizeFieldLenEqOne:
-
     def test_scalar_compressed_broadcast(self):
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,)),
@@ -1016,8 +1017,7 @@ class TestNormalizeFieldLenEqOne:
             input_shapes=(((3, 4), (5, 4)), (8,)),
         )
         case.input_dtypes = (("float16", "float32"),)
-        case._normalize_field_by_dist(
-            "input_dtypes", (2, 0), TestcaseOp._is_scalar_group)
+        case._normalize_field_by_dist("input_dtypes", (2, 0), TestcaseOp._is_scalar_group)
         assert case.is_valid is False
         assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
 
@@ -1031,7 +1031,6 @@ class TestNormalizeFieldLenEqOne:
 
 
 class TestNormalizeFieldPerPositionExpand:
-
     def test_scalar_group_single_broadcast(self):
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 4)), (8,)),
@@ -1045,21 +1044,18 @@ class TestNormalizeFieldPerPositionExpand:
             input_shapes=(((3, 4), (5, 4)), (8,)),
         )
         case.input_data_ranges = (((0, 1), (0, 1), (0, 1)), (0, 5))
-        case._normalize_field_by_dist(
-            "input_data_ranges", (2, 0), TestcaseOp._is_range_group)
+        case._normalize_field_by_dist("input_data_ranges", (2, 0), TestcaseOp._is_range_group)
         assert case.is_valid is False
         assert case.fail_reason == "CASE_FIELD_AMBIGUOUS"
 
 
 class TestNormalizeFieldGuardChecks:
-
     def test_guard_checks_skip_normalize(self):
         case = _make_testcase()
         case.is_valid = False
         case.input_dtypes = ("float16",)
         original = case.input_dtypes
-        case._normalize_field_by_dist(
-            "input_dtypes", (2, 0), TestcaseOp._is_scalar_group)
+        case._normalize_field_by_dist("input_dtypes", (2, 0), TestcaseOp._is_scalar_group)
         assert case.input_dtypes == original
 
         case2 = _make_testcase(input_shapes=(((3, 4), (5, 4)), (8,)), input_formats=())

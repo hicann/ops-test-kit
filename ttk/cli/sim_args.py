@@ -11,6 +11,7 @@ device to the NPUSim (SoC-level simulator) backend. Simulation data flows via a
 Python user_app (wrapper) that NPUSim ``record`` launches; results are written
 back as ``output_*.bin`` and compared through the existing comparison pipeline.
 """
+
 import os
 
 

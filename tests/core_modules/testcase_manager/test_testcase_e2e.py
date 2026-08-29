@@ -39,7 +39,6 @@ def make_testcase():
 
 
 class TestGetTensorListDistribution:
-
     def test_flat_shapes(self, make_testcase):
         case = make_testcase(tensor_view_shapes=FLAT_SHAPES)
         assert case.tensor_list_dist == (0, 0)
@@ -58,7 +57,6 @@ class TestGetTensorListDistribution:
 
 
 class TestFlatTensorViewShapes:
-
     def test_flat(self, make_testcase):
         case = make_testcase(tensor_view_shapes=FLAT_SHAPES)
         assert case.flat_tensor_view_shapes == FLAT_SHAPES
@@ -73,101 +71,80 @@ class TestFlatTensorViewShapes:
 
 
 class TestFlatTensorDtypesCompression:
-
     def test_compressed_broadcast_after_normalize(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=TENSORLIST_SHAPES,
-            tensor_dtypes=('float32',))
+        case = make_testcase(tensor_view_shapes=TENSORLIST_SHAPES, tensor_dtypes=("float32",))
         case._normalize_compressed_fields()
-        assert case.flat_tensor_dtypes == ('float32', 'float32', 'float32')
+        assert case.flat_tensor_dtypes == ("float32", "float32", "float32")
         assert all(isinstance(x, str) for x in case.flat_tensor_dtypes)
 
     def test_per_param_after_normalize(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=NESTED_SHAPES,
-            tensor_dtypes=('float32', 'int8'))
+        case = make_testcase(tensor_view_shapes=NESTED_SHAPES, tensor_dtypes=("float32", "int8"))
         case._normalize_compressed_fields()
-        assert case.flat_tensor_dtypes == ('float32', 'float32', 'int8')
+        assert case.flat_tensor_dtypes == ("float32", "float32", "int8")
 
     def test_fully_nested(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=TENSORLIST_SHAPES,
-            tensor_dtypes=(('float32', 'float16', 'int8'),))
-        assert case.flat_tensor_dtypes == ('float32', 'float16', 'int8')
+        case = make_testcase(tensor_view_shapes=TENSORLIST_SHAPES, tensor_dtypes=(("float32", "float16", "int8"),))
+        assert case.flat_tensor_dtypes == ("float32", "float16", "int8")
 
     def test_flat_no_nesting(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=FLAT_SHAPES,
-            tensor_dtypes=('float32', 'float32'))
-        assert case.flat_tensor_dtypes == ('float32', 'float32')
+        case = make_testcase(tensor_view_shapes=FLAT_SHAPES, tensor_dtypes=("float32", "float32"))
+        assert case.flat_tensor_dtypes == ("float32", "float32")
 
 
 class TestPureOutputIndexes:
-
     def test_flat_output(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=((2, 3), (2, 3), (2, 3)),
-            output_tensor_indexes=(2,))
+        case = make_testcase(tensor_view_shapes=((2, 3), (2, 3), (2, 3)), output_tensor_indexes=(2,))
         assert case.pure_output_indexes == [2]
 
     def test_tensorlist_output(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=NESTED_SHAPES,
-            output_tensor_indexes=(0,))
+        case = make_testcase(tensor_view_shapes=NESTED_SHAPES, output_tensor_indexes=(0,))
         assert case.pure_output_indexes == [0, 1]
 
     def test_multi_output(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=((2, 3), (2, 3), (2, 3), (2, 3)),
-            output_tensor_indexes=(1, 3))
+        case = make_testcase(tensor_view_shapes=((2, 3), (2, 3), (2, 3), (2, 3)), output_tensor_indexes=(1, 3))
         assert case.pure_output_indexes == [1, 3]
 
 
 class TestValidateFrameworkApi:
-
     @pytest.fixture(autouse=True)
     def mock_api_info(self):
         from unittest.mock import patch
+
         info = APIParamInfo(
             api_name="torch.dummy",
             overloads=[
-                [ParamInfo(name="input", type="Tensor"),
-                 ParamInfo(name="other", type="Tensor")],
+                [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
                 [ParamInfo(name="tensors", type="List[Tensor]")],
-            ])
-        with patch.object(TestcaseE2e, 'get_api_info', return_value=info):
+            ],
+        )
+        with patch.object(TestcaseE2e, "get_api_info", return_value=info):
             yield
 
     def test_valid_flat(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+        case = make_testcase(tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32"))
         case.validate()
         assert case.is_valid
 
     def test_valid_nested_compressed(self, make_testcase):
-        case = make_testcase(
-            tensor_view_shapes=TENSORLIST_SHAPES,
-            tensor_dtypes=('float32',))
+        case = make_testcase(tensor_view_shapes=TENSORLIST_SHAPES, tensor_dtypes=("float32",))
         case.validate()
         assert case.is_valid
-        assert case.flat_tensor_dtypes == ('float32', 'float32', 'float32')
+        assert case.flat_tensor_dtypes == ("float32", "float32", "float32")
 
     def test_missing_api_name(self, make_testcase):
-        case = make_testcase(api_name="", tensor_view_shapes=((2, 3),), tensor_dtypes=('float32',))
+        case = make_testcase(api_name="", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",))
         case.validate()
         assert not case.is_valid
 
     def test_missing_shapes(self, make_testcase):
-        case = make_testcase(tensor_view_shapes=(), tensor_dtypes=('float32',))
+        case = make_testcase(tensor_view_shapes=(), tensor_dtypes=("float32",))
         case.validate()
         assert not case.is_valid
 
     def test_output_index_out_of_range(self, make_testcase):
         case = make_testcase(
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'),
-            output_tensor_indexes=(5,))
+            tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32"), output_tensor_indexes=(5,)
+        )
         case.validate()
         assert not case.is_valid
 
@@ -187,110 +164,128 @@ class TestCheckTensorConfiguration:
         FrameworkApiInfoKeeper().register(api_name, params, source="test")
 
     def test_tensor_count_mismatch_too_many_invalidates(self, make_testcase):
-        self._register_api("torch.test_count", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="other", type="Tensor"),
-        ])
+        self._register_api(
+            "torch.test_count",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="other", type="Tensor"),
+            ],
+        )
         case = make_testcase(
             api_name="torch.test_count",
             tensor_view_shapes=((2, 3), (2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32', 'float32'))
+            tensor_dtypes=("float32", "float32", "float32"),
+        )
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "INPUT_COUNT_EXCEEDED"
 
     def test_tensor_count_too_few_required_invalidates(self, make_testcase):
-        self._register_api("torch.test_req", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="other", type="Tensor"),
-            ParamInfo(name="out", type="Tensor", default="None", is_optional=True),
-        ])
-        case = make_testcase(
-            api_name="torch.test_req",
-            tensor_view_shapes=((2, 3),),
-            tensor_dtypes=('float32',))
+        self._register_api(
+            "torch.test_req",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="other", type="Tensor"),
+                ParamInfo(name="out", type="Tensor", default="None", is_optional=True),
+            ],
+        )
+        case = make_testcase(api_name="torch.test_req", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",))
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "TENSOR_COUNT_MISMATCH"
 
     def test_optional_out_omitted_and_provided_valid(self, make_testcase):
-        self._register_api("torch.test_opt", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="other", type="Tensor"),
-            ParamInfo(name="out", type="Tensor", default="None", is_optional=True),
-        ])
+        self._register_api(
+            "torch.test_opt",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="other", type="Tensor"),
+                ParamInfo(name="out", type="Tensor", default="None", is_optional=True),
+            ],
+        )
         case_omit = make_testcase(
-            api_name="torch.test_opt",
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            api_name="torch.test_opt", tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32")
+        )
         case_omit.validate()
         assert case_omit.is_valid
 
         case_provide = make_testcase(
             api_name="torch.test_opt",
             tensor_view_shapes=((2, 3), (2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32', 'float32'),
-            output_tensor_indexes=(2,))
+            tensor_dtypes=("float32", "float32", "float32"),
+            output_tensor_indexes=(2,),
+        )
         case_provide.validate()
         assert case_provide.is_valid
 
     def test_tensorlist_type_mismatch_and_match(self, make_testcase):
-        self._register_api("torch.test_tl", [
-            ParamInfo(name="tensors", type="tuple of Tensors"),
-            ParamInfo(name="dim", type="int"),
-        ])
-        case_bad = make_testcase(
-            api_name="torch.test_tl",
-            tensor_view_shapes=((2, 3),),
-            tensor_dtypes=('float32',))
+        self._register_api(
+            "torch.test_tl",
+            [
+                ParamInfo(name="tensors", type="tuple of Tensors"),
+                ParamInfo(name="dim", type="int"),
+            ],
+        )
+        case_bad = make_testcase(api_name="torch.test_tl", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",))
         case_bad.validate()
         assert not case_bad.is_valid
         assert case_bad.fail_reason == "PARAM_TYPE_MISMATCH"
 
-        self._register_api("torch.test_tl_ok", [
-            ParamInfo(name="tensors", type="tuple of Tensors"),
-            ParamInfo(name="out", type="Tensor", default="None", is_optional=True),
-        ])
+        self._register_api(
+            "torch.test_tl_ok",
+            [
+                ParamInfo(name="tensors", type="tuple of Tensors"),
+                ParamInfo(name="out", type="Tensor", default="None", is_optional=True),
+            ],
+        )
         case_ok = make_testcase(
             api_name="torch.test_tl_ok",
             tensor_view_shapes=(((2, 3), (2, 5)), (3, 3)),
-            tensor_dtypes=('float32', 'float32'),
-            output_tensor_indexes=(1,))
+            tensor_dtypes=("float32", "float32"),
+            output_tensor_indexes=(1,),
+        )
         case_ok.validate()
         assert case_ok.is_valid
 
     def test_single_tensor_nested_for_tensor_param_invalid(self, make_testcase):
-        self._register_api("torch.test_nested_mismatch", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="other", type="Tensor"),
-        ])
+        self._register_api(
+            "torch.test_nested_mismatch",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="other", type="Tensor"),
+            ],
+        )
         case = make_testcase(
             api_name="torch.test_nested_mismatch",
             tensor_view_shapes=(((2, 3), (2, 5)), (3, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            tensor_dtypes=("float32", "float32"),
+        )
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "PARAM_TYPE_MISMATCH"
 
     def test_api_not_found_skips_validation(self, make_testcase):
         case = make_testcase(
-            api_name="nonexistent.api",
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            api_name="nonexistent.api", tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32")
+        )
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "API_PARSE_FAIL"
 
     def test_none_element_for_tensorlist_skipped(self, make_testcase):
-        self._register_api("torch.test_none_tl", [
-            ParamInfo(name="tensors", type="tuple of Tensors"),
-            ParamInfo(name="out", type="Tensor", default="None", is_optional=True),
-        ])
+        self._register_api(
+            "torch.test_none_tl",
+            [
+                ParamInfo(name="tensors", type="tuple of Tensors"),
+                ParamInfo(name="out", type="Tensor", default="None", is_optional=True),
+            ],
+        )
         case = make_testcase(
             api_name="torch.test_none_tl",
             tensor_view_shapes=(None, (3, 3)),
-            tensor_dtypes=('float32', 'float32'),
-            output_tensor_indexes=(1,))
+            tensor_dtypes=("float32", "float32"),
+            output_tensor_indexes=(1,),
+        )
         case.validate()
         assert case.is_valid
 
@@ -300,16 +295,12 @@ class TestCheckTensorConfiguration:
         except ImportError:
             pytest.skip("torch not available")
         case = make_testcase(
-            api_name="torch.add",
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            api_name="torch.add", tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32")
+        )
         case.validate()
         assert case.is_valid
 
-        case_bad = make_testcase(
-            api_name="torch.add",
-            tensor_view_shapes=((2, 3),),
-            tensor_dtypes=('float32',))
+        case_bad = make_testcase(api_name="torch.add", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",))
         case_bad.validate()
         assert not case_bad.is_valid
         assert case_bad.fail_reason == "TENSOR_COUNT_MISMATCH"
@@ -327,58 +318,69 @@ class TestCheckMultiOverload:
         _MANUAL_OVERRIDES.clear()
 
     def test_multi_overload_matches_second(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.test_multi", [
-            [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
-            [ParamInfo(name="input", type="Tensor")],
-        ], source="test")
-        case = make_testcase(
-            api_name="torch.test_multi",
-            tensor_view_shapes=((2, 3),),
-            tensor_dtypes=('float32',))
+        FrameworkApiInfoKeeper().register(
+            "torch.test_multi",
+            [
+                [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
+                [ParamInfo(name="input", type="Tensor")],
+            ],
+            source="test",
+        )
+        case = make_testcase(api_name="torch.test_multi", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",))
         case.validate()
         assert case.is_valid
 
     def test_multi_overload_matches_first(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.test_multi2", [
-            [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
-            [ParamInfo(name="input", type="Tensor")],
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.test_multi2",
+            [
+                [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
+                [ParamInfo(name="input", type="Tensor")],
+            ],
+            source="test",
+        )
         case = make_testcase(
-            api_name="torch.test_multi2",
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            api_name="torch.test_multi2", tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32")
+        )
         case.validate()
         assert case.is_valid
 
     def test_multi_overload_no_match(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.test_multi3", [
-            [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
-            [ParamInfo(name="input", type="Tensor")],
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.test_multi3",
+            [
+                [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
+                [ParamInfo(name="input", type="Tensor")],
+            ],
+            source="test",
+        )
         case = make_testcase(
             api_name="torch.test_multi3",
             tensor_view_shapes=((2, 3), (2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32', 'float32'))
+            tensor_dtypes=("float32", "float32", "float32"),
+        )
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "INPUT_COUNT_EXCEEDED"
 
     def test_multi_overload_tensorlist_vs_tensor(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.test_multi_tl", [
-            [ParamInfo(name="tensors", type="tuple of Tensors")],
-            [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.test_multi_tl",
+            [
+                [ParamInfo(name="tensors", type="tuple of Tensors")],
+                [ParamInfo(name="input", type="Tensor"), ParamInfo(name="other", type="Tensor")],
+            ],
+            source="test",
+        )
         case_nested = make_testcase(
-            api_name="torch.test_multi_tl",
-            tensor_view_shapes=(((2, 3), (2, 5)),),
-            tensor_dtypes=('float32',))
+            api_name="torch.test_multi_tl", tensor_view_shapes=(((2, 3), (2, 5)),), tensor_dtypes=("float32",)
+        )
         case_nested.validate()
         assert case_nested.is_valid
 
         case_flat = make_testcase(
-            api_name="torch.test_multi_tl",
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            api_name="torch.test_multi_tl", tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32")
+        )
         case_flat.validate()
         assert case_flat.is_valid
 
@@ -396,47 +398,56 @@ class TestOutputTensorExcludesFromInputCount:
 
     def test_all_tensors_marked_output_invalidates(self, make_testcase):
         """1 tensor with output_tensor_indexes=(0,) → 0 input tensors → invalid."""
-        FrameworkApiInfoKeeper().register("torch.abs", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="out", type="Tensor", default="None",
-                      is_optional=True, is_keyword_only=True),
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.abs",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="out", type="Tensor", default="None", is_optional=True, is_keyword_only=True),
+            ],
+            source="test",
+        )
         case = make_testcase(
-            api_name="torch.abs",
-            tensor_view_shapes=((2, 3),),
-            tensor_dtypes=('float32',),
-            output_tensor_indexes=(0,))
+            api_name="torch.abs", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",), output_tensor_indexes=(0,)
+        )
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "ALL_TENSORS_MARKED_OUTPUT"
 
     def test_output_tensor_excluded_from_count(self, make_testcase):
         """2 tensors, 1 output → 1 input tensor, API needs 1 input → valid."""
-        FrameworkApiInfoKeeper().register("torch.abs_valid", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="out", type="Tensor", default="None",
-                      is_optional=True, is_keyword_only=True),
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.abs_valid",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="out", type="Tensor", default="None", is_optional=True, is_keyword_only=True),
+            ],
+            source="test",
+        )
         case = make_testcase(
             api_name="torch.abs_valid",
             tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'),
-            output_tensor_indexes=(1,))
+            tensor_dtypes=("float32", "float32"),
+            output_tensor_indexes=(1,),
+        )
         case.validate()
         assert case.is_valid
 
     def test_two_outputs_one_input_valid(self, make_testcase):
         """3 tensors, 2 outputs → 1 input. API with 1 required tensor + 2 optional → valid."""
-        FrameworkApiInfoKeeper().register("torch.sort_like", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="out", type="Tensor", default="None",
-                      is_optional=True, is_keyword_only=True),
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.sort_like",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="out", type="Tensor", default="None", is_optional=True, is_keyword_only=True),
+            ],
+            source="test",
+        )
         case = make_testcase(
             api_name="torch.sort_like",
             tensor_view_shapes=((2, 3), (2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32', 'float32'),
-            output_tensor_indexes=(1, 2))
+            tensor_dtypes=("float32", "float32", "float32"),
+            output_tensor_indexes=(1, 2),
+        )
         case.validate()
         assert case.is_valid
 
@@ -446,17 +457,14 @@ class TestOutputTensorExcludesFromInputCount:
         except ImportError:
             pytest.skip("torch not available")
         case = make_testcase(
-            api_name="torch.abs",
-            tensor_view_shapes=((2, 3),),
-            tensor_dtypes=('float32',),
-            output_tensor_indexes=(0,))
+            api_name="torch.abs", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",), output_tensor_indexes=(0,)
+        )
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "ALL_TENSORS_MARKED_OUTPUT"
 
 
 class TestInplaceTensorMethod:
-
     def setup_method(self):
         FrameworkApiInfoKeeper().clear_cache()
         _MANUAL_OVERRIDES.clear()
@@ -473,68 +481,84 @@ class TestInplaceTensorMethod:
         assert not TestcaseE2e._is_inplace_tensor_method("")
 
     def test_auto_fill_output_for_inplace(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.Tensor.fake_add_", [
-            ParamInfo(name="self", type="Tensor"),
-            ParamInfo(name="other", type="Tensor"),
-            ParamInfo(name="alpha", type="Number", default="1"),
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.Tensor.fake_add_",
+            [
+                ParamInfo(name="self", type="Tensor"),
+                ParamInfo(name="other", type="Tensor"),
+                ParamInfo(name="alpha", type="Number", default="1"),
+            ],
+            source="test",
+        )
         case = make_testcase(
             api_name="torch.Tensor.fake_add_",
             tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'),
-            attributes={'alpha': '2'})
+            tensor_dtypes=("float32", "float32"),
+            attributes={"alpha": "2"},
+        )
         case.validate()
         assert case.is_valid
         assert case.output_tensor_indexes == (0,)
 
     def test_inplace_self_not_excluded_from_input_count(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.Tensor.fake_mul_", [
-            ParamInfo(name="self", type="Tensor"),
-            ParamInfo(name="other", type="Tensor"),
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.Tensor.fake_mul_",
+            [
+                ParamInfo(name="self", type="Tensor"),
+                ParamInfo(name="other", type="Tensor"),
+            ],
+            source="test",
+        )
         case = make_testcase(
-            api_name="torch.Tensor.fake_mul_",
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            api_name="torch.Tensor.fake_mul_", tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32")
+        )
         case.validate()
         assert case.is_valid
 
     def test_inplace_pure_output_excludes_self(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.Tensor.fake_sub_", [
-            ParamInfo(name="self", type="Tensor"),
-            ParamInfo(name="other", type="Tensor"),
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.Tensor.fake_sub_",
+            [
+                ParamInfo(name="self", type="Tensor"),
+                ParamInfo(name="other", type="Tensor"),
+            ],
+            source="test",
+        )
         case = make_testcase(
-            api_name="torch.Tensor.fake_sub_",
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            api_name="torch.Tensor.fake_sub_", tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32")
+        )
         case.validate()
         assert case.pure_output_indexes == []
 
     def test_non_inplace_not_auto_filled(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.Tensor.fake_add", [
-            ParamInfo(name="self", type="Tensor"),
-            ParamInfo(name="other", type="Tensor"),
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch.Tensor.fake_add",
+            [
+                ParamInfo(name="self", type="Tensor"),
+                ParamInfo(name="other", type="Tensor"),
+            ],
+            source="test",
+        )
         case = make_testcase(
-            api_name="torch.Tensor.fake_add",
-            tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'))
+            api_name="torch.Tensor.fake_add", tensor_view_shapes=((2, 3), (2, 3)), tensor_dtypes=("float32", "float32")
+        )
         case.validate()
         assert case.output_tensor_indexes is None or case.output_tensor_indexes == ()
 
 
 class TestOutputConfigurationValidation:
-
     def test_required_out_missing_fails(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch_npu.test_req_out", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="out", type="Tensor", is_keyword_only=True),
-        ], source="test")
+        FrameworkApiInfoKeeper().register(
+            "torch_npu.test_req_out",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="out", type="Tensor", is_keyword_only=True),
+            ],
+            source="test",
+        )
         case = make_testcase(
-            api_name="torch_npu.test_req_out",
-            tensor_view_shapes=((2, 3),),
-            tensor_dtypes=('float32',))
+            api_name="torch_npu.test_req_out", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",)
+        )
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "MISSING_REQUIRED_OUTPUT"
@@ -542,10 +566,12 @@ class TestOutputConfigurationValidation:
     def test_required_tensor_list_out_wrong_and_correct_count(self, make_testcase):
         info = APIParamInfo(
             api_name="torch_npu.test_tl_out",
-            overloads=[[
-                ParamInfo(name="input", type="Tensor"),
-                ParamInfo(name="out", type="Tensor[]", is_keyword_only=True),
-            ]],
+            overloads=[
+                [
+                    ParamInfo(name="input", type="Tensor"),
+                    ParamInfo(name="out", type="Tensor[]", is_keyword_only=True),
+                ]
+            ],
             _return_counts=[4],
             source="test",
         )
@@ -553,8 +579,9 @@ class TestOutputConfigurationValidation:
         case_bad = make_testcase(
             api_name="torch_npu.test_tl_out",
             tensor_view_shapes=((2, 3), (2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32', 'float32'),
-            output_tensor_indexes=(1, 2))
+            tensor_dtypes=("float32", "float32", "float32"),
+            output_tensor_indexes=(1, 2),
+        )
         case_bad.validate()
         assert not case_bad.is_valid
         assert case_bad.fail_reason == "OUTPUT_COUNT_MISMATCH"
@@ -562,28 +589,31 @@ class TestOutputConfigurationValidation:
         case_ok = make_testcase(
             api_name="torch_npu.test_tl_out",
             tensor_view_shapes=((2, 3), (2, 3), (2, 3), (2, 3), (2, 3)),
-            tensor_dtypes=('float32',) * 5,
-            output_tensor_indexes=(1, 2, 3, 4))
+            tensor_dtypes=("float32",) * 5,
+            output_tensor_indexes=(1, 2, 3, 4),
+        )
         case_ok.validate()
         assert case_ok.is_valid
 
     def test_optional_out_passes_with_and_without_output(self, make_testcase):
-        FrameworkApiInfoKeeper().register("torch.opt_out", [
-            ParamInfo(name="input", type="Tensor"),
-            ParamInfo(name="out", type="Tensor", is_optional=True, is_keyword_only=True),
-        ], source="test")
-        case_no_out = make_testcase(
-            api_name="torch.opt_out",
-            tensor_view_shapes=((2, 3),),
-            tensor_dtypes=('float32',))
+        FrameworkApiInfoKeeper().register(
+            "torch.opt_out",
+            [
+                ParamInfo(name="input", type="Tensor"),
+                ParamInfo(name="out", type="Tensor", is_optional=True, is_keyword_only=True),
+            ],
+            source="test",
+        )
+        case_no_out = make_testcase(api_name="torch.opt_out", tensor_view_shapes=((2, 3),), tensor_dtypes=("float32",))
         case_no_out.validate()
         assert case_no_out.is_valid
 
         case_with_out = make_testcase(
             api_name="torch.opt_out",
             tensor_view_shapes=((2, 3), (2, 3)),
-            tensor_dtypes=('float32', 'float32'),
-            output_tensor_indexes=(1,))
+            tensor_dtypes=("float32", "float32"),
+            output_tensor_indexes=(1,),
+        )
         case_with_out.validate()
         assert case_with_out.is_valid
 
@@ -598,28 +628,29 @@ class TestOutputConfigUnknownTensorListCount:
     def test_optional_tensor_list_unknown_count_no_out_passes(self, make_testcase):
         info = APIParamInfo(
             api_name="torch.sort_like",
-            overloads=[[
-                ParamInfo(name="input", type="Tensor"),
-                ParamInfo(name="out", type="tuple of Tensors", is_optional=True, is_keyword_only=True),
-            ]],
+            overloads=[
+                [
+                    ParamInfo(name="input", type="Tensor"),
+                    ParamInfo(name="out", type="tuple of Tensors", is_optional=True, is_keyword_only=True),
+                ]
+            ],
             _return_counts=[0],
             source="test",
         )
         FrameworkApiInfoKeeper().register("torch.sort_like", info)
-        case = make_testcase(
-            api_name="torch.sort_like",
-            tensor_view_shapes=((4, 4),),
-            tensor_dtypes=('float32',))
+        case = make_testcase(api_name="torch.sort_like", tensor_view_shapes=((4, 4),), tensor_dtypes=("float32",))
         case.validate()
         assert case.is_valid
 
     def test_optional_tensor_list_unknown_count_with_out_passes(self, make_testcase):
         info = APIParamInfo(
             api_name="torch.sort_like2",
-            overloads=[[
-                ParamInfo(name="input", type="Tensor"),
-                ParamInfo(name="out", type="tuple of Tensors", is_optional=True, is_keyword_only=True),
-            ]],
+            overloads=[
+                [
+                    ParamInfo(name="input", type="Tensor"),
+                    ParamInfo(name="out", type="tuple of Tensors", is_optional=True, is_keyword_only=True),
+                ]
+            ],
             _return_counts=[0],
             source="test",
         )
@@ -627,18 +658,21 @@ class TestOutputConfigUnknownTensorListCount:
         case = make_testcase(
             api_name="torch.sort_like2",
             tensor_view_shapes=((4, 4), (4, 4), (4, 4)),
-            tensor_dtypes=('float32', 'float32', 'float32'),
-            output_tensor_indexes=(1, 2))
+            tensor_dtypes=("float32", "float32", "float32"),
+            output_tensor_indexes=(1, 2),
+        )
         case.validate()
         assert case.is_valid
 
     def test_required_tensor_list_unknown_count_with_out_passes(self, make_testcase):
         info = APIParamInfo(
             api_name="torch.sort_like3",
-            overloads=[[
-                ParamInfo(name="input", type="Tensor"),
-                ParamInfo(name="out", type="tuple of Tensors", is_keyword_only=True),
-            ]],
+            overloads=[
+                [
+                    ParamInfo(name="input", type="Tensor"),
+                    ParamInfo(name="out", type="tuple of Tensors", is_keyword_only=True),
+                ]
+            ],
             _return_counts=[0],
             source="test",
         )
@@ -646,26 +680,26 @@ class TestOutputConfigUnknownTensorListCount:
         case = make_testcase(
             api_name="torch.sort_like3",
             tensor_view_shapes=((4, 4), (4, 4)),
-            tensor_dtypes=('float32', 'float32'),
-            output_tensor_indexes=(1,))
+            tensor_dtypes=("float32", "float32"),
+            output_tensor_indexes=(1,),
+        )
         case.validate()
         assert case.is_valid
 
     def test_required_tensor_list_unknown_count_no_out_fails(self, make_testcase):
         info = APIParamInfo(
             api_name="torch.sort_like4",
-            overloads=[[
-                ParamInfo(name="input", type="Tensor"),
-                ParamInfo(name="out", type="tuple of Tensors", is_keyword_only=True),
-            ]],
+            overloads=[
+                [
+                    ParamInfo(name="input", type="Tensor"),
+                    ParamInfo(name="out", type="tuple of Tensors", is_keyword_only=True),
+                ]
+            ],
             _return_counts=[0],
             source="test",
         )
         FrameworkApiInfoKeeper().register("torch.sort_like4", info)
-        case = make_testcase(
-            api_name="torch.sort_like4",
-            tensor_view_shapes=((4, 4),),
-            tensor_dtypes=('float32',))
+        case = make_testcase(api_name="torch.sort_like4", tensor_view_shapes=((4, 4),), tensor_dtypes=("float32",))
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "MISSING_REQUIRED_OUTPUT"
@@ -673,10 +707,12 @@ class TestOutputConfigUnknownTensorListCount:
     def test_known_count_exact_validation_still_works(self, make_testcase):
         info = APIParamInfo(
             api_name="torch.exact_tl",
-            overloads=[[
-                ParamInfo(name="input", type="Tensor"),
-                ParamInfo(name="out", type="tuple of Tensors", is_keyword_only=True),
-            ]],
+            overloads=[
+                [
+                    ParamInfo(name="input", type="Tensor"),
+                    ParamInfo(name="out", type="tuple of Tensors", is_keyword_only=True),
+                ]
+            ],
             _return_counts=[2],
             source="test",
         )
@@ -684,8 +720,9 @@ class TestOutputConfigUnknownTensorListCount:
         case = make_testcase(
             api_name="torch.exact_tl",
             tensor_view_shapes=((4, 4), (4, 4)),
-            tensor_dtypes=('float32', 'float32'),
-            output_tensor_indexes=(1,))
+            tensor_dtypes=("float32", "float32"),
+            output_tensor_indexes=(1,),
+        )
         case.validate()
         assert not case.is_valid
         assert case.fail_reason == "OUTPUT_COUNT_MISMATCH"

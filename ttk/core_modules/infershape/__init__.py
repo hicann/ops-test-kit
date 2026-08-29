@@ -10,5 +10,6 @@
 """
 Shape Inference Module
 """
-from . import infershape
-from . import format_transformation
+
+from . import format_transformation as format_transformation  # noqa: F401
+from . import infershape as infershape

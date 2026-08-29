@@ -13,6 +13,7 @@
 Provides HCCL communicator initialization and group-name injection so that
 mc2 operator tiling (GetRankSize) and aclnn execution work in the Kernel path.
 """
+
 import ctypes
 import logging
 from typing import List, Optional, Tuple
@@ -72,8 +73,7 @@ def init_hccl(device_ids: List[int] = None) -> Tuple[List[int], str, int]:
     _hccl_group_name = group_name
     _hccl_rank_size = rank_size.value
     _hccl_device_ids = device_ids
-    logging.info(f"mc2_hccl: initialized HCCL devices={device_ids}, group='{group_name}', "
-                 f"rank_size={_hccl_rank_size}")
+    logging.info(f"mc2_hccl: initialized HCCL devices={device_ids}, group='{group_name}', rank_size={_hccl_rank_size}")
     return handles, group_name, _hccl_rank_size
 
 
@@ -92,20 +92,37 @@ def get_hccl_rank_size() -> int:
 def is_mc2_op(op_name: str) -> bool:
     """Check if an operator is a mc2 communication-fusion operator."""
     mc2_ops = {
-        "all_gather_matmul", "matmul_all_reduce", "matmul_reduce_scatter",
-        "allto_all_matmul", "matmul_allto_all", "matmul_reduce_scatter_v2",
-        "all_gather_matmul_v2", "grouped_mat_mul_all_reduce",
-        "grouped_mat_mul_allto_allv", "inplace_matmul_all_reduce_add_rms_norm",
-        "matmul_all_reduce_add_rms_norm", "batch_mat_mul_reduce_scatter_allto_all",
-        "allto_all_all_gather_batch_mat_mul", "allto_allv_grouped_mat_mul",
-        "allto_allv_quant_grouped_mat_mul", "quant_all_reduce",
-        "quant_reduce_scatter", "quant_grouped_mat_mul_allto_allv",
-        "distribute_barrier", "distribute_barrier_extend",
-        "moe_distribute_dispatch", "moe_distribute_combine",
-        "moe_distribute_dispatch_v2", "moe_distribute_dispatch_v3",
-        "moe_distribute_combine_v2", "moe_distribute_combine_v3",
+        "all_gather_matmul",
+        "matmul_all_reduce",
+        "matmul_reduce_scatter",
+        "allto_all_matmul",
+        "matmul_allto_all",
+        "matmul_reduce_scatter_v2",
+        "all_gather_matmul_v2",
+        "grouped_mat_mul_all_reduce",
+        "grouped_mat_mul_allto_allv",
+        "inplace_matmul_all_reduce_add_rms_norm",
+        "matmul_all_reduce_add_rms_norm",
+        "batch_mat_mul_reduce_scatter_allto_all",
+        "allto_all_all_gather_batch_mat_mul",
+        "allto_allv_grouped_mat_mul",
+        "allto_allv_quant_grouped_mat_mul",
+        "quant_all_reduce",
+        "quant_reduce_scatter",
+        "quant_grouped_mat_mul_allto_allv",
+        "distribute_barrier",
+        "distribute_barrier_extend",
+        "moe_distribute_dispatch",
+        "moe_distribute_combine",
+        "moe_distribute_dispatch_v2",
+        "moe_distribute_dispatch_v3",
+        "moe_distribute_combine_v2",
+        "moe_distribute_combine_v3",
         "moe_distribute_combine_add_rms_norm",
-        "moe_update_expert", "mega_moe",
-        "moe_ep_dispatch", "moe_ep_dispatch_epilogue", "moe_ep_combine",
+        "moe_update_expert",
+        "mega_moe",
+        "moe_ep_dispatch",
+        "moe_ep_dispatch_epilogue",
+        "moe_ep_combine",
     }
     return op_name in mc2_ops

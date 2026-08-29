@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Tests for ACLNN golden promote dtype context."""
+
 from collections import OrderedDict
 from unittest.mock import MagicMock, patch
 
@@ -54,6 +55,7 @@ def _make_testcase(api_name, tensors, tensor_dtypes):
 
 class _RecordDtype:
     """class-form golden:无自定义 __init__(走 cls() 守卫);__call__ 记录收到的 dtype。"""
+
     received = {}
 
     def __call__(self, x):
@@ -67,9 +69,9 @@ def _mock_env(monkeypatch):
         monkeypatch.delenv(k, raising=False)
 
 
-@patch('ttk.core_modules.npu.op_api.golden_generation.OpApiInfoKeeper')
-@patch('ttk.core_modules.npu.op_api.golden_generation.get_global_storage')
-@patch('ttk.core_modules.npu.op_api.golden_generation.get_plugin_function')
+@patch("ttk.core_modules.npu.op_api.golden_generation.OpApiInfoKeeper")
+@patch("ttk.core_modules.npu.op_api.golden_generation.get_global_storage")
+@patch("ttk.core_modules.npu.op_api.golden_generation.get_plugin_function")
 class TestAclnnPromote:
     def test_promote_float16_to_float32_and_restore(self, mock_get_plugin, mock_sw, mock_op_info):
         """Promote: float16 输入 → golden(class __call__)收 float32;退出后 ctx 还原 float16。"""

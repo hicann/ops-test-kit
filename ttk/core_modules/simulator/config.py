@@ -52,7 +52,9 @@ def _cannsim_model_name(soc_version: str) -> str:
     try:
         result = subprocess.run(
             [sys.executable, "-c", code, site_packages, soc_version],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         name = result.stdout.strip()
         if result.returncode == 0 and name:
@@ -72,9 +74,7 @@ def resolve_camodel_lib_dir(soc_version: str) -> Path:
     """
     asc_home = os.getenv("ASCEND_TOOLKIT_HOME", "")
     if not asc_home:
-        raise RuntimeError(
-            "ASCEND_TOOLKIT_HOME is not set; install a CANN toolkit that ships cannsim."
-        )
+        raise RuntimeError("ASCEND_TOOLKIT_HOME is not set; install a CANN toolkit that ships cannsim.")
     model = _cannsim_model_name(soc_version) or SIM_PLATFORM_BY_SOC.get(soc_version, "")
     if not model:
         raise RuntimeError(
@@ -85,7 +85,6 @@ def resolve_camodel_lib_dir(soc_version: str) -> Path:
     camodel = Path(asc_home) / "tools" / "simulator" / model / "camodel"
     if not camodel.is_dir():
         raise RuntimeError(
-            f"camodel directory not found: {camodel}. "
-            f"Check that {asc_home} provides tools/simulator/{model}."
+            f"camodel directory not found: {camodel}. Check that {asc_home} provides tools/simulator/{model}."
         )
     return camodel

@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """_assign_device 单元测试：覆盖单卡/多卡 RR 分配、busy 跳过、全占阻塞、CPU 模式及并发场景。"""
+
 import threading
 
 from ttk.remote.server import xpu_server
@@ -37,14 +38,15 @@ def test_concurrent_two_requests_different_devices():
     barrier = threading.Barrier(2)
 
     def t():
-        barrier.wait()   # 确保同时出发
+        barrier.wait()  # 确保同时出发
         results.append(h._assign_device())
+
     ths = [threading.Thread(target=t) for _ in range(2)]
     for th in ths:
         th.start()
     for th in ths:
         th.join(timeout=2)
-    assert sorted(results) == [0, 1]   # 分到不同 device
+    assert sorted(results) == [0, 1]  # 分到不同 device
     for d in results:
         locks[d].release()
 
@@ -52,10 +54,10 @@ def test_concurrent_two_requests_different_devices():
 def test_data_does_not_concurrent_with_perf_same_device():
     """PERF 占 device 0 → DATA try-lock 0 失败 → 跳到 device 1（spec §6 DATA+PERF 不并发）。"""
     locks = {0: threading.Lock(), 1: threading.Lock()}
-    locks[0].acquire()   # 模拟 PERF 占 device 0
+    locks[0].acquire()  # 模拟 PERF 占 device 0
     h = _make_handler([0, 1], locks)
-    h._device_rr_counter = 0   # 强制 RR 起点为 0
-    dev = h._assign_device()   # DATA 请求
-    assert dev == 1   # PERF 在 0，DATA 跳到 1
+    h._device_rr_counter = 0  # 强制 RR 起点为 0
+    dev = h._assign_device()  # DATA 请求
+    assert dev == 1  # PERF 在 0，DATA 跳到 1
     locks[1].release()
     locks[0].release()

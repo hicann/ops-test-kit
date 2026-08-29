@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Tests for remote dispatcher: serialization, dispatch, backoff, round-trip."""
+
 import io
 import json
 import subprocess
@@ -22,13 +23,15 @@ import pytest
 @pytest.fixture(scope="module")
 def xpu_server():
     proc = subprocess.Popen(
-        [sys.executable, "-m", "server.xpu_server",
-         "--port", "19092", "--dry-run"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        [sys.executable, "-m", "server.xpu_server", "--port", "19092", "--dry-run"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     for _ in range(20):
         time.sleep(0.5)
         try:
             import http.client
+
             conn = http.client.HTTPConnection("127.0.0.1", 19092, timeout=1)
             conn.request("GET", "/v1/heartbeat")
             conn.getresponse().read()
@@ -48,6 +51,7 @@ def xpu_server():
 class TestDispatchApiMode:
     def test_dispatch_api_string(self, xpu_server):
         from ttk.remote.dispatcher import dispatch_to_remote
+
         inputs = [np.random.randn(4, 8).astype(np.float32)]
         outputs = dispatch_to_remote(
             op_name="softmax_v2",
@@ -66,6 +70,7 @@ class TestDispatchApiMode:
 class TestSerializationRoundtrip:
     def test_numpy_roundtrip(self):
         from ttk.remote.dispatcher import _load_npz_outputs, _serialize_to_file
+
         original = [
             np.random.randn(4, 8).astype(np.float32),
             np.random.randn(3, 5).astype(np.int64),
@@ -79,6 +84,7 @@ class TestSerializationRoundtrip:
             np.testing.assert_array_equal(outputs[1], original[1])
         finally:
             import os
+
             os.unlink(tmp)
 
 
@@ -88,6 +94,7 @@ class TestInputSchema:
         import numpy as np
 
         from ttk.remote.dispatcher import _build_input_schema
+
         a, b, c = np.array([1.0]), np.array([2.0]), np.array([3.0])
         schema = _build_input_schema(inputs=[[a, b], c], input_names=["x", "y"])
         assert schema == [
@@ -104,13 +111,14 @@ class TestSerialize:
         import numpy as np
 
         from ttk.remote.dispatcher import _serialize_to_file
+
         a, b, c, d, e = [np.array([float(i)]) for i in range(1, 6)]
         tmp = _serialize_to_file([[a, b], c, [d, e], None])
         try:
             npz = np.load(tmp)
-            assert len(npz.files) == 5                       # a0..a4,不是 3
+            assert len(npz.files) == 5  # a0..a4,不是 3
             for i in range(5):
-                assert npz[f"a{i}"].shape == (1,)           # 每个 (1,),不是 (2,1)
+                assert npz[f"a{i}"].shape == (1,)  # 每个 (1,),不是 (2,1)
         finally:
             os.unlink(tmp)
 
@@ -123,6 +131,7 @@ class TestSchemaLeafCount:
         import numpy as np
 
         from ttk.remote.dispatcher import _build_input_schema, _schema_leaf_count, _serialize_to_file
+
         a, b, c, d, e = [np.array([float(i)]) for i in range(1, 6)]
         inputs = [[a, b], c, [d, e], None]
         names = ["p0", "p1", "p2", "p3"]
@@ -138,6 +147,7 @@ class TestSchemaLeafCount:
 class TestErrorHandling:
     def test_connection_refused(self):
         from ttk.remote.dispatcher import RemoteConnectionError, dispatch_to_remote
+
         with pytest.raises(RemoteConnectionError):
             dispatch_to_remote(
                 op_name="test",
@@ -167,11 +177,10 @@ class TestSyncSemaphore:
                 raise AssertionError("should not poll when acquired")
 
         fake = FakeCtx()
-        with patch("ttk.remote.dispatcher._do_http_sync", return_value=True) as do_sync, \
-             patch("ttk.core_modules.tbe_multiprocessing.pool.get_process_context",
-                   return_value=fake):
-            ok = dispatcher._sync_missing_dependency(
-                "m", [str(tmp_path)], "127.0.0.1", 19090, "t1", 5)
+        with patch("ttk.remote.dispatcher._do_http_sync", return_value=True) as do_sync, patch(
+            "ttk.core_modules.tbe_multiprocessing.pool.get_process_context", return_value=fake
+        ):
+            ok = dispatcher._sync_missing_dependency("m", [str(tmp_path)], "127.0.0.1", 19090, "t1", 5)
         assert ok is True
         assert do_sync.called
         assert fake.set_calls == [("xpu_sync_127.0.0.1:19090:m", "ok")]
@@ -180,6 +189,7 @@ class TestSyncSemaphore:
 class TestClientHelpers:
     def test_backoff_delay_caps_and_jitters(self):
         from ttk.remote.dispatcher import _backoff_delay
+
         assert _backoff_delay(0, 0.5, 10.0, 0.25, lambda a, b: b) == 0.5 * 1.25
         assert _backoff_delay(5, 0.5, 10.0, 0.25, lambda a, b: b) == 10.0 * 1.25
         assert _backoff_delay(0, 0.5, 10.0, 0.25, lambda a, b: a) == 0.5 * 0.75
@@ -244,22 +254,31 @@ class TestDispatchBackoff:
     def test_503_then_200(self, scripted):
         from ttk.remote import DATA
         from ttk.remote.dispatcher import dispatch_to_remote
-        scripted.script = [_FakeResp(503), _FakeResp(503),
-                           _FakeResp(200, {"X-Output-Count": "1",
-                                           "X-Output-Schema": json.dumps([{"index": 0, "dtype": "float64"}])},
-                                     _npz_body(np.array([2.0])))]
-        out = dispatch_to_remote(op_name="add", inputs=[np.array([1.0])], input_names=["x"],
-                                 mode=DATA, endpoint_port=9, tenant_id="t")
+
+        scripted.script = [
+            _FakeResp(503),
+            _FakeResp(503),
+            _FakeResp(
+                200,
+                {"X-Output-Count": "1", "X-Output-Schema": json.dumps([{"index": 0, "dtype": "float64"}])},
+                _npz_body(np.array([2.0])),
+            ),
+        ]
+        out = dispatch_to_remote(
+            op_name="add", inputs=[np.array([1.0])], input_names=["x"], mode=DATA, endpoint_port=9, tenant_id="t"
+        )
         assert len(out) == 1
 
     def test_500_no_retry(self, scripted):
         from ttk.remote import DATA
         from ttk.remote.dispatcher import RemoteExecutionError, dispatch_to_remote
+
         scripted.script = [_FakeResp(500, body=b"boom")]
         with pytest.raises(RemoteExecutionError):
-            dispatch_to_remote(op_name="add", inputs=[np.array([1.0])], input_names=["x"],
-                               mode=DATA, endpoint_port=9, tenant_id="t")
-        assert len(scripted.script) == 0      # only one attempt; no retry
+            dispatch_to_remote(
+                op_name="add", inputs=[np.array([1.0])], input_names=["x"], mode=DATA, endpoint_port=9, tenant_id="t"
+            )
+        assert len(scripted.script) == 0  # only one attempt; no retry
 
 
 class TestRoundTrip:
@@ -270,6 +289,7 @@ class TestRoundTrip:
 
         from ttk.remote.dispatcher import _build_input_schema, _serialize_to_file
         from ttk.remote.server.execution_container import match_params_v1
+
         a, b, c, d, e = [np.array([float(i)]) for i in range(1, 6)]
         inputs = [[a, b], c, [d, e], None]
         names = ["p0", "p1", "p2", "p3"]
@@ -278,7 +298,7 @@ class TestRoundTrip:
         try:
             npz = np.load(npz_path)
             flat = [npz[k] for k in npz.files]
-            named = match_params_v1(schema, flat)            # 真实 server 函数
+            named = match_params_v1(schema, flat)  # 真实 server 函数
             # p0/p2 是 list（不是 merged 数组）,p3 是 None
             assert isinstance(named["p0"], list) and len(named["p0"]) == 2
             np.testing.assert_array_equal(named["p0"][0], a)
@@ -287,4 +307,5 @@ class TestRoundTrip:
             assert named["p3"] is None
         finally:
             import os
+
             os.unlink(npz_path)

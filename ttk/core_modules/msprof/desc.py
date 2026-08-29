@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -13,21 +12,17 @@
 Declaration info from acl interface.
 """
 
-
-__all__ = ["ACL_ERROR_DESC_DICT", "TtkMsProfType", "AclProfType", "AiCoreProfMetrics",
-           "MsProfOpDfx"]
+__all__ = ["ACL_ERROR_DESC_DICT", "TtkMsProfType", "AclProfType", "AiCoreProfMetrics", "MsProfOpDfx"]
 
 
 import ctypes
 import threading
+from dataclasses import dataclass
 from enum import Enum
-from dataclasses import dataclass, field
-from typing import Optional, Union
-
+from typing import Optional
 
 ACL_ERROR_DESC_DICT = {
     0: "ACL_SUCCESS",
-
     100000: "ACL_ERROR_INVALID_PARAM",
     100001: "ACL_ERROR_UNINITIALIZE",
     100002: "ACL_ERROR_REPEAT_INITIALIZE",
@@ -81,7 +76,6 @@ ACL_ERROR_DESC_DICT = {
     148050: "ACL_ERROR_OP_UNSUPPORTED_DYNAMIC",
     148051: "ACL_ERROR_RELATIVE_RESOURCE_NOT_CLEARED",
     148052: "ACL_ERROR_UNSUPPORTED_JPEG",
-
     200000: "ACL_ERROR_BAD_ALLOC",
     200001: "ACL_ERROR_API_NOT_SUPPORT",
     200002: "ACL_ERROR_INVALID_DEVICE",
@@ -90,9 +84,7 @@ ACL_ERROR_DESC_DICT = {
     200005: "ACL_ERROR_INVALID_RESOURCE_HANDLE",
     200006: "ACL_ERROR_FEATURE_UNSUPPORTED",
     200007: "ACL_ERROR_PROF_MODULES_UNSUPPORTED",
-
     300000: "ACL_ERROR_STORAGE_OVER_LIMIT",
-
     500000: "ACL_ERROR_INTERNAL_ERROR",
     500001: "ACL_ERROR_FAILURE",
     500002: "ACL_ERROR_GE_FAILURE",
@@ -162,16 +154,14 @@ class MsprofTaskType(Enum):
 
 class MsprofNodeBasicInfo(ctypes.Structure):
     _fields_ = [
-        ('op_name', ctypes.c_uint64),
-        ('task_type', ctypes.c_uint32),
-        ('op_type', ctypes.c_uint64),
-        ('block_dim', ctypes.c_uint32),
-        ('op_flag', ctypes.c_uint32),
+        ("op_name", ctypes.c_uint64),
+        ("task_type", ctypes.c_uint32),
+        ("op_type", ctypes.c_uint64),
+        ("block_dim", ctypes.c_uint32),
+        ("op_flag", ctypes.c_uint32),
     ]
 
-    def __init__(self,
-                 op_name: int, task_type: int,
-                 op_type: int, block_dim: int):
+    def __init__(self, op_name: int, task_type: int, op_type: int, block_dim: int):
         self.op_name = op_name
         self.task_type = task_type
         self.op_type = op_type
@@ -187,19 +177,19 @@ class MsprofCompactInfoUnionData(ctypes.Union):
 
 
 class MsprofCompactInfo(ctypes.Structure):
-    ''' MsprofReportCompactInfo buffer data '''
+    """MsprofReportCompactInfo buffer data"""
+
     _fields_ = [
-        ('magic', ctypes.c_uint16),
-        ('level', ctypes.c_uint16),
-        ('type', ctypes.c_uint32),
-        ('thread_id', ctypes.c_uint32),
-        ('data_len', ctypes.c_uint32),
-        ('time_stamp', ctypes.c_uint64),
-        ('data', MsprofCompactInfoUnionData),
+        ("magic", ctypes.c_uint16),
+        ("level", ctypes.c_uint16),
+        ("type", ctypes.c_uint32),
+        ("thread_id", ctypes.c_uint32),
+        ("data_len", ctypes.c_uint32),
+        ("time_stamp", ctypes.c_uint64),
+        ("data", MsprofCompactInfoUnionData),
     ]
 
-    def __init__(self, time_stamp: int,
-                 op_name: int, task_type: int, block_dim: int):
+    def __init__(self, time_stamp: int, op_name: int, task_type: int, block_dim: int):
         super().__init__()
         self.magic = 0x5A5A
         self.level = 10000

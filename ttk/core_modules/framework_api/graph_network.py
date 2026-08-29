@@ -13,6 +13,7 @@
 GraphNetwork — generic torch.nn.Module wrapper for torch.compile graph mode testing.
 Also provides split_params for custom Module parameter routing (__init__ vs forward).
 """
+
 import inspect
 
 import torch
@@ -21,10 +22,11 @@ import torch
 class GraphNetwork(torch.nn.Module):
     """
     Generic torch.nn.Module wrapper for torch.compile graph mode testing.
-    
+
     api_func is always a callable — either the resolved API function directly,
     or a closure that handles tensor method dispatch.
     """
+
     def __init__(self, api_func):
         super().__init__()
         self.api_func = api_func
@@ -52,21 +54,19 @@ def split_params(module_cls, overload_params, args, kwargs):
         (init_kwargs, fwd_kwargs) — dicts for __init__ and forward respectively
     """
     full_kwargs = dict(kwargs)
-    positional_param_names = [
-        p.name for p in overload_params
-        if not p.is_keyword_only
-    ]
+    positional_param_names = [p.name for p in overload_params if not p.is_keyword_only]
     for i, val in enumerate(args):
         if i < len(positional_param_names):
             full_kwargs[positional_param_names[i]] = val
 
-    init_params = set(inspect.signature(module_cls.__init__).parameters.keys()) - {'self'}
-    fwd_params = set(inspect.signature(module_cls.forward).parameters.keys()) - {'self'}
+    init_params = set(inspect.signature(module_cls.__init__).parameters.keys()) - {"self"}
+    fwd_params = set(inspect.signature(module_cls.forward).parameters.keys()) - {"self"}
 
     if "self" in full_kwargs:
         fwd_ordered = [
-            p.name for p in inspect.signature(module_cls.forward).parameters.values()
-            if p.name != 'self' and p.kind != inspect.Parameter.VAR_KEYWORD
+            p.name
+            for p in inspect.signature(module_cls.forward).parameters.values()
+            if p.name != "self" and p.kind != inspect.Parameter.VAR_KEYWORD
         ]
         for name in fwd_ordered:
             if name not in init_params and name not in full_kwargs:
@@ -74,8 +74,7 @@ def split_params(module_cls, overload_params, args, kwargs):
                 break
 
     fwd_has_var_kw = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD
-        for p in inspect.signature(module_cls.forward).parameters.values()
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in inspect.signature(module_cls.forward).parameters.values()
     )
 
     init_kwargs = {k: v for k, v in full_kwargs.items() if k in init_params}

@@ -8,12 +8,14 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Tests for get_config() raising RuntimeError before load_config()."""
+
 import pytest
 
 
 def test_get_config_raises_before_load():
     """get_config() 在 load_config() 之前调 → raise RuntimeError（不再 lazy fallback）。"""
     import ttk.config.loader as loader
+
     saved = loader._config
     loader._config = None
     try:

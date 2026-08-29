@@ -7,8 +7,6 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-from __future__ import annotations
-
 """CPU backend (for golden baseline or no-device testing).
 
 Renamed from CpuBackend. CPU has no ``torch.cpu.get_device_name`` (torch exposes
@@ -18,8 +16,10 @@ through the profiler ``_build`` path (which would inject torch_lib/profile), so
 both are provided as class attributes here for state self-consistency.
 """
 
+from __future__ import annotations
+
+from ....utilities import numpy_to_torch_tensor
 from .torch_backend import TorchBackend
-from ....utilities import numpy_to_torch_tensor, torch_to_numpy_tensor
 
 
 class CpuTorchBackend(TorchBackend):

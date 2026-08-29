@@ -10,7 +10,8 @@
 """
 Module for operator interface
 """
-from . import op_interface
-from .tbe_interface import Opc
-from .op_info_keeper import OpInfoKeeper
-from .knowledge_base import knowledge_base_sequence
+
+from . import op_interface as op_interface  # noqa: F401
+from .knowledge_base import knowledge_base_sequence as knowledge_base_sequence  # noqa: F401
+from .op_info_keeper import OpInfoKeeper as OpInfoKeeper  # noqa: F401
+from .tbe_interface import Opc as Opc  # noqa: F401

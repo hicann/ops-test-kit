@@ -16,18 +16,22 @@ import os
 def _fake_brief_loop(**kwargs):
     """模块级短 sleep target（forkserver pickle 要求模块级）。"""
     import time
+
     time.sleep(5)
 
 
 # -- start ------------------------------------------------------------------
+
 
 def test_start_sets_health_path_and_idempotent(tmp_path):
     """start: 设置 TTK_XPU_HEALTH_PATH（含 .ttk + tenant_id）；二次 start 不创建新进程。"""
     from ttk.remote.heartbeat_manager import HeartbeatManager
 
     mgr = HeartbeatManager(
-        heartbeat_target=_fake_brief_loop, root_path=str(tmp_path),
-        tenant_id="tid123", endpoints=[],
+        heartbeat_target=_fake_brief_loop,
+        root_path=str(tmp_path),
+        tenant_id="tid123",
+        endpoints=[],
     )
     mgr.start()
     try:

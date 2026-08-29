@@ -12,6 +12,7 @@ enabled mode's ``RTSProfilingParam``, launches one NPUSim ``record`` whose
 wrapper runs all modes inside the simulation, then rebuilds
 ``RTSProfilingResult`` objects from the wrapper-written output files.
 """
+
 import json
 import logging
 import pickle
@@ -60,7 +61,7 @@ def _load_mode_result(case_path: Path, mode: str):
     output_bytes = []
     idx = 0
     while True:
-        bin_file = mdir / ("output_%d.bin" % idx)
+        bin_file = mdir / f"output_{idx}.bin"
         if not bin_file.is_file():
             break
         output_bytes.append(bin_file.read_bytes())
@@ -69,9 +70,7 @@ def _load_mode_result(case_path: Path, mode: str):
         return RTSProfilingResult.fail("SIM_NO_OUTPUT")
     # output_bytes must be a list: npu/op/comparison.py assigns in place
     # (outputs[idx] = ...), matching the real-device _copy_output_from_hbm.
-    return RTSProfilingResult(cycle=payload.get("cycle"),
-                              output_bytes=output_bytes,
-                              oob=payload.get("oob", "UNKNOWN"))
+    return RTSProfilingResult(cycle=payload.get("cycle"), output_bytes=output_bytes, oob=payload.get("oob", "UNKNOWN"))
 
 
 def _construct_param(context, mode: str, output_placeholder: bool):
@@ -134,13 +133,11 @@ def run_kernel_sim(context):
 
         wrapper = write_kernel_wrapper(sw, case_path)
         try:
-            export_root = run_record(sw, wrapper, case_path,
-                                     extra_argv=("-u", str(case_path)))
+            export_root = run_record(sw, wrapper, case_path, extra_argv=("-u", str(case_path)))
         except Exception as exc:  # noqa: BLE001 - surface as a structured fail
             # A record-level failure (cannsim missing, timeout, no archive)
             # must not crash the whole run; mark every enabled mode failed.
-            logging.error("npusim record failed for %s: %s",
-                          context.testcase_name, exc)
+            logging.error("npusim record failed for %s: %s", context.testcase_name, exc)
             for mode in enabled:
                 results[mode] = RTSProfilingResult.fail(f"SIM_RECORD_FAILED: {exc}")
             return results["dyn"], results["cst"], results["bin"]
@@ -149,8 +146,7 @@ def run_kernel_sim(context):
         for mode in enabled:
             results[mode] = _load_mode_result(case_path, mode)
     else:
-        logging.warning("no kernel mode was serialized for %s; nothing to simulate",
-                        context.testcase_name)
+        logging.warning("no kernel mode was serialized for %s; nothing to simulate", context.testcase_name)
     return results["dyn"], results["cst"], results["bin"]
 
 
@@ -169,7 +165,7 @@ def _load_aclnn_result(case_path: Path):
     output_bytes = []
     idx = 0
     while True:
-        bin_file = case_path / ("output_%d.bin" % idx)
+        bin_file = case_path / f"output_{idx}.bin"
         if not bin_file.is_file():
             break
         output_bytes.append(bin_file.read_bytes())
@@ -217,11 +213,9 @@ def run_aclnn_sim(context, dev_id):
 
     wrapper = write_aclnn_wrapper(sw, case_path)
     try:
-        export_root = run_record(sw, wrapper, case_path,
-                                 extra_argv=("-u", str(case_path)))
+        export_root = run_record(sw, wrapper, case_path, extra_argv=("-u", str(case_path)))
     except Exception as exc:  # noqa: BLE001 - surface as a structured fail
-        logging.error("npusim record failed for %s: %s",
-                      context.testcase_name, exc)
+        logging.error("npusim record failed for %s: %s", context.testcase_name, exc)
         return ApiProfilingResult.fail(f"SIM_RECORD_FAILED: {exc}")
     if sw.sim_report:
         sim_report.maybe_generate_sim_report(sw, case_path, export_root)

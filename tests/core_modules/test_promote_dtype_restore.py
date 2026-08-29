@@ -9,6 +9,7 @@ Everything built afterwards inherited them; the GEIR graph then declared
 DT_DOUBLE for a float32 testcase and the operator rejected it, masking the real
 error (an out-of-range `dim`) behind "data type DT_DOUBLE is not supported".
 """
+
 import numpy
 import pytest
 
@@ -38,8 +39,7 @@ class _Ctx:
 def test_promote_restores_dtypes(monkeypatch, raises):
     ctx = _Ctx()
     before_in, before_out = ctx.input_dtypes, ctx.output_dtypes
-    monkeypatch.setattr(output_generation, "input_apply_as_list",
-                        lambda values, _dist: list(values), raising=False)
+    monkeypatch.setattr(output_generation, "input_apply_as_list", lambda values, _dist: list(values), raising=False)
 
     if raises:
         with pytest.raises(RuntimeError):

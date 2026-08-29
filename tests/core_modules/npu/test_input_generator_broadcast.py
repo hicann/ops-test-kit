@@ -12,6 +12,7 @@ InputGenerator.is_broadcast 的参数化测试。
 
 覆盖广播场景：expand 产生 stride=0 的张量应返回 True。
 """
+
 import pytest
 import torch
 

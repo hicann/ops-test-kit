@@ -18,27 +18,32 @@ __all__ = ["GoldenGenerator"]
 import contextlib
 import copy
 import gc
-import inspect
 import logging
-import numpy
-import os
 from typing import Sequence
+
+import numpy
 
 try:
     from collections.abc import Callable
 except ImportError:
-    from collections import Callable
+    from collections.abc import Callable
 
 # Third-party Packages
+from ....utilities import (
+    DTYPE_PROMOTE_MAP,
+    acl_to_torch_dtype,
+    bind_by_name,
+    camel_to_snake,
+    framework_of,
+    get_global_storage,
+    is_torch_native_dtype,
+    resolve_callable_str,
+    str_to_torch_dtype,
+)
+from ....utilities.container_utils import apply_as_list, deep_flatten
+from ...aclnn import OpApiInfo, OpApiInfoKeeper
 from ...plugin_loader import get_plugin_function
 from ...testcase_manager import TestcaseAclnn
-from ...aclnn import OpApiInfoKeeper, OpApiInfo
-from ....utilities import get_global_storage
-from ....utilities import camel_to_snake, acl_to_torch_dtype
-from ....utilities import framework_of, bind_by_name, resolve_callable_str
-from ....utilities import DTYPE_PROMOTE_MAP, str_to_torch_dtype, is_torch_native_dtype
-from ....utilities.container_utils import deep_flatten, apply_as_list
-
 
 ACLNN_GOLDEN: dict = {
     "aclnnInplaceOne": "torch.ops.aten.ones_like",
@@ -213,7 +218,7 @@ class GoldenGenerator:
             torch_api = None
         if torch_api and isinstance(torch_api, Callable):
             logging.debug(
-                f"Using function [{getattr(torch_module, '__name__')}.{snake_name}] "
+                f"Using function [{torch_module.__name__}.{snake_name}] "
                 f"for api {self._ctx.api_name} to generate golden."
             )
             return torch_api

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -11,13 +10,13 @@
 """
 helper_kernels
 """
+
 import numpy
-from tbe import tik
 import tbe.common.platform as tbe_platform
+from tbe import tik
 
 
-def clear_ub(ipt: dict, full_soc_version: str, core_type: str,
-             kernel_name: str = "clear_ub"):
+def clear_ub(ipt: dict, full_soc_version: str, core_type: str, kernel_name: str = "clear_ub"):
     """
     clear UB data
     """
@@ -29,8 +28,7 @@ def clear_ub(ipt: dict, full_soc_version: str, core_type: str,
     dtype_bytes = numpy.dtype(dtype).itemsize
     input_gm = tik_instance.Tensor(dtype, (32 // dtype_bytes,), name="input_gm", scope=tik.scope_gm)
     src_ub = tik_instance.Tensor(dtype, (ub_size // dtype_bytes,), name="src_ub", scope=tik.scope_ubuf)
-    tik_instance.data_move(dst=src_ub, src=input_gm, sid=0, nburst=1, burst=1,
-                           src_stride=0, dst_stride=0)
+    tik_instance.data_move(dst=src_ub, src=input_gm, sid=0, nburst=1, burst=1, src_stride=0, dst_stride=0)
     clean_val_scalar = tik_instance.Scalar(dtype=dtype, name="clean_val_scalar", init_value=src_ub[0])
 
     with tik_instance.for_range(0, core_num, block_num=core_num):
@@ -40,8 +38,9 @@ def clear_ub(ipt: dict, full_soc_version: str, core_type: str,
     return tik_instance
 
 
-def test_clear_ub(output, full_soc_version: str, core_type: str,
-                  clean_val: numpy.generic, kernel_name: str = "test_clear_ub"):
+def test_clear_ub(
+    output, full_soc_version: str, core_type: str, clean_val: numpy.generic, kernel_name: str = "test_clear_ub"
+):
     """Test UB data after clear"""
     tbe_platform.set_current_compile_soc_info(full_soc_version, core_type)
     tik_instance = tik.Tik()
@@ -51,8 +50,7 @@ def test_clear_ub(output, full_soc_version: str, core_type: str,
     src_ub = tik_instance.Tensor(dtype, (2 * 32 // dtype_bytes,), name="src_ub", scope=tik.scope_ubuf)
     output_gm = tik_instance.Tensor(dtype, (2 * 32 // dtype_bytes,), name="output_gm", scope=tik.scope_gm)
     with tik_instance.for_range(0, 1, block_num=1):  # copy out only in one core
-        tik_instance.data_move(dst=output_gm, src=src_ub, sid=0, nburst=1, burst=2,
-                               src_stride=0, dst_stride=0)
+        tik_instance.data_move(dst=output_gm, src=src_ub, sid=0, nburst=1, burst=2, src_stride=0, dst_stride=0)
     tik_instance.BuildCCE(kernel_name=kernel_name, inputs=(), outputs=(output_gm,))
     return tik_instance
 
@@ -64,17 +62,20 @@ def _clear_ub_each_core(tik_instance: tik.Tik, ub_to_clear: tik.Tensor, clear_va
     repeat_tail = ub_to_clear.size % mask_max
     offset = 0
     while repeat > 255:
-        tik_instance.vec_dup(mask=mask_max, dst=ub_to_clear[offset], scalar=clear_value,
-                             repeat_times=255, dst_rep_stride=8)
+        tik_instance.vec_dup(
+            mask=mask_max, dst=ub_to_clear[offset], scalar=clear_value, repeat_times=255, dst_rep_stride=8
+        )
         repeat = repeat - 255
         offset = offset + mask_max * 255
     if repeat > 0:
-        tik_instance.vec_dup(mask=mask_max, dst=ub_to_clear[offset], scalar=clear_value,
-                             repeat_times=repeat, dst_rep_stride=8)
+        tik_instance.vec_dup(
+            mask=mask_max, dst=ub_to_clear[offset], scalar=clear_value, repeat_times=repeat, dst_rep_stride=8
+        )
         offset = offset + mask_max * repeat
     if repeat_tail > 0:
-        tik_instance.vec_dup(mask=repeat_tail, dst=ub_to_clear[offset], scalar=clear_value,
-                             repeat_times=1, dst_rep_stride=8)
+        tik_instance.vec_dup(
+            mask=repeat_tail, dst=ub_to_clear[offset], scalar=clear_value, repeat_times=1, dst_rep_stride=8
+        )
 
 
 def clear_l1(ipt: dict, full_soc_version: str, kernel_name: str = "clear_l1"):
@@ -96,15 +97,27 @@ def clear_l1(ipt: dict, full_soc_version: str, kernel_name: str = "clear_l1"):
     with tik_instance.for_range(0, core_num, block_num=core_num):
         repeat = l1_size // input_bytes
         for idx in range(repeat):
-            tik_instance.data_move(dst=dst_l1[idx * input_bytes // dtype_bytes], src=input_gm, sid=0,
-                                   nburst=1, burst=input_bytes // 32,
-                                   src_stride=0, dst_stride=0)
+            tik_instance.data_move(
+                dst=dst_l1[idx * input_bytes // dtype_bytes],
+                src=input_gm,
+                sid=0,
+                nburst=1,
+                burst=input_bytes // 32,
+                src_stride=0,
+                dst_stride=0,
+            )
         repeat_tail = l1_size % input_bytes
         tail_burst = repeat_tail // 32
         if repeat_tail > 0 and tail_burst > 0:
-            tik_instance.data_move(dst=dst_l1[repeat * input_bytes // dtype_bytes], src=input_gm, sid=0,
-                                   nburst=1, burst=tail_burst,
-                                   src_stride=0, dst_stride=0)
+            tik_instance.data_move(
+                dst=dst_l1[repeat * input_bytes // dtype_bytes],
+                src=input_gm,
+                sid=0,
+                nburst=1,
+                burst=tail_burst,
+                src_stride=0,
+                dst_stride=0,
+            )
 
     tik_instance.BuildCCE(kernel_name=kernel_name, inputs=(input_gm,), outputs=())
     return tik_instance

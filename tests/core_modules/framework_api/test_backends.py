@@ -12,6 +12,7 @@
 Task 7: device_name() 返回硬件 MODEL（torch.<lib>.get_device_name）；
 alias() 携带段名；soc_version 已移除（合并入 device_name）。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -54,13 +55,19 @@ def test_npu_backend_is_npu_device_type():
     "segment, torch_lib, profiler_config, expected_cls, check_torch_lib",
     [
         pytest.param(
-            "gpu", "cuda", {"activities": ["CPU", "CUDA"]},
-            XpuTorchBackend, "cuda",
+            "gpu",
+            "cuda",
+            {"activities": ["CPU", "CUDA"]},
+            XpuTorchBackend,
+            "cuda",
             id="segment_name_not_hardcoded",
         ),
         pytest.param(
-            "ascend", "npu", "builtin",
-            NpuTorchBackend, None,
+            "ascend",
+            "npu",
+            "builtin",
+            NpuTorchBackend,
+            None,
             id="npu_torch_lib",
         ),
     ],

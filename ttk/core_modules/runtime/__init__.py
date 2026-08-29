@@ -10,6 +10,8 @@
 """
 RTS Related Objects Module
 """
-from . import rts_info
-from .rts_interface import RTSInterface, RTSInterfaceBase
-from .rts_structures import LaunchKernelArgs
+
+from . import rts_info as rts_info  # noqa: F401
+from .rts_interface import RTSInterface as RTSInterface  # noqa: F401
+from .rts_interface import RTSInterfaceBase as RTSInterfaceBase
+from .rts_structures import LaunchKernelArgs as LaunchKernelArgs  # noqa: F401

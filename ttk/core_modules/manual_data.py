@@ -29,7 +29,7 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
 import numpy
 
-from ttk.utilities import dump_to_file, load_numpy_data, resolve_custom_numpy_dtypes, is_4bit_dtype
+from ttk.utilities import dump_to_file, is_4bit_dtype, load_numpy_data, resolve_custom_numpy_dtypes
 from ttk.utilities.dtypes import torch_to_numpy_tensor
 
 SUPPORTED_MANUAL_DATA_FORMATS = ("bin", "npy", "pt")

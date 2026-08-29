@@ -75,7 +75,7 @@ class NpuInstance(InstanceBase):
             else:
                 try:
                     self.switches.dev_plat = DSMIInterface().get_chip_info(0).get_complete_platform()
-                except:
+                except Exception as e:
                     if (
                         self.switches.compile_only
                         or self.switches.validate_only
@@ -83,7 +83,7 @@ class NpuInstance(InstanceBase):
                     ):
                         raise RuntimeError(
                             "Try to get Ascend platform failed. Please specify it with option like: --plat=Ascend910A"
-                        )
+                        ) from e
                     else:
                         raise
         hw_info = get_npu_hw_info(self.switches.dev_plat)
@@ -140,13 +140,13 @@ class NpuInstance(InstanceBase):
                 dsmi_platform = dsmi.get_chip_info(dev_id)
                 platform = dsmi_platform.get_complete_platform()
                 chip_ver = dsmi_platform.get_ver()
-            except:
+            except Exception:
                 platform = "ERR"
                 chip_ver = "ERR"
 
             try:
                 health = DSMIInterface().get_device_health_state(dev_id).name
-            except:
+            except Exception:
                 health = "ERR"
 
             temperature = str(DSMIInterface().get_device_temperature(dev_id) or "???")

@@ -26,8 +26,10 @@ def _write_health(path, endpoints_data):
 def _make_ev(monkeypatch, tmp_path, health_data, endpoints_list):
     """Wire config + health file, construct a fresh EndpointView (singleton cleared)."""
     from ttk.utilities.singleton import Singleton
+
     Singleton._instances.clear()
     import ttk.config.loader as loader
+
     loader._config = None
     config_path = tmp_path / "endpoints.yaml"
     config_path.write_text(yaml.safe_dump({"remote": {"endpoints": endpoints_list}}))
@@ -40,11 +42,15 @@ def _make_ev(monkeypatch, tmp_path, health_data, endpoints_list):
 
 # -- resolve_providers ------------------------------------------------------
 
+
 def test_resolve_intersects_and_preserves_priority(monkeypatch, tmp_path):
     """resolve_providers: 无 spec→sorted union；spec 交集 + 保持 spec 声明顺序（非 sorted）。"""
-    ev = _make_ev(monkeypatch, tmp_path,
-                  {"10.0.0.1:9090": {"alive": True, "providers": ["torch", "tf"]}},
-                  [{"host": "10.0.0.1", "port": 9090}])
+    ev = _make_ev(
+        monkeypatch,
+        tmp_path,
+        {"10.0.0.1:9090": {"alive": True, "providers": ["torch", "tf"]}},
+        [{"host": "10.0.0.1", "port": 9090}],
+    )
     # 无 spec → sorted union
     assert ev.resolve_providers() == ["tf", "torch"]
     # spec 交集
@@ -58,23 +64,35 @@ def test_resolve_intersects_and_preserves_priority(monkeypatch, tmp_path):
 
 # -- pick_endpoint ----------------------------------------------------------
 
+
 def test_pick_endpoint_round_robin_and_none(monkeypatch, tmp_path):
     """pick_endpoint: 双 endpoint 轮询；dead→None；provider 不存在→None。"""
     # 轮询
-    ev = _make_ev(monkeypatch, tmp_path,
-                  {"10.0.0.1:9090": {"alive": True, "providers": ["torch"]},
-                   "10.0.0.2:9090": {"alive": True, "providers": ["torch"]}},
-                  [{"host": "10.0.0.1", "port": 9090}, {"host": "10.0.0.2", "port": 9090}])
+    ev = _make_ev(
+        monkeypatch,
+        tmp_path,
+        {
+            "10.0.0.1:9090": {"alive": True, "providers": ["torch"]},
+            "10.0.0.2:9090": {"alive": True, "providers": ["torch"]},
+        },
+        [{"host": "10.0.0.1", "port": 9090}, {"host": "10.0.0.2", "port": 9090}],
+    )
     assert ev.pick_endpoint("torch") is not ev.pick_endpoint("torch")
 
     # dead → None
-    ev = _make_ev(monkeypatch, tmp_path,
-                  {"10.0.0.1:9090": {"alive": False, "providers": ["torch"]}},
-                  [{"host": "10.0.0.1", "port": 9090}])
+    ev = _make_ev(
+        monkeypatch,
+        tmp_path,
+        {"10.0.0.1:9090": {"alive": False, "providers": ["torch"]}},
+        [{"host": "10.0.0.1", "port": 9090}],
+    )
     assert ev.pick_endpoint("torch") is None
 
     # provider 不存在 → None
-    ev = _make_ev(monkeypatch, tmp_path,
-                  {"10.0.0.1:9090": {"alive": True, "providers": ["torch"]}},
-                  [{"host": "10.0.0.1", "port": 9090}])
+    ev = _make_ev(
+        monkeypatch,
+        tmp_path,
+        {"10.0.0.1:9090": {"alive": True, "providers": ["torch"]}},
+        [{"host": "10.0.0.1", "port": 9090}],
+    )
     assert ev.pick_endpoint("tf") is None

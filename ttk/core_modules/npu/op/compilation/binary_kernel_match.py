@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -17,14 +16,21 @@ import math
 import os
 import pathlib
 from typing import Callable, List, Mapping, Optional, Tuple, Union
+
+from .....utilities import (
+    DATA_TYPE_DICT,
+    FORMAT_DICT,
+    DynamicCompilationResult,
+    KernelJsonInfo,
+    is_nchw_like,
+    is_ndhwc_like,
+    param_transformation,
+)
+from ....operator import OpInfoKeeper
+from ....operator.op_interface import OperatorInterface
+
 # Third-Party Packages
 from ....testcase_manager import TestcaseOp
-from ....operator.op_interface import OperatorInterface
-from ....operator import OpInfoKeeper
-from .....utilities import param_transformation
-from .....utilities import DynamicCompilationResult, KernelJsonInfo, is_ndhwc_like, is_nchw_like
-from .....utilities import DATA_TYPE_DICT, FORMAT_DICT
-
 
 # cache
 op_generalize_func: dict = {}
@@ -64,8 +70,9 @@ def binary_kernel_match(interface: OperatorInterface, testcase: TestcaseOp, comp
             return None
         stc_generalize_info, dynamic_generalize_info = generalize_op(interface, testcase, compile_options)
         optional_input_indices = get_optional_input_indices(op_name)
-        matched_bin_info = kernel_match_by_static_key(testcase, bin_cfg, stc_generalize_info,
-                                                      dynamic_generalize_info, optional_input_indices)
+        matched_bin_info = kernel_match_by_static_key(
+            testcase, bin_cfg, stc_generalize_info, dynamic_generalize_info, optional_input_indices
+        )
     if not matched_bin_info:
         return None
     if "binInfo" not in matched_bin_info:  # simplified key mode
@@ -78,8 +85,12 @@ def binary_kernel_match(interface: OperatorInterface, testcase: TestcaseOp, comp
         return matched_bin_info["binInfo"]["jsonFilePath"]
 
 
-def parse_matched_bin_info(interface: OperatorInterface, testcase: TestcaseOp,
-                           matched_bin_info: Union[str, pathlib.Path], result: DynamicCompilationResult) -> None:
+def parse_matched_bin_info(
+    interface: OperatorInterface,
+    testcase: TestcaseOp,
+    matched_bin_info: Union[str, pathlib.Path],
+    result: DynamicCompilationResult,
+) -> None:
     if not os.path.exists(matched_bin_info):
         raise RuntimeError(f"Binary kernel info json file not exist: {matched_bin_info}")
     with open(matched_bin_info, encoding="UTF-8") as f:
@@ -93,16 +104,24 @@ def parse_matched_bin_info(interface: OperatorInterface, testcase: TestcaseOp,
     kernel_dir = os.path.dirname(matched_bin_info)
     kernel_json_info = KernelJsonInfo.from_dict(info)
     # set compilation result
-    result.standard_set(compile_info, tiling_op_type,
-                        "SUCC", "BINARY_MATCH", dyn_func_params,
-                        kernel_json_info, result.kernel_name, kernel_dir)
+    result.standard_set(
+        compile_info,
+        tiling_op_type,
+        "SUCC",
+        "BINARY_MATCH",
+        dyn_func_params,
+        kernel_json_info,
+        result.kernel_name,
+        kernel_dir,
+    )
 
 
 def support_simplified_key_mode(op_type: str, testcase: TestcaseOp):
     binary_info = OpInfoKeeper().binary_info_config_of(testcase.op_name)
     if not binary_info:
-        logging.info(f"OpType [{op_type}] is not configured in binary_info_config.json. "
-                     f"SimplifiedKey mode is not supported.")
+        logging.info(
+            f"OpType [{op_type}] is not configured in binary_info_config.json. SimplifiedKey mode is not supported."
+        )
         return False
     simplified_key_mode = binary_info.get("simplifiedKeyMode", -1)
     if simplified_key_mode not in SUPPORT_SIMPLIFIEDKEY_ID_SET:
@@ -114,8 +133,10 @@ def support_simplified_key_mode(op_type: str, testcase: TestcaseOp):
     config_input_args_len = len(binary_info.get("params", {}).get("inputs", ()))
     config_output_args_len = len(binary_info.get("params", {}).get("outputs", ()))
     if op_info_input_args_len != config_input_args_len or op_info_output_args_len != config_output_args_len:
-        logging.warning(f"Inputs or outputs count mismatch which in binary_info_config.json for [{op_type}]"
-                        f", not support simplifiedKeyMode")
+        logging.warning(
+            f"Inputs or outputs count mismatch which in binary_info_config.json for [{op_type}]"
+            f", not support simplifiedKeyMode"
+        )
         return False
     return True
 
@@ -173,8 +194,7 @@ def get_impl_mode_int(impl_mode: str) -> int:
     return IMPL_MODE_DICT.get(impl_mode, 0)
 
 
-def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: TestcaseOp,
-                                    op_info: dict) -> Optional[str]:
+def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: TestcaseOp, op_info: dict) -> Optional[str]:
     # GenerateAttrs
     attr_in_op_info = op_info.get("attr")
     if not attr_in_op_info:
@@ -192,10 +212,14 @@ def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: Test
             continue
         if idx - xput_num > len(attr_in_op_info) or k == "kernel_name":
             break
-        attr_cfg = attr_in_op_info[idx-xput_num-1]
-        attr_value = op_kwargs.get(k) if k in op_kwargs else \
-            v.default if v.default is not inspect.Parameter.empty else \
-            attr_cfg["defaultValue"]
+        attr_cfg = attr_in_op_info[idx - xput_num - 1]
+        attr_value = (
+            op_kwargs.get(k)
+            if k in op_kwargs
+            else v.default
+            if v.default is not inspect.Parameter.empty
+            else attr_cfg["defaultValue"]
+        )
         attr_type = attr_cfg.get("type")
         if attr_type == "str":
             generalized_attr.append(attr_value)
@@ -208,8 +232,7 @@ def generalize_attr_for_simple_mode(interface: OperatorInterface, testcase: Test
 
 def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, compile_options: dict = None):
     # GenerateSimpleKeyStr
-    def _construct_dtype_format(xput_tensor: Union[List[dict], dict],
-                                _dtype_mode, _format_mode, explain: list):
+    def _construct_dtype_format(xput_tensor: Union[List[dict], dict], _dtype_mode, _format_mode, explain: list):
         tensor = xput_tensor[0] if isinstance(xput_tensor, (list, tuple)) else xput_tensor
         dtype, fmt = tensor["dtype"], tensor["format"]
         dtype = dtype_normalize(_dtype_mode, dtype)
@@ -228,22 +251,22 @@ def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, 
     binary_info = OpInfoKeeper().binary_info_config_of(testcase.op_name)
     dyn_inputs, dyn_outputs = gather_dynamic_tensors(interface, testcase)
     case_xputs: dict = {"inputs": dyn_inputs, "outputs": dyn_outputs}
-    binary_info_params_value = binary_info.get('params', None)
+    binary_info_params_value = binary_info.get("params", None)
     simplified_key_mode = binary_info["simplifiedKeyMode"]
     simplified_key = f"{op_type}/d={deterministic},p={impl_mode}/"
     key_explain = f"{op_type}/determination={deterministic},impl_mode={impl_mode_str}/"
     if simplified_key_mode == 2:
         from ....operator.registries import customize_gen_simplified_key
+
         inputs, outputs, attrs = interface.prepare_tiling_params(testcase)
-        simplified_key = customize_gen_simplified_key(simplified_key,
-                                                      op_type, inputs, outputs, attrs)
+        simplified_key = customize_gen_simplified_key(simplified_key, op_type, inputs, outputs, attrs)
         logging.info(f"customized simplified_key is {simplified_key}")
         return simplified_key
     optional_input_mode = binary_info.get("optionalInputMode", "no_placeholder")
     dynamic_param_mode = binary_info.get("dynamicParamMode", "")
     xput_key = []
     xput_key_exp = []
-    for str_xpt in ('inputs', 'outputs'):
+    for str_xpt in ("inputs", "outputs"):
         for idx, xpt_x in enumerate(op_info.get(str_xpt, ())):
             if not case_xputs[str_xpt][idx]:
                 if simplified_key_mode == 1:
@@ -251,16 +274,19 @@ def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, 
                     xput_key_exp.append(",")
                 continue
             if xpt_x.get("paramType") == "optional" and (
-                    simplified_key_mode != 1 or optional_input_mode != "gen_placeholder"):
+                simplified_key_mode != 1 or optional_input_mode != "gen_placeholder"
+            ):
                 continue
             binary_info_xpt = binary_info_params_value[str_xpt][idx]
             binary_info_xpt = binary_info_xpt[0] if isinstance(binary_info_xpt, list) else binary_info_xpt
-            dtype_mode = binary_info_xpt.get('dtypeMode', DTYPE_MODE_NORMAL)
-            format_mode = binary_info_xpt.get('formatMode', FORMAT_MODE_NORMAL)
-            xput_key.append(_construct_dtype_format(case_xputs[str_xpt][idx],
-                                                    dtype_mode, format_mode,
-                                                    xput_key_exp))
-            if xpt_x.get("paramType") == "dynamic" and simplified_key_mode == 1 and dynamic_param_mode != "folded_with_desc":
+            dtype_mode = binary_info_xpt.get("dtypeMode", DTYPE_MODE_NORMAL)
+            format_mode = binary_info_xpt.get("formatMode", FORMAT_MODE_NORMAL)
+            xput_key.append(_construct_dtype_format(case_xputs[str_xpt][idx], dtype_mode, format_mode, xput_key_exp))
+            if (
+                xpt_x.get("paramType") == "dynamic"
+                and simplified_key_mode == 1
+                and dynamic_param_mode != "folded_with_desc"
+            ):
                 xput_key_exp[-1] += ",tensor_list_count"
                 xput_key[-1] += f",{len(case_xputs[str_xpt][idx])}"
     if simplified_key_mode == 1:
@@ -277,8 +303,7 @@ def generate_simplified_key(interface: OperatorInterface, testcase: TestcaseOp, 
 def kernel_match_by_simplified_key(simplified_key: str, op_name: str):
     binary_info = OpInfoKeeper().binary_info_config_of(op_name)
     bin_list = binary_info.get("binaryList", ())
-    matched_bin_list = [b for b in bin_list
-                        if "simplifiedKey" in b and simplified_key in b["simplifiedKey"]]
+    matched_bin_list = [b for b in bin_list if "simplifiedKey" in b and simplified_key in b["simplifiedKey"]]
     logging.debug(f"Simplified key of {simplified_key} matched bin count: {len(matched_bin_list)}")
     matched_bin = matched_bin_list[0] if matched_bin_list else None
     return matched_bin
@@ -292,19 +317,19 @@ def generalize_op(interface: OperatorInterface, testcase: TestcaseOp, compile_op
     # it will never be None
     op_func = interface.get_dyn_operator(testcase)
     dyn_func_params = interface.get_op_func_parameter_dict(op_func, testcase.op_name)
-    static_json, dynamic_json = generalize_with_default_rule(testcase, op_info, dyn_func_params,
-                                                             dyn_inputs, dyn_outputs,
-                                                             compile_options=compile_options)
+    static_json, dynamic_json = generalize_with_default_rule(
+        testcase, op_info, dyn_func_params, dyn_inputs, dyn_outputs, compile_options=compile_options
+    )
 
     generalize_func = get_generalize_func_registered(interface, testcase)
     if generalize_func:
         try:
-            registered_json = generalize_with_register_func(testcase, dyn_func_params,
-                                                            dyn_inputs, dyn_outputs,
-                                                            generalize_func)
+            registered_json = generalize_with_register_func(
+                testcase, dyn_func_params, dyn_inputs, dyn_outputs, generalize_func
+            )
             logging.debug(f"generalized json from registered function: {registered_json}")
         except BaseException as e:
-            raise RuntimeError(f"Invoke registered generalize function failed: {e}")
+            raise RuntimeError(f"Invoke registered generalize function failed: {e}") from None
         else:
             parse_registered_generalize_result(registered_json, static_json, dynamic_json)
     logging.debug(f"The last static json: {static_json}")
@@ -318,8 +343,7 @@ def get_optional_input_indices(op_name: str) -> list:
     return [idx for idx, inpt in enumerate(inpts) if inpt.get("paramType") == "optional"]
 
 
-def get_generalize_func_registered(interface: OperatorInterface,
-                                   testcase: TestcaseOp) -> Optional[Callable]:
+def get_generalize_func_registered(interface: OperatorInterface, testcase: TestcaseOp) -> Optional[Callable]:
     if testcase.op_name in op_generalize_func:
         return op_generalize_func[testcase.op_name]
     op_func = interface.get_dyn_operator(testcase)
@@ -332,21 +356,31 @@ def get_generalize_func_registered(interface: OperatorInterface,
     return generalize_func
 
 
-def generalize_with_default_rule(testcase: TestcaseOp, op_info: dict,
-                                 dyn_func_params: Mapping[str, inspect.Parameter],
-                                 dyn_inputs: Tuple[dict], dyn_outputs: Tuple[dict],
-                                 compile_options: dict = None):
+def generalize_with_default_rule(
+    testcase: TestcaseOp,
+    op_info: dict,
+    dyn_func_params: Mapping[str, inspect.Parameter],
+    dyn_inputs: Tuple[dict],
+    dyn_outputs: Tuple[dict],
+    compile_options: dict = None,
+):
     op_pattern = op_info.get("op.pattern", None)
     support_dynamic_rank = str(op_info.get("dynamicRankSupport.flag", False) or False)
-    if support_dynamic_rank.lower() != 'true':
+    if support_dynamic_rank.lower() != "true":
         # print warning log in case some operator forget to configure it.
-        logging.warning(f"dynamicRankSupport of operator [{testcase.op_name}] is not configured "
-                        f"or configured to False !!! Binary kernel match may fail.")
-    inputs_json = [generalize_xput(dyn_inputs[idx], input_x, op_pattern, support_dynamic_rank)
-                   for idx, input_x in enumerate(op_info.get("inputs", ()))]
+        logging.warning(
+            f"dynamicRankSupport of operator [{testcase.op_name}] is not configured "
+            f"or configured to False !!! Binary kernel match may fail."
+        )
+    inputs_json = [
+        generalize_xput(dyn_inputs[idx], input_x, op_pattern, support_dynamic_rank)
+        for idx, input_x in enumerate(op_info.get("inputs", ()))
+    ]
     static_inputs_json, dynamic_inputs_json = zip(*inputs_json)
-    outputs_json = [generalize_xput(dyn_outputs[idx], output_x, op_pattern, support_dynamic_rank)
-                    for idx, output_x in enumerate(op_info.get("outputs", ()))]
+    outputs_json = [
+        generalize_xput(dyn_outputs[idx], output_x, op_pattern, support_dynamic_rank)
+        for idx, output_x in enumerate(op_info.get("outputs", ()))
+    ]
     static_outputs_json, dynamic_outputs_json = zip(*outputs_json) if outputs_json else (None, None)
     static_attr_json, dynamic_attr_json = generalize_attr(testcase, op_info, dyn_func_params)
     if static_outputs_json:
@@ -367,10 +401,13 @@ def generalize_with_default_rule(testcase: TestcaseOp, op_info: dict,
     return static_json, dynamic_json
 
 
-def generalize_with_register_func(testcase: TestcaseOp,
-                                  dyn_func_params: Mapping[str, inspect.Parameter],
-                                  dyn_inputs: Tuple[dict], dyn_outputs: Tuple[dict],
-                                  generalize_func: Callable):
+def generalize_with_register_func(
+    testcase: TestcaseOp,
+    dyn_func_params: Mapping[str, inspect.Parameter],
+    dyn_inputs: Tuple[dict],
+    dyn_outputs: Tuple[dict],
+    generalize_func: Callable,
+):
     op_info = OpInfoKeeper().info_of(testcase.op_name)
     attr_in_op_info = op_info.get("attr")
     # fix axes, axis
@@ -379,7 +416,7 @@ def generalize_with_register_func(testcase: TestcaseOp,
     kwargs.update({"generalize_config": {"mode": "all_shape", "single_op": "true"}})
     # pick attrs from kwargs to make BinaryMatchBase happy ...
     attrs: list = []
-    for idx, name in enumerate(dyn_func_param_names[len(dyn_inputs) + len(dyn_outputs):]):
+    for idx, name in enumerate(dyn_func_param_names[len(dyn_inputs) + len(dyn_outputs) :]):
         if name == "kernel_name":
             break
         if name in kwargs:
@@ -396,8 +433,7 @@ def generalize_with_register_func(testcase: TestcaseOp,
     return generalize_func(*dyn_inputs, *dyn_outputs, *attrs, **kwargs)
 
 
-def generalize_xput(xput_tensor: Union[dict, List[dict]], op_info_xput: dict,
-                    op_pattern: str, support_dynamic_rank):
+def generalize_xput(xput_tensor: Union[dict, List[dict]], op_info_xput: dict, op_pattern: str, support_dynamic_rank):
     # GeneralizeInOrOutputs
     if not xput_tensor:
         return None, None
@@ -410,12 +446,17 @@ def generalize_xput(xput_tensor: Union[dict, List[dict]], op_info_xput: dict,
 
 def generalize_xput_without_value_depend(xput_tensor: Union[List[dict], dict], op_pattern: str, support_dynamic_rank):
     def _construct_tensor_info(tensor):
-        static_json = {"dtype": tensor["dtype"],
-                       "format": "ND" if op_pattern == "formatAgnostic" else tensor["format"],
-                       "shape": [-2] if support_dynamic_rank.lower() == "true" else [-1] * len(tensor["shape"])}
-        dynamic_json = {"ori_format": tensor["ori_format"], "ori_shape": tensor["ori_shape"],
-                        "ori_range": [[ele, ele] if ele > 0 else [1, None] for ele in tensor["ori_shape"]],
-                        "range": tensor["range"]}
+        static_json = {
+            "dtype": tensor["dtype"],
+            "format": "ND" if op_pattern == "formatAgnostic" else tensor["format"],
+            "shape": [-2] if support_dynamic_rank.lower() == "true" else [-1] * len(tensor["shape"]),
+        }
+        dynamic_json = {
+            "ori_format": tensor["ori_format"],
+            "ori_shape": tensor["ori_shape"],
+            "ori_range": [[ele, ele] if ele > 0 else [1, None] for ele in tensor["ori_shape"]],
+            "range": tensor["range"],
+        }
         dynamic_json.update(static_json)
         return static_json, dynamic_json
 
@@ -440,8 +481,7 @@ def feed_xput_directory(xput_tensor: Union[List[dict], dict]):
         return _construct_tensor_info(xput_tensor)
 
 
-def generalize_attr(testcase: TestcaseOp, op_info: dict,
-                    dyn_func_params: Mapping[str, inspect.Parameter]):
+def generalize_attr(testcase: TestcaseOp, op_info: dict, dyn_func_params: Mapping[str, inspect.Parameter]):
     # GenerateNormalizeFusionAttrTmpJson
     attr_in_op_info = op_info.get("attr")
     if not attr_in_op_info:
@@ -459,12 +499,16 @@ def generalize_attr(testcase: TestcaseOp, op_info: dict,
         if idx - xput_num > len(attr_in_op_info) or k == "kernel_name":
             break
         attr_info = {}
-        attr_cfg = attr_in_op_info[idx-xput_num-1]
+        attr_cfg = attr_in_op_info[idx - xput_num - 1]
         attr_type = attr_cfg.get("type")
         attr_info["dtype"] = attr_type.lower().replace("list", "list_").replace("str", "string")
-        attr_info["value"] = op_kwargs.get(k) if k in op_kwargs else \
-            v.default if v.default is not inspect.Parameter.empty else \
-            attr_cfg["defaultValue"]
+        attr_info["value"] = (
+            op_kwargs.get(k)
+            if k in op_kwargs
+            else v.default
+            if v.default is not inspect.Parameter.empty
+            else attr_cfg["defaultValue"]
+        )
         if attr_cfg.get("value") == "all" and attr_type not in ("str", "bool"):
             attr_info["value"] = None
         all_attr_info_dyn.append(copy.deepcopy(attr_info))
@@ -479,6 +523,7 @@ def parse_registered_generalize_result(registered_json: list, static_json: dict,
         def _replace_with_key(key):
             if key in src:
                 dst[key] = src[key]
+
         if "ori_format" in src and "ori_format" in dst:
             dst["ori_format"] = src["ori_format"]
         _replace_with_key("shape")
@@ -488,10 +533,13 @@ def parse_registered_generalize_result(registered_json: list, static_json: dict,
     def _replace_xput_generalize_info(registered_xput_generalize, default_generalize, index):
         if registered_xput_generalize:
             if isinstance(registered_xput_generalize, (list, tuple)):
-                if not isinstance(default_generalize, (list, tuple)) \
-                        or len(registered_xput_generalize) != len(default_generalize):
-                    raise RuntimeError(f"Size mismatch for generalized input/output with index {index}!"
-                                       f"Generalized is {registered_xput_generalize}, default is {default_generalize}")
+                if not isinstance(default_generalize, (list, tuple)) or len(registered_xput_generalize) != len(
+                    default_generalize
+                ):
+                    raise RuntimeError(
+                        f"Size mismatch for generalized input/output with index {index}!"
+                        f"Generalized is {registered_xput_generalize}, default is {default_generalize}"
+                    )
                 for i, gt in enumerate(registered_xput_generalize):
                     _replace_generalize_info(gt, default_generalize[i])
             else:
@@ -514,15 +562,20 @@ def parse_registered_generalize_result(registered_json: list, static_json: dict,
                 _replace_xput_generalize_info(generalized_tensor, dft_general_inputs[idx], idx)
             elif idx < len(dft_general_inputs) + len(dft_general_outputs):
                 # outputs
-                _replace_xput_generalize_info(generalized_tensor,
-                                              dft_general_outputs[idx-len(dft_general_inputs)], idx)
+                _replace_xput_generalize_info(
+                    generalized_tensor, dft_general_outputs[idx - len(dft_general_inputs)], idx
+                )
             elif idx < len(dft_general_inputs) + len(dft_general_outputs) + len(dft_general_attrs):
                 # attrs
-                if generalized_tensor is not None \
-                        and not isinstance(generalized_tensor, (str, list, tuple, float, int, bool)):
+                if generalized_tensor is not None and not isinstance(
+                    generalized_tensor, (str, list, tuple, float, int, bool)
+                ):
                     raise RuntimeError(f"Generalized attribute value invalid: {generalized_tensor} of index {idx}.")
-                _replace_attr_generalize_info(is_static, generalized_tensor,
-                                              dft_general_attrs[idx-len(dft_general_inputs)-len(dft_general_outputs)])
+                _replace_attr_generalize_info(
+                    is_static,
+                    generalized_tensor,
+                    dft_general_attrs[idx - len(dft_general_inputs) - len(dft_general_outputs)],
+                )
             else:
                 pass
 
@@ -540,9 +593,13 @@ def parse_registered_generalize_result(registered_json: list, static_json: dict,
         _replace_info(dynamic_json, r, False)
 
 
-def kernel_match_by_static_key(testcase: TestcaseOp, bin_cfg: dict,
-                               stc_generalize_info: dict, dyn_generalize_info: dict,
-                               optional_input_indices: list = None):
+def kernel_match_by_static_key(
+    testcase: TestcaseOp,
+    bin_cfg: dict,
+    stc_generalize_info: dict,
+    dyn_generalize_info: dict,
+    optional_input_indices: list = None,
+):
     # BinaryMatchWithStaticKeyAndDynInfo
     generate_build_options(testcase, stc_generalize_info)
     static_key = json_sha256(stc_generalize_info)
@@ -569,19 +626,21 @@ def generate_build_options(testcase: TestcaseOp, stc_generalize_info: dict):
 
 
 def json_sha256(stc_generalize_info: dict) -> str:
-    str_to_hash = json.dumps(stc_generalize_info, separators=(',', ':'), sort_keys=True)
+    str_to_hash = json.dumps(stc_generalize_info, separators=(",", ":"), sort_keys=True)
     logging.debug(f"Json to sha256 is {str_to_hash}")
     sha256_hash = hashlib.sha256()
-    sha256_hash.update(str_to_hash.encode('utf-8'))
+    sha256_hash.update(str_to_hash.encode("utf-8"))
     return sha256_hash.hexdigest()
 
 
-def kernel_match_without_optional_inputs(bin_cfg: dict, stc_generalize_info: dict,
-                                         optional_input_indices: list = None) -> Optional[list]:
+def kernel_match_without_optional_inputs(
+    bin_cfg: dict, stc_generalize_info: dict, optional_input_indices: list = None
+) -> Optional[list]:
     if not optional_input_indices or "inputs" not in stc_generalize_info:
         return None
-    stc_generalize_info["inputs"] = [None if idx in optional_input_indices else inpt
-                                     for idx, inpt in enumerate(stc_generalize_info["inputs"])]
+    stc_generalize_info["inputs"] = [
+        None if idx in optional_input_indices else inpt for idx, inpt in enumerate(stc_generalize_info["inputs"])
+    ]
     static_key = json_sha256(stc_generalize_info)
     matched_bin_list = get_matched_bin_list(static_key, bin_cfg)
     if not matched_bin_list:
@@ -592,29 +651,31 @@ def kernel_match_without_optional_inputs(bin_cfg: dict, stc_generalize_info: dic
 
 def get_matched_bin_list(static_key: str, bin_cfg: dict):
     bin_list = bin_cfg.get("binList", ())
-    matched_bin_list = [b for b in bin_list
-                        if "staticKey" in b and isinstance(b["staticKey"], str) and static_key in b["staticKey"]]
+    matched_bin_list = [
+        b for b in bin_list if "staticKey" in b and isinstance(b["staticKey"], str) and static_key in b["staticKey"]
+    ]
     logging.debug(f"Static key {static_key} matched bin count: {len(matched_bin_list)}")
     return matched_bin_list
 
 
-def match_op_params(matched_bin_list: list, dyn_generalize_info: dict,
-                    optional_input_indices: list = None) -> Optional[dict]:
+def match_op_params(
+    matched_bin_list: list, dyn_generalize_info: dict, optional_input_indices: list = None
+) -> Optional[dict]:
     for b in matched_bin_list:
         if not match_int64_mode(b, dyn_generalize_info):
-            logging.debug(f"int64Mode match failed.")
+            logging.debug("int64Mode match failed.")
             continue
         if not match_deterministic(b, dyn_generalize_info):
-            logging.debug(f"deterministic match failed.")
+            logging.debug("deterministic match failed.")
             continue
         if not match_xputs(b.get("inputs"), dyn_generalize_info.get("inputs"), optional_input_indices):
-            logging.debug(f"inputs match failed.")
+            logging.debug("inputs match failed.")
             continue
         if not match_xputs(b.get("outputs"), dyn_generalize_info.get("outputs")):
-            logging.debug(f"outputs match failed.")
+            logging.debug("outputs match failed.")
             continue
         if not match_attrs(b, dyn_generalize_info):
-            logging.debug(f"attrs match failed.")
+            logging.debug("attrs match failed.")
             continue
         return b
     return None
@@ -630,8 +691,9 @@ def match_deterministic(bin_cfg: dict, dyn_generalize_info: dict) -> bool:
     return dyn_deterministic == "ignore" or bin_deterministic == "ignore" or bin_deterministic == dyn_deterministic
 
 
-def match_xputs(bin_xputs: Optional[list], dyn_generalize_xputs: Optional[list],
-                optional_input_indices: Optional[list] = None) -> bool:
+def match_xputs(
+    bin_xputs: Optional[list], dyn_generalize_xputs: Optional[list], optional_input_indices: Optional[list] = None
+) -> bool:
     if bin_xputs is None and dyn_generalize_xputs is None:
         return True
     if bin_xputs is None or dyn_generalize_xputs is None:
@@ -695,24 +757,34 @@ def match_const_value(bin_xput: Optional[dict]) -> bool:
 def match_no_range_params(bin_xput: Optional[dict], dyn_generalize_xput: Optional[dict]) -> bool:
     if not match_param_in_json("ori_format", bin_xput, dyn_generalize_xput, None, ""):
         return False
-    if not match_param_in_json("ori_shape", bin_xput, dyn_generalize_xput,
-                               lambda b, d: all([True if x == -1 else x == d[i] for i, x in enumerate(b)]), (), (-2,)):
+    if not match_param_in_json(
+        "ori_shape",
+        bin_xput,
+        dyn_generalize_xput,
+        lambda b, d: all([True if x == -1 else x == d[i] for i, x in enumerate(b)]),
+        (),
+        (-2,),
+    ):
         return False
     # addr_type, split_index, is_first_layer, slice_offset, valid_shape, total_shape, L1_*** are all skipped.
     return True
 
 
-def match_param_in_json(key, bin_xput: Optional[dict], dyn_generalize_xput: Optional[dict],
-                        custom_compare: Optional[Callable], *dft) -> bool:
+def match_param_in_json(
+    key, bin_xput: Optional[dict], dyn_generalize_xput: Optional[dict], custom_compare: Optional[Callable], *dft
+) -> bool:
     if bin_xput is None or key not in bin_xput:
         return True
-    if any([list(bin_xput[key]) == list(d) if isinstance(d, (list, tuple))
-            else bin_xput[key] == d for d in dft]):
+    if any([list(bin_xput[key]) == list(d) if isinstance(d, (list, tuple)) else bin_xput[key] == d for d in dft]):
         return True
     if not dyn_generalize_xput or key not in dyn_generalize_xput:
         return False
-    if any([list(dyn_generalize_xput[key]) == list(d) if isinstance(d, (list, tuple))
-            else dyn_generalize_xput[key] == d for d in dft]):
+    if any(
+        [
+            list(dyn_generalize_xput[key]) == list(d) if isinstance(d, (list, tuple)) else dyn_generalize_xput[key] == d
+            for d in dft
+        ]
+    ):
         return False
     bv, dv = bin_xput[key], dyn_generalize_xput[key]
     if isinstance(bv, (list, tuple)) and isinstance(dv, (list, tuple)):

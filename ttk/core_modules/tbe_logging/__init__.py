@@ -11,19 +11,17 @@
 Logging module
 """
 
-
 __all__ = ["default_logging_config", "build_single_log_dir"]
 
 
 # Standard Packages
+import logging.handlers
 import os
 import sys
+import warnings
 
 # Third-party Packages
 import numpy
-import warnings
-import logging.handlers
-
 
 _MODE_LOG_DIR = {
     "op": "kernel",
@@ -46,7 +44,7 @@ def build_single_log_dir(test_mode, op_or_api_name, root_path):
     return log_dir
 
 
-class MyFilter(object):
+class MyFilter:
     """
     This Filter is used to make logging module to print only message of specific level
     """
@@ -74,9 +72,11 @@ def attach_handler(_handler, _level=None, _filter=None, _formatter=None):
     if _formatter is not None:
         _handler.setFormatter(_formatter)
     else:
-        log_format = '%(asctime)s [%(levelname)s] ' \
-                     '[%(process)d %(processName)s %(threadName)s] [%(filename)s:%(lineno)d]: ' \
-                     '%(message)s '
+        log_format = (
+            "%(asctime)s [%(levelname)s] "
+            "[%(process)d %(processName)s %(threadName)s] [%(filename)s:%(lineno)d]: "
+            "%(message)s "
+        )
         formatter = logging.Formatter(log_format)
         _handler.setFormatter(formatter)
     if _filter is not None:
@@ -103,8 +103,7 @@ def add_level(name: str, visible_name: str, level: int):
     setattr(logging.getLoggerClass(), name, _logging_method)
 
 
-def default_logging_config(file_handler: bool = False, testcase_name: str = None,
-                           log_dir: str = None):
+def default_logging_config(file_handler: bool = False, testcase_name: str = None, log_dir: str = None):
     add_level("debugc", "COMPARE", logging.DEBUG - 5)
     for handler in logging.getLogger().handlers:
         logging.getLogger().removeHandler(handler)
@@ -114,24 +113,34 @@ def default_logging_config(file_handler: bool = False, testcase_name: str = None
         for handler in logger.handlers:
             logger.removeHandler(handler)
     # Ignore numpy RuntimeWarnings
-    numpy.seterr(all='ignore')
-    warnings.filterwarnings('ignore')
+    numpy.seterr(all="ignore")
+    warnings.filterwarnings("ignore")
     # Attach logging handler for internal logging levels
     if file_handler:
         suffix = f"-{testcase_name}" if testcase_name else ""
         base = log_dir if log_dir else "."
-        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-debug{suffix}.log')),
-                       logging.DEBUG)
-        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-info{suffix}.log')),
-                       logging.INFO, MyFilter(logging.INFO))
-        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-warning{suffix}.log')),
-                       logging.WARNING, MyFilter(logging.WARNING))
-        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-critical{suffix}.log')),
-                       logging.CRITICAL, MyFilter(logging.CRITICAL))
-        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-error{suffix}.log')),
-                       logging.ERROR, MyFilter(logging.ERROR))
-        attach_handler(logging.FileHandler(os.path.join(base, f'ttk-compare{suffix}.log')),
-                       logging.DEBUG - 5, MyFilter(logging.DEBUG - 5))
+        attach_handler(logging.FileHandler(os.path.join(base, f"ttk-debug{suffix}.log")), logging.DEBUG)
+        attach_handler(
+            logging.FileHandler(os.path.join(base, f"ttk-info{suffix}.log")), logging.INFO, MyFilter(logging.INFO)
+        )
+        attach_handler(
+            logging.FileHandler(os.path.join(base, f"ttk-warning{suffix}.log")),
+            logging.WARNING,
+            MyFilter(logging.WARNING),
+        )
+        attach_handler(
+            logging.FileHandler(os.path.join(base, f"ttk-critical{suffix}.log")),
+            logging.CRITICAL,
+            MyFilter(logging.CRITICAL),
+        )
+        attach_handler(
+            logging.FileHandler(os.path.join(base, f"ttk-error{suffix}.log")), logging.ERROR, MyFilter(logging.ERROR)
+        )
+        attach_handler(
+            logging.FileHandler(os.path.join(base, f"ttk-compare{suffix}.log")),
+            logging.DEBUG - 5,
+            MyFilter(logging.DEBUG - 5),
+        )
         attach_handler(logging.StreamHandler(sys.stdout), logging.INFO)
     else:
         attach_handler(logging.StreamHandler(sys.stdout), logging.NOTSET)

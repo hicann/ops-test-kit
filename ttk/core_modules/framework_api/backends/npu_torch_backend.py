@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from .torch_backend import TorchBackend
 from ....utilities import (
-    is_torch_native_dtype,
-    is_4bit_dtype,
     get_npu_hw_info,
+    is_4bit_dtype,
+    is_torch_native_dtype,
 )
+from .torch_backend import TorchBackend
 
 
 class NpuTorchBackend(TorchBackend):

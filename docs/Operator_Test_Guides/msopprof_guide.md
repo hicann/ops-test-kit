@@ -108,4 +108,3 @@ msopprof --aic-metrics=pipetimeline/instrtimeline python3 -m ttk kernel -i cases
 
 - `task duration` 一般大于 `aiv time`，因为 `task duration` 包含硬件调度时间，而 `aiv time` 是纯核执行时间。
 - 从数据来源看，`task duration` 由 stars 采集，`aiv time` 由 ffts 采集。
-

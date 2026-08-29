@@ -2,13 +2,11 @@ import ctypes
 import ctypes.util
 import glob
 import importlib.util
-import logging
 import os
 import resource
 import subprocess
 import sys
 import time
-
 
 
 def setup_env():
@@ -34,7 +32,7 @@ def _find_ascend_root():
 
     opp = os.getenv("ASCEND_OPP_PATH")
     if opp:
-        candidates.append(opp.rstrip("/opp").rstrip("/"))
+        candidates.append(opp.rstrip("/opp").rstrip("/"))  # noqa: B005
 
     if not candidates:
         user_path = "/usr/local/Ascend" if os.getuid() == 0 else os.path.expanduser("~/Ascend")
@@ -63,7 +61,8 @@ def _sim_ld_paths():
     before sourcing and restored afterwards.
     """
     return [
-        p for p in (os.environ.get("LD_LIBRARY_PATH", "") or "").split(":")
+        p
+        for p in (os.environ.get("LD_LIBRARY_PATH", "") or "").split(":")
         if p and ("camodel" in p or "/simulator/" in p)
     ]
 
@@ -87,14 +86,16 @@ def _source_setenv_bash(ascend_root):
     try:
         result = subprocess.run(
             ["bash", "-c", f'source "{setenv}" && env -0'],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return
 
-        for entry in result.stdout.split('\0'):
-            if '=' in entry:
-                key, _, val = entry.partition('=')
+        for entry in result.stdout.split("\0"):
+            if "=" in entry:
+                key, _, val = entry.partition("=")
                 if key and "\n" not in key:
                     os.environ[key] = val
         # setenv.bash rebuilds LD_LIBRARY_PATH; keep the camodel runtime visible.
@@ -130,8 +131,7 @@ def _get_vendor_impl_parent_paths(opp_path):
                 for name in line.split("=", 1)[1].split(","):
                     name = name.strip()
                     if name:
-                        tbe = os.path.join(opp_path, "vendors", name,
-                                           "op_impl", "ai_core", "tbe")
+                        tbe = os.path.join(opp_path, "vendors", name, "op_impl", "ai_core", "tbe")
                         if os.path.isdir(tbe):
                             paths.append(tbe)
                 break
@@ -248,7 +248,6 @@ def _cleanup_old_logs():
 
 
 def _ensure_log_dirs():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     os.makedirs(os.path.expanduser("~/ascend/log"), exist_ok=True)
 
     cutoff = time.time() - 15 * 86400

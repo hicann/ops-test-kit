@@ -10,11 +10,13 @@
 """
 Knowledge Base Sequence for Universal testcases
 """
+
 # Standard Packages
 import logging
 import os
 import time
 from contextlib import contextmanager
+
 # Third-party Packages
 from ...utilities import set_thread_name
 from ...utilities.platform import get_npu_hw_info
@@ -28,24 +30,23 @@ class KnowledgeBaseInterface:
 
     def __init__(self):
         try:
-            self.interface = __import__("tbe.common.repository_manager",
-                                        fromlist=["interface"]).interface
+            self.interface = __import__("tbe.common.repository_manager", fromlist=["interface"]).interface
             logging.info("KnowledgeBaseInterface init success.")
         except ModuleNotFoundError as e:
-            logging.info(f"Import `tbe.common.repository_manager` failed. "
-                         f"Maybe it has been removed: {e}")
+            logging.info(f"Import `tbe.common.repository_manager` failed. Maybe it has been removed: {e}")
         except BaseException as e:
             logging.critical(f"KnowledgeBaseInterface init failed: {e}")
             raise e
 
     @contextmanager
     def knowledge_base(self):
-        if hasattr(self, 'interface'):
+        if hasattr(self, "interface"):
             try:
                 full_soc = os.environ.get("TTK_FULL_SOC_VERSION", "")
                 hw_info = get_npu_hw_info(full_soc) if full_soc else {}
-                ret = self.interface.cann_kb_init({"core_num": hw_info.get("ai_core_cnt"),
-                                                   "soc_version": full_soc}, {}, {})
+                ret = self.interface.cann_kb_init(
+                    {"core_num": hw_info.get("ai_core_cnt"), "soc_version": full_soc}, {}, {}
+                )
                 logging.debug(f"Knowledge Base initialize [cann_kb_init] return: {ret}")
             except BaseException as e:
                 logging.critical(f"Knowledge Base initialize exception: {e}. The Knowledge Base process will exit.")

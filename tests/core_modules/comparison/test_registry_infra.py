@@ -9,6 +9,7 @@
 # ----------------------------------------------------------------------------
 """registry 基础设施单元测试：EachCompareResult 默认值、_to_numpy 转换、
 ComparisonBase.compare() 4-tuple + _check_empty。"""
+
 import numpy as np
 import pytest
 
@@ -51,13 +52,15 @@ class _Dummy(ComparisonBase):
     STANDARD_NAME = "dummy"
 
     def compare_impl(self):
-        return EachCompareResult(0.5, is_pass=True, standard="dummy",
-                                 metrics={"k": 1})
+        return EachCompareResult(0.5, is_pass=True, standard="dummy", metrics={"k": 1})
 
 
-@pytest.mark.parametrize("actual, golden, expected", [
-    pytest.param(np.array([]), np.array([]), (True, 1), id="both_empty"),
-])
+@pytest.mark.parametrize(
+    "actual, golden, expected",
+    [
+        pytest.param(np.array([]), np.array([]), (True, 1), id="both_empty"),
+    ],
+)
 def test_check_empty(actual, golden, expected):
     """_check_empty: 双方空 → PASS(precision=1)。"""
     c = _Dummy(actual, golden, 0, "float32", {})

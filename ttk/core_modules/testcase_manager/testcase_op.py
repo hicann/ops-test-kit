@@ -11,29 +11,42 @@
 OP Testcase Structure
 """
 
-
 __all__ = ["TestcaseOp"]
 
 
 # Standard Packages
 import logging
+from typing import TYPE_CHECKING, Dict, Iterable, Optional, Tuple, Union
+
 import numpy
-from typing import Dict, Optional, Tuple, Union, Iterable
 
 try:
     from collections.abc import Callable
 except ImportError:
-    from collections import Callable
+    from collections.abc import Callable
 
 # Third-Party Packages
-from .testcase_base import TestcaseBase
-from .field_types import FIELD_TYPES
-from ..infershape.infershape import shape_inference
-from ...utilities import DynamicCompilationResult
-from ...utilities import ConstCompilationResult, BinaryCompilationResult, BaseCompilationResult
-from ...utilities import get, get_dtype_width, shape_product, eliminate_scalar_shapes, get_global_storage
-from ...utilities import parse_dtype, DynamicOpTilingResult, input_apply_as_list
+from ...utilities import (
+    BaseCompilationResult,
+    BinaryCompilationResult,
+    ConstCompilationResult,
+    DynamicCompilationResult,
+    DynamicOpTilingResult,
+    eliminate_scalar_shapes,
+    get,
+    get_dtype_width,
+    get_global_storage,
+    input_apply_as_list,
+    parse_dtype,
+    shape_product,
+)
 from ...utilities.container_utils import pickup_by_names
+from ..infershape.infershape import shape_inference
+from .field_types import FIELD_TYPES
+from .testcase_base import TestcaseBase
+
+if TYPE_CHECKING:
+    import ttk
 
 
 class TestcaseOp(TestcaseBase):
@@ -42,105 +55,105 @@ class TestcaseOp(TestcaseBase):
     """
 
     __slots__ = (
-                 # === testcase valid configurations === #
-                 "op_name",
-                 # static input tensors shape & format & dtype
-                 "input_shapes",
-                 "input_formats",
-                 "input_dtypes",
-                 # static output tensors shape & format & dtype
-                 "output_shapes",
-                 # static input tensors original shape & format
-                 "input_ori_shapes",
-                 "input_ori_formats",
-                 # static output tensors original shape & format
-                 "output_ori_shapes",
-                 "output_ori_formats",
-                 "output_formats",
-                 "output_dtypes",
-                 # special
-                 "output_inplace_indexes",
-                 "output_shape_unknown_indexes",
-                 # specify dump file prefix
-                 "dump_file_prefix",
-                 # manual configurations
-                 "manual_input_binaries",
-                 "manual_golden_binaries",
-                 # operator attributes
-                 "attributes",
-                 "attributes1",
-                 "attributes2",
-                 "attributes3",
-                 "attributes4",
-                 "attributes5",
-                 "attributes6",
-                 "attributes7",
-                 "attributes8",
-                 "attributes9",
-                 # === Runtime parameters below === #
-                 # Compilation result
-                 "dyn_compile_result",
-                 "cst_compile_result",
-                 "bin_compile_result",
-                 # Profiling result
-                 "dyn_prof_result",
-                 "cst_prof_result",
-                 "bin_prof_result",
-                 # impl.dynamic.xxx implement function parameters
-                 "dyn_func_params",
-                 "input_arrays",
-                 "original_input_arrays",
-                 "golden_arrays",
-                 "output_arrays",
-                 "dyn_workspace_arrays",
-                 "cst_workspace_arrays",
-                 "bin_workspace_arrays",
-                 "dyn_tuple_tiling_data",
-                 "dyn_str_tiling_data",
-                 "dyn_tiling_data_bytes",
-                 "bin_tuple_tiling_data",
-                 "bin_str_tiling_data",
-                 "bin_tiling_data_bytes",
-                 "compile_done",
-                 "compile_done",
-                 "torch_func",
-                 "tf_func",
-                 "kb_pid",
-                 "core_type",
-                 # XPU third-party
-                 "xpu_results",
-                 "golden_mode_override",
-                 # private
-                 "_computed_list_distribution",
-                 "_input_distribution",
-                 "_output_distribution",
-                 "_flat_input_shapes",
-                 "_flat_input_dtypes",
-                 "_flat_input_formats",
-                 "_flat_input_ori_shapes",
-                 "_flat_input_ori_formats",
-                 "_flat_output_shapes",
-                 "_flat_output_dtypes",
-                 "_flat_output_formats",
-                 "_flat_output_ori_shapes",
-                 "_flat_output_ori_formats",
-                 "_flat_input_data_ranges",
-                 "_flat_precision_tolerances",
-                 "_flat_absolute_precision",
-                 "_spec_tensors_cache",
-                 "_spec_attrs_cache",
-                 "_flat_input_arrays",
-                 "_flat_manual_input_binaries",
-                 "_flat_manual_golden_binaries",
-                 "_dyn_clear_atomic",
-                 "_cst_clear_atomic",
-                 "_bin_clear_atomic",
-                 "_dyn_tensor_dict",
-                 "_bin_tensor_dict",
-                 "_dyn_input_ranges_cache",
-                 "_dyn_output_ranges_cache",
-                 "xpu_results",
-                 )
+        # === testcase valid configurations === #
+        "op_name",
+        # static input tensors shape & format & dtype
+        "input_shapes",
+        "input_formats",
+        "input_dtypes",
+        # static output tensors shape & format & dtype
+        "output_shapes",
+        # static input tensors original shape & format
+        "input_ori_shapes",
+        "input_ori_formats",
+        # static output tensors original shape & format
+        "output_ori_shapes",
+        "output_ori_formats",
+        "output_formats",
+        "output_dtypes",
+        # special
+        "output_inplace_indexes",
+        "output_shape_unknown_indexes",
+        # specify dump file prefix
+        "dump_file_prefix",
+        # manual configurations
+        "manual_input_binaries",
+        "manual_golden_binaries",
+        # operator attributes
+        "attributes",
+        "attributes1",
+        "attributes2",
+        "attributes3",
+        "attributes4",
+        "attributes5",
+        "attributes6",
+        "attributes7",
+        "attributes8",
+        "attributes9",
+        # === Runtime parameters below === #
+        # Compilation result
+        "dyn_compile_result",
+        "cst_compile_result",
+        "bin_compile_result",
+        # Profiling result
+        "dyn_prof_result",
+        "cst_prof_result",
+        "bin_prof_result",
+        # impl.dynamic.xxx implement function parameters
+        "dyn_func_params",
+        "input_arrays",
+        "original_input_arrays",
+        "golden_arrays",
+        "output_arrays",
+        "dyn_workspace_arrays",
+        "cst_workspace_arrays",
+        "bin_workspace_arrays",
+        "dyn_tuple_tiling_data",
+        "dyn_str_tiling_data",
+        "dyn_tiling_data_bytes",
+        "bin_tuple_tiling_data",
+        "bin_str_tiling_data",
+        "bin_tiling_data_bytes",
+        "compile_done",
+        "compile_done",
+        "torch_func",
+        "tf_func",
+        "kb_pid",
+        "core_type",
+        # XPU third-party
+        "xpu_results",
+        "golden_mode_override",
+        # private
+        "_computed_list_distribution",
+        "_input_distribution",
+        "_output_distribution",
+        "_flat_input_shapes",
+        "_flat_input_dtypes",
+        "_flat_input_formats",
+        "_flat_input_ori_shapes",
+        "_flat_input_ori_formats",
+        "_flat_output_shapes",
+        "_flat_output_dtypes",
+        "_flat_output_formats",
+        "_flat_output_ori_shapes",
+        "_flat_output_ori_formats",
+        "_flat_input_data_ranges",
+        "_flat_precision_tolerances",
+        "_flat_absolute_precision",
+        "_spec_tensors_cache",
+        "_spec_attrs_cache",
+        "_flat_input_arrays",
+        "_flat_manual_input_binaries",
+        "_flat_manual_golden_binaries",
+        "_dyn_clear_atomic",
+        "_cst_clear_atomic",
+        "_bin_clear_atomic",
+        "_dyn_tensor_dict",
+        "_bin_tensor_dict",
+        "_dyn_input_ranges_cache",
+        "_dyn_output_ranges_cache",
+        "xpu_results",
+    )
     identity_headers: Dict[str, tuple] = {
         **TestcaseBase.identity_headers,
         "op_name": (FIELD_TYPES.STRING, None),  # Required
@@ -149,8 +162,7 @@ class TestcaseOp(TestcaseBase):
         "input_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ()),
         "input_ori_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, ("input_shapes",)),
         "output_ori_shapes": (FIELD_TYPES.SHAPELIKE_STC_EX_NESTED, ("output_shapes",), None),
-        "input_ori_formats": (FIELD_TYPES.STRING_SCALAR_NESTED,
-                                  ("input_formats",), ("ND",)),
+        "input_ori_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, ("input_formats",), ("ND",)),
         "output_ori_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, ("output_formats",), ("ND",)),
         "attributes": (FIELD_TYPES.DICT, None, {}),
         **{f"attributes{i}": (FIELD_TYPES.DICT, None, {}) for i in range(1, 10)},
@@ -165,11 +177,12 @@ class TestcaseOp(TestcaseBase):
     special_property_headers: Dict[str, tuple] = {
         **TestcaseBase.special_property_headers,
         "output_inplace_indexes": (FIELD_TYPES.INT_CONTAINER, None, ()),
-        "output_shape_unknown_indexes": (FIELD_TYPES.INT_CONTAINER, None, ())
+        "output_shape_unknown_indexes": (FIELD_TYPES.INT_CONTAINER, None, ()),
     }
     property_headers: Dict[str, tuple] = {
-        **non_platform_static_property_headers, **static_property_headers,
-        **special_property_headers
+        **non_platform_static_property_headers,
+        **static_property_headers,
+        **special_property_headers,
     }
     option_headers: Dict[str, tuple] = {
         **TestcaseBase.option_headers,
@@ -193,8 +206,11 @@ class TestcaseOp(TestcaseBase):
     def cst_clear_atomic(self):
         if self._cst_clear_atomic is not None:
             return self._cst_clear_atomic
-        if self.cst_compile_result and self.cst_compile_result.kernel_json_info \
-                and self.cst_compile_result.kernel_json_info.clear_atomic:
+        if (
+            self.cst_compile_result
+            and self.cst_compile_result.kernel_json_info
+            and self.cst_compile_result.kernel_json_info.clear_atomic
+        ):
             return True
         if self.op_name in self.force_clear_atomic_ops:
             return True
@@ -204,8 +220,11 @@ class TestcaseOp(TestcaseBase):
     def dyn_clear_atomic(self):
         if self._dyn_clear_atomic is not None:
             return self._dyn_clear_atomic
-        if self.dyn_compile_result and self.dyn_compile_result.kernel_json_info \
-                and self.dyn_compile_result.kernel_json_info.clear_atomic:
+        if (
+            self.dyn_compile_result
+            and self.dyn_compile_result.kernel_json_info
+            and self.dyn_compile_result.kernel_json_info.clear_atomic
+        ):
             return True
         if self.op_name in self.force_clear_atomic_ops:
             return True
@@ -215,8 +234,11 @@ class TestcaseOp(TestcaseBase):
     def bin_clear_atomic(self):
         if self._bin_clear_atomic is not None:
             return self._bin_clear_atomic
-        if self.bin_compile_result and self.bin_compile_result.kernel_json_info \
-                and self.bin_compile_result.kernel_json_info.clear_atomic:
+        if (
+            self.bin_compile_result
+            and self.bin_compile_result.kernel_json_info
+            and self.bin_compile_result.kernel_json_info.clear_atomic
+        ):
             return True
         if self.op_name in self.force_clear_atomic_ops:
             return True
@@ -226,27 +248,29 @@ class TestcaseOp(TestcaseBase):
     def const_input_indexes(self):
         """Nested indexes of const inputs, derived from op_info valueDepend."""
         from ..operator.op_info_keeper import OpInfoKeeper
+
         op_info = OpInfoKeeper().info_of(self.op_name)
         if not op_info:
             return ()
-        return tuple(idx for idx, ipt in enumerate(op_info["inputs"])
-                     if ipt.get("valueDepend") in ("optional", "required"))
+        return tuple(
+            idx for idx, ipt in enumerate(op_info["inputs"]) if ipt.get("valueDepend") in ("optional", "required")
+        )
 
     @property
     def spec_tensors(self) -> dict:
-        return getattr(self, '_spec_tensors_cache', {})
+        return getattr(self, "_spec_tensors_cache", {})
 
     @property
     def spec_attrs(self) -> dict:
-        return getattr(self, '_spec_attrs_cache', {})
+        return getattr(self, "_spec_attrs_cache", {})
 
     def _cache_split_attributes(self):
         from ..operator.op_info_keeper import OpInfoKeeper
+
         op_info = OpInfoKeeper().info_of(self.op_name)
         input_names = [ipt["name"] for ipt in op_info["inputs"]] if op_info else []
         self._spec_tensors_cache = pickup_by_names(self.attributes or {}, input_names)
-        self._spec_attrs_cache = {k: v for k, v in (self.attributes or {}).items()
-                                  if k not in self._spec_tensors_cache}
+        self._spec_attrs_cache = {k: v for k, v in (self.attributes or {}).items() if k not in self._spec_tensors_cache}
 
     @property
     def input_bytes(self):
@@ -255,10 +279,10 @@ class TestcaseOp(TestcaseBase):
             if self.flat_input_shapes[idx] is None:
                 continue
             try:
-                bytes_lst.append(shape_product(self.flat_input_shapes[idx]) *
-                                 get_dtype_width(get(self.flat_input_dtypes, idx))
-                                 )
-            except:
+                bytes_lst.append(
+                    shape_product(self.flat_input_shapes[idx]) * get_dtype_width(get(self.flat_input_dtypes, idx))
+                )
+            except Exception:
                 bytes_lst.append(0)
         return sum(bytes_lst)
 
@@ -269,10 +293,10 @@ class TestcaseOp(TestcaseBase):
             if self.flat_output_shapes[idx] is None:
                 continue
             try:
-                bytes_lst.append(shape_product(self.flat_output_shapes[idx]) *
-                                 get_dtype_width(get(self.flat_output_dtypes, idx))
-                                 )
-            except:
+                bytes_lst.append(
+                    shape_product(self.flat_output_shapes[idx]) * get_dtype_width(get(self.flat_output_dtypes, idx))
+                )
+            except Exception:
                 bytes_lst.append(0)
         return sum(bytes_lst)
 
@@ -287,14 +311,16 @@ class TestcaseOp(TestcaseBase):
             self.dyn_input_formats,
             self.dyn_input_ranges,  # nested
             self._eliminate_scalar_shapes_nested(self.dyn_ori_inputs),
-            self.dyn_input_ori_formats)
+            self.dyn_input_ori_formats,
+        )
         outputs = self._construct_op_xput_tensor_dict(
             self.dyn_outputs,
             self.output_dtypes,
             self.output_formats,
             self.dyn_output_ranges,  # nested
             self.dyn_ori_outputs,
-            self.output_ori_formats)
+            self.output_ori_formats,
+        )
         self._dyn_tensor_dict = (inputs, outputs)
         return self._dyn_tensor_dict
 
@@ -328,12 +354,12 @@ class TestcaseOp(TestcaseBase):
             self.dyn_input_formats,
             tuple(bin_ranges),
             dyn_ori_inputs,
-            self.dyn_input_ori_formats)
+            self.dyn_input_ori_formats,
+        )
         dyn_outputs = self.dyn_outputs
-        dyn_out_ranges = self.dyn_output_ranges
         dyn_ori_outputs = self.dyn_ori_outputs
         bin_out_shapes, bin_out_ranges = [], []
-        for pos, shape in enumerate(dyn_outputs):
+        for _, shape in enumerate(dyn_outputs):
             if shape is None:
                 bin_out_shapes.append(None)
                 bin_out_ranges.append(None)
@@ -350,7 +376,8 @@ class TestcaseOp(TestcaseBase):
             self.output_formats,
             tuple(bin_out_ranges),
             dyn_ori_outputs,
-            self.output_ori_formats)
+            self.output_ori_formats,
+        )
         self._bin_tensor_dict = (inputs, outputs)
         return self._bin_tensor_dict
 
@@ -381,10 +408,7 @@ class TestcaseOp(TestcaseBase):
                 result.append(None)
             elif distribution and i < len(distribution) and distribution[i] > 0:
                 # TensorList position: shape is tuple of shapes
-                result.append(tuple(
-                    tuple(-1 if d > 0 else d for d in s) if s else s
-                    for s in shape
-                ))
+                result.append(tuple(tuple(-1 if d > 0 else d for d in s) if s else s for s in shape))
             else:
                 result.append(tuple(-1 if d > 0 else d for d in shape) if shape else shape)
         return tuple(result)
@@ -444,6 +468,7 @@ class TestcaseOp(TestcaseBase):
         if not self.input_arrays:
             return ()
         from ...utilities.container_utils import deep_flatten
+
         self._flat_input_arrays = tuple(deep_flatten(self.input_arrays))
         return self._flat_input_arrays
 
@@ -480,14 +505,6 @@ class TestcaseOp(TestcaseBase):
     @property
     def tensor_list_distribution(self):
         return self._computed_list_distribution or ()
-
-    @property
-    def flat_precision_tolerances(self):
-        return self.precision_tolerances
-
-    @property
-    def flat_absolute_precision(self):
-        return self.absolute_precision
 
     @property
     def dyn_input_ranges(self):
@@ -530,7 +547,7 @@ class TestcaseOp(TestcaseBase):
             if testcase not in testcase_group:
                 testcase_group.add(testcase)
             else:
-                logging.warning("Duplicate testcase: %s" % testcase.testcase_name)
+                logging.warning(f"Duplicate testcase: {testcase.testcase_name}")
         return testcase_group_dict
 
     def invalidate_flat_cache(self, *fields):
@@ -550,11 +567,24 @@ class TestcaseOp(TestcaseBase):
         :return: Optional[int] Hash
         """
         must_factors = ("op_name",)
-        common_factors = ("dyn_input_dtypes", "output_dtypes", "dyn_input_formats", "dyn_input_ori_formats",
-                          "output_formats", "output_ori_formats", "tensor_list_distribution",
-                          "attributes")
-        binary_factors = ("dyn_inputs", "dyn_outputs", "dyn_input_ranges", "dyn_output_ranges",
-                          "dyn_ori_inputs", "dyn_ori_outputs")
+        common_factors = (
+            "dyn_input_dtypes",
+            "output_dtypes",
+            "dyn_input_formats",
+            "dyn_input_ori_formats",
+            "output_formats",
+            "output_ori_formats",
+            "tensor_list_distribution",
+            "attributes",
+        )
+        binary_factors = (
+            "dyn_inputs",
+            "dyn_outputs",
+            "dyn_input_ranges",
+            "dyn_output_ranges",
+            "dyn_ori_inputs",
+            "dyn_ori_outputs",
+        )
         factors = must_factors + common_factors + binary_factors
         if is_binary:
             factors = tuple(ele for ele in factors if ele not in binary_factors)
@@ -593,22 +623,17 @@ class TestcaseOp(TestcaseBase):
         self._cache_split_attributes()
 
     def str_tiling_key(self, is_binary: bool = False):
-        tiling_key = self.bin_compile_result.tiling_key if is_binary \
-            else self.dyn_compile_result.tiling_key
+        tiling_key = self.bin_compile_result.tiling_key if is_binary else self.dyn_compile_result.tiling_key
         return ("0x" + hex(tiling_key)[2:].zfill(16)) if isinstance(tiling_key, int) else tiling_key
 
     def compile_failed(self):
-        return 'SUCC' not in [getattr(getattr(self, f"{t}_compile_result"), "compile_result")
-                              for t in ("dyn", "cst", "bin")]
+        return "SUCC" not in [getattr(self, f"{t}_compile_result").compile_result for t in ("dyn", "cst", "bin")]
 
     def compile_dynamic_op_success(self):
-        return 'SUCC' in [getattr(getattr(self, f"{t}_compile_result"), "compile_result")
-                          for t in ("dyn", "cst", "bin")]
+        return "SUCC" in [getattr(self, f"{t}_compile_result").compile_result for t in ("dyn", "cst", "bin")]
 
     def apply_compile_result(self, compile_result: BaseCompilationResult):
-        if isinstance(compile_result, (DynamicCompilationResult,
-                                       BinaryCompilationResult,
-                                       ConstCompilationResult)):
+        if isinstance(compile_result, (DynamicCompilationResult, BinaryCompilationResult, ConstCompilationResult)):
             if self.dyn_func_params is None:
                 self.dyn_func_params = compile_result.func_params
         if isinstance(compile_result, DynamicCompilationResult):
@@ -625,18 +650,17 @@ class TestcaseOp(TestcaseBase):
                 self.cst_compile_result = compile_result
         self.compile_done += 1
 
-    def get_dyn_func_param_name(self, param_idx: int,
-                                dyn_func_params: Optional[Union[tuple, list]] = None):
+    def get_dyn_func_param_name(self, param_idx: int, dyn_func_params: Optional[Union[tuple, list]] = None):
         if dyn_func_params is None:
             dyn_func_params = self.dyn_func_params
         list_dist = self.tensor_list_distribution or []
         tmp = numpy.array(list_dist[:param_idx]) - 1
         return dyn_func_params[param_idx - sum(tmp[tmp > 0])]
 
-    ''' static private methods '''
+    """ static private methods """
+
     @staticmethod
-    def _construct_op_xput_tensor_dict(shapes, dtypes, formats, ranges,
-                                       ori_shapes, ori_formats) -> tuple:
+    def _construct_op_xput_tensor_dict(shapes, dtypes, formats, ranges, ori_shapes, ori_formats) -> tuple:
         """Build tensor dicts preserving TensorList nesting.
 
         shapes/dtypes/formats/ranges are nested: each element is either a single
@@ -666,24 +690,36 @@ class TestcaseOp(TestcaseBase):
                             fmt_val = fmt_val[sub_idx]
                         if isinstance(range_val, (tuple, list)):
                             range_val = range_val[sub_idx]
-                        if isinstance(ori_shape_val, (tuple, list)) and ori_shape_val and isinstance(ori_shape_val[0], (tuple, list)):
+                        if (
+                            isinstance(ori_shape_val, (tuple, list))
+                            and ori_shape_val
+                            and isinstance(ori_shape_val[0], (tuple, list))
+                        ):
                             ori_shape_val = ori_shape_val[sub_idx]
                         if isinstance(ori_fmt_val, (tuple, list)):
                             ori_fmt_val = ori_fmt_val[sub_idx]
-                        group.append({"shape": sub_shape,
-                                      "ori_shape": ori_shape_val,
-                                      "range": range_val,
-                                      "dtype": dtype_val,
-                                      "format": fmt_val,
-                                      "ori_format": ori_fmt_val})
+                        group.append(
+                            {
+                                "shape": sub_shape,
+                                "ori_shape": ori_shape_val,
+                                "range": range_val,
+                                "dtype": dtype_val,
+                                "format": fmt_val,
+                                "ori_format": ori_fmt_val,
+                            }
+                        )
                 tensors.append(tuple(group))
             else:
-                tensors.append({"shape": shape,
-                                "ori_shape": get(ori_shapes, idx),
-                                "range": get(ranges, idx),
-                                "dtype": get(dtypes, idx),
-                                "format": get(formats, idx),
-                                "ori_format": get(ori_formats, idx)})
+                tensors.append(
+                    {
+                        "shape": shape,
+                        "ori_shape": get(ori_shapes, idx),
+                        "range": get(ranges, idx),
+                        "dtype": get(dtypes, idx),
+                        "format": get(formats, idx),
+                        "ori_format": get(ori_formats, idx),
+                    }
+                )
         return tuple(tensors)
 
     @staticmethod
@@ -701,10 +737,7 @@ class TestcaseOp(TestcaseBase):
                 result.append(None)
             elif isinstance(shape, tuple) and shape and isinstance(shape[0], tuple):
                 # TensorList position: shape is tuple of shapes
-                result.append(tuple(
-                    eliminate_scalar_shapes((s,))[0] if s is not None else None
-                    for s in shape
-                ))
+                result.append(tuple(eliminate_scalar_shapes((s,))[0] if s is not None else None for s in shape))
             else:
                 # Single shape: wrap in tuple to use eliminate_scalar_shapes
                 result.append(eliminate_scalar_shapes((shape,))[0])
@@ -712,7 +745,7 @@ class TestcaseOp(TestcaseBase):
 
     @staticmethod
     def _do_shape_inference(inputs: tuple, outputs: str, args: dict) -> tuple:
-        """ Shape inference """
+        """Shape inference"""
         if None in inputs:
             raise ValueError("Automatic inference doesn't support None input")
         if outputs in ("ELEWISE",):
@@ -728,8 +761,8 @@ class TestcaseOp(TestcaseBase):
         elif "ELEWISE" in outputs:
             try:
                 args = eval(outputs[7:])
-            except:
-                raise ValueError("Unable to parse shape inference args from %s" % outputs)
+            except Exception as e:
+                raise ValueError(f"Unable to parse shape inference args from {outputs}") from e
             else:
                 return shape_inference(inputs, args, "ELEWISE")
         elif "REDUCE" in outputs:
@@ -741,16 +774,15 @@ class TestcaseOp(TestcaseBase):
                     args = (args["axis"], *_args[1:])
                 else:
                     args = _args
-            except:
-                raise ValueError("Unable to parse shape inference args from %s" % outputs)
+            except Exception as e:
+                raise ValueError(f"Unable to parse shape inference args from {outputs}") from e
             else:
                 return shape_inference(inputs, args, "REDUCE")
         else:
-            raise ValueError("Invalid shape inference value %s" % outputs)
+            raise ValueError(f"Invalid shape inference value {outputs}")
 
     @staticmethod
-    def _expand_indices(ipt_size: int, list_distribution: Union[list, tuple],
-                        inplace_indices: list):
+    def _expand_indices(ipt_size: int, list_distribution: Union[list, tuple], inplace_indices: list):
         flatten_ipts = list(range(ipt_size))
         structure_ipts = input_apply_as_list(flatten_ipts, list_distribution)
         # flatten
@@ -766,11 +798,12 @@ class TestcaseOp(TestcaseBase):
                 result.append(item)
         return result
 
-    ''' private methods '''
+    """ private methods """
 
     def _compute_input_distribution(self):
         """Compute input distribution from input_shapes nesting."""
         from ...utilities.container_utils import infer_list_distribution_from_nesting
+
         if self._is_nested_shapes(self.input_shapes):
             self._input_distribution = infer_list_distribution_from_nesting(self.input_shapes)
         elif self.input_shapes:
@@ -781,6 +814,7 @@ class TestcaseOp(TestcaseBase):
     def _compute_output_distribution(self):
         """Compute output distribution from output_shapes (already resolved)."""
         from ...utilities.container_utils import infer_list_distribution_from_nesting
+
         if isinstance(self.output_shapes, tuple) and self._is_nested_shapes(self.output_shapes):
             self._output_distribution = infer_list_distribution_from_nesting(self.output_shapes)
         elif isinstance(self.output_shapes, tuple):
@@ -799,14 +833,14 @@ class TestcaseOp(TestcaseBase):
         input_dist = self.input_distribution
         output_dist = self.output_distribution
         if input_dist:
-            for f in ('input_dtypes', 'input_formats', 'input_ori_formats'):
+            for f in ("input_dtypes", "input_formats", "input_ori_formats"):
                 self._normalize_scalar_field_by_dist(f, input_dist)
-            for f in ('input_ori_shapes', 'input_data_ranges'):
+            for f in ("input_ori_shapes", "input_data_ranges"):
                 self._normalize_range_field_by_dist(f, input_dist)
         if output_dist:
-            for f in ('output_dtypes', 'output_formats', 'output_ori_formats', 'absolute_precision'):
+            for f in ("output_dtypes", "output_formats", "output_ori_formats", "absolute_precision"):
                 self._normalize_scalar_field_by_dist(f, output_dist)
-            for f in ('output_ori_shapes', 'precision_tolerances'):
+            for f in ("output_ori_shapes", "precision_tolerances"):
                 self._normalize_range_field_by_dist(f, output_dist)
 
     def _check_manual_binaries(self):
@@ -821,7 +855,7 @@ class TestcaseOp(TestcaseBase):
             self._normalize_manual_binaries_impl()
             self._validate_manual_binaries_impl()
             self._reshape_manual_binaries_impl()
-        except:
+        except Exception:
             self.is_valid = False
             self.fail_reason = "MANUAL_BINARIES_INVALID"
             logging.exception("manual_input_binaries validation failed")
@@ -834,8 +868,7 @@ class TestcaseOp(TestcaseBase):
             self.manual_input_binaries = (binaries,)
             return
         if not isinstance(binaries, (tuple, list)):
-            raise ValueError(f"Invalid manual_input_binaries: {binaries}. "
-                             f"Expected str, tuple or list.")
+            raise ValueError(f"Invalid manual_input_binaries: {binaries}. Expected str, tuple or list.")
         self.manual_input_binaries = self._normalize_binaries_recursive(binaries)
 
     def _normalize_binaries_recursive(self, container):
@@ -843,7 +876,7 @@ class TestcaseOp(TestcaseBase):
         for item in container:
             if isinstance(item, (tuple, list)):
                 result.append(self._normalize_binaries_recursive(item))
-            elif isinstance(item, str) and item == 'None':
+            elif isinstance(item, str) and item == "None":
                 result.append(None)
             else:
                 result.append(item)
@@ -860,26 +893,32 @@ class TestcaseOp(TestcaseBase):
 
         if is_nested:
             if not has_tensor_list:
-                raise ValueError(f"manual_input_binaries must be flat when no TensorList "
-                                 f"in inputs, got nested: {binaries}")
+                raise ValueError(
+                    f"manual_input_binaries must be flat when no TensorList in inputs, got nested: {binaries}"
+                )
             if len(binaries) != n_params:
-                raise ValueError(f"manual_input_binaries top-level count {len(binaries)} "
-                                 f"!= input params count {n_params}")
+                raise ValueError(
+                    f"manual_input_binaries top-level count {len(binaries)} != input params count {n_params}"
+                )
             offset = 0
             for i, dist_val in enumerate(self.input_distribution):
                 count = max(dist_val, 1)
-                group_inputs = self.flat_input_shapes[offset:offset + count]
+                group_inputs = self.flat_input_shapes[offset : offset + count]
                 offset += count
                 group = binaries[i]
                 if dist_val > 0:
                     if not isinstance(group, (tuple, list)):
-                        raise ValueError(f"manual_input_binaries param {i}: "
-                                         f"expected tuple/list for TensorList, got {type(group).__name__}")
+                        raise ValueError(
+                            f"manual_input_binaries param {i}: "
+                            f"expected tuple/list for TensorList, got {type(group).__name__}"
+                        )
                     self._check_none_alignment(group, group_inputs, f"group {i}")
                 else:
                     if isinstance(group, (tuple, list)):
-                        raise ValueError(f"manual_input_binaries param {i}: "
-                                         f"expected str/None for non-TensorList, got {type(group).__name__}")
+                        raise ValueError(
+                            f"manual_input_binaries param {i}: "
+                            f"expected str/None for non-TensorList, got {type(group).__name__}"
+                        )
                     self._check_none_alignment((group,), group_inputs, f"param {i}")
         else:
             self._check_none_alignment(binaries, self.flat_input_shapes, "flat")
@@ -889,14 +928,13 @@ class TestcaseOp(TestcaseBase):
         for i, inp in enumerate(inputs):
             binary = binaries[i] if i < len(binaries) else None
             if inp is not None and binary is None:
-                raise ValueError(f"manual_input_binaries {context_label}[{i}]: "
-                                 f"input is non-None but binary is missing/None")
+                raise ValueError(
+                    f"manual_input_binaries {context_label}[{i}]: input is non-None but binary is missing/None"
+                )
             if inp is None and binary is not None:
-                raise ValueError(f"manual_input_binaries {context_label}[{i}]: "
-                                 f"input is None but binary is {binary!r}")
+                raise ValueError(f"manual_input_binaries {context_label}[{i}]: input is None but binary is {binary!r}")
         if len(binaries) > len(inputs):
-            raise ValueError(f"manual_input_binaries {context_label}: "
-                             f"{len(binaries)} entries > {len(inputs)} inputs")
+            raise ValueError(f"manual_input_binaries {context_label}: {len(binaries)} entries > {len(inputs)} inputs")
 
     def _reshape_manual_binaries_impl(self):
         binaries = self.manual_input_binaries
@@ -911,7 +949,7 @@ class TestcaseOp(TestcaseBase):
         offset = 0
         for d in dist:
             if d > 0:
-                result.append(tuple(flat_bins[offset:offset + d]))
+                result.append(tuple(flat_bins[offset : offset + d]))
             else:
                 result.append(flat_bins[offset])
             offset += max(d, 1)
@@ -941,7 +979,7 @@ class TestcaseOp(TestcaseBase):
             self._normalize_manual_output_binaries_impl()
             self._validate_manual_output_binaries_impl()
             self._reshape_manual_output_binaries_impl()
-        except:
+        except Exception:
             self.is_valid = False
             self.fail_reason = "MANUAL_OUTPUT_BINARIES_INVALID"
             logging.exception("manual_golden_binaries validation failed")
@@ -956,6 +994,7 @@ class TestcaseOp(TestcaseBase):
                 self.manual_golden_binaries = self._normalize_binaries_recursive(binaries)
             else:
                 raise ValueError(f"Invalid manual_golden_binaries: {binaries}")
+
     def _validate_manual_output_binaries_impl(self):
         dist = self.output_distribution or ()
         flat_outputs = self.flat_output_shapes
@@ -969,26 +1008,32 @@ class TestcaseOp(TestcaseBase):
 
             if is_nested:
                 if not has_tensor_list:
-                    raise ValueError(f"manual_golden_binaries must be flat when no TensorList "
-                                     f"in outputs, got nested: {binaries}")
+                    raise ValueError(
+                        f"manual_golden_binaries must be flat when no TensorList in outputs, got nested: {binaries}"
+                    )
                 if len(binaries) != n_params:
-                    raise ValueError(f"manual_golden_binaries top-level count {len(binaries)} "
-                                     f"!= output params count {n_params}")
+                    raise ValueError(
+                        f"manual_golden_binaries top-level count {len(binaries)} != output params count {n_params}"
+                    )
                 offset = 0
                 for i, dist_val in enumerate(dist):
                     count = max(dist_val, 1)
-                    group_outputs = flat_outputs[offset:offset + count]
+                    group_outputs = flat_outputs[offset : offset + count]
                     offset += count
                     group = binaries[i]
                     if dist_val > 0:
                         if not isinstance(group, (tuple, list)):
-                            raise ValueError(f"manual_golden_binaries param {i}: "
-                                             f"expected tuple/list for TensorList, got {type(group).__name__}")
+                            raise ValueError(
+                                f"manual_golden_binaries param {i}: "
+                                f"expected tuple/list for TensorList, got {type(group).__name__}"
+                            )
                         self._check_none_alignment(group, group_outputs, f"output group {i}")
                     else:
                         if isinstance(group, (tuple, list)):
-                            raise ValueError(f"manual_golden_binaries param {i}: "
-                                             f"expected str/None for non-TensorList, got {type(group).__name__}")
+                            raise ValueError(
+                                f"manual_golden_binaries param {i}: "
+                                f"expected str/None for non-TensorList, got {type(group).__name__}"
+                            )
                         self._check_none_alignment((group,), group_outputs, f"output param {i}")
             else:
                 self._check_none_alignment(binaries, flat_outputs, "output flat")
@@ -1006,7 +1051,7 @@ class TestcaseOp(TestcaseBase):
         offset = 0
         for d in dist:
             if d > 0:
-                result.append(tuple(flat_bins[offset:offset + d]))
+                result.append(tuple(flat_bins[offset : offset + d]))
             else:
                 result.append(flat_bins[offset])
             offset += max(d, 1)
@@ -1034,6 +1079,7 @@ class TestcaseOp(TestcaseBase):
             self._flat_input_shapes = self.input_shapes
         else:
             from ...utilities.container_utils import flatten_nested_sequence
+
             self._flat_input_shapes = flatten_nested_sequence(self.input_shapes)
         return self._flat_input_shapes
 
@@ -1047,6 +1093,7 @@ class TestcaseOp(TestcaseBase):
             self._flat_manual_input_binaries = self.manual_input_binaries
         else:
             from ...utilities.container_utils import deep_flatten
+
             self._flat_manual_input_binaries = deep_flatten(self.manual_input_binaries)
         return self._flat_manual_input_binaries
 
@@ -1060,6 +1107,7 @@ class TestcaseOp(TestcaseBase):
             self._flat_manual_golden_binaries = self.manual_golden_binaries
         else:
             from ...utilities.container_utils import deep_flatten
+
             self._flat_manual_golden_binaries = deep_flatten(self.manual_golden_binaries)
         return self._flat_manual_golden_binaries
 
@@ -1123,6 +1171,7 @@ class TestcaseOp(TestcaseBase):
             self._flat_output_shapes = self.output_shapes
         else:
             from ...utilities.container_utils import flatten_nested_sequence
+
             self._flat_output_shapes = flatten_nested_sequence(self.output_shapes)
         return self._flat_output_shapes
 
@@ -1159,9 +1208,14 @@ class TestcaseOp(TestcaseBase):
         self._computed_list_distribution = (self._input_distribution or ()) + self._output_distribution
         # Invalidate all flat output caches — they recompute via updated distribution
         self.invalidate_flat_cache(
-            "output_shapes", "output_dtypes", "output_formats",
-            "output_ori_shapes", "output_ori_formats",
-            "precision_tolerances", "absolute_precision")
+            "output_shapes",
+            "output_dtypes",
+            "output_formats",
+            "output_ori_shapes",
+            "output_ori_formats",
+            "precision_tolerances",
+            "absolute_precision",
+        )
 
     @property
     def flat_output_formats(self):
@@ -1371,9 +1425,9 @@ class TestcaseOp(TestcaseBase):
         self.bin_str_tiling_data = None
         self.bin_tiling_data_bytes = None
         # Outputs
-        self.dyn_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
-        self.cst_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
-        self.bin_prof_result: Optional["ttk.core_modules.npu.RTSProfilingResult"] = None
+        self.dyn_prof_result: Optional[ttk.core_modules.npu.RTSProfilingResult] = None
+        self.cst_prof_result: Optional[ttk.core_modules.npu.RTSProfilingResult] = None
+        self.bin_prof_result: Optional[ttk.core_modules.npu.RTSProfilingResult] = None
 
     def _init_flat_and_property_fields(self):
         """Initialize test runtime, flat-tensor caches and property overrides."""
@@ -1418,12 +1472,12 @@ class TestcaseOp(TestcaseBase):
     def actual_input_data_ranges(self, value):
         if value is not None and self.input_distribution:
             self._actual_input_data_ranges = value
-            self._normalize_range_field_by_dist('_actual_input_data_ranges', self.input_distribution, (None, None))
+            self._normalize_range_field_by_dist("_actual_input_data_ranges", self.input_distribution, (None, None))
         else:
             self._actual_input_data_ranges = value
 
     def _shape_size_exceed(self):
-        """ Check shape product size """
+        """Check shape product size"""
         shapes = eliminate_scalar_shapes(self.flat_input_shapes)
         shapes_out = eliminate_scalar_shapes(self.flat_output_shapes)
         total_shape_product_value = 0
@@ -1446,6 +1500,7 @@ class TestcaseOp(TestcaseBase):
             logging.exception("op_name must be specified.")
             return
         from ..operator.op_info_keeper import OpInfoKeeper
+
         if not OpInfoKeeper().info_of(self.op_name):
             self.is_valid = False
             self.fail_reason = "SOC_NOT_SUPPORT"
@@ -1455,6 +1510,7 @@ class TestcaseOp(TestcaseBase):
         if not self.is_valid:
             return
         from ..operator.op_info_keeper import OpInfoKeeper
+
         op_info = OpInfoKeeper().info_of(self.op_name)
         if not op_info:
             return
@@ -1463,13 +1519,16 @@ class TestcaseOp(TestcaseBase):
         if actual_in != expected_in:
             self.is_valid = False
             self.fail_reason = "INPUT_COUNT_MISMATCH"
-            logging.error(f"Testcase [{self.testcase_name}] input count mismatch: "
-                          f"got {actual_in}, expected {expected_in} from op_info.")
+            logging.error(
+                f"Testcase [{self.testcase_name}] input count mismatch: "
+                f"got {actual_in}, expected {expected_in} from op_info."
+            )
 
     def _check_output_count(self):
         if not self.is_valid:
             return
         from ..operator.op_info_keeper import OpInfoKeeper
+
         op_info = OpInfoKeeper().info_of(self.op_name)
         if not op_info or not op_info.get("outputs"):
             return
@@ -1478,8 +1537,10 @@ class TestcaseOp(TestcaseBase):
         if actual_out != expected_out:
             self.is_valid = False
             self.fail_reason = "OUTPUT_COUNT_MISMATCH"
-            logging.error(f"Testcase [{self.testcase_name}] output count mismatch: "
-                          f"got {actual_out}, expected {expected_out} from op_info.")
+            logging.error(
+                f"Testcase [{self.testcase_name}] output count mismatch: "
+                f"got {actual_out}, expected {expected_out} from op_info."
+            )
 
     def _check_attributes(self):
         if not self.is_valid:
@@ -1489,7 +1550,7 @@ class TestcaseOp(TestcaseBase):
             if get_global_storage().op_impl_mode is not None:
                 # command line has higher priority
                 self.attributes["impl_mode"] = get_global_storage().op_impl_mode
-        except:
+        except Exception:
             self.is_valid = False
             self.fail_reason = "OTHER_PARAMS_INVALID"
             logging.exception("Attributes parsing failed")
@@ -1500,7 +1561,7 @@ class TestcaseOp(TestcaseBase):
         # noinspection PyBroadException
         try:
             self.input_dtypes = self._recursively_parse_dtypes(self.input_dtypes)
-        except:
+        except Exception:
             self.is_valid = False
             self.fail_reason = "STC_INPUT_DTYPES_INVALID"
             logging.exception(f"Static input dtypes parse failed: {self.input_dtypes}")
@@ -1511,14 +1572,14 @@ class TestcaseOp(TestcaseBase):
         # noinspection PyBroadException
         try:
             if isinstance(self.output_shapes, str):
-                self.output_shapes = self._do_shape_inference(self.flat_input_shapes,
-                                                            self.output_shapes,
-                                                            self.attributes)
+                self.output_shapes = self._do_shape_inference(
+                    self.flat_input_shapes, self.output_shapes, self.attributes
+                )
             elif self.output_shapes is None:
                 self.is_valid = False
                 self.fail_reason = "STC_OUTPUT_NOT_SPECIFIED"
-                logging.error("Static output shape not specified for %s" % self.testcase_name)
-        except:
+                logging.error(f"Static output shape not specified for {self.testcase_name}")
+        except Exception:
             self.is_valid = False
             self.fail_reason = "STC_OUTPUT_INFERENCE_FAILED"
             logging.exception("Static output shape inference failed")
@@ -1529,14 +1590,14 @@ class TestcaseOp(TestcaseBase):
         # noinspection PyBroadException
         try:
             if isinstance(self.output_ori_shapes, str):
-                self.output_ori_shapes = self._do_shape_inference(self.flat_input_ori_shapes,
-                                                                self.output_ori_shapes,
-                                                                self.attributes)
+                self.output_ori_shapes = self._do_shape_inference(
+                    self.flat_input_ori_shapes, self.output_ori_shapes, self.attributes
+                )
             elif self.output_ori_shapes is None:
                 self.is_valid = False
                 self.fail_reason = "STC_ORI_OUTPUT_NOT_SPECIFIED"
-                logging.error("Static original output shape not specified for %s" % self.testcase_name)
-        except:
+                logging.error(f"Static original output shape not specified for {self.testcase_name}")
+        except Exception:
             self.is_valid = False
             self.fail_reason = "STC_ORI_OUTPUT_INFERENCE_FAILED"
             logging.exception("Static original output shape inference failed")
@@ -1547,7 +1608,7 @@ class TestcaseOp(TestcaseBase):
         # noinspection PyBroadException
         try:
             self.output_dtypes = self._recursively_parse_dtypes(self.output_dtypes)
-        except:
+        except Exception:
             self.is_valid = False
             self.fail_reason = "OUTPUT_DTYPES_INVALID"
             logging.exception(f"Output dtypes parse failed: {self.output_dtypes}")
@@ -1556,16 +1617,19 @@ class TestcaseOp(TestcaseBase):
         if not self.is_valid:
             return
         if self._shape_size_exceed():
-            logging.error(f"Testcase {self.testcase_name} is invalid because shape is out of bound: "
-                          f"limit={get_global_storage().DAVINCI_HBM_SIZE_LIMIT}GB, inputs: {self.input_shapes}, "
-                          f"dtype: {self.input_dtypes}, "
-                          f"outputs: {self.output_shapes}, "
-                          f"dtype: {self.output_dtypes}")
+            logging.error(
+                f"Testcase {self.testcase_name} is invalid because shape is out of bound: "
+                f"limit={get_global_storage().DAVINCI_HBM_SIZE_LIMIT}GB, inputs: {self.input_shapes}, "
+                f"dtype: {self.input_dtypes}, "
+                f"outputs: {self.output_shapes}, "
+                f"dtype: {self.output_dtypes}"
+            )
             self.is_valid = False
             self.fail_reason = "STC_SHAPE_OUT_OF_BOUND"
 
     def _set_case_core_type(self):
         from ..operator.op_info_keeper import OpInfoKeeper
+
         op_info = OpInfoKeeper().info_of(self.op_name)
         if op_info is None:
             self.core_type = "AiCore"
@@ -1574,6 +1638,7 @@ class TestcaseOp(TestcaseBase):
 
     def _auto_set_inplace_indexes(self):
         from ..operator.op_info_keeper import OpInfoKeeper
+
         op_info = OpInfoKeeper().info_of(self.op_name)
         if op_info and not self.output_inplace_indexes:
             inputs = [ipt["name"] for ipt in op_info["inputs"]]
@@ -1589,16 +1654,15 @@ class TestcaseOp(TestcaseBase):
                 # mem_set_v2
                 if ipt_type == "dynamic" or opt_type == "dynamic":
                     if ipt_type != opt_type:
-                        logging.error(f"Testcase {self.testcase_name} "
-                                      f"{opt_idx}th output inplace {ipt_idx}th input. "
-                                      f"The `paramType` mismatch: should be both `dynamic`. "
-                                      f"But got input={ipt_type}, output={opt_type}")
+                        logging.error(
+                            f"Testcase {self.testcase_name} "
+                            f"{opt_idx}th output inplace {ipt_idx}th input. "
+                            f"The `paramType` mismatch: should be both `dynamic`. "
+                            f"But got input={ipt_type}, output={opt_type}"
+                        )
                         self.is_valid = False
                         self.fail_reason = "OUTPUT_INPLACE_INDEXES_ERROR"
                         break
             # expand for dynamic.
-            flatten_inplace_indices = self._expand_indices(len(inputs),
-                                                           self.tensor_list_distribution,
-                                                           inplace_indices)
+            flatten_inplace_indices = self._expand_indices(len(inputs), self.tensor_list_distribution, inplace_indices)
             self.output_inplace_indexes = tuple(flatten_inplace_indices)
-

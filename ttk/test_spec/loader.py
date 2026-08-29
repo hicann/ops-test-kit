@@ -3,9 +3,8 @@ import ast
 import importlib
 import importlib.util
 import logging
-import sys
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 def _snake_to_pascal(name: str) -> str:
@@ -87,11 +86,9 @@ class SpecLoader:
         file_spec: Dict[str, str] = {}  # this file's __spec__, last-wins
         for node in tree.body:  # module-level only, NOT ast.walk
             target = None
-            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
-                    and isinstance(node.targets[0], ast.Name):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 target = node.targets[0]
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
-                    and node.value is not None:
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
                 target = node.target
             else:
                 continue
@@ -103,9 +100,7 @@ class SpecLoader:
                 if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
                     continue
                 if not (isinstance(val, ast.Constant) and isinstance(val.value, str)):
-                    raise ValueError(
-                        f"only string class names accepted, got {type(val).__name__} "
-                        f"in {py_file}")
+                    raise ValueError(f"only string class names accepted, got {type(val).__name__} in {py_file}")
                 file_spec[key.value] = val.value  # last-wins within file
         for op, cls_name in file_spec.items():
             if op not in self.__spec_index:  # first-wins across files
@@ -160,7 +155,7 @@ class SpecLoader:
     def _mark_source(cls: type, py_file: Path) -> None:
         """Record the source file on the class so remote spec-mode can locate it."""
         try:
-            setattr(cls, "__ttk_spec_file__", str(py_file))
+            cls.__ttk_spec_file__ = str(py_file)
         except (AttributeError, TypeError):
             pass
 

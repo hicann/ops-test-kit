@@ -11,15 +11,11 @@
 Testcase manager Module
 """
 
-
-__all__ = ["TestcaseBase", "UniversalTestcaseFactory",
-           "TestcaseOp",
-           "TestcaseAclnn",
-           "TensorApiTestcaseBase"]
+__all__ = ["TestcaseBase", "UniversalTestcaseFactory", "TestcaseOp", "TestcaseAclnn", "TensorApiTestcaseBase"]
 
 
+from .testcase_aclnn import TestcaseAclnn
 from .testcase_base import TestcaseBase
-from .testcase_tensor_api_base import TensorApiTestcaseBase
 from .testcase_manager import UniversalTestcaseFactory
 from .testcase_op import TestcaseOp
-from .testcase_aclnn import TestcaseAclnn
+from .testcase_tensor_api_base import TensorApiTestcaseBase

@@ -14,12 +14,12 @@ Plugin scanner using AST to parse plugin declarations without importing modules
 import ast
 import logging
 from pathlib import Path
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple
 
 
 class PluginScanner:
     """Scan plugin declarations using AST without importing modules"""
-    
+
     def __init__(self, scan_dir, plugin_type: str, field_name: str):
         """
         Args:
@@ -32,7 +32,7 @@ class PluginScanner:
         self.scan_dir = scan_dir
         self.plugin_type = plugin_type
         self.field_name = field_name
-        
+
     def scan(self) -> Dict[str, Tuple[str, str, Path]]:
         """
         Scan directory and return {operator_name: (module_name, function_name, file_path)}
@@ -49,7 +49,7 @@ class PluginScanner:
                 if f.name.endswith(".py"):
                     module_info = self._scan_module(f)
                     if module_info:
-                            results.update(module_info)
+                        results.update(module_info)
             else:
                 for py_file in f.rglob("*.py"):
                     if py_file.name.startswith("_") or py_file.name == "__init__.py":
@@ -60,40 +60,40 @@ class PluginScanner:
                         results.update(module_info)
 
         return results
-        
+
     def _scan_module(self, py_file: Path) -> Dict[str, Tuple[str, str, Path]]:
         """Parse module using AST"""
         try:
             module_name = py_file.stem
-            
-            with open(py_file, 'r', encoding='utf-8') as f:
+
+            with open(py_file, encoding="utf-8") as f:
                 source_code = f.read()
-                
+
             tree = ast.parse(source_code, filename=str(py_file))
             plugin_decl = self._find_plugin_declaration(tree)
-            
+
             if not plugin_decl:
                 return {}
-                
+
             operators = self._parse_operators_dict(plugin_decl)
-            
+
             if not operators:
                 return {}
-                
+
             valid_operators = {}
             for op_name, func_name in operators.items():
                 valid_operators[op_name] = (module_name, func_name, py_file)
                 logging.debug(f"Found {self.plugin_type}: {op_name} -> {module_name}.{func_name}")
-                    
+
             return valid_operators
-            
+
         except SyntaxError as e:
             logging.error(f"Syntax error in {py_file}: {e}")
             return {}
         except Exception as e:
             logging.error(f"Error scanning {py_file}: {e}")
             return {}
-            
+
     def _find_plugin_declaration(self, tree: ast.AST) -> ast.Dict:
         """Find __golden__ or __input__ declaration"""
         for node in ast.walk(tree):
@@ -102,11 +102,11 @@ class PluginScanner:
                     if isinstance(node.value, ast.Dict):
                         return node.value
         return None
-        
+
     def _parse_operators_dict(self, dict_node: ast.Dict) -> Dict[str, str]:
         """Parse kernel or aclnn dictionary"""
         operators = {}
-        
+
         for key, value in zip(dict_node.keys, dict_node.values):
             if isinstance(key, ast.Constant):
                 key_value = key.value
@@ -115,5 +115,5 @@ class PluginScanner:
                         for op_key, op_value in zip(value.keys, value.values):
                             if isinstance(op_key, ast.Constant) and isinstance(op_value, ast.Constant):
                                 operators[op_key.value] = op_value.value
-                            
+
         return operators

@@ -31,14 +31,13 @@ from ttk.core_modules.npu.op import output_generation as _mod
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 # Access module-level private functions via getattr to dodge class-style name mangling.
-_generate_golden = getattr(_mod, '__generate_golden')
+_generate_golden = getattr(_mod, "__generate_golden")
 KERNEL_GOLDEN = _mod.KERNEL_GOLDEN
 
 
-def _make_testcase(op_name="neg", input_shapes=((4,),),
-                   input_dtypes=("float32",),
-                   output_shapes=((4,),),
-                   output_dtypes=("float32",)):
+def _make_testcase(
+    op_name="neg", input_shapes=((4,),), input_dtypes=("float32",), output_shapes=((4,),), output_dtypes=("float32",)
+):
     case = TestcaseOp()
     case.testcase_name = f"test_{op_name}_builtin_golden"
     case.op_name = op_name
@@ -65,7 +64,7 @@ def _mock_switches():
     sw = MagicMock()
     sw.dev_plat = "Ascend910B2"
     sw.short_soc_version = "Ascend910B"
-    sw.golden_mode = "Enable"      # not Promote → __golden_mode is a no-op
+    sw.golden_mode = "Enable"  # not Promote → __golden_mode is a no-op
     sw.plugin_path = None
     sw.overflow_mode = 0
     return sw
@@ -79,9 +78,9 @@ def _mock_env(monkeypatch):
     monkeypatch.delenv("ASCEND_OPP_PATH", raising=False)
 
 
-@patch('ttk.core_modules.npu.op.output_generation.OpInfoKeeper')
-@patch('ttk.core_modules.npu.op.output_generation.get_global_storage')
-@patch('ttk.core_modules.npu.op.output_generation.get_plugin_function')
+@patch("ttk.core_modules.npu.op.output_generation.OpInfoKeeper")
+@patch("ttk.core_modules.npu.op.output_generation.get_global_storage")
+@patch("ttk.core_modules.npu.op.output_generation.get_plugin_function")
 class TestKernelBuiltinGoldenDispatch:
     """KERNEL_GOLDEN[op] → numpy ufunc → numeric result (not a sentinel)."""
 
@@ -92,10 +91,13 @@ class TestKernelBuiltinGoldenDispatch:
         mock_sw.return_value = _mock_switches()
         mock_op_info.return_value.info_of.return_value = {"inputs": []}
 
-        case = _make_testcase(op_name="neg", input_shapes=((4,),),
-                              input_dtypes=("float32",),
-                              output_shapes=((4,),),
-                              output_dtypes=("float32",))
+        case = _make_testcase(
+            op_name="neg",
+            input_shapes=((4,),),
+            input_dtypes=("float32",),
+            output_shapes=((4,),),
+            output_dtypes=("float32",),
+        )
         # Sanity: pre-conditions for the path under test.
         assert "neg" in KERNEL_GOLDEN
         assert KERNEL_GOLDEN["neg"] is np.negative
@@ -108,15 +110,13 @@ class TestKernelBuiltinGoldenDispatch:
         # The path must succeed (not "GOLDEN_FAILURE" / "UNSUPPORTED") and
         # produce a numeric numpy array equal to -input.
         assert len(golden) >= 1
-        assert isinstance(golden[0], np.ndarray), \
-            f"expected ndarray, got sentinel/string: {golden[0]!r}"
-        np.testing.assert_array_equal(golden[0], np.array([-1.0, 2.0, -3.0, 4.0],
-                                                          dtype="float32"))
+        assert isinstance(golden[0], np.ndarray), f"expected ndarray, got sentinel/string: {golden[0]!r}"
+        np.testing.assert_array_equal(golden[0], np.array([-1.0, 2.0, -3.0, 4.0], dtype="float32"))
         # Confirm get_plugin_function was consulted (proves the None→KERNEL_GOLDEN branch ran).
         mock_get_plugin.assert_called_once()
 
 
-@patch('ttk.core_modules.npu.op.output_generation.get_plugin_function')
+@patch("ttk.core_modules.npu.op.output_generation.get_plugin_function")
 class TestKernelGoldenFallbackBranchCoverage:
     """Lighter-weight unit on the fallback decision itself.
 
@@ -130,6 +130,6 @@ class TestKernelGoldenFallbackBranchCoverage:
         # framework_of classification is what steers numpy ufuncs into
         # __call_numpy_api inside __invoke_golden.
         from ttk.utilities import framework_of
+
         for op in ("neg", "acos", "floor_div"):
-            assert framework_of(KERNEL_GOLDEN[op]) == "numpy", \
-                f"{op} must classify as 'numpy' to hit the builtin path"
+            assert framework_of(KERNEL_GOLDEN[op]) == "numpy", f"{op} must classify as 'numpy' to hit the builtin path"

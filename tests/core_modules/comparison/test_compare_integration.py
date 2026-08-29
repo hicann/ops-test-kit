@@ -20,14 +20,14 @@ def test_compare_returns_4tuple_with_metrics():
     outputs = [np.array([1.0, 2.0], np.float32)]
     goldens = [np.array([1.0, 2.0], np.float32)]
     standards = resolve_tolerance(None, None, None, ["float32"], None)  # -> stat_rel_err
-    precision, log, is_pass, metrics = compare(outputs, goldens, ("float32",),
-                                               standards=standards)
+    precision, log, is_pass, metrics = compare(outputs, goldens, ("float32",), standards=standards)
     assert is_pass is True
     assert 0 in metrics
     assert metrics[0]["standard"] == "stat_rel_err"
 
 
 # —— 端到端:Spec.tolerance → resolve → compare → metrics → structure（CR5-I2）——
+
 
 def test_threshold_override_flows_to_metrics():
     """Spec.tolerance threshold override 经 resolve → compare → stat_rel_err metrics。"""
@@ -79,7 +79,7 @@ def test_metrics_flow_to_api_structure():
 def test_output_none_fails():
     """output=None + golden 非 None → NO_OUTPUT / FAIL。"""
     precision, _log, is_pass, _m = compare(
-        [None], [np.array([1.0])], ("float32",),
-        standards=[ResolvedStandard("stat_rel_err")])
+        [None], [np.array([1.0])], ("float32",), standards=[ResolvedStandard("stat_rel_err")]
+    )
     assert precision == "NO_OUTPUT"
     assert is_pass is False

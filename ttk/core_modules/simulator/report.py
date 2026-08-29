@@ -5,6 +5,7 @@
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 """Best-effort performance report generation (``--sim-report``)."""
+
 import logging
 from pathlib import Path
 

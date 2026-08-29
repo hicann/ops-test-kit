@@ -7,8 +7,6 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-from __future__ import annotations
-
 """NPU TF backend — uses npu_device plugin for Ascend NPU.
 
 Corresponds to NpuTorchBackend (torch_npu). npu_device.open() must be called
@@ -24,8 +22,10 @@ which ignores the argument device path and always uses ctx.default_device
 (NPU:0).  Therefore to_device / device_scope need not (and cannot) place
 tensors on a specific NPU via tf.device — all ops auto-dispatch to NPU.
 """
-import logging
 
+from __future__ import annotations
+
+import logging
 from contextlib import nullcontext
 
 from .tf_backend import TfBackend
@@ -80,8 +80,9 @@ class NpuTfBackend(TfBackend):
 
     def device_name(self, dev_id=0):
         try:
-            from ...dsmi import DSMIInterface
             from ttk.utilities.platform import get_npu_hw_info
+
+            from ...dsmi import DSMIInterface
 
             platform = DSMIInterface().get_chip_info(dev_id).get_complete_platform()
             return get_npu_hw_info(platform).get("short_soc_version", platform)
@@ -110,6 +111,7 @@ class NpuTfBackend(TfBackend):
         the API's own defaults.
         """
         import inspect
+
         import tensorflow as tf
 
         try:

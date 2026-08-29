@@ -13,7 +13,7 @@ Plugin loader module - unified interface for loading TestSpec and custom plugins
 
 __all__ = ["get_plugin_function"]
 
-from typing import Optional, Callable, Set, Tuple, Dict
+from typing import Callable, Dict, Optional, Tuple
 
 from .custom_plugin_manager import CustomPluginManager
 from .spec_loader import load_spec_function
@@ -21,10 +21,9 @@ from .spec_loader import load_spec_function
 _func_cache: Dict[Tuple[str, str, str, Optional[str]], Optional[Callable]] = {}
 
 
-def get_plugin_function(operator_name: str,
-                     plugin_type: str = "golden",
-                     level_type: str = "kernel",
-                     plugin_path: Optional[str] = None) -> Optional[Callable]:
+def get_plugin_function(
+    operator_name: str, plugin_type: str = "golden", level_type: str = "kernel", plugin_path: Optional[str] = None
+) -> Optional[Callable]:
     """
     Get plugin function by priority
 

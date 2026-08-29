@@ -11,9 +11,9 @@ Shared base class for aclnn (op_api) and framework_api (e2e) testcase structures
 __all__ = ["TensorApiTestcaseBase"]
 
 
+from ...utilities import shape_stride
+from ...utilities.container_utils import deep_flatten, flatten_nested_sequence, infer_list_distribution_from_nesting
 from .testcase_base import TestcaseBase
-from ...utilities import get, shape_stride
-from ...utilities.container_utils import infer_list_distribution_from_nesting, flatten_nested_sequence, deep_flatten
 
 
 class TensorApiTestcaseBase(TestcaseBase):

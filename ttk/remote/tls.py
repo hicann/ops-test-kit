@@ -5,6 +5,7 @@
 Stdlib-only (http.client + ssl) — shared leaf consumed by dispatcher and
 instance_base via heartbeat; no ttk.* import to avoid cycles.
 """
+
 import http.client
 import ssl
 
@@ -19,8 +20,7 @@ def tls_from_config(config) -> dict:
     key = getattr(config, "tls_key", "") or ""
     skip_verify = bool(getattr(config, "tls_skip_verify", False))
     if (cert and not key) or (key and not cert):
-        raise RuntimeError(
-            f"TLS 配置错误：tls_cert/tls_key 必须成对（cert={cert!r}, key={key!r}）")
+        raise RuntimeError(f"TLS 配置错误：tls_cert/tls_key 必须成对（cert={cert!r}, key={key!r}）")
     if not (ca or cert):
         return {}
     return {"ca_cert": ca, "cert": cert, "key": key, "skip_verify": skip_verify}

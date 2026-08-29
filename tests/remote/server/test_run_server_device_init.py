@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """_init_device_locks 单元测试：覆盖 GPU/CPU/非连续 id 初始化及 stale 锁清理。"""
+
 from ttk.remote.server.xpu_server import _init_device_locks
 
 
@@ -15,4 +16,5 @@ def test_init_device_locks_empty_for_cpu():
     """_init_device_locks(["cpu"]) → _device_locks 为空。"""
     _init_device_locks(["cpu"])
     from ttk.remote.server import xpu_server
+
     assert xpu_server._device_locks == {}

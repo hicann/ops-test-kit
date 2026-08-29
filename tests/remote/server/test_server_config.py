@@ -23,22 +23,25 @@ def test_server_config_reads_all_fields(monkeypatch):
     monkeypatch.delenv("TTK_XPU_RUN_DEADLINE_S", raising=False)
 
     # Create a temporary YAML file with non-default values
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-        yaml.dump({
-            "server": {
-                "bind": "0.0.0.0",
-                "port": 9999,
-                "max_concurrent": 20,
-                "run_deadline_s": 600,
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(
+            {
+                "server": {
+                    "bind": "0.0.0.0",
+                    "port": 9999,
+                    "max_concurrent": 20,
+                    "run_deadline_s": 600,
+                },
+                "execution": {
+                    "gate_wait_s": 5.0,
+                },
+                "storage": {
+                    "sync_dir": "/custom/sync",
+                    "tmp_dir": "/custom/tmp",
+                },
             },
-            "execution": {
-                "gate_wait_s": 5.0,
-            },
-            "storage": {
-                "sync_dir": "/custom/sync",
-                "tmp_dir": "/custom/tmp",
-            },
-        }, f)
+            f,
+        )
         config_path = f.name
 
     try:

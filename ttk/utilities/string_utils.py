@@ -10,6 +10,7 @@
 """
 String Related Utilities
 """
+
 # Standard Packages
 import logging
 from typing import Any, List
@@ -27,7 +28,7 @@ def tostr(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        return '_'.join(tuple(tostr((key, tostr(value[key]))) for key in value))
+        return "_".join(tuple(tostr((key, tostr(value[key]))) for key in value))
     if isinstance(value, (tuple, list)):
         for sub_value in value:
             if isinstance(sub_value, str):
@@ -35,12 +36,12 @@ def tostr(value: Any) -> str:
             elif isinstance(sub_value, int):
                 result += str(sub_value).replace("-", "neg").replace(".", "p")
             elif isinstance(sub_value, (tuple, list)):
-                first_process = '__' + '_'.join(tuple(map(str, sub_value))).replace("-", "neg").replace(".", "p")
-                result += first_process.replace('(', '').replace(')', '').replace(' ', '').replace(',', '_')
+                first_process = "__" + "_".join(tuple(map(str, sub_value))).replace("-", "neg").replace(".", "p")
+                result += first_process.replace("(", "").replace(")", "").replace(" ", "").replace(",", "_")
             else:
-                raise TypeError('Invalid type %s of %s for string conversion!' % (type(sub_value), str(value)))
+                raise TypeError(f"Invalid type {type(sub_value)} of {str(value)} for string conversion!")
     else:
-        raise TypeError('Invalid type %s of %s for string conversion!' % (type(value), str(value)))
+        raise TypeError(f"Invalid type {type(value)} of {str(value)} for string conversion!")
     return result
 
 
@@ -57,7 +58,7 @@ def process_kernel_string(value: str) -> str:
     valid_char = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
     for idx in range(len(value)):
         if value[idx] not in valid_char:
-            logging.warning("%s is not a valid kernel name, all invalid character will be converted to _" % value)
+            logging.warning(f"{value} is not a valid kernel name, all invalid character will be converted to _")
             break
     value_container = [v if v in valid_char else "_" if v != "-" else "neg" for v in value]
     result = "".join(value_container)

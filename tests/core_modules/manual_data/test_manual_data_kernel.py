@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """kernel 算子 manual_data prepare/replay 与存储输入/golden 的单元测试。"""
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -134,9 +135,7 @@ def test_kernel_prepare_snapshots_input_and_stops_before_device(monkeypatch, tmp
     assert result is prepared
     assert not device_execution.called
     loaded = ManualDataStore(tmp_path).load_case(case, "kernel")
-    np.testing.assert_array_equal(
-        loaded.inputs[0], np.array([1.0, 2.0], np.float32)
-    )
+    np.testing.assert_array_equal(loaded.inputs[0], np.array([1.0, 2.0], np.float32))
     np.testing.assert_array_equal(
         loaded.load_goldens(
             shapes=case.flat_output_shapes,

@@ -21,11 +21,14 @@ import pytest
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 
-def _make_testcase(op_name="Add", input_shapes=((8,), (8,)),
-                   input_dtypes=("float16", "float16"),
-                   output_shapes=((8,),),
-                   output_dtypes=("float16",),
-                   **kwargs):
+def _make_testcase(
+    op_name="Add",
+    input_shapes=((8,), (8,)),
+    input_dtypes=("float16", "float16"),
+    output_shapes=((8,),),
+    output_dtypes=("float16",),
+    **kwargs,
+):
     case = TestcaseOp()
     case.testcase_name = f"test_{op_name or 'None'}"
     case.op_name = op_name
@@ -58,7 +61,7 @@ def _mock_env(monkeypatch):
 def _validate(case):
     n_in = len(case.input_shapes) if case.input_shapes else 0
     n_out = len(case.output_shapes) if case.output_shapes and not isinstance(case.output_shapes, str) else 0
-    with patch('ttk.core_modules.operator.op_info_keeper.OpInfoKeeper') as mock:
+    with patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper") as mock:
         mock.return_value.info_of.return_value = {
             "coreType.value": "AiCore",
             "inputs": [{"name": f"i{i}"} for i in range(n_in)],
@@ -71,6 +74,7 @@ def _validate(case):
 # Normalize: basic type conversions
 # =====================================================================
 
+
 class TestNormalizeManualOutputBinaries:
     """Tests for _normalize_manual_binaries on output side.
 
@@ -80,35 +84,44 @@ class TestNormalizeManualOutputBinaries:
     - test_invalid_type_rejected: 非法类型 → MANUAL_OUTPUT_BINARIES_INVALID
     """
 
-    @pytest.mark.parametrize("output_shapes, output_dtypes, value, expected", [
-        (((8,), (8,)), ("float16", "float16"), (), ()),
-        (((8,), (8,)), ("float16", "float16"), None, None),
-        (((8,),), ("float16",), 'out.bin', ('out.bin',)),
-        (((8,), (8,), (8,)),
-         ("float16", "float16", "float16"),
-         ('o1.bin', 'o2.bin', 'o3.bin'),
-         ('o1.bin', 'o2.bin', 'o3.bin')),
-        (((8,), None, (8,)),
-         ("float16", "float16", "float32"),
-         ('o1.bin', 'None', 'o3.bin'),
-         ('o1.bin', None, 'o3.bin')),
-    ], ids=["empty-not-modified", "none-not-modified",
-            "single-string-wrapped", "flat-tuple-preserved",
-            "none-quoted-converted"])
-    def test_normalize_preserves_value(self, output_shapes, output_dtypes,
-                                       value, expected):
+    @pytest.mark.parametrize(
+        "output_shapes, output_dtypes, value, expected",
+        [
+            (((8,), (8,)), ("float16", "float16"), (), ()),
+            (((8,), (8,)), ("float16", "float16"), None, None),
+            (((8,),), ("float16",), "out.bin", ("out.bin",)),
+            (
+                ((8,), (8,), (8,)),
+                ("float16", "float16", "float16"),
+                ("o1.bin", "o2.bin", "o3.bin"),
+                ("o1.bin", "o2.bin", "o3.bin"),
+            ),
+            (
+                ((8,), None, (8,)),
+                ("float16", "float16", "float32"),
+                ("o1.bin", "None", "o3.bin"),
+                ("o1.bin", None, "o3.bin"),
+            ),
+        ],
+        ids=[
+            "empty-not-modified",
+            "none-not-modified",
+            "single-string-wrapped",
+            "flat-tuple-preserved",
+            "none-quoted-converted",
+        ],
+    )
+    def test_normalize_preserves_value(self, output_shapes, output_dtypes, value, expected):
         """验证 validate 后 manual_golden_binaries 等于 expected。"""
-        case = _make_testcase(output_shapes=output_shapes,
-                              output_dtypes=output_dtypes)
+        case = _make_testcase(output_shapes=output_shapes, output_dtypes=output_dtypes)
         case.manual_golden_binaries = value
         _validate(case)
         assert case.manual_golden_binaries == expected
 
     def test_list_converted_to_tuple(self):
         """list 被 normalize 转换为 tuple，保留 isinstance 断言。"""
-        case = _make_testcase(output_shapes=((8,), (8,)),
-                              output_dtypes=("float16", "float16"))
-        case.manual_golden_binaries = ['o1.bin', 'o2.bin']
+        case = _make_testcase(output_shapes=((8,), (8,)), output_dtypes=("float16", "float16"))
+        case.manual_golden_binaries = ["o1.bin", "o2.bin"]
         _validate(case)
         assert isinstance(case.manual_golden_binaries, tuple)
 
@@ -125,6 +138,7 @@ class TestNormalizeManualOutputBinaries:
 # Validation: flat outputs
 # =====================================================================
 
+
 class TestValidateOutputBinariesFlat:
     """Tests for flat output binaries validation.
 
@@ -135,21 +149,18 @@ class TestValidateOutputBinariesFlat:
       （check_reason 为 True 表示同时检查 fail_reason）
     """
 
-    @pytest.mark.parametrize("output_shapes, output_dtypes, value, expected", [
-        (((8,), (8,)), ("float16", "float16"),
-         ('o1.bin', 'o2.bin'), True),
-        (((8,), None, (8,)),
-         ("float16", "float16", "float32"),
-         ('o1.bin', None, 'o3.bin'), True),
-        (((8,), None, None),
-         ("float16", "float16", "float16"),
-         ('o1.bin',), ('o1.bin', None, None)),
-    ], ids=["flat-count-matches", "flat-with-none-output",
-            "flat-trailing-none-padded"])
+    @pytest.mark.parametrize(
+        "output_shapes, output_dtypes, value, expected",
+        [
+            (((8,), (8,)), ("float16", "float16"), ("o1.bin", "o2.bin"), True),
+            (((8,), None, (8,)), ("float16", "float16", "float32"), ("o1.bin", None, "o3.bin"), True),
+            (((8,), None, None), ("float16", "float16", "float16"), ("o1.bin",), ("o1.bin", None, None)),
+        ],
+        ids=["flat-count-matches", "flat-with-none-output", "flat-trailing-none-padded"],
+    )
     def test_flat_valid(self, output_shapes, output_dtypes, value, expected):
         """验证 flat binaries 与 outputs 匹配时 is_valid 为真（可选检查字段值）。"""
-        case = _make_testcase(output_shapes=output_shapes,
-                              output_dtypes=output_dtypes)
+        case = _make_testcase(output_shapes=output_shapes, output_dtypes=output_dtypes)
         case.manual_golden_binaries = value
         _validate(case)
         if expected is True:
@@ -157,23 +168,18 @@ class TestValidateOutputBinariesFlat:
         else:
             assert case.manual_golden_binaries == expected
 
-    @pytest.mark.parametrize("output_shapes, output_dtypes, value, check_reason", [
-        (((8,), (8,)), ("float16", "float16"),
-         ('o1.bin', 'o2.bin', 'o3.bin'), True),
-        (((8,), None, (8,)),
-         ("float16", "float16", "float32"),
-         ('o1.bin', 'unexpected.bin', 'o3.bin'), False),
-        (((8,), (8,), (8,)),
-         ("float16", "float16", "float16"),
-         ('o1.bin', None, 'o3.bin'), False),
-    ], ids=["flat-exceeds-outputs-rejected",
-            "file-for-none-output-rejected",
-            "missing-file-for-non-none-rejected"])
-    def test_flat_rejected(self, output_shapes, output_dtypes,
-                           value, check_reason):
+    @pytest.mark.parametrize(
+        "output_shapes, output_dtypes, value, check_reason",
+        [
+            (((8,), (8,)), ("float16", "float16"), ("o1.bin", "o2.bin", "o3.bin"), True),
+            (((8,), None, (8,)), ("float16", "float16", "float32"), ("o1.bin", "unexpected.bin", "o3.bin"), False),
+            (((8,), (8,), (8,)), ("float16", "float16", "float16"), ("o1.bin", None, "o3.bin"), False),
+        ],
+        ids=["flat-exceeds-outputs-rejected", "file-for-none-output-rejected", "missing-file-for-non-none-rejected"],
+    )
+    def test_flat_rejected(self, output_shapes, output_dtypes, value, check_reason):
         """验证 flat binaries 与 outputs 不匹配时 is_valid 为 False。"""
-        case = _make_testcase(output_shapes=output_shapes,
-                              output_dtypes=output_dtypes)
+        case = _make_testcase(output_shapes=output_shapes, output_dtypes=output_dtypes)
         case.manual_golden_binaries = value
         _validate(case)
         assert case.is_valid is False
@@ -185,6 +191,7 @@ class TestValidateOutputBinariesFlat:
 # Validation: nested (TensorList) outputs
 # =====================================================================
 
+
 class TestValidateOutputBinariesNested:
     """Tests for nested (TensorList) output binaries validation.
 
@@ -193,53 +200,43 @@ class TestValidateOutputBinariesNested:
     - test_nested_rejected: 嵌套结构不匹配 → is_valid 为 False
     """
 
-    @pytest.mark.parametrize("output_shapes, output_dtypes, value, expected", [
-        ((((8,), (8,)),),
-         (("float16", "float16"),),
-         (('o1.bin', 'o2.bin'),),
-         (('o1.bin', 'o2.bin'),)),
-        ((((8,), None),),
-         (("float16", "float16"),),
-         (('o1.bin', None),),
-         (('o1.bin', None),)),
-    ], ids=["nested-preserved", "nested-with-none-in-tensorlist"])
-    def test_nested_preserved(self, output_shapes, output_dtypes,
-                              value, expected):
+    @pytest.mark.parametrize(
+        "output_shapes, output_dtypes, value, expected",
+        [
+            ((((8,), (8,)),), (("float16", "float16"),), (("o1.bin", "o2.bin"),), (("o1.bin", "o2.bin"),)),
+            ((((8,), None),), (("float16", "float16"),), (("o1.bin", None),), (("o1.bin", None),)),
+        ],
+        ids=["nested-preserved", "nested-with-none-in-tensorlist"],
+    )
+    def test_nested_preserved(self, output_shapes, output_dtypes, value, expected):
         """验证嵌套 binaries 与 TensorList output_shapes 匹配时被保留。"""
-        case = _make_testcase(output_shapes=output_shapes,
-                              output_dtypes=output_dtypes)
+        case = _make_testcase(output_shapes=output_shapes, output_dtypes=output_dtypes)
         case.manual_golden_binaries = value
         _validate(case)
         assert case.manual_golden_binaries == expected
 
-    @pytest.mark.parametrize("output_shapes, output_dtypes, value", [
-        (((8,), (8,)), ("float16", "float16"),
-         (('o1.bin', 'o2.bin'),)),
-        ((((8,), (8,)), (4,)), ("float16", "float32"),
-         (('o1.bin', 'o2.bin'),)),
-        ((((8,), (8,)),),
-         (("float16", "float16"),),
-         ('o1.bin',)),
-        ((((8,), (8,)), (4,)), ("float16", "float32"),
-         (('o1.bin', 'o2.bin'), ('o3.bin',))),
-        ((((8,), None),),
-         (("float16", "float16"),),
-         (('o1.bin', 'unexpected.bin'),)),
-        ((((8,), (8,)),),
-         (("float16", "float16"),),
-         (('o1.bin', None),)),
-    ], ids=[
-        "nested-rejected-without-tensorlist",
-        "nested-top-level-count-mismatch",
-        "nested-tensorlist-position-is-str-rejected",
-        "nested-non-tensorlist-position-is-tuple-rejected",
-        "file-for-none-in-tensorlist-rejected",
-        "missing-file-for-non-none-tensorlist-rejected",
-    ])
+    @pytest.mark.parametrize(
+        "output_shapes, output_dtypes, value",
+        [
+            (((8,), (8,)), ("float16", "float16"), (("o1.bin", "o2.bin"),)),
+            ((((8,), (8,)), (4,)), ("float16", "float32"), (("o1.bin", "o2.bin"),)),
+            ((((8,), (8,)),), (("float16", "float16"),), ("o1.bin",)),
+            ((((8,), (8,)), (4,)), ("float16", "float32"), (("o1.bin", "o2.bin"), ("o3.bin",))),
+            ((((8,), None),), (("float16", "float16"),), (("o1.bin", "unexpected.bin"),)),
+            ((((8,), (8,)),), (("float16", "float16"),), (("o1.bin", None),)),
+        ],
+        ids=[
+            "nested-rejected-without-tensorlist",
+            "nested-top-level-count-mismatch",
+            "nested-tensorlist-position-is-str-rejected",
+            "nested-non-tensorlist-position-is-tuple-rejected",
+            "file-for-none-in-tensorlist-rejected",
+            "missing-file-for-non-none-tensorlist-rejected",
+        ],
+    )
     def test_nested_rejected(self, output_shapes, output_dtypes, value):
         """验证嵌套结构不匹配时 is_valid 为 False。"""
-        case = _make_testcase(output_shapes=output_shapes,
-                              output_dtypes=output_dtypes)
+        case = _make_testcase(output_shapes=output_shapes, output_dtypes=output_dtypes)
         case.manual_golden_binaries = value
         _validate(case)
         assert case.is_valid is False
@@ -249,35 +246,31 @@ class TestValidateOutputBinariesNested:
 # Reshape: flat → nested
 # =====================================================================
 
+
 class TestReshapeOutputBinaries:
     """Tests for reshape: flat → nested binaries.
 
     每行参数：output_shapes/output_dtypes/value/expected，验证 flat binaries 被正确 reshape。
     """
 
-    @pytest.mark.parametrize("output_shapes, output_dtypes, value, expected", [
-        ((((8,), (8,)),),
-         (("float16", "float16"),),
-         ('o1.bin', 'o2.bin'),
-         (('o1.bin', 'o2.bin'),)),
-        ((((8,), None),),
-         (("float16", "float16"),),
-         ('o1.bin', None),
-         (('o1.bin', None),)),
-        ((((8,), (8,)), (4,)),
-         ("float16", "float32"),
-         ('o1.bin', 'o2.bin', 'o3.bin'),
-         (('o1.bin', 'o2.bin'), 'o3.bin')),
-        (((8,), (8,)),
-         ("float16", "float16"),
-         ('o1.bin', 'o2.bin'),
-         ('o1.bin', 'o2.bin')),
-    ], ids=["flat-to-nested", "flat-with-none-to-nested",
-            "mixed-tensorlist-and-flat", "no-tensorlist-stays-flat"])
+    @pytest.mark.parametrize(
+        "output_shapes, output_dtypes, value, expected",
+        [
+            ((((8,), (8,)),), (("float16", "float16"),), ("o1.bin", "o2.bin"), (("o1.bin", "o2.bin"),)),
+            ((((8,), None),), (("float16", "float16"),), ("o1.bin", None), (("o1.bin", None),)),
+            (
+                (((8,), (8,)), (4,)),
+                ("float16", "float32"),
+                ("o1.bin", "o2.bin", "o3.bin"),
+                (("o1.bin", "o2.bin"), "o3.bin"),
+            ),
+            (((8,), (8,)), ("float16", "float16"), ("o1.bin", "o2.bin"), ("o1.bin", "o2.bin")),
+        ],
+        ids=["flat-to-nested", "flat-with-none-to-nested", "mixed-tensorlist-and-flat", "no-tensorlist-stays-flat"],
+    )
     def test_reshape(self, output_shapes, output_dtypes, value, expected):
         """验证 flat binaries 被 reshape 为匹配 output_shapes 的结构。"""
-        case = _make_testcase(output_shapes=output_shapes,
-                              output_dtypes=output_dtypes)
+        case = _make_testcase(output_shapes=output_shapes, output_dtypes=output_dtypes)
         case.manual_golden_binaries = value
         _validate(case)
         assert case.manual_golden_binaries == expected
@@ -287,6 +280,7 @@ class TestReshapeOutputBinaries:
 # Flat properties
 # =====================================================================
 
+
 class TestFlatOutputBinariesProperties:
     """Tests for flat_manual_golden_binaries property.
 
@@ -295,25 +289,23 @@ class TestFlatOutputBinariesProperties:
     - test_flat_output_none_when_not_set: 未设置时 flat 属性为 None
     """
 
-    @pytest.mark.parametrize("output_shapes, output_dtypes, value, expected", [
-        (((8,), (8,)),
-         ("float16", "float16"),
-         ('o1.bin', 'o2.bin'),
-         ('o1.bin', 'o2.bin')),
-        ((((8,), (8,)),),
-         (("float16", "float16"),),
-         (('o1.bin', 'o2.bin'),),
-         ('o1.bin', 'o2.bin')),
-        ((((8,), (8,)), (4,)),
-         ("float16", "float32"),
-         (('o1.bin', 'o2.bin'), 'o3.bin'),
-         ('o1.bin', 'o2.bin', 'o3.bin')),
-    ], ids=["flat", "nested", "mixed"])
-    def test_flat_property(self, output_shapes, output_dtypes,
-                           value, expected):
+    @pytest.mark.parametrize(
+        "output_shapes, output_dtypes, value, expected",
+        [
+            (((8,), (8,)), ("float16", "float16"), ("o1.bin", "o2.bin"), ("o1.bin", "o2.bin")),
+            ((((8,), (8,)),), (("float16", "float16"),), (("o1.bin", "o2.bin"),), ("o1.bin", "o2.bin")),
+            (
+                (((8,), (8,)), (4,)),
+                ("float16", "float32"),
+                (("o1.bin", "o2.bin"), "o3.bin"),
+                ("o1.bin", "o2.bin", "o3.bin"),
+            ),
+        ],
+        ids=["flat", "nested", "mixed"],
+    )
+    def test_flat_property(self, output_shapes, output_dtypes, value, expected):
         """验证 flat_manual_golden_binaries 在 flat/nested/mixed 下的返回值。"""
-        case = _make_testcase(output_shapes=output_shapes,
-                              output_dtypes=output_dtypes)
+        case = _make_testcase(output_shapes=output_shapes, output_dtypes=output_dtypes)
         case.manual_golden_binaries = value
         _validate(case)
         assert case.flat_manual_golden_binaries == expected

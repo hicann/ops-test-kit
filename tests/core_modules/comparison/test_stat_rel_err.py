@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """StatRelErrComparison 单元测试：mismatch 真值表、diff_idx 分流、mere/mare 公式、边界场景。"""
+
 import numpy as np
 import pytest
 
@@ -27,14 +28,17 @@ def _run(actual, golden, dtype, threshold):
 
 
 # —— 防线 1：mismatch 真值表全覆盖（13 cell）——
-@pytest.mark.parametrize("a,g,expect_pass,mere_none", [
-    # match：全非有限且一致 → PASS，mere=None
-    (np.nan,  np.nan,   True,  True),
-    # finite/finite → mere 路径（mere 算出来，非 None）
-    (1.0,  2.0, False, False),    # mere≈0.5 >> th → FAIL
-    # mismatch → FAIL，mere=None
-    (np.nan, 1.0,     False, True),
-])
+@pytest.mark.parametrize(
+    "a,g,expect_pass,mere_none",
+    [
+        # match：全非有限且一致 → PASS，mere=None
+        (np.nan, np.nan, True, True),
+        # finite/finite → mere 路径（mere 算出来，非 None）
+        (1.0, 2.0, False, False),  # mere≈0.5 >> th → FAIL
+        # mismatch → FAIL，mere=None
+        (np.nan, 1.0, False, True),
+    ],
+)
 def test_mismatch_truth_table(a, g, expect_pass, mere_none):
     """防线 1：mismatch 真值表全覆盖（13 cell）—非有限值一致/不一致的 PASS/FAIL 与 mere 是否为 None。"""
     r = _impl([a], [g], "float32", 2**-13)
@@ -80,9 +84,12 @@ def test_mere_mare_values():
 
 
 # —— 结构 / 边界 ——
-@pytest.mark.parametrize("actual, golden, check", [
-    pytest.param([], [], "empty_precision", id="empty_both"),
-])
+@pytest.mark.parametrize(
+    "actual, golden, check",
+    [
+        pytest.param([], [], "empty_precision", id="empty_both"),
+    ],
+)
 def test_pass_cases(actual, golden, check):
     """空数组 precision=100%。"""
     precision, _l, is_pass, _m = _run(actual, golden, "float32", 2**-13)

@@ -12,6 +12,7 @@
 Covers _build_spec (Task 7). The _extract_spec_providers test is covered by
 test_profiling_config.py. No server fixture.
 """
+
 from ttk.core_modules.npu.op import profiling as prof
 
 # ---- _build_spec (signature: provider, tp, spec_file, spec_class, op_name, op_type) ----
@@ -19,9 +20,14 @@ from ttk.core_modules.npu.op import profiling as prof
 
 def test_build_spec_dict_api_string():
     """third_party 为 dict 且值为 API 字符串时，spec.type 标记为 api。"""
-    spec = prof._build_spec("torch", {"torch": "torch.add", "tf": "tf.raw.ops.Add"},
-                            spec_file=None, spec_class=None,
-                            op_name="add", op_type="Add")
+    spec = prof._build_spec(
+        "torch",
+        {"torch": "torch.add", "tf": "tf.raw.ops.Add"},
+        spec_file=None,
+        spec_class=None,
+        op_name="add",
+        op_type="Add",
+    )
     assert spec.provider == "torch" and spec.type == "api" and spec.api == "torch.add"
 
 
@@ -31,8 +37,8 @@ def test_build_spec_dict_impl_class_marks_spec_mode():
     class _Dummy:
         pass
 
-    spec = prof._build_spec("torch", {"torch": _Dummy},
-                            spec_file="/tmp/s.py", spec_class="_SpecCls",
-                            op_name="add", op_type="Add")
+    spec = prof._build_spec(
+        "torch", {"torch": _Dummy}, spec_file="/tmp/s.py", spec_class="_SpecCls", op_name="add", op_type="Add"
+    )
     assert spec.provider == "torch" and spec.type == "spec"
     assert spec.spec_file == "/tmp/s.py" and spec.spec_class == "_SpecCls"

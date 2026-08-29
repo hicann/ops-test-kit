@@ -29,11 +29,12 @@ import pytest
 from ttk.core_modules.npu.op import output_generation as _mod
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
-_generate_golden = getattr(_mod, '__generate_golden')
+_generate_golden = getattr(_mod, "__generate_golden")
 
 
 def _make_custom_golden(seen_dtypes):
     """构造 custom golden 函数，捕获实际接收的 dtype。"""
+
     def golden(x, **kwargs):
         if isinstance(x, np.ndarray):
             seen_dtypes.append(x.dtype)
@@ -42,13 +43,17 @@ def _make_custom_golden(seen_dtypes):
                 if isinstance(t, np.ndarray):
                     seen_dtypes.append(t.dtype)
         return x
+
     return golden
 
 
-def _make_testcase(op_name="custom_promote_op", input_shapes=((4,),),
-                   input_dtypes=("float16",),
-                   output_shapes=((4,),),
-                   output_dtypes=("float16",)):
+def _make_testcase(
+    op_name="custom_promote_op",
+    input_shapes=((4,),),
+    input_dtypes=("float16",),
+    output_shapes=((4,),),
+    output_dtypes=("float16",),
+):
     case = TestcaseOp()
     case.testcase_name = f"test_{op_name}_promote_wrap"
     case.op_name = op_name
@@ -75,7 +80,7 @@ def _mock_switches_promote():
     sw = MagicMock()
     sw.dev_plat = "Ascend910B2"
     sw.short_soc_version = "Ascend910B"
-    sw.golden_mode = "Promote"     # <-- the mode under test
+    sw.golden_mode = "Promote"  # <-- the mode under test
     sw.plugin_path = None
     sw.overflow_mode = 0
     return sw
@@ -88,9 +93,9 @@ def _mock_env(monkeypatch):
     monkeypatch.delenv("ASCEND_OPP_PATH", raising=False)
 
 
-@patch('ttk.core_modules.npu.op.output_generation.OpInfoKeeper')
-@patch('ttk.core_modules.npu.op.output_generation.get_global_storage')
-@patch('ttk.core_modules.npu.op.output_generation.get_plugin_function')
+@patch("ttk.core_modules.npu.op.output_generation.OpInfoKeeper")
+@patch("ttk.core_modules.npu.op.output_generation.get_global_storage")
+@patch("ttk.core_modules.npu.op.output_generation.get_plugin_function")
 class TestKernelPromoteWrapCoversAllForms:
     """Under golden_mode=Promote, ALL dispatch forms must see promoted inputs."""
 
@@ -102,15 +107,13 @@ class TestKernelPromoteWrapCoversAllForms:
         mock_sw.return_value = _mock_switches_promote()
         mock_op_info.return_value.info_of.return_value = {"inputs": []}
 
-        case = _make_testcase(op_name="custom_promote_op",
-                              input_dtypes=("float16",),
-                              output_dtypes=("float16",))
+        case = _make_testcase(op_name="custom_promote_op", input_dtypes=("float16",), output_dtypes=("float16",))
 
         _generate_golden(case, ["float16"])
 
         assert len(seen_dtypes) >= 1, "golden was not invoked"
         for d in seen_dtypes:
             # float16 ∈ DTYPE_PROMOTE_MAP → must be promoted to float32
-            assert d == np.dtype("float32"), \
-                f"golden received UN-promoted dtype {d!r}; " \
-                f"expected float32 (promoted from float16 under Promote mode)"
+            assert d == np.dtype("float32"), (
+                f"golden received UN-promoted dtype {d!r}; expected float32 (promoted from float16 under Promote mode)"
+            )
