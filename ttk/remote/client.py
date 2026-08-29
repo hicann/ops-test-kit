@@ -187,11 +187,15 @@ def collect_third_party(
     switches,
     need_data: bool = True,
     param_order: Optional[list] = None,
+    input_formats: Optional[list] = None,
 ) -> Tuple[Optional[str], Optional[list], Optional[dict]]:
     """门面：采集第三方输出，返回 (priority_provider, flat_third_parties, xpu_results)。
 
     各模式在 cross_check / xpu_perf 场景调用：传入逻辑 ori-shape 的 inputs、
     算子参数名 input_names，本函数完成 spec 解析 → endpoint 解析 → 派发 → 提取 → 展平。
+
+    input_formats：逐输入 format（与 input_names 位置对齐，可为空）——转发给
+    dispatch_xpu → X-Input-Schema，供服务端 compose 解析通道轴等 format 依赖场景
 
     - 远端不可用 / 无 provider / 执行失败 → (None, None, None)
       （调用方传 None 给 compare → cross_check 返回 GOLDEN_FAILURE）
@@ -214,6 +218,7 @@ def collect_third_party(
         switches=switches,
         need_data=need_data,
         param_order=param_order,
+        input_formats=input_formats,
     )
 
     if need_data:

@@ -231,6 +231,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             switches=switches,
             need_data=need_3party_outputs,
             param_order=_geir_param_order(testcase),
+            input_formats=getattr(testcase, "input_formats", None),
         )
 
     # Build op-level source (cached) + per-case config + compile (cached)
