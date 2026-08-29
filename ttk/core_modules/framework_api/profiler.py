@@ -55,6 +55,7 @@ class ProfilerConfig:
     root_path: str = "."
     dev_id: int = 0
     enabled: bool = True
+    warmup_count: int = 0
 
 
 class FrameworkProfiler(ABC):
@@ -70,6 +71,9 @@ class FrameworkProfiler(ABC):
 
     @abstractmethod
     def result(self, backend, repeat_count) -> ProfileResult:
+        pass
+
+    def step(self):  # noqa: B027
         pass
 
 
@@ -93,10 +97,11 @@ class NpuProfiler(FrameworkProfiler):
     kernel_details.csv / operator_details.csv for device-side timing.
     """
 
-    def __init__(self, backend, testcase_name="", root_path="."):
+    def __init__(self, backend, testcase_name="", root_path=".", warmup_count=0):
         self._testcase_name = testcase_name or "unknown"
         self._outdir = os.path.join(root_path, "msprof", "e2e", self._testcase_name)
         os.makedirs(self._outdir, exist_ok=True)
+        self._warmup_count = warmup_count
         self._prof = None
 
     def __enter__(self):
@@ -120,12 +125,15 @@ class NpuProfiler(FrameworkProfiler):
             activities=[ProfilerActivity.CPU, ProfilerActivity.NPU],
             record_shapes=True,
             experimental_config=experimental_config,
-            schedule=schedule(wait=0, warmup=1, active=1, repeat=1),
+            schedule=schedule(wait=0, warmup=self._warmup_count, active=1, repeat=1),
             on_trace_ready=tensorboard_trace_handler(self._outdir),
         )
         self._prof.start()
-        self._prof.step()
         return self
+
+    def step(self):
+        if self._prof:
+            self._prof.step()
 
     def __exit__(self, *exc):
         if self._prof:
@@ -173,7 +181,11 @@ class NpuProfiler(FrameworkProfiler):
 
     @staticmethod
     def _parse_kernel_details(csv_path):
-        """Parse kernel_details.csv for per-kernel device timing."""
+        """Parse kernel_details.csv for per-kernel device timing.
+
+        Rows with empty Step Id belong to the profiler warmup phase and are
+        skipped so they don't skew the aggregated timing.
+        """
         kernels_map = {}  # name -> {total_us, calls, max_us, min_us}
         total_device_us = 0.0
 
@@ -181,6 +193,9 @@ class NpuProfiler(FrameworkProfiler):
             with open(csv_path, newline="") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    step_id = row.get("Step Id", "").strip()
+                    if not step_id:
+                        continue
                     name = row.get("Name", "").strip()
                     try:
                         duration = float(row.get("Duration(us)", 0))
@@ -511,13 +526,13 @@ def get_profiler(
     if api_name.startswith("torch_npu."):
         if not backend.is_npu():
             raise RuntimeError(f"API '{api_name}' requires NPU backend, but current is '{backend.device_type()}'")
-        return NpuProfiler(backend, config.testcase_name, config.root_path)
+        return NpuProfiler(backend, config.testcase_name, config.root_path, warmup_count=config.warmup_count)
     if api_name.startswith("torch."):
         # NPU with builtin profiler -> NpuProfiler; otherwise TorchProfiler.
         if backend.is_npu() and backend.profile.get("profiler") == "builtin":
-            return NpuProfiler(backend, config.testcase_name, config.root_path)
+            return NpuProfiler(backend, config.testcase_name, config.root_path, warmup_count=config.warmup_count)
         return TorchProfiler(backend)
 
     if backend.is_npu():
-        return NpuProfiler(backend, config.testcase_name, config.root_path)
+        return NpuProfiler(backend, config.testcase_name, config.root_path, warmup_count=config.warmup_count)
     return WallClockProfiler(backend)

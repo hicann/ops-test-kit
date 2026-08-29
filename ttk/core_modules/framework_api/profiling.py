@@ -43,7 +43,6 @@ from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
 
 from .api_resolver import resolve_api
 from .backends import get_backend
-from .eager_execution import call_api
 from .input_generation import generate_inputs
 from .profiler import ProfilerConfig, get_profiler
 from .profiling_utils import compute_output_md5, finalize_det_status, prepare_device_args, unpack_4bit_outputs
@@ -389,6 +388,7 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
     deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
     run_count = switches.run_time
+    warmup_count = WARMUP_COUNT if (switches.warmup and profiling_enabled) else 0
     profiler = get_profiler(
         testcase.api_name,
         backend,
@@ -397,95 +397,60 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
             root_path=switches.root_path,
             dev_id=dev_id,
             enabled=profiling_enabled,
+            warmup_count=warmup_count,
         ),
     )
 
     inplace_input_indexes = getattr(testcase, "inplace_input_indexes", None) or ()
-    inplace_input_backups = {}
-    if inplace_input_indexes:
-        for idx in inplace_input_indexes:
-            if idx < len(args) and args[idx] is not None:
-                inplace_input_backups[idx] = backend.clone(args[idx])
+    inplace_idxs = set()
+    if is_inplace and args and args[0] is not None:
+        inplace_idxs.add(0)
+    inplace_idxs.update(i for i in inplace_input_indexes if i < len(args) and args[i] is not None)
 
-    if is_inplace:
-        inplace_backup = backend.clone(args[0]) if args and args[0] is not None else None
-        with backend.device_scope(dev_id):
-            if is_tensor_method:
-                if args[0] is not None:
-                    result = call_api(
-                        testcase.api_name, plan.overload_index, getattr(args[0], resolved), args[1:], kwargs
-                    )
-                else:
-                    result = None
-            else:
-                result = call_api(testcase.api_name, plan.overload_index, resolved, args, kwargs)
-        backend.synchronize(dev_id)
-        result_nps = backend.result_to_numpy(result, copy=True)
-        if inplace_backup is not None:
-            backend.restore_inplace(args[0], inplace_backup)
-    else:
-        result = None
+    backups = {}
+    for idx in inplace_idxs:
+        backups[idx] = backend.clone(args[idx])
 
-    if switches.warmup and profiling_enabled:
-        for _ in range(WARMUP_COUNT):
-            if is_inplace and inplace_backup is not None:
-                backend.restore_inplace(args[0], inplace_backup)
-            for idx, backup in inplace_input_backups.items():
-                backend.restore_inplace(args[idx], backup)
-            with backend.device_scope(dev_id):
-                if is_tensor_method:
-                    getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
-                else:
-                    resolved(*args, **kwargs)
-        backend.synchronize(dev_id)
+    total = warmup_count + run_count
+    clones = {}
+    for idx in backups:
+        clones[idx] = [backend.clone(backups[idx]) for _ in range(total)]
 
-    for idx, backup in inplace_input_backups.items():
-        backend.restore_inplace(args[idx], backup)
-    if is_inplace and inplace_backup is not None:
-        backend.restore_inplace(args[0], inplace_backup)
-
-    inplace_clones = {}
-    original_tensors = {}
-    for idx in inplace_input_backups:
-        original_tensors[idx] = args[idx]
-        inplace_clones[idx] = [backend.clone(args[idx]) for _ in range(run_count - 1)]
-    if is_inplace and inplace_backup is not None and 0 not in original_tensors:
-        if args and args[0] is not None:
-            original_tensors[0] = args[0]
-            inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
-
+    result = None
     md5_list = []
     with profiler:
-        for i in range(run_count):
-            if i < run_count - 1:
-                for idx in inplace_clones:
-                    args[idx] = inplace_clones[idx][i]
-            else:
-                for idx in original_tensors:
-                    args[idx] = original_tensors[idx]
+        for i in range(total):
+            is_warmup = i < warmup_count
+            for idx in clones:
+                args[idx] = clones[idx][i]
             with backend.device_scope(dev_id):
                 if is_tensor_method:
                     r = getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
                 else:
                     r = resolved(*args, **kwargs)
+                if is_warmup:
+                    profiler.step()
+                    continue
                 if not is_inplace:
                     result = r
-            if deterministic:
-                backend.synchronize(dev_id)
-                run_nps = []
-                if r is not None:
-                    run_nps.extend(backend.result_to_numpy(r))
-                if inplace_input_indexes:
-                    for idx in sorted(inplace_input_indexes):
-                        if idx < len(args) and args[idx] is not None:
-                            run_nps.append(backend.to_numpy(args[idx], safe=True))
-                md5_list.append(compute_output_md5(run_nps))
+                if deterministic:
+                    backend.synchronize(dev_id)
+                    run_nps = []
+                    if r is not None:
+                        run_nps.extend(backend.result_to_numpy(r))
+                    if inplace_input_indexes:
+                        for idx in sorted(inplace_input_indexes):
+                            if idx < len(args) and args[idx] is not None:
+                                run_nps.append(backend.to_numpy(args[idx], safe=True))
+                    md5_list.append(compute_output_md5(run_nps))
         backend.synchronize(dev_id)
 
     perf = profiler.result(backend, run_count)
 
     if not is_inplace:
         result_nps = backend.result_to_numpy(result)
+    else:
+        result_nps = backend.result_to_numpy(r, copy=True) if r is not None else []
 
     if inplace_input_indexes:
         if result_nps is None:
@@ -1127,9 +1092,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
             )
             write_goldens = switches.dump_config.is_golden_enabled()
             golden_nps = (
-                _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False)
-                if write_goldens
-                else []
+                _generate_golden_data(testcase, raw_inputs, switches, backend, dump=False) if write_goldens else []
             )
             process_ctx.notify_status("OnWriteManualData")
             case_dir = prepare_store.write_case(
