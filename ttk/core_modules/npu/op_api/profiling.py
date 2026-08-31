@@ -169,12 +169,13 @@ class Phase1ParamBuilder:
     """
 
     CBaseTypeMap = {
-        # bool / int8_t / int / int32_t / float
+        # bool / int8_t / int / int32_t / uint32_t / float
         # int64_t / uint64_t / double
         "bool": ctypes.c_bool,
         "int8_t": ctypes.c_int8,
         "int": ctypes.c_int,
         "int32_t": ctypes.c_int32,
+        "uint32_t": ctypes.c_uint32,
         "float": ctypes.c_float,
         "int64_t": ctypes.c_int64,
         "uint64_t": ctypes.c_uint64,
@@ -214,7 +215,7 @@ class Phase1ParamBuilder:
                     case_params.append(ctypes.c_char_p(val_bytes))
                 else:
                     # Base c types:
-                    # bool / int8_t / int / int32_t / float
+                    # bool / int8_t / int / int32_t / uint32_t / float
                     # int64_t / uint64_t / double
                     c_type = self.CBaseTypeMap[acl_type]
                     case_params.append(c_type(val))
