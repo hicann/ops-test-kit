@@ -3,7 +3,7 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
@@ -42,8 +42,7 @@ def _setup_handler(h, device_ids, gpu_locks, dry_run, use_device=False, hardware
     h.sync_base_dir = "/tmp"
     h.run_deadline_s = 30
     h.sandbox = "none"
-    h.device_lost_retries = 0
-    h.device_lost_wait_s = 0.0
+    h.device_unhealthy_detect_interval_s = 60.0
 
     def _get_header(k, d=""):
         return "test_tenant" if k == "X-Tenant-ID" else d

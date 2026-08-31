@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """
 xpu_server - TTK Remote XPU Execution Server.
 
@@ -23,6 +32,7 @@ Full deployment guide (plain HTTP / mTLS / per-process / per-container):
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import json
 import logging
@@ -124,16 +134,15 @@ def _receive_body_to_file(handler: BaseHTTPRequestHandler, dir=None) -> Optional
     if content_length == 0:
         return None
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".npz", delete=False, dir=dir)
-    remaining = content_length
-    while remaining > 0:
-        chunk_size = min(CHUNK_SIZE, remaining)
-        chunk = handler.rfile.read(chunk_size)
-        if not chunk:
-            break
-        tmp.write(chunk)
-        remaining -= len(chunk)
-    tmp.close()
+    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False, dir=dir) as tmp:
+        remaining = content_length
+        while remaining > 0:
+            chunk_size = min(CHUNK_SIZE, remaining)
+            chunk = handler.rfile.read(chunk_size)
+            if not chunk:
+                break
+            tmp.write(chunk)
+            remaining -= len(chunk)
     return tmp.name
 
 
@@ -148,13 +157,16 @@ def _resolve_class(module: object, dotted_name: str):
     return obj
 
 
-def _wait_device(provider, profile, retries, wait_s):
-    """设备不可用时轮询等待恢复（执行前调用）。设备在则直接返回。"""
-    while not executor.device_available(provider, profile):
-        if retries <= 0:
-            return
-        retries -= 1
-        time.sleep(wait_s)
+_device_unhealthy: dict = {}  # {device_id: timestamp_marked}
+
+
+def _mark_device_unhealthy(device_id):
+    _device_unhealthy[device_id] = time.time()
+
+
+def _is_device_healthy(device_id, cooldown_s):
+    ts = _device_unhealthy.get(device_id)
+    return ts is None or (time.time() - ts) >= cooldown_s
 
 
 def _run_in_subprocess(kwargs: dict, deadline: float) -> dict:
@@ -202,10 +214,8 @@ class TenantManager:
         with self._lock:
             if tenant_id not in self._tenants:
                 tenant_path = os.path.join(self.sync_base_dir, tenant_id)
-                try:
+                with contextlib.suppress(OSError):
                     os.makedirs(tenant_path, exist_ok=True)
-                except OSError:
-                    pass  # May not have write permission; track tenant anyway
                 self._tenants[tenant_id] = {
                     "last_heartbeat": time.time(),
                     "path": tenant_path,
@@ -429,22 +439,33 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
             return self._device_rr_counter - 1
 
     def _assign_device(self):
-        """RR + try-lock: 从 RR 起点出发找空闲 device，全占则阻塞起点。
+        """RR + try-lock: 从 RR 起点出发找空闲且健康的 device，全占则阻塞起点。
 
         所有请求（PERF + DATA）都 acquire Lock。返回 device_id（int 或 "cpu"）。
         调用方负责 finally release。
+
+        不健康设备（子进程报设备初始化错误时标记）在冷却期内跳过，
+        避免反复分配到不可用设备。冷却期过后自动恢复重试。
         """
         device_ids = [d for d in self.device_ids if d != "cpu"]
         if not device_ids:
             return "cpu"
 
+        cooldown = self.device_unhealthy_detect_interval_s
         start = self._device_rr_next() % len(device_ids)
         for offset in range(len(device_ids)):
-            idx = (start + offset) % len(device_ids)
-            dev = device_ids[idx]
+            dev = device_ids[(start + offset) % len(device_ids)]
+            if not _is_device_healthy(dev, cooldown):
+                continue
             if _device_locks[dev].acquire(blocking=False):
                 return dev
-        # 全占 → 阻塞等起点 device
+        # 健康设备全占 → 阻塞等第一个健康设备
+        for offset in range(len(device_ids)):
+            dev = device_ids[(start + offset) % len(device_ids)]
+            if _is_device_healthy(dev, cooldown):
+                _device_locks[dev].acquire()
+                return dev
+        # 全部不健康 → 阻塞起点（最后手段，大概率仍失败但不死锁）
         _device_locks[device_ids[start]].acquire()
         return device_ids[start]
 
@@ -468,10 +489,8 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
         finally:
             shutil.rmtree(req_dir, ignore_errors=True)
             if gate_held:
-                try:
+                with contextlib.suppress(ValueError):
                     gate.release()
-                except ValueError:
-                    pass
 
     def _parse_run_headers(self, req_api):
         """Parse and validate all /v1/run headers. Returns dict or None (error sent)."""
@@ -528,41 +547,57 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
                 result = _dry_run_env(req_dir)
             else:
                 provider = get_framework(self._get_header("X-Provider", "torch"), self.provider_framework)
-                n = "cpu" if not self.use_device else self._assign_device()
-                opts = _build_device_opts(self, n)
-                if opts.get("ok") is False:
-                    result = {**opts, "api": req_api}
-                else:
-                    _wait_device(provider, self.profile, self.device_lost_retries, self.device_lost_wait_s)
+                max_attempts = len([d for d in self.device_ids if d != "cpu"]) if self.use_device else 1
+                for attempt in range(max_attempts):
+                    n = "cpu" if not self.use_device else self._assign_device()
+                    opts = _build_device_opts(self, n)
+                    if opts.get("ok") is False:
+                        result = {**opts, "api": req_api}
+                        n = None
+                        break
                     kwargs = self._build_run_kwargs(req_dir, req_api, provider, parsed, tmp_in, opts)
                     result = self._exec_run(kwargs, opts, req_api, provider)
+                    if result.get("ok") or result.get("http_status", 500) < 500:
+                        break
+                    _mark_device_unhealthy(n)
+                    logging.warning(
+                        "device %s marked unhealthy (attempt %d/%d): %s",
+                        n,
+                        attempt + 1,
+                        max_attempts,
+                        result.get("error", ""),
+                    )
+                    _device_locks[n].release()
+                    n = None
+                    if attempt + 1 >= max_attempts:
+                        break
         finally:
             if n is not None and n != "cpu":
                 _device_locks[n].release()
         return result, provider, n
 
     def _build_run_kwargs(self, req_dir, req_api, provider, parsed, tmp_in, opts):
-        kwargs = dict(
-            tenant_sync_dir=os.path.join(self.sync_base_dir, parsed["tenant_id"]),
-            exec_type=parsed["exec_type"],
-            provider=provider,
-            profile=self.profile,
-            op_name=self._get_header("X-Op-Name", "") or None,
-            op_type=self._get_header("X-Op-Type", "") or None,
-            api=req_api,
-            spec_module=self._get_header("X-Spec-Module", "") or None,
-            spec_class=self._get_header("X-Spec-Class", "") or None,
-            mode=parsed["mode"],
-            input_schema=parsed["input_schema"],
-            attrs=parsed["attrs"],
-            tmp_in_path=tmp_in,
-            input_count=parsed["input_count"],
-            device_id=opts["device_id"],
-            use_device=self.use_device,
-            output_dir=req_dir,
-            runtime=parsed["runtime"],
-            param_order=parsed["param_order"],
-        )
+        kwargs = {
+            "tenant_sync_dir": os.path.join(self.sync_base_dir, parsed["tenant_id"]),
+            "exec_type": parsed["exec_type"],
+            "provider": provider,
+            "profile": self.profile,
+            "op_name": self._get_header("X-Op-Name", "") or None,
+            "op_type": self._get_header("X-Op-Type", "") or None,
+            "api": req_api,
+            "spec_module": self._get_header("X-Spec-Module", "") or None,
+            "spec_class": self._get_header("X-Spec-Class", "") or None,
+            "mode": parsed["mode"],
+            "input_schema": parsed["input_schema"],
+            "attrs": parsed["attrs"],
+            "tmp_in_path": tmp_in,
+            "input_count": parsed["input_count"],
+            "device_id": opts["device_id"],
+            "use_device": self.use_device,
+            "output_dir": req_dir,
+            "runtime": parsed["runtime"],
+            "param_order": parsed["param_order"],
+        }
         if "env" in opts:
             kwargs["env"] = opts["env"]
         return kwargs
@@ -724,8 +759,7 @@ def _apply_handler_config(handler, cfg, role, device_ids, use_device, dry_run, s
     handler.sync_base_dir = sync_base_dir
     handler.tmp_root = tmp_root
     handler.gate_wait_s = cfg["gate_wait_s"]
-    handler.device_lost_retries = cfg["device_lost_retries"]
-    handler.device_lost_wait_s = cfg["device_lost_wait_s"]
+    handler.device_unhealthy_detect_interval_s = cfg["device_unhealthy_detect_interval_s"]
     handler.run_deadline_s = cfg["run_deadline_s"]
 
 

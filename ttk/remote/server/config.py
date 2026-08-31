@@ -1,3 +1,12 @@
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """Server config loader: yaml -> built-in defaults.
 
 Deployment constraint: stdlib + PyYAML only. No ttk.* imports.
@@ -99,8 +108,7 @@ def load_server_config(yaml_path=None):
         "run_deadline_s": _get(("server", "run_deadline_s"), 300),
         "sandbox": _get(("execution", "sandbox"), "none"),
         "gate_wait_s": _get(("execution", "gate_wait_s"), 1.0),
-        "device_lost_retries": _get(("execution", "device_lost_retries"), 3),
-        "device_lost_wait_s": _get(("execution", "device_lost_wait_s"), 5.0),
+        "device_unhealthy_detect_interval_s": _get(("execution", "device_unhealthy_detect_interval_s"), 60.0),
         "providers": _get(("providers",), None),
         "provider_framework": _get(("provider_framework",), {}),
         "sync_dir": _get(("storage", "sync_dir"), os.path.join(os.path.dirname(__file__), "ttk_xpu_sync")),
