@@ -14,12 +14,15 @@ Main profiling process function for framework_api.
 This function runs in a subprocess — must be top-level importable.
 """
 
+import contextlib
 import gc
 import json
 import logging
 import os
+import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -366,6 +369,63 @@ def _ensure_deterministic_level_e2e(process_ctx, backend, testcase):
     process_ctx.storage["_deterministic_level_set"] = True
 
 
+_npu_memory_hint_shown = False
+
+
+def _capture_stdout_npu_memory(testcase, return_struct, fn, *args, **kwargs):
+    """Redirect fd 1 to a temp file during *fn*, extract workspace size from captured stdout.
+
+    Requires the user to set ``ASCEND_SLOG_PRINT_TO_STDOUT=1`` and
+    ``ASCEND_GLOBAL_LOG_LEVEL=1`` before running TTK; otherwise no CANN logs
+    reach stdout and ``npu_memory`` stays ``None``.
+
+    CANN logs workspace size as ``Workspace addr: 0x..., size: 16777728`` in
+    op_executor.cpp. Some versions may use ``workspaceSize: xxx``.
+    """
+    global _npu_memory_hint_shown
+    # 捕获仅在日志走 stdout 且级别覆盖 INFO(workspace) 时才可能有结果，否则零开销直通
+    if os.environ.get("ASCEND_SLOG_PRINT_TO_STDOUT") != "1" or os.environ.get("ASCEND_GLOBAL_LOG_LEVEL", "3") not in (
+        "0",
+        "1",
+    ):
+        if not _npu_memory_hint_shown:
+            _npu_memory_hint_shown = True
+            logging.info(
+                "[E2E] npu_memory not captured: to enable, export "
+                "ASCEND_SLOG_PRINT_TO_STDOUT=1 ASCEND_GLOBAL_LOG_LEVEL=1 before running TTK"
+            )
+        return fn(*args, **kwargs)
+    sys.stdout.flush()
+    cap_name = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w+b", suffix=".stdout", delete=False) as cap:
+            cap_name = cap.name
+            orig_stdout = os.dup(1)
+            try:
+                os.dup2(cap.fileno(), 1)
+                result = fn(*args, **kwargs)
+            finally:
+                sys.stdout.flush()
+                os.dup2(orig_stdout, 1)
+                os.close(orig_stdout)
+
+        with open(cap_name, "rb") as f:
+            content = f.read().decode("utf-8", errors="replace")
+
+        for line in content.splitlines():
+            if "Workspace addr" not in line and "workspaceSize" not in line:
+                continue
+            logging.info("[E2E/%s] %s", testcase.testcase_name, line.strip())
+            m = re.search(r"(?:Workspace addr:.*?size:|workspaceSize:)\s*(\d+)", line)
+            if m:
+                return_struct.npu_memory = int(m.group(1))
+        return result
+    finally:
+        if cap_name:
+            with contextlib.suppress(OSError):
+                os.unlink(cap_name)
+
+
 def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf, det_status)."""
     if backend.is_npu():
@@ -413,8 +473,8 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
 
     total = warmup_count + run_count
     clones = {}
-    for idx in backups:
-        clones[idx] = [backend.clone(backups[idx]) for _ in range(total)]
+    for idx, backup in backups.items():
+        clones[idx] = [backend.clone(backup) for _ in range(total)]
 
     result = None
     md5_list = []
@@ -487,7 +547,7 @@ def _needs_golden_promote(testcase, switches, ref_nps):
             dtypes,
             switches.compare_method,
         )
-        return any(s.token == "cross_check" for s in standards)
+        return any(s.token == "cross_check" for s in standards)  # noqa: S105
     except (KeyError, TypeError, ValueError):
         # 只兜 tolerance spec 配置类错误(字段缺失/类型不对/取值非法)。
         # 用 warning 而非 debug:此处静默跳过 Promote 正是本函数要修的症状
@@ -678,7 +738,7 @@ def _collect_sim_report(testcase, switches):
         maybe_generate_sim_report(switches, case_path, case_path)
 
 
-def _do_profile_multi_device(
+def _do_profile_multi_device(  # noqa: PLR0911
     testcase, backend, device_grant_events, device_granted_indices, device_ids, switches, return_struct
 ):
     """Multi-device profiling for collective communication operators.
@@ -700,10 +760,8 @@ def _do_profile_multi_device(
         return
 
     resolved, is_tensor_method = None, False
-    try:
+    with contextlib.suppress(ValueError):
         resolved, is_tensor_method = resolve_api(testcase.api_name)
-    except ValueError:
-        pass
 
     process_ctx.notify_status("OnGenInput")
     try:
@@ -901,7 +959,7 @@ def _do_profile_multi_device(
         logging.info(f"E2E multi-device: running {cmd} with devices={device_ids} graph_mode={graph_mode or 'none'}")
 
         try:
-            proc = subprocess.run(cmd, env=env, capture_output=True, text=True, errors="replace")
+            proc = subprocess.run(cmd, env=env, capture_output=True, text=True, errors="replace", check=False)
             if proc.returncode != 0:
                 err_msg = proc.stderr[-2000:] if proc.stderr else "unknown"
                 if os.path.exists(error_path):
@@ -920,7 +978,7 @@ def _do_profile_multi_device(
                                 f"using fallback result (worker exit crash ignored)."
                             )
                             fallback_used = True
-                    except Exception:
+                    except Exception:  # noqa: S110
                         pass
                 if not fallback_used:
                     logging.error(f"E2E multi-device worker failed (rc={proc.returncode}): {err_msg}")
@@ -932,10 +990,8 @@ def _do_profile_multi_device(
         except subprocess.TimeoutExpired:
             import shutil
 
-            try:
+            with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir)
-            except Exception:
-                pass
             return_struct.eager_precision = "MULTI_DEVICE_TIMEOUT"
             return_struct.precision_status = "FAIL"
             return
@@ -943,10 +999,8 @@ def _do_profile_multi_device(
         if not os.path.exists(result_path):
             import shutil
 
-            try:
+            with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir)
-            except Exception:
-                pass
             return_struct.eager_precision = "NO_OUTPUT"
             return_struct.precision_status = "FAIL"
             return
@@ -960,10 +1014,8 @@ def _do_profile_multi_device(
             passed = str(loaded["pass_0"])
             import shutil
 
-            try:
+            with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir)
-            except Exception:
-                pass
             return_struct.construct(prec, passed, None)
             # Multi-device mc2 graph result (dynamic/static) produced by worker
             if "graph_precision_0" in loaded.files:
@@ -983,10 +1035,8 @@ def _do_profile_multi_device(
 
         import shutil
 
-        try:
+        with contextlib.suppress(Exception):
             shutil.rmtree(tmp_dir)
-        except Exception:
-            pass
 
     if golden_result and not any(isinstance(g, str) for g in golden_result):
         golden_nps = golden_result
@@ -1031,7 +1081,9 @@ def _find_free_port():
         return s.getsockname()[1]
 
 
-def _do_profile(testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct):
+def _do_profile(  # noqa: PLR0911
+    testcase, backend, device_grant_events, device_granted_indices, dev_id, switches, return_struct
+):
     """Core profiling logic."""
     process_ctx = get_process_context()
     return_struct.batch_consistency_id = getattr(testcase, "batch_consistency_id", None)
@@ -1149,8 +1201,19 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
 
         process_ctx.notify_status("OnEagerProfiling")
         if not getattr(switches, "aclgraph_enabled", False):
-            result_nps, perf, eager_det_status = _execute_eager(
-                testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs
+            result_nps, perf, eager_det_status = _capture_stdout_npu_memory(
+                testcase,
+                return_struct,
+                _execute_eager,
+                testcase,
+                backend,
+                dev_id,
+                switches,
+                plan,
+                resolved,
+                is_tensor_method,
+                is_inplace,
+                raw_inputs,
             )
         if graph_enabled:
             from .framework_detector import detect_framework
@@ -1257,7 +1320,7 @@ def _do_profile(testcase, backend, device_grant_events, device_granted_indices, 
             output_dtypes,
             switches.compare_method,
         )
-        need_3party = any(s.token == "cross_check" for s in standards)
+        need_3party = any(s.token == "cross_check" for s in standards)  # noqa: S105
         from ttk.remote.client import collect_third_party, xpu_mode_of
 
         xpu_mode = xpu_mode_of(switches, need_3party)

@@ -119,25 +119,31 @@ def default_logging_config(file_handler: bool = False, testcase_name: str = None
     if file_handler:
         suffix = f"-{testcase_name}" if testcase_name else ""
         base = log_dir if log_dir else "."
-        attach_handler(logging.FileHandler(os.path.join(base, f"ttk-debug{suffix}.log")), logging.DEBUG)
+        # single-log mode (testcase_name set): overwrite; default: append
+        file_mode = "w" if testcase_name else "a"
+        attach_handler(logging.FileHandler(os.path.join(base, f"ttk-debug{suffix}.log"), mode=file_mode), logging.DEBUG)
         attach_handler(
-            logging.FileHandler(os.path.join(base, f"ttk-info{suffix}.log")), logging.INFO, MyFilter(logging.INFO)
+            logging.FileHandler(os.path.join(base, f"ttk-info{suffix}.log"), mode=file_mode),
+            logging.INFO,
+            MyFilter(logging.INFO),
         )
         attach_handler(
-            logging.FileHandler(os.path.join(base, f"ttk-warning{suffix}.log")),
+            logging.FileHandler(os.path.join(base, f"ttk-warning{suffix}.log"), mode=file_mode),
             logging.WARNING,
             MyFilter(logging.WARNING),
         )
         attach_handler(
-            logging.FileHandler(os.path.join(base, f"ttk-critical{suffix}.log")),
+            logging.FileHandler(os.path.join(base, f"ttk-critical{suffix}.log"), mode=file_mode),
             logging.CRITICAL,
             MyFilter(logging.CRITICAL),
         )
         attach_handler(
-            logging.FileHandler(os.path.join(base, f"ttk-error{suffix}.log")), logging.ERROR, MyFilter(logging.ERROR)
+            logging.FileHandler(os.path.join(base, f"ttk-error{suffix}.log"), mode=file_mode),
+            logging.ERROR,
+            MyFilter(logging.ERROR),
         )
         attach_handler(
-            logging.FileHandler(os.path.join(base, f"ttk-compare{suffix}.log")),
+            logging.FileHandler(os.path.join(base, f"ttk-compare{suffix}.log"), mode=file_mode),
             logging.DEBUG - 5,
             MyFilter(logging.DEBUG - 5),
         )

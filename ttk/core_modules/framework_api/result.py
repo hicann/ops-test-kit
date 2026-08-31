@@ -46,6 +46,7 @@ class FrameworkApiReturnStructure:
         "batch_consistency_id",
         "deterministic_status",
         "xpu_metrics",
+        "npu_memory",
     )
 
     def __init__(self):
@@ -74,6 +75,7 @@ class FrameworkApiReturnStructure:
         self.deterministic_status = None
         self.precision_metrics = {}
         self.xpu_metrics = {}
+        self.npu_memory = None
 
     @staticmethod
     def get_titles():
@@ -95,10 +97,7 @@ class FrameworkApiReturnStructure:
             mode: None for eager, "static" or "dynamic" for graph
             metrics: per-mode precision metrics dict (accumulated by mode key)
         """
-        if mode is None:
-            prefix = "eager_"
-        else:
-            prefix = f"graph_{self._MODE_PREFIX[mode]}_"
+        prefix = "eager_" if mode is None else f"graph_{self._MODE_PREFIX[mode]}_"
 
         setattr(self, f"{prefix}precision", precision_str)
         if precision_passed == "FAIL" or self.precision_status is None:
