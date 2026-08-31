@@ -38,7 +38,6 @@ except ImportError:
     @contextlib.contextmanager
     def NULLCXT():
         """NULL CONTEXT"""
-        pass
 
     nullcontext = NULLCXT
 
@@ -55,6 +54,7 @@ from ....utilities import (
     resolve_custom_numpy_dtypes,
     waiting_for_memory,
 )
+from ....utilities.dtypes import is_4bit_dtype
 from ...aclnn import AclInterface, OpApiInfoKeeper
 from ...manual_data import (
     load_manual_data_case,
@@ -241,7 +241,13 @@ class Phase1ParamBuilder:
                             np_storage = numpy.asarray(np_storage.base)
                             break
                         np_storage = np_storage.base
-                    byte_size = int(math.ceil(np_storage.size * get_dtype_width(np_storage.dtype)))
+                    # en_dtypes numpy storage is 1 byte/elem (unpacked view), but the
+                    # aclTensor device storage for 4-bit dtypes is packed 2 values/byte.
+                    csv_dtype = get(self._ctx.flat_tensor_dtypes, flat_idx)
+                    if csv_dtype and is_4bit_dtype(str(csv_dtype)):
+                        byte_size = int(math.ceil(np_storage.size / 2))
+                    else:
+                        byte_size = int(math.ceil(np_storage.size * get_dtype_width(np_storage.dtype)))
                 else:
                     byte_size = tensor.storage().nbytes()
                 output_byte_arrays.append(self._dvc.get_data_from_hbm(npu_ptr, byte_size))
@@ -460,7 +466,7 @@ class AclOpExecutor:
                             import hashlib
 
                             md5_list.append(
-                                hashlib.md5(
+                                hashlib.md5(  # noqa: S324  # 非安全用途：确定性校验和
                                     b"".join(
                                         bytes(b) if isinstance(b, (bytearray, memoryview)) else b for b in out_bytes
                                     )
@@ -506,10 +512,8 @@ class AclOpExecutor:
             return api_prof, op_prof
         for item in pathlib.Path(os.path.dirname(csv_files[0])).iterdir():
             if item.is_file():
-                try:
+                with contextlib.suppress(shutil.SameFileError):
                     shutil.copy(item, prof_result_path.joinpath(item.name))
-                except shutil.SameFileError:
-                    pass
         for item in prof_result_path.iterdir():
             if item.is_dir():
                 shutil.rmtree(item)
@@ -569,15 +573,14 @@ def do_profiling(context: TestcaseAclnn, dev_id: int) -> ApiProfilingResult:
     switches = get_global_storage()
     if not context.is_valid:
         return ApiProfilingResult.fail(context.fail_reason)
-    else:
-        # noinspection PyBroadException
-        try:
-            device = __get_aclnn_device(dev_id)
-            return AclOpExecutor(context, device).do()
-        except Exception as e:
-            raise RuntimeError(f"Profiling Sequence of mode {switches.mode} failed") from e
-        finally:
-            os.chdir(switches.root_path)
+    # noinspection PyBroadException
+    try:
+        device = __get_aclnn_device(dev_id)
+        return AclOpExecutor(context, device).do()
+    except Exception as e:
+        raise RuntimeError(f"Profiling Sequence of mode {switches.mode} failed") from e
+    finally:
+        os.chdir(switches.root_path)
 
 
 def _aclnn_xpu_inputs(context: TestcaseAclnn) -> list:
@@ -704,9 +707,11 @@ def __regenerate_v2_mxfp_inputs(thread_ctx, rank_idx: int, base_seed: int):
         # per_rank_seed so x2/x1scale/x2scale differ per rank, but NPU
         # all_gather_matmul expects x2 and both scales to be shared (weight).
         # Regenerate with rank-independent seed.
-        if thread_ctx.flatten_tensors[x2_idx] is None or thread_ctx.flatten_tensors[x2s_idx] is None:
-            return
-        if thread_ctx.flatten_tensors[x1s_idx] is None:
+        if (
+            thread_ctx.flatten_tensors[x2_idx] is None
+            or thread_ctx.flatten_tensors[x2s_idx] is None
+            or thread_ctx.flatten_tensors[x1s_idx] is None
+        ):
             return
         # flatten_tensors/np_storages may be a tuple (rebased upstream); make mutable
         if not hasattr(thread_ctx, "_flat_tensors") or thread_ctx._flat_tensors is None:
@@ -1531,10 +1536,8 @@ def __profile_multi_device(context: TestcaseAclnn, device_ids: List[int], device
 
     logging.info(f"Multi-device: aclrtSetDevice for all {device_ids}")
     for did in device_ids:
-        try:
+        with contextlib.suppress(Exception):
             acl_dll.aclrtResetDevice(ctypes.c_int32(did))
-        except Exception:
-            pass
     for did in device_ids:
         acl_dll.aclrtSetDevice(ctypes.c_int32(did))
 
@@ -1762,7 +1765,7 @@ def _run_aclnn_npu_preprocess(context, switches, process_ctx, dev_id):
     return None
 
 
-def profile_process(
+def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径显式返回
     context: TestcaseAclnn,
     device_grant_events: dict,
     device_granted_indices: dict,
@@ -1920,107 +1923,103 @@ def profile_process(
         return_structure.construct(context, compare_result)
         __profiling_end_print(context, compare_result)
         return return_structure
-    else:
-        if is_multi_device and device_ids and switches.golden_mode == "Disable":
-            thread_contexts = getattr(context, "_multi_device_thread_contexts", {})
-            all_passed = all(
-                did in thread_contexts and not thread_contexts[did].prof_result.failed() for did in device_ids
-            )
-            __release_retained_multi_device_resources(context, device_ids)
-            compare_result = ApiComparisonResult(None)
-            compare_result.set(
-                "EXECUTED" if all_passed else "MULTI_DEVICE_EXECUTION_FAILURE",
-                "PASS" if all_passed else "FAIL",
-            )
-            process_ctx.notify_status("OnReturning")
-            return_structure = ApiProfilingReturnStructure()
-            return_structure.construct(context, compare_result)
-            __profiling_end_print(context, compare_result)
-            return return_structure
-
-        from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
-
-        plugin_path = getattr(switches, "plugin_path", None)
-        tolerance = get_spec_attr(context.api_name, "tolerance", plugin_path)
-        output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
-        standards = _resolve_tolerance(
-            tolerance,
-            context.flat_precision_tolerances,
-            context.flat_absolute_precision,
-            output_dtypes,
-            switches.compare_method,
+    if is_multi_device and device_ids and switches.golden_mode == "Disable":
+        thread_contexts = getattr(context, "_multi_device_thread_contexts", {})
+        all_passed = all(did in thread_contexts and not thread_contexts[did].prof_result.failed() for did in device_ids)
+        __release_retained_multi_device_resources(context, device_ids)
+        compare_result = ApiComparisonResult(None)
+        compare_result.set(
+            "EXECUTED" if all_passed else "MULTI_DEVICE_EXECUTION_FAILURE",
+            "PASS" if all_passed else "FAIL",
         )
-        need_3party = any(s.token == "cross_check" for s in standards)
-        if need_3party:
-            context.golden_mode_override = "Promote"
-        try:
-            if is_multi_device and device_ids and hasattr(context, "_multi_device_thread_contexts"):
-                thread_contexts = context._multi_device_thread_contexts
-                all_passed = True
-                all_precision = []
-                for did in device_ids:
-                    tc = thread_contexts.get(did)
-                    if tc is None or tc.prof_result.failed():
-                        all_passed = False
-                        logging.error(f"Multi-device: rank dev={did} execution failed, skipping golden")
-                if not all_passed:
-                    compare_result = ApiComparisonResult(None)
-                    compare_result.set("MULTI_DEVICE_EXECUTION_FAILURE", "FAIL")
-                else:
-                    __release_retained_multi_device_resources(context, device_ids)
-                    # Plugin-first: check for per-operator golden in TestSpec.
-                    # If the operator's spec.py declares a golden callable,
-                    # delegate to it; otherwise fall back to the built-in mc2_dispatcher dispatcher.
-                    _plugin_golden = get_spec_attr(context.api_name, "golden", getattr(switches, "plugin_path", None))
-                    if _plugin_golden is not None:
-                        # Inject proc_timeout into thread_contexts attributes so
-                        # cascade workers can read it via _get_timeout().
-                        _timeout_val = int(getattr(switches, "proc_timeout", 0) or 3600)
-                        for _did in device_ids:
-                            _tc = thread_contexts.get(_did)
-                            if _tc and hasattr(_tc, "attributes"):
-                                _tc.attributes["proc_timeout"] = _timeout_val
-                        logging.info(
-                            f"Multi-device: cascade timeout = {_timeout_val}s, "
-                            f"using plugin golden for {context.api_name}"
-                        )
-                        _plugin_golden(thread_contexts, device_ids, all_precision)
-                    else:
-                        __golden_multi_device_compare(thread_contexts, device_ids, all_precision)
-                    has_fail = any("FAIL" in p or "EXCEPTION" in p for p in all_precision)
-                    compare_result = ApiComparisonResult(None)
-                    compare_result.set(
-                        ",".join(all_precision) if all_precision else "MULTI_DEVICE_COMPARE_FAILURE",
-                        "PASS" if not has_fail else "FAIL",
-                    )
-                    process_ctx.notify_status("OnReturning")
-                    return_structure = ApiProfilingReturnStructure()
-                    return_structure.construct(context, compare_result)
-                    __profiling_end_print(context, compare_result)
-                    return return_structure
-            elif manual_case is not None and manual_case.has_goldens:
-                try:
-                    process_ctx.notify_status("OnLoadManualGolden")
-                    context.golden_tensors = manual_case.load_goldens(
-                        shapes=context.prof_result.output_view_shapes,
-                        dtypes=context.flat_output_dtypes,
-                    )
-                    __dump_golden(context)
-                except Exception as exc:
-                    logging.exception("Manual golden loading failure")
-                    return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+        process_ctx.notify_status("OnReturning")
+        return_structure = ApiProfilingReturnStructure()
+        return_structure.construct(context, compare_result)
+        __profiling_end_print(context, compare_result)
+        return return_structure
+
+    from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
+
+    plugin_path = getattr(switches, "plugin_path", None)
+    tolerance = get_spec_attr(context.api_name, "tolerance", plugin_path)
+    output_dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
+    standards = _resolve_tolerance(
+        tolerance,
+        context.flat_precision_tolerances,
+        context.flat_absolute_precision,
+        output_dtypes,
+        switches.compare_method,
+    )
+    need_3party = any(s.token == "cross_check" for s in standards)  # noqa: S105  # token 为精度标准类型名，非凭据
+    if need_3party:
+        context.golden_mode_override = "Promote"
+    try:
+        if is_multi_device and device_ids and hasattr(context, "_multi_device_thread_contexts"):
+            thread_contexts = context._multi_device_thread_contexts
+            all_passed = True
+            all_precision = []
+            for did in device_ids:
+                tc = thread_contexts.get(did)
+                if tc is None or tc.prof_result.failed():
+                    all_passed = False
+                    logging.error(f"Multi-device: rank dev={did} execution failed, skipping golden")
+            if not all_passed:
+                compare_result = ApiComparisonResult(None)
+                compare_result.set("MULTI_DEVICE_EXECUTION_FAILURE", "FAIL")
             else:
-                process_ctx.notify_status("OnGenGolden")
-                # noinspection PyBroadException
-                try:
-                    GoldenGenerator(context).gen()
-                    process_ctx.notify_status("OnDumpGoldenDataIfRequired")
-                    __dump_golden(context)
-                except Exception:
-                    logging.exception("Golden data generation failure")
-        finally:
-            if hasattr(context, "golden_mode_override"):
-                del context.golden_mode_override
+                __release_retained_multi_device_resources(context, device_ids)
+                # Plugin-first: check for per-operator golden in TestSpec.
+                # If the operator's spec.py declares a golden callable,
+                # delegate to it; otherwise fall back to the built-in mc2_dispatcher dispatcher.
+                _plugin_golden = get_spec_attr(context.api_name, "golden", getattr(switches, "plugin_path", None))
+                if _plugin_golden is not None:
+                    # Inject proc_timeout into thread_contexts attributes so
+                    # cascade workers can read it via _get_timeout().
+                    _timeout_val = int(getattr(switches, "proc_timeout", 0) or 3600)
+                    for _did in device_ids:
+                        _tc = thread_contexts.get(_did)
+                        if _tc and hasattr(_tc, "attributes"):
+                            _tc.attributes["proc_timeout"] = _timeout_val
+                    logging.info(
+                        f"Multi-device: cascade timeout = {_timeout_val}s, using plugin golden for {context.api_name}"
+                    )
+                    _plugin_golden(thread_contexts, device_ids, all_precision)
+                else:
+                    __golden_multi_device_compare(thread_contexts, device_ids, all_precision)
+                has_fail = any("FAIL" in p or "EXCEPTION" in p for p in all_precision)
+                compare_result = ApiComparisonResult(None)
+                compare_result.set(
+                    ",".join(all_precision) if all_precision else "MULTI_DEVICE_COMPARE_FAILURE",
+                    "PASS" if not has_fail else "FAIL",
+                )
+                process_ctx.notify_status("OnReturning")
+                return_structure = ApiProfilingReturnStructure()
+                return_structure.construct(context, compare_result)
+                __profiling_end_print(context, compare_result)
+                return return_structure
+        elif manual_case is not None and manual_case.has_goldens:
+            try:
+                process_ctx.notify_status("OnLoadManualGolden")
+                context.golden_tensors = manual_case.load_goldens(
+                    shapes=context.prof_result.output_view_shapes,
+                    dtypes=context.flat_output_dtypes,
+                )
+                __dump_golden(context)
+            except Exception as exc:
+                logging.exception("Manual golden loading failure")
+                return prof_end(context, f"MANUAL_DATA_READ_FAILURE: {exc}")
+        else:
+            process_ctx.notify_status("OnGenGolden")
+            # noinspection PyBroadException
+            try:
+                GoldenGenerator(context).gen()
+                process_ctx.notify_status("OnDumpGoldenDataIfRequired")
+                __dump_golden(context)
+            except Exception:
+                logging.exception("Golden data generation failure")
+    finally:
+        if hasattr(context, "golden_mode_override"):
+            del context.golden_mode_override
     process_ctx.notify_status("OnDumpOutputDataIfRequired")
     __dump_output(context)
     third_parties = None
