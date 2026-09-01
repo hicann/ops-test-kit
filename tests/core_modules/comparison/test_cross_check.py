@@ -34,7 +34,8 @@ def test_pass_when_all_good():
     precision, log, is_pass, metrics = c.compare()
     assert is_pass is True
     assert metrics["standard"] == "cross_check"
-    assert "config" in metrics and "result" in metrics  # 单元测试定位 metrics 形状（不只靠 Task 9 E2E）
+    assert "config" in metrics  # 单元测试定位 metrics 形状（不只靠 Task 9 E2E）
+    assert "result" in metrics
 
 
 def test_ratio_exceeded():
@@ -64,6 +65,9 @@ def test_safe_div_branches():
     assert safe_div(1.0, 0, err) == 1.0 / err  # 分母为 0 -> 夹到 err（非 inf）
     assert safe_div(6, 3, err) == 2.0  # 分母 > err，照常相除
     assert safe_div(0.1, float("nan"), err) == float("inf")  # nan 分母 -> inf
+    assert safe_div(float("inf"), float("inf"), err) == 1.0  # 两侧均溢出 -> 一致
+    assert safe_div(float("inf"), 3.0, err) == float("inf")  # NPU 溢出、竞品未溢出
+    assert safe_div(3.0, float("inf"), err) == 0.0  # 竞品溢出、NPU 未溢出 -> NPU 严格更优
     assert isinstance(safe_div(6, 3, err), float)  # 守护 float() 强转
 
 
@@ -89,21 +93,143 @@ def test_small_value_partition_pass():
     assert metrics["result"]["mare"] is None  # 全小值域 large-empty → mare N/A（非 0.0 误导）
 
 
+_NAN_PARAMS = {
+    "level": "L1",
+    "mare_ratio": 5.0,
+    "mere_ratio": 1.5,
+    "rmse_ratio": 1.5,
+    "small_value": 2**-14,
+    "small_value_atol": 2**-30,
+    "legacy": {"rtol": None, "ptol": None, "atol": 1e-8},
+}
+
+
 def test_nan_inf_mismatch():
-    """NaN/Inf 特殊位 mismatch → reason=NaN/Inf mismatch（special_ok 短路优先于 ratio）。"""
-    params = {
-        "level": "L1",
-        "mare_ratio": 5.0,
-        "mere_ratio": 1.5,
-        "rmse_ratio": 1.5,
-        "small_value": 2**-14,
-        "small_value_atol": 2**-30,
-        "legacy": {"rtol": None, "ptol": None, "atol": 1e-8},
-    }
+    """golden 与 third_party 一致(NaN)，但 NPU 不一致 → FAIL（规则3）。"""
     g = np.array([1.0, np.nan], dtype=np.float32)
-    out = np.array([1.0, 1.0], dtype=np.float32)  # golden[1]=nan 但 NPU 非 nan → special 位 mismatch
+    out = np.array([1.0, 1.0], dtype=np.float32)  # golden[1]=nan 但 NPU 非 nan
     third = np.array([1.0, np.nan], dtype=np.float32)
-    c = _make(out, g, third, params)
+    c = _make(out, g, third, _NAN_PARAMS)
     precision, log, is_pass, metrics = c.compare()
+    assert not is_pass
+    assert metrics["reason"] == "NaN/Inf mismatch"
+
+
+def test_nan_inf_pass_npu_matches_third():
+    """规则1：NPU 与 third_party 一致 → 通过（不论 golden 为何值）。"""
+    # golden=NaN, NPU=+Inf, third=+Inf → NPU 与 third 一致 → 通过
+    g = np.array([np.nan], dtype=np.float32)
+    out = np.array([np.inf], dtype=np.float32)
+    third = np.array([np.inf], dtype=np.float32)
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert is_pass
+
+    # golden=1.0, NPU=NaN, third=NaN → NPU 与 third 一致 → 通过
+    g = np.array([1.0], dtype=np.float32)
+    out = np.array([np.nan], dtype=np.float32)
+    third = np.array([np.nan], dtype=np.float32)
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert is_pass
+
+
+def test_nan_inf_pass_npu_matches_golden():
+    """规则2：golden 为 nan/inf 且 NPU 与 golden 一致 → 通过（不论 third_party）。"""
+    # golden=NaN, NPU=NaN, third=1.0 → NPU 与 golden 一致 → 通过
+    g = np.array([np.nan], dtype=np.float32)
+    out = np.array([np.nan], dtype=np.float32)
+    third = np.array([1.0], dtype=np.float32)
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert is_pass
+
+    # golden=+Inf, NPU=+Inf, third=-Inf → NPU 与 golden 一致 → 通过
+    g = np.array([np.inf], dtype=np.float32)
+    out = np.array([np.inf], dtype=np.float32)
+    third = np.array([-np.inf], dtype=np.float32)
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert is_pass
+
+
+def test_nan_inf_fail_golden_matches_third_finite():
+    """规则3（有限值）：golden 与 third_party 均为有限且相等，但 NPU 为 NaN → FAIL。"""
+    g = np.array([1.0], dtype=np.float32)
+    out = np.array([np.nan], dtype=np.float32)  # NPU 异常
+    third = np.array([1.0], dtype=np.float32)  # golden 与 third 一致
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, metrics = c.compare()
+    assert not is_pass
+    assert metrics["reason"] == "NaN/Inf mismatch"
+
+
+def test_nan_inf_fail_golden_third_disagree():
+    """golden 与 third_party 不一致、NPU 与双方都不一致 → FAIL（规则1和规则2都不满足）。"""
+    # golden=NaN, NPU=1.0, third=+Inf → t≠b 且 t≠g → FAIL
+    g = np.array([np.nan], dtype=np.float32)
+    out = np.array([1.0], dtype=np.float32)
+    third = np.array([np.inf], dtype=np.float32)
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert not is_pass
+
+    # golden=+Inf, NPU=1.0, third=-Inf → t≠b 且 t≠g → FAIL
+    g = np.array([np.inf], dtype=np.float32)
+    out = np.array([1.0], dtype=np.float32)
+    third = np.array([-np.inf], dtype=np.float32)
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert not is_pass
+
+
+def test_rmse_no_overflow_in_float32():
+    """float32 大差值（**2 溢出量级）不应让 rmse_ratio 误判 Inf→FAIL。
+
+    golden=1e19, NPU=-1e19（差 2e19，平方=4e38 > float32 max≈3.4e38→Inf），
+    third_party 同款差值 → 两侧 rmse 均溢出 → safe_div 返回 1.0（一致）→ PASS。
+    """
+    g = np.array([1e19, 2e19], dtype=np.float32)
+    out = np.array([-1e19, -2e19], dtype=np.float32)  # 差值 2e19/4e19，平方溢出 float32
+    third = np.array([-1e19, -2e19], dtype=np.float32)  # 竞品同款 → ratio=1.0
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, metrics = c.compare()
+    assert is_pass
+    assert metrics["result"]["rmse"] == 1.0
+
+
+def test_rmse_overflow_npu_only():
+    """NPU 差值溢出但竞品未溢出 → rmse_ratio=Inf → FAIL（真实异常，非误判）。"""
+    g = np.array([1e19], dtype=np.float32)
+    out = np.array([-1e19], dtype=np.float32)  # 平方溢出 float32 → rmse_npu=Inf
+    third = np.array([1e19 + 1e10], dtype=np.float32)  # 差值小 → rmse_party 有限
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, metrics = c.compare()
+    assert not is_pass
+
+
+def test_golden_inf_but_target_equals_third_party():
+    """issue #126 缺陷2: golden 非有限（inf），t/b 均有限且 t==b → PASS。
+
+    golden 在该位溢出不可用作真值，退化为 t vs b 两方一致性判定。
+    """
+    g = np.array([1.0, np.inf], dtype=np.float32)
+    out = np.array([1.0, 42.0], dtype=np.float32)
+    third = np.array([1.0, 42.0], dtype=np.float32)  # t==b
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert is_pass
+
+
+def test_golden_inf_and_target_differs_from_third_party():
+    """issue #126 缺陷2: golden 非有限（inf），t/b 均有限但 t≠b → FAIL。
+
+    golden 不可用且两方有分歧，不放行。
+    """
+    g = np.array([1.0, np.inf], dtype=np.float32)
+    out = np.array([1.0, 42.0], dtype=np.float32)
+    third = np.array([1.0, 99.0], dtype=np.float32)  # t≠b
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, metrics = c.compare()
     assert not is_pass
     assert metrics["reason"] == "NaN/Inf mismatch"
