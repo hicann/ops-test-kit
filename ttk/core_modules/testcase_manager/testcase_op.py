@@ -15,6 +15,7 @@ __all__ = ["TestcaseOp"]
 
 
 # Standard Packages
+import ast
 import logging
 from typing import TYPE_CHECKING, Dict, Iterable, Optional, Tuple, Union
 
@@ -74,6 +75,9 @@ class TestcaseOp(TestcaseBase):
         # special
         "output_inplace_indexes",
         "output_shape_unknown_indexes",
+        # number of metadata outputs appended to the declared output fields by
+        # append_output_metadata (read back by golden regeneration — GEIR)
+        "_output_meta_count",
         # specify dump file prefix
         "dump_file_prefix",
         # manual configurations
@@ -192,7 +196,7 @@ class TestcaseOp(TestcaseBase):
         "manual_golden_binaries": (FIELD_TYPES.FREE_EVAL, None, ()),
     }
     complete_headers: Dict[str, tuple] = {**identity_headers, **property_headers, **option_headers}
-    force_clear_atomic_ops = tuple(["ones_like"])
+    force_clear_atomic_ops = ("ones_like",)
 
     def __init__(self):
         super().__init__()
@@ -212,9 +216,7 @@ class TestcaseOp(TestcaseBase):
             and self.cst_compile_result.kernel_json_info.clear_atomic
         ):
             return True
-        if self.op_name in self.force_clear_atomic_ops:
-            return True
-        return False
+        return self.op_name in self.force_clear_atomic_ops
 
     @property
     def dyn_clear_atomic(self):
@@ -226,9 +228,7 @@ class TestcaseOp(TestcaseBase):
             and self.dyn_compile_result.kernel_json_info.clear_atomic
         ):
             return True
-        if self.op_name in self.force_clear_atomic_ops:
-            return True
-        return False
+        return self.op_name in self.force_clear_atomic_ops
 
     @property
     def bin_clear_atomic(self):
@@ -240,9 +240,7 @@ class TestcaseOp(TestcaseBase):
             and self.bin_compile_result.kernel_json_info.clear_atomic
         ):
             return True
-        if self.op_name in self.force_clear_atomic_ops:
-            return True
-        return False
+        return self.op_name in self.force_clear_atomic_ops
 
     @property
     def const_input_indexes(self):
@@ -633,9 +631,11 @@ class TestcaseOp(TestcaseBase):
         return "SUCC" in [getattr(self, f"{t}_compile_result").compile_result for t in ("dyn", "cst", "bin")]
 
     def apply_compile_result(self, compile_result: BaseCompilationResult):
-        if isinstance(compile_result, (DynamicCompilationResult, BinaryCompilationResult, ConstCompilationResult)):
-            if self.dyn_func_params is None:
-                self.dyn_func_params = compile_result.func_params
+        if (
+            isinstance(compile_result, (DynamicCompilationResult, BinaryCompilationResult, ConstCompilationResult))
+            and self.dyn_func_params is None
+        ):
+            self.dyn_func_params = compile_result.func_params
         if isinstance(compile_result, DynamicCompilationResult):
             # Dyn & Bin
             if isinstance(compile_result, BinaryCompilationResult):
@@ -645,9 +645,8 @@ class TestcaseOp(TestcaseBase):
             if compile_result.tiling_result is None:
                 compile_result.tiling_result = DynamicOpTilingResult()
                 compile_result.tiling_result.all_set(compile_result.compile_result)
-        else:
-            if isinstance(compile_result, ConstCompilationResult):
-                self.cst_compile_result = compile_result
+        elif isinstance(compile_result, ConstCompilationResult):
+            self.cst_compile_result = compile_result
         self.compile_done += 1
 
     def get_dyn_func_param_name(self, param_idx: int, dyn_func_params: Optional[Union[tuple, list]] = None):
@@ -758,16 +757,16 @@ class TestcaseOp(TestcaseBase):
             else:
                 axes = None
             return shape_inference(inputs, (axes, 1, None), outputs)
-        elif "ELEWISE" in outputs:
+        if "ELEWISE" in outputs:
             try:
-                args = eval(outputs[7:])
+                args = ast.literal_eval(outputs[7:])
             except Exception as e:
                 raise ValueError(f"Unable to parse shape inference args from {outputs}") from e
             else:
                 return shape_inference(inputs, args, "ELEWISE")
         elif "REDUCE" in outputs:
             try:
-                _args = eval(outputs[6:])
+                _args = ast.literal_eval(outputs[6:])
                 if "axes" in args:
                     args = (args["axes"], *_args[1:])
                 elif "axis" in args:
@@ -1087,9 +1086,7 @@ class TestcaseOp(TestcaseBase):
     def flat_manual_input_binaries(self):
         if self._flat_manual_input_binaries is not None:
             return self._flat_manual_input_binaries
-        if not self.manual_input_binaries:
-            self._flat_manual_input_binaries = self.manual_input_binaries
-        elif not self.input_distribution:
+        if not self.manual_input_binaries or not self.input_distribution:
             self._flat_manual_input_binaries = self.manual_input_binaries
         else:
             from ...utilities.container_utils import deep_flatten
@@ -1101,9 +1098,7 @@ class TestcaseOp(TestcaseBase):
     def flat_manual_golden_binaries(self):
         if self._flat_manual_golden_binaries is not None:
             return self._flat_manual_golden_binaries
-        if not self.manual_golden_binaries:
-            self._flat_manual_golden_binaries = self.manual_golden_binaries
-        elif not self.output_distribution:
+        if not self.manual_golden_binaries or not self.output_distribution:
             self._flat_manual_golden_binaries = self.manual_golden_binaries
         else:
             from ...utilities.container_utils import deep_flatten
@@ -1216,6 +1211,7 @@ class TestcaseOp(TestcaseBase):
             "precision_tolerances",
             "absolute_precision",
         )
+        self._output_meta_count += 1
 
     @property
     def flat_output_formats(self):
@@ -1300,9 +1296,13 @@ class TestcaseOp(TestcaseBase):
         if not shapes or not isinstance(shapes, tuple):
             return False
         for element in shapes:
-            if element is not None and isinstance(element, tuple) and len(element) > 0:
-                if isinstance(element[0], tuple):
-                    return True
+            if (
+                element is not None
+                and isinstance(element, tuple)
+                and len(element) > 0
+                and isinstance(element[0], tuple)
+            ):
+                return True
         return False
 
     # ========== Normalize helpers ==========
@@ -1315,10 +1315,8 @@ class TestcaseOp(TestcaseBase):
         is either already expanded (len==num) or compressed (len==1).
         """
         result = []
-        vi = 0
-        for num in distribution:
+        for vi, num in enumerate(distribution):
             val = values[vi]
-            vi += 1
             if num > 0:
                 if isinstance(val, (tuple, list)):
                     if len(val) == num:
@@ -1393,6 +1391,7 @@ class TestcaseOp(TestcaseBase):
         self.attributes9: Optional[dict] = None
         self.output_inplace_indexes = None  # flat input indexes after tensor_list expansion
         self.output_shape_unknown_indexes: Optional[tuple] = None
+        self._output_meta_count: int = 0
 
     def _init_manual_and_runtime_fields(self):
         """Initialize manual-controlled parameters and runtime arrays."""
@@ -1652,17 +1651,16 @@ class TestcaseOp(TestcaseBase):
                 ipt_type = op_info["inputs"][ipt_idx].get("paramType")
                 opt_type = op_info["outputs"][opt_idx].get("paramType")
                 # mem_set_v2
-                if ipt_type == "dynamic" or opt_type == "dynamic":
-                    if ipt_type != opt_type:
-                        logging.error(
-                            f"Testcase {self.testcase_name} "
-                            f"{opt_idx}th output inplace {ipt_idx}th input. "
-                            f"The `paramType` mismatch: should be both `dynamic`. "
-                            f"But got input={ipt_type}, output={opt_type}"
-                        )
-                        self.is_valid = False
-                        self.fail_reason = "OUTPUT_INPLACE_INDEXES_ERROR"
-                        break
+                if (ipt_type == "dynamic" or opt_type == "dynamic") and ipt_type != opt_type:
+                    logging.error(
+                        f"Testcase {self.testcase_name} "
+                        f"{opt_idx}th output inplace {ipt_idx}th input. "
+                        f"The `paramType` mismatch: should be both `dynamic`. "
+                        f"But got input={ipt_type}, output={opt_type}"
+                    )
+                    self.is_valid = False
+                    self.fail_reason = "OUTPUT_INPLACE_INDEXES_ERROR"
+                    break
             # expand for dynamic.
             flatten_inplace_indices = self._expand_indices(len(inputs), self.tensor_list_distribution, inplace_indices)
             self.output_inplace_indexes = tuple(flatten_inplace_indices)

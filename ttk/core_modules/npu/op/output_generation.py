@@ -279,9 +279,12 @@ def __generate_golden(context: TestcaseOp, output_dtypes: list) -> list:
     golden_func = get_plugin_function(context.op_name, "golden", "kernel", switches.plugin_path)
     if golden_func is None:
         golden_func = KERNEL_GOLDEN.get(context.op_name)
-    if golden_func is None:
-        if context.op_name in numpy.__dir__() and isinstance(getattr(numpy, context.op_name), Callable):
-            golden_func = getattr(numpy, context.op_name)
+    if (
+        golden_func is None
+        and context.op_name in numpy.__dir__()
+        and isinstance(getattr(numpy, context.op_name), Callable)
+    ):
+        golden_func = getattr(numpy, context.op_name)
     if golden_func:
         # noinspection PyBroadException
         try:
@@ -334,15 +337,25 @@ def __gen_output(context: TestcaseOp, stored_goldens=None):
     if len(golden_arrays) > len(context.flat_output_shapes):
         golden_arrays = golden_arrays[: len(context.flat_output_shapes)]
     __normalize_goldens(golden_arrays, output_dtypes)
-    for idx, output_shape in enumerate(context.flat_output_shapes):
+    # Regenerating golden on a testcase whose output fields were already
+    # extended (GEIR regenerates per mode: const/dynamic) must walk only the
+    # declared outputs — appended metadata entries carry no independent
+    # golden and would trip __output_shape_needs_golden.
+    n_meta = getattr(context, "_output_meta_count", 0)
+    declared_shapes = context.flat_output_shapes[: len(context.flat_output_shapes) - n_meta]
+    for idx, output_shape in enumerate(declared_shapes):
+        # alloc_shape is the shape the output buffer is actually allocated
+        # with: the declared shape adjusted for dtype packing (complex32/uint1),
+        # then replaced by the golden shape. Kept separate from the loop
+        # variable since it is rebound below.
+        alloc_shape = output_shape
         out_dtype = get(output_dtypes, idx)
         if "complex32" in str(out_dtype):
             out_dtype = "float16"
-            output_shape = list(output_shape) + [2]
-        elif "uint1" == str(out_dtype):
+            alloc_shape = list(output_shape) + [2]
+        elif str(out_dtype) == "uint1":
             out_dtype = "uint8"
-            u8_size = ceil_div(shape_product(output_shape), 8)
-            output_shape = [u8_size]
+            alloc_shape = [ceil_div(shape_product(output_shape), 8)]
         golden_shape = None
         if idx < len(golden_arrays) and isinstance(golden_arrays[idx], numpy.ndarray):
             golden_shape = golden_arrays[idx].shape
@@ -352,48 +365,52 @@ def __gen_output(context: TestcaseOp, stored_goldens=None):
             output_arrays.append(context.output_inplace_indexes[idx])
         else:
             if golden_shape is not None:
-                if output_shape and tuple(output_shape) != tuple(golden_shape):
+                if alloc_shape and tuple(alloc_shape) != tuple(golden_shape):
                     logging.warning(
-                        f"Golden shape {golden_shape} not match with testcase shape {output_shape}, replacing..."
+                        f"Golden shape {golden_shape} not match with testcase shape {alloc_shape}, replacing..."
                     )
-                output_shape = golden_shape
+                alloc_shape = golden_shape
             else:
                 __output_shape_needs_golden(context, idx)
-            output_arrays.append(numpy.ones(output_shape, dtype=out_dtype))
-    __append_out_shape_unknown_golden(context, golden_arrays, output_arrays)
+            output_arrays.append(numpy.ones(alloc_shape, dtype=out_dtype))
+    __append_out_shape_unknown_golden(context, golden_arrays, output_arrays, extend_fields=not n_meta)
     context.golden_arrays = golden_arrays
     context.output_arrays = tuple(output_arrays)
 
 
 def __normalize_goldens(golden_arrays: List[Union[str, numpy.ndarray]], output_dtypes: list):
-    for idx, array in enumerate(golden_arrays):
-        if not isinstance(array, numpy.ndarray):
+    # golden is rebound after view/concat conversions and written back to
+    # golden_arrays — iterate by index so the rebinding stays explicit.
+    for idx in range(len(golden_arrays)):
+        golden = golden_arrays[idx]
+        if not isinstance(golden, numpy.ndarray):
             continue
         npu_dtype = get(output_dtypes, idx)
         if "complex32" in str(npu_dtype):
             npu_dtype = "float16"
-        if "uint1" == str(npu_dtype):
+        if str(npu_dtype) == "uint1":
             npu_dtype = "uint8"
         npu_dtype = numpy.dtype(npu_dtype).name
-        if array.dtype.name == "bfloat16":
+        if golden.dtype.name == "bfloat16":
             ttk_bf16 = numpy_bfloat16()
-            if array.dtype.type != ttk_bf16.dtype.type:
-                golden_arrays[idx] = array = array.view(ttk_bf16)
-        if array.dtype.name == npu_dtype or npu_dtype not in DTYPE_PROMOTE_MAP:
+            if golden.dtype.type != ttk_bf16.dtype.type:
+                golden = golden.view(ttk_bf16)
+                golden_arrays[idx] = golden
+        if golden.dtype.name == npu_dtype or npu_dtype not in DTYPE_PROMOTE_MAP:
             continue
         if "complex32" in str(get(output_dtypes, idx)):
             # complex32 is a bit complicated:
             # real/imag part needs to be extracted when dtype not equal (to float16)
             # it will be complex64 or complex128
-            real, imag = array.real.reshape(array.real.shape + (1,)), array.imag.reshape(array.imag.shape + (1,))
-            golden_arrays[idx] = numpy.concatenate((real, imag), axis=-1)
-            array = golden_arrays[idx]
+            real, imag = golden.real.reshape(golden.real.shape + (1,)), golden.imag.reshape(golden.imag.shape + (1,))
+            golden = numpy.concatenate((real, imag), axis=-1)
+            golden_arrays[idx] = golden
         dr = get_dtype_range(npu_dtype)
         if get_global_storage().overflow_mode == 0:
-            numpy.clip(array, a_min=dr[0], a_max=dr[1], out=array)
+            numpy.clip(golden, a_min=dr[0], a_max=dr[1], out=golden)
         else:
-            array[array < dr[0]] = -numpy.inf
-            array[array > dr[1]] = numpy.inf
+            golden[golden < dr[0]] = -numpy.inf
+            golden[golden > dr[1]] = numpy.inf
 
 
 def __nan_to_num(golden_array: numpy.ndarray, op: str, npu_dtype):
@@ -468,9 +485,8 @@ def __nan_to_num(golden_array: numpy.ndarray, op: str, npu_dtype):
             golden_array = numpy.where(nan, tmp[0], golden_array)
         golden_array[golden_array == tmp[3]] = tmp[1]
         golden_array[golden_array == tmp[4]] = tmp[2]
-    else:
-        if numpy.any(numpy.isnan(golden_array)) or numpy.any(numpy.isinf(golden_array)):
-            numpy.nan_to_num(golden_array, copy=False)
+    elif numpy.any(numpy.isnan(golden_array)) or numpy.any(numpy.isinf(golden_array)):
+        numpy.nan_to_num(golden_array, copy=False)
     return golden_array
 
 
@@ -551,8 +567,18 @@ def __output_shape_needs_golden(context: TestcaseOp, output_idx: int):
         )
 
 
-def __append_out_shape_unknown_golden(context: TestcaseOp, golden_arrays: list, output_arrays: list):
-    """append output shape tensor to golden & output_arrays"""
+def __append_out_shape_unknown_golden(
+    context: TestcaseOp, golden_arrays: list, output_arrays: list, extend_fields: bool = True
+):
+    """append output shape tensor to golden & output_arrays
+
+    Args:
+        extend_fields: also grow the testcase output fields via
+            append_output_metadata. Callers regenerating golden on an
+            already-extended testcase (GEIR per-mode regeneration) pass False —
+            the metadata golden itself is still appended (fresh list every
+            call), only the persistent field growth must not repeat.
+    """
     if not context.output_shape_unknown_indexes:
         return
     output_shape_golden = []
@@ -573,4 +599,5 @@ def __append_out_shape_unknown_golden(context: TestcaseOp, golden_arrays: list, 
     output_shape_golden_array.view(numpy.uint8)[3] = 128
     output_arrays.append(numpy.ones(output_shape_golden_array.shape, dtype="uint64"))
     golden_arrays.append(output_shape_golden_array)
-    context.append_output_metadata("uint64", "ND", output_shape_golden_array.shape)
+    if extend_fields:
+        context.append_output_metadata("uint64", "ND", output_shape_golden_array.shape)

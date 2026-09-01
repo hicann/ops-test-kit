@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 """
 C++ source generator for GEIR tests.
 
@@ -82,7 +88,9 @@ _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
 
 def _render_template(name: str, **ctx) -> str:
-    env = Environment(loader=FileSystemLoader(_TEMPLATE_DIR), trim_blocks=True, lstrip_blocks=True)
+    # noqa: S701 — the template renders C++ source; autoescape would HTML-escape
+    # angle brackets (`vector<int64_t>`, `#include <...>`) and corrupt codegen.
+    env = Environment(loader=FileSystemLoader(_TEMPLATE_DIR), trim_blocks=True, lstrip_blocks=True)  # noqa: S701
     tpl = env.get_template(name)
     return tpl.render(**ctx)
 
@@ -446,10 +454,7 @@ class GeirGraphBuilder:
                     eori_fmt = elt_ori_fmts[j] if j < len(elt_ori_fmts) else elt_ori_fmts[-1]
                     eori_shape = elt_ori_shapes[j] if j < len(elt_ori_shapes) else None
                     out_data_shape = list(eshape)
-                    if is_dynamic:
-                        out_desc_shape = [-1 for _ in out_data_shape]
-                    else:
-                        out_desc_shape = out_data_shape
+                    out_desc_shape = [-1 for _ in out_data_shape] if is_dynamic else out_data_shape
                     elems.append(
                         {
                             "data_shape": out_data_shape,
@@ -472,10 +477,7 @@ class GeirGraphBuilder:
                 }
             else:
                 out_data_shape = list(output_shapes[i])
-                if is_dynamic:
-                    out_desc_shape = [-1 for _ in out_data_shape]
-                else:
-                    out_desc_shape = out_data_shape
+                out_desc_shape = [-1 for _ in out_data_shape] if is_dynamic else out_data_shape
                 entry = {
                     "name": name,
                     "data_shape": out_data_shape,
@@ -513,7 +515,7 @@ class GeirGraphBuilder:
 
         # ---- attrs (exclude input names and special prefixes) ----
         input_name_set = set(input_names)
-        attr_proto_types = {name: ptype for name, ptype in proto_info.attrs}
+        attr_proto_types = dict(proto_info.attrs)
         attrs_json: Dict[str, Any] = {}
         for k, v in attrs.items():
             if k in input_name_set or str(k)[0] in ("!", "#", "@"):
@@ -538,11 +540,24 @@ class GeirGraphBuilder:
             "ge.deterministicLevel": ge_deterministic_level,
         }
 
+        # ---- output shape-unknown indexes (kernel-route protocol) ----
+        # CSV's output_shape_unknown_indexes marks data-dependent outputs whose
+        # effective shape is only known after compute. The kernel route appends
+        # a uint64[9*k] shape-metadata golden (output_generation.py
+        # __append_out_shape_unknown_golden); GEIR mirrors it on the device side
+        # by emitting one extra output chunk built from the actual GE-computed
+        # output shape, so Spec.compare receives the same 2-outputs/2-goldens
+        # contract on both routes.
+        shape_unknown_indexes = sorted(
+            {int(idx) for idx in (getattr(testcase, "output_shape_unknown_indexes", None) or ()) if idx is not None}
+        )
+
         config = {
             "inputs": inputs_json,
             "outputs": outputs_json,
             "attrs": attrs_json,
             "build_options": build_options,
+            "shape_unknown_indexes": shape_unknown_indexes,
         }
 
         config_path = os.path.join(self._work_dir, f"{testcase.testcase_name}.json")

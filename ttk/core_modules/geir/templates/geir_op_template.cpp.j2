@@ -663,7 +663,39 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "[TTK-GEIR] fdopen(data_fd=%d) failed; fallback to stdout\n", data_fd);
         data_out = stdout;
     }
-    int64_t num_outputs = (int64_t)output_tensors.size();
+
+    // Dynamic-shape metadata for outputs marked by output_shape_unknown_indexes
+    // (kernel-route protocol): one extra chunk holding, per marked output in
+    // ascending order, 9 uint64 words [rank | 0x80000000, d0..d7] built from
+    // the actual GE-computed output shape. Matches the golden appended by
+    // output_generation.py::__append_out_shape_unknown_golden.
+    vector<uint64_t> shape_meta;
+    if (config.has("shape_unknown_indexes")) {
+        const JsonValue& sui = config.at("shape_unknown_indexes");
+        if (sui.type == JsonValue::Array) {
+            for (size_t si = 0; si < sui.size(); si++) {
+                int64_t sidx = sui.at(si).getInt();
+                if (sidx < 0 || (size_t)sidx >= output_tensors.size()) {
+                    fprintf(stderr, "[TTK-GEIR] shape_unknown_indexes[%zu]=%lld out of range (outputs=%zu)\n",
+                            si, (long long)sidx, output_tensors.size());
+                    continue;
+                }
+                const vector<int64_t>& dims =
+                    output_tensors[(size_t)sidx].GetTensorDesc().GetShape().GetDims();
+                uint64_t words[9] = {1, 1, 1, 1, 1, 1, 1, 1, 1};
+                size_t rank = dims.size() > 8 ? 8 : dims.size();
+                words[0] = (uint64_t)rank | (1ULL << 31);
+                for (size_t d = 0; d < rank; d++) {
+                    words[d + 1] = (uint64_t)dims[d];
+                }
+                for (size_t w = 0; w < 9; w++) {
+                    shape_meta.push_back(words[w]);
+                }
+            }
+        }
+    }
+
+    int64_t num_outputs = (int64_t)output_tensors.size() + (shape_meta.empty() ? 0 : 1);
     fwrite(&num_outputs, 8, 1, data_out);
     for (size_t oi = 0; oi < output_tensors.size(); oi++) {
         Tensor& t            = output_tensors[oi];
@@ -672,6 +704,11 @@ int main(int argc, char* argv[]) {
         int64_t byte_count   = (int64_t)data_size;
         fwrite(&byte_count, 8, 1, data_out);
         fwrite(data, 1, data_size, data_out);
+    }
+    if (!shape_meta.empty()) {
+        int64_t meta_bytes = (int64_t)(shape_meta.size() * sizeof(uint64_t));
+        fwrite(&meta_bytes, 8, 1, data_out);
+        fwrite(shape_meta.data(), 1, meta_bytes, data_out);
     }
     fflush(data_out);
 
