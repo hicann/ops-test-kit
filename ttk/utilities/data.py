@@ -64,7 +64,7 @@ class RandomData:
                 imag = self._random("float16", shape, distribution=distribution, is_complex_imag=True)
                 np_array = numpy.concatenate((real, imag), axis=-1)
             else:  # complex64 / complex128
-                bits = eval(str(self._dtype)[7:])
+                bits = int(str(self._dtype)[7:])
                 fp_dtype = f"float{bits // 2}"
                 real = self._random(fp_dtype, self._shape, distribution=distribution)
                 imag = self._random(fp_dtype, self._shape, distribution=distribution, is_complex_imag=True)
@@ -92,7 +92,7 @@ class RandomData:
             low = DEFAULT_LOW
         if high is None:
             high = DEFAULT_HIGH
-        return list([low, high, *data_range[2:]])
+        return [low, high, *data_range[2:]]
 
     @staticmethod
     def _digitize_inf_nan(r, dtype: str):
@@ -100,10 +100,9 @@ class RandomData:
         if numpy.isinf(tmp):
             dtype_range = get_dtype_range(dtype)
             return dtype_range[0] if numpy.isneginf(tmp) else dtype_range[1]
-        elif numpy.isnan(tmp):
+        if numpy.isnan(tmp):
             return 0
-        else:
-            return tmp[0]
+        return tmp[0]
 
     def _get_must_contain_dataset(self, dtype, is_complex_imag: bool) -> tuple:
         # border value will always be included
@@ -123,13 +122,52 @@ class RandomData:
             replace_list = [x for x in replace_list if numpy.isfinite(x)]
         return tuple(replace_list)
 
+    @staticmethod
+    def _is_full_value_range(dtype, low, high) -> bool:
+        s = str(dtype)
+        if "float" not in s and "double" not in s and "bfloat" not in s:
+            return False
+        try:
+            dtype_min, dtype_max = get_dtype_range(dtype)
+        except Exception:
+            return False
+        max_abs = max(abs(low), abs(high))
+        dtype_max_abs = max(abs(dtype_min), abs(dtype_max))
+        if dtype_max_abs == 0:
+            return False
+        return max_abs >= dtype_max_abs * 0.99 and low < 0 < high
+
+    @staticmethod
+    def _gen_exponential_data(dtype, shape) -> numpy.ndarray:
+        try:
+            info = numpy.finfo(dtype)
+            max_v = float(info.max)
+            tiny = float(info.tiny)
+        except (TypeError, ValueError):
+            _, max_v = get_dtype_range(dtype)
+            s = str(dtype)
+            if "float16" in s:
+                tiny = float(numpy.finfo(numpy.float16).tiny)
+            elif "bfloat" in s:
+                tiny = float(numpy.finfo(numpy.float32).tiny)
+            else:
+                tiny = float(numpy.finfo(numpy.float64).tiny)
+        arr = numpy.random.uniform(low=-1.0, high=1.0, size=shape)
+        low_exp = int(numpy.log10(tiny)) + 1
+        high_exp = int(numpy.log10(max_v)) + 1
+        if low_exp >= high_exp:
+            return arr.astype(dtype, copy=False)
+        arr_exp = numpy.random.randint(low=low_exp, high=high_exp, size=shape)
+        arr_pow = numpy.power(10.0, arr_exp.astype(numpy.float64))
+        result = numpy.multiply(arr, arr_pow)
+        return result.astype(dtype, copy=False)
+
     def _random(
         self, dtype, shape: Union[list, tuple], is_complex_imag: bool = False, distribution: str = "uniform"
     ) -> numpy.ndarray:
         low, high = self._data_range[:2]
         tmp = numpy.array([low, high], dtype="float64")
         if low == high or all(numpy.isnan(tmp)):
-            # inf+inf*1j will be nan+infj in numpy
             if dtype == "hifloat4":
                 dtype = "float4_e1m2"
             fill_val = 0 if is_complex_imag and not numpy.isfinite(low) else low
@@ -149,11 +187,12 @@ class RandomData:
                 array = numpy.random.uniform(low, high, shape).astype(dtype, copy=False)
             elif dtype in ("float64", "double"):
                 finfo = numpy.finfo(numpy.float64)
-                # to escape `OverflowError: Range exceeds valid bounds`
                 low = max(low, finfo.min / 2)
                 high = min(high, finfo.max / 2)
                 array = numpy.random.uniform(low, high, shape).astype(dtype, copy=False)
-            else:  # default
+            elif distribution == "uniform" and self._is_full_value_range(dtype, low, high):
+                array = self._gen_exponential_data(dtype, shape)
+            else:
                 elem_count = 1
                 for d in shape:
                     elem_count *= d

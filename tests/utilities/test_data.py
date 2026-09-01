@@ -45,3 +45,41 @@ def test_zero_range_values_all_zero():
     """range(-0,+0) 生成的值必须全为 ±0（混入语义不引入非零值）。"""
     arr = RandomData("float32", (2,), (-0.0, 0.0)).generate()
     assert np.all(arr == 0.0)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "max_val"),
+    [("float32", 3.4028234663852886e38), ("float16", 65504.0)],
+)
+def test_full_value_range_covers_multiple_magnitudes(dtype, max_val):
+    """全值域应走指数分布法，覆盖多个量级而非全是极大数。
+
+    回归 issue #135：uniform 在全值域下 97% 的值落在 1e37~1e38，
+    小数几乎无法生成。改用指数分布后各量级概率均等。
+    """
+    np.random.seed(0)
+    arr = RandomData(dtype, (5000,), (-max_val, max_val)).generate()
+    assert str(arr.dtype) == dtype
+    arr64 = arr.astype("float64")
+    assert not np.any(np.isinf(arr64))
+    assert not np.any(np.isnan(arr64))
+    small = np.sum(np.abs(arr64) < 1e10)
+    assert small > 500
+
+
+def test_full_value_range_explicit_max_triggers_exponential():
+    """显式写出 bf16 max 区间也应触发指数分布法。"""
+    np.random.seed(1)
+    rd = RandomData("float32", (3000,), (-3.3895313892515355e38, 3.3895313892515355e38))
+    assert rd._is_full_value_range("float32", -3.3895313892515355e38, 3.3895313892515355e38)
+    arr = rd.generate()
+    arr64 = arr.astype("float64")
+    assert not np.any(np.isinf(arr64))
+    assert np.sum(np.abs(arr64) < 1e10) > 300
+
+
+def test_narrow_range_does_not_trigger_exponential():
+    """小范围区间不应触发指数分布法，保持 uniform 行为。"""
+    assert not RandomData._is_full_value_range("float32", -1.0, 1.0)
+    assert not RandomData._is_full_value_range("float32", -100.0, 100.0)
+    assert not RandomData._is_full_value_range("int32", -2147483648, 2147483647)
