@@ -26,6 +26,7 @@ from .math import is_negative_zero, is_positive_zero
 
 DEFAULT_LOW = -2
 DEFAULT_HIGH = 2
+CHUNK_ELEMS = 4_000_000
 
 
 def fixed_np_array(dtype, shape, init_value=1):
@@ -162,6 +163,23 @@ class RandomData:
         result = numpy.multiply(arr, arr_pow)
         return result.astype(dtype, copy=False)
 
+    @staticmethod
+    def _gen_normal_data(gen, dtype, shape):
+        """Generate truncated-normal samples into a pre-allocated typed buffer chunk by chunk.
+
+        gen.rvs consumes one numpy RandomState stream element by element, so the chunked
+        output is bitwise identical to a single full-size rvs(...).astype(dtype) call.
+        """
+        elem_count = int(numpy.prod(shape)) if numpy.ndim(shape) else 1
+        if elem_count <= 2 * CHUNK_ELEMS:
+            return gen.rvs(shape).astype(dtype, copy=False)
+        out = numpy.empty(shape, dtype=dtype)
+        flat = out.ravel()
+        for start in range(0, elem_count, CHUNK_ELEMS):
+            end = min(start + CHUNK_ELEMS, elem_count)
+            flat[start:end] = gen.rvs(end - start)
+        return out
+
     def _random(
         self, dtype, shape: Union[list, tuple], is_complex_imag: bool = False, distribution: str = "uniform"
     ) -> numpy.ndarray:
@@ -181,7 +199,7 @@ class RandomData:
                 mean = (high + low) / 2
                 sigma = (high - mean) / 3
                 gen = truncnorm((low - mean) / sigma, (high - mean) / sigma, loc=mean, scale=sigma)
-                array = gen.rvs(shape).astype(dtype, copy=False)
+                array = self._gen_normal_data(gen, dtype, shape)
             elif dtype == "hifloat4":
                 dtype = "float4_e1m2"
                 array = numpy.random.uniform(low, high, shape).astype(dtype, copy=False)

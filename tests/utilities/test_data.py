@@ -15,6 +15,15 @@ import pytest
 from ttk.utilities.data import RandomData
 
 
+def _missing_en_dtypes():
+    try:
+        import en_dtypes  # noqa: F401
+
+        return False
+    except ImportError:
+        return True
+
+
 @pytest.mark.parametrize("dtype", ["float32", "bfloat16", "float16"])
 def test_small_tensor_zero_range_keeps_dtype(dtype):
     """size <= replace_count 走 concatenate 混入路径，dtype 必须保持声明值（防 float64 提升）。"""
@@ -83,3 +92,92 @@ def test_narrow_range_does_not_trigger_exponential():
     assert not RandomData._is_full_value_range("float32", -1.0, 1.0)
     assert not RandomData._is_full_value_range("float32", -100.0, 100.0)
     assert not RandomData._is_full_value_range("int32", -2147483648, 2147483647)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    ["float16", "bfloat16", "float32", "float64", "int32", "int64", "uint8", "bool"],
+)
+def test_normal_chunked_bitwise_equal(dtype):
+    """normal 大 tensor 分块生成与单次全量生成逐位相同（含非整除尾块）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS + 1024
+    rd = RandomData(dtype, (n,), (-1.0, 1.0))
+    low, high = rd._digitize_inf_nan(-1.0, rd._dtype), rd._digitize_inf_nan(1.0, rd._dtype)
+
+    from scipy.stats import truncnorm
+
+    mean = (high + low) / 2
+    sigma = (high - mean) / 3
+    gen = truncnorm((low - mean) / sigma, (high - mean) / sigma, loc=mean, scale=sigma)
+
+    np.random.seed(42)
+    full = gen.rvs(n).astype(rd._dtype, copy=False)
+    np.random.seed(42)
+    chunked = rd._gen_normal_data(gen, rd._dtype, (n,))
+    assert chunked.dtype == full.dtype
+    assert np.array_equal(chunked, full)
+
+
+def test_normal_small_tensor_keeps_single_shot_path():
+    """elem_count <= 2*CHUNK_ELEMS 时保持单次全量路径（行为与改动前一致）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS
+    rd = RandomData("float32", (n,), (-1.0, 1.0))
+    low, high = rd._digitize_inf_nan(-1.0, rd._dtype), rd._digitize_inf_nan(1.0, rd._dtype)
+
+    from scipy.stats import truncnorm
+
+    mean = (high + low) / 2
+    sigma = (high - mean) / 3
+    gen = truncnorm((low - mean) / sigma, (high - mean) / sigma, loc=mean, scale=sigma)
+
+    np.random.seed(42)
+    full = gen.rvs(n).astype(rd._dtype, copy=False)
+    np.random.seed(42)
+    small = rd._gen_normal_data(gen, rd._dtype, (n,))
+    assert np.array_equal(small, full)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        "float16",
+        "bfloat16",
+        "float32",
+        "float64",
+        "int32",
+        "int64",
+        "uint8",
+        "int4",
+        "float8_e5m2",
+        "float8_e4m3fn",
+        pytest.param(
+            "float4_e2m1", marks=pytest.mark.skipif(_missing_en_dtypes(), reason="en_dtypes is not installed")
+        ),
+        pytest.param("hifloat8", marks=pytest.mark.skipif(_missing_en_dtypes(), reason="en_dtypes is not installed")),
+    ],
+)
+def test_chunked_direct_write_matches_astype(dtype):
+    """resolve 后的各 dtype：np.empty 预分配 + 分块直写 cast 与整块 astype 逐位一致。"""
+    from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
+
+    resolved = resolve_custom_numpy_dtypes([dtype])[0]
+    src = np.random.uniform(-1.0, 1.0, 4096)
+    chunk = 1000
+    out = np.empty(4096, dtype=resolved)
+    for start in range(0, 4096, chunk):
+        end = min(start + chunk, 4096)
+        out[start:end] = src[start:end]
+    assert np.array_equal(out, src.astype(resolved, copy=False))
+
+
+def test_normal_chunked_generate_dtype_preserved():
+    """generate 入口走分块路径后 dtype 保持声明值（防 float64 提升/降级）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS + 8
+    arr = RandomData("bfloat16", (n,), (-1.0, 1.0)).generate(distribution="normal")
+    assert str(arr.dtype) == "bfloat16"
