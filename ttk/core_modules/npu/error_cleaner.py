@@ -31,6 +31,10 @@ def _ensure_loaded():
     global _cleaner
     if _cleaner is not None:
         return
+    # Preload liberror_manager.so globally so the cleaner cext and the CANN runtime
+    # resolve the same ErrorManager instance; otherwise ClearErrorManager would clear
+    # a different symbol copy and residual errors would survive (issue #29).
+    ctypes.CDLL("liberror_manager.so", mode=ctypes.RTLD_GLOBAL)
     _cleaner = load_cext("libttk_error_manager_cleaner.so", "error_manager_cleaner")
     _cleaner.ClearErrorManager.restype = ctypes.c_int
 
