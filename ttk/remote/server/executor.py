@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """executor — runs ONE /v1/run inside a fresh child process (isolation).
 
 Module-level so it is picklable for multiprocessing. execute_request returns an
@@ -313,9 +323,8 @@ def camel_to_snake(camel_name: str) -> str:
                 sub_head = True
             else:
                 _idx_next = _idx + 1
-                if _idx_next < len(name_list):
-                    if name_list[_idx_next].islower():
-                        snake_name += "_"
+                if _idx_next < len(name_list) and name_list[_idx_next].islower():
+                    snake_name += "_"
         snake_name += _char
 
     return snake_name.lower()
@@ -333,21 +342,19 @@ def _find_torch_api(torch_module, snake_name: str):
         torch_api = None
     if torch_api and isinstance(torch_api, _Callable):
         return torch_api
-    else:
-        if snake_name.startswith("inplace_"):
-            return _find_torch_api(torch_module, snake_name[len("inplace_") :])
-        elif snake_name.endswith("_scalar"):
-            return _find_torch_api(torch_module, snake_name[: -len("_scalar")])
-        elif snake_name.endswith("_tensor"):
-            return _find_torch_api(torch_module, snake_name[: -len("_tensor")])
-        elif snake_name.endswith("_v2"):
-            return _find_torch_api(torch_module, snake_name[: -len("_v2")])
-        elif snake_name.endswith("s"):
-            return _find_torch_api(torch_module, snake_name[: -len("s")])
-        elif not snake_name.startswith("_"):  # _add_relu
-            return _find_torch_api(torch_module, "_" + snake_name)
-        else:
-            return None
+    if snake_name.startswith("inplace_"):
+        return _find_torch_api(torch_module, snake_name[len("inplace_") :])
+    if snake_name.endswith("_scalar"):
+        return _find_torch_api(torch_module, snake_name[: -len("_scalar")])
+    if snake_name.endswith("_tensor"):
+        return _find_torch_api(torch_module, snake_name[: -len("_tensor")])
+    if snake_name.endswith("_v2"):
+        return _find_torch_api(torch_module, snake_name[: -len("_v2")])
+    if snake_name.endswith("s"):
+        return _find_torch_api(torch_module, snake_name[: -len("s")])
+    if not snake_name.startswith("_"):  # _add_relu
+        return _find_torch_api(torch_module, "_" + snake_name)
+    return None
 
 
 def _auto_import_from_torch(snake_name: str):
@@ -1090,7 +1097,7 @@ def execute_request(
 
         if has_data(mode):
             path = os.path.join(output_dir, "out.npz")
-            np.savez_compressed(path, **{f"a{i}": o for i, o in enumerate(outs)})
+            np.savez(path, **{f"a{i}": o for i, o in enumerate(outs)})
             return _ok(
                 path, len(schema), [list(o.shape) for o in outs], dtypes=None, perf=perf, api=api_label, schema=schema
             )

@@ -671,7 +671,7 @@ def _dry_run_env(req_dir):
     """Random-output envelope for dry-run, mirroring _run_in_subprocess's return."""
     outs = [np.random.randn(4, 8).astype(np.float32)]
     path = os.path.join(req_dir, "out.npz")
-    np.savez_compressed(path, **{f"a{i}": o for i, o in enumerate(outs)})
+    np.savez(path, **{f"a{i}": o for i, o in enumerate(outs)})
     return {
         "ok": True,
         "http_status": 200,

@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """
 Dispatcher - Worker-side remote execution dispatch.
 
@@ -131,10 +141,9 @@ def _serialize_to_file(inputs: list, dir=None) -> str:
     deep_flatten 展开嵌套（每叶子一个 a{i}），过滤 None。dir: 临时文件目录
     （默认系统 tempdir）。返回路径，caller 清理。
     """
-    tmp = tempfile.NamedTemporaryFile(suffix=".npz", delete=False, dir=dir)
     leaves = [a for a in deep_flatten(inputs) if a is not None]
-    np.savez_compressed(tmp, **{f"a{i}": a for i, a in enumerate(leaves)})
-    tmp.close()
+    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False, dir=dir) as tmp:
+        np.savez(tmp, **{f"a{i}": a for i, a in enumerate(leaves)})
     return tmp.name
 
 
@@ -327,9 +336,8 @@ def _do_http_sync(
         if resp.status == 200:
             logging.info(f"424: synced '{rel_path}' for missing module '{missing}'")
             return True
-        else:
-            logging.warning(f"424: sync failed for '{rel_path}' (status {resp.status})")
-            return False
+        logging.warning(f"424: sync failed for '{rel_path}' (status {resp.status})")
+        return False
     except Exception as e:
         logging.warning(f"424: sync error for '{missing}': {e}")
         return False
