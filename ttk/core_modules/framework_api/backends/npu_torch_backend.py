@@ -36,6 +36,11 @@ class NpuTorchBackend(TorchBackend):
     def is_npu(self) -> bool:
         return True
 
+    def set_device(self, dev_id: int = 0):
+        import torch_npu  # NPU-only: keep import in method body (lazy)
+
+        torch_npu.npu.set_device(dev_id)
+
     def to_device(self, tensor, dev_id=0, preserve_stride=False):
         if preserve_stride:
             return self._to_device_preserving_stride(tensor, dev_id)
@@ -45,18 +50,16 @@ class NpuTorchBackend(TorchBackend):
         if is_torch_native_dtype(str_dtype):
             torch_tensor = self.from_numpy(tensor)
             return torch_tensor.npu(dev_id)
-        else:
-            if is_4bit_dtype(str_dtype):
-                torch_tensor = self.from_numpy(tensor)
-                return torch_tensor.npu(dev_id)
-            elif str_dtype == "float8_e8m0":
-                return self.from_numpy(tensor).npu(dev_id)
-            else:
-                np_fp32 = tensor.astype(np.float32)
-                npu_torch_tensor = torch_npu.npu_dtype_cast(
-                    self.from_numpy(np_fp32).npu(dev_id), dtype=getattr(torch_npu, str_dtype)
-                )
-                return npu_torch_tensor
+        if is_4bit_dtype(str_dtype):
+            torch_tensor = self.from_numpy(tensor)
+            return torch_tensor.npu(dev_id)
+        if str_dtype == "float8_e8m0":
+            return self.from_numpy(tensor).npu(dev_id)
+        np_fp32 = tensor.astype(np.float32)
+        npu_torch_tensor = torch_npu.npu_dtype_cast(
+            self.from_numpy(np_fp32).npu(dev_id), dtype=getattr(torch_npu, str_dtype)
+        )
+        return npu_torch_tensor
 
     # to_numpy/from_numpy inherited from TorchBackend (was a dead byte-identical
     # override that also dropped the .contiguous() guard the parent applies).

@@ -428,10 +428,7 @@ def _capture_stdout_npu_memory(testcase, return_struct, fn, *args, **kwargs):
 
 def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf, det_status)."""
-    if backend.is_npu():
-        import torch_npu
-
-        torch_npu.npu.set_device(dev_id)
+    backend.set_device(dev_id)
     resolved = backend.wrap_eager_callable(resolved)
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
@@ -1120,6 +1117,10 @@ def _do_profile(  # noqa: PLR0911
             return
 
     process_ctx.notify_status("OnGenInput")
+    # 提前设定进程设备：TF 的 npu_device.open/as_default 必须先于首个
+    # tf.Tensor 创建（generate_inputs 内），否则 TF context 冻结在 CPU、
+    # op 静默跑 CPU（假绿）。torch 侧为幂等的 torch_npu.npu.set_device。
+    backend.set_device(dev_id)
     try:
         if manual_case is not None:
             raw_inputs = generate_inputs(testcase, switches, backend, plan, stored_inputs=manual_case.inputs)

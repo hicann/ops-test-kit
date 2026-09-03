@@ -14,8 +14,13 @@ BEFORE any TF eager operations (tf.convert_to_tensor etc.), because it swaps
 the global TF context to _ContextWithDefaultDevice with NPU as default device.
 Calling it after the context is already initialized will not take effect.
 
-Therefore open() is called in __init__ (at backend creation time, before
-generate_inputs creates the first tf.Tensor), not lazily in to_device.
+open() is therefore deferred to ``set_device(dev_id)`` — called by
+``_do_profile`` before input generation (the same hook and timing as
+torch_npu.npu.set_device) — rather than __init__: E2E workers are forked
+from the parent process, and an open() in the parent leaves the children
+with dead GE threads inherited across fork (aclprofStart segfaults). The
+parent only queries metadata (has_device / device_type) and must not
+touch the device.
 
 as_default() monkey-patches ops.device to _device_consistent_with_context,
 which ignores the argument device path and always uses ctx.default_device
@@ -40,7 +45,12 @@ class NpuTfBackend(TfBackend):
     _opened_device = None
 
     def __init__(self):
-        self._ensure_npu_opened(0)
+        # open 延迟到 set_device(dev_id)（_do_profile 在输入生成前统一调用，
+        # 与 torch 的 torch_npu.npu.set_device 同一时机、同一语义）。此处不能
+        # open：E2E worker 经 fork 拉起，父进程 open 后 C++ GE 线程不随 fork
+        # 存活，子进程继承的句柄已坏（aclprofStart 段错误）。父进程仅做元数据
+        # 查询（has_device/device_type），不需要设备。
+        pass
 
     def is_npu(self) -> bool:
         return True
@@ -64,6 +74,9 @@ class NpuTfBackend(TfBackend):
 
     def device_scope(self, dev_id=0):
         return nullcontext()
+
+    def set_device(self, dev_id: int = 0):
+        self._ensure_npu_opened(dev_id)
 
     def _ensure_npu_opened(self, dev_id):
         if NpuTfBackend._opened_device is None:

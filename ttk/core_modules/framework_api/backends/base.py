@@ -118,7 +118,6 @@ class Backend(ABC):
 
     def restore_inplace(self, target, backup):  # noqa: B027
         """Restore a tensor from backup after an inplace operation. Default: no-op."""
-        pass
 
     def is_npu_only(self, api_name: str) -> bool:
         """Whether the API can only run on device (not CPU). Default: False."""
@@ -134,7 +133,13 @@ class Backend(ABC):
 
     def set_deterministic_level(self, level):  # noqa: B027
         """Set deterministic computation level. Default: no-op."""
-        pass
+
+    def set_device(self, dev_id: int = 0):  # noqa: B027
+        """Set the current device for eager execution. Default: no-op.
+
+        Framework-specific (torch_npu needs a process-global device; TF's
+        npu_device.open().as_default() in __init__ already pinned the device).
+        """
 
     def device_scope(self, dev_id=0):
         """Context manager for device-scoped execution. Default: nullcontext."""

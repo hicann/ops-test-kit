@@ -1,12 +1,14 @@
-# ----------------------------------------------------------------------------
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-# ----------------------------------------------------------------------------
+
+
 """manual_data prepare/replay 与 e2e/aclnn profiling 流程的集成测试。"""
 
 from contextlib import nullcontext
@@ -126,7 +128,7 @@ def test_e2e_prepare_stops_before_api_resolution_and_device_execution(monkeypatc
 
     e2e_profiling._do_profile(
         case,
-        SimpleNamespace(device_type=lambda: "npu", inputs_from_numpy=lambda tc, ri: ri),
+        SimpleNamespace(device_type=lambda: "npu", set_device=lambda *_: None, inputs_from_numpy=lambda tc, ri: ri),
         {},
         {},
         0,
@@ -160,7 +162,7 @@ def test_e2e_failed_reprepare_invalidates_previous_case(monkeypatch, tmp_path):
     result = FrameworkApiReturnStructure()
     e2e_profiling._do_profile(
         case,
-        SimpleNamespace(device_type=lambda: "npu", inputs_from_numpy=lambda tc, ri: ri),
+        SimpleNamespace(device_type=lambda: "npu", set_device=lambda *_: None, inputs_from_numpy=lambda tc, ri: ri),
         {},
         {},
         0,
@@ -205,7 +207,12 @@ def test_e2e_replay_skips_input_and_golden_generation(monkeypatch, tmp_path):
     monkeypatch.setattr(e2e_profiling, "_apply_pre_compare", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_evaluate_eager_precision", evaluated)
     monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
-    backend = SimpleNamespace(device_type=lambda: "npu", has_device=lambda: False, inputs_from_numpy=lambda tc, ri: ri)
+    backend = SimpleNamespace(
+        device_type=lambda: "npu",
+        has_device=lambda: False,
+        set_device=lambda *_: None,
+        inputs_from_numpy=lambda tc, ri: ri,
+    )
 
     e2e_profiling._do_profile(case, backend, {}, {}, 0, switches, FrameworkApiReturnStructure())
 
@@ -256,7 +263,12 @@ def test_e2e_replay_custom_compare_receives_restored_inputs(monkeypatch, tmp_pat
     monkeypatch.setattr(e2e_profiling, "_dump_goldens", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_dump_outputs", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
-    backend = SimpleNamespace(device_type=lambda: "npu", has_device=lambda: False, inputs_from_numpy=lambda tc, ri: ri)
+    backend = SimpleNamespace(
+        device_type=lambda: "npu",
+        has_device=lambda: False,
+        set_device=lambda *_: None,
+        inputs_from_numpy=lambda tc, ri: ri,
+    )
     result = FrameworkApiReturnStructure()
 
     e2e_profiling._do_profile(case, backend, {}, {}, 0, switches, result)
@@ -308,7 +320,12 @@ def test_e2e_provider_automatically_selects_replay(monkeypatch, tmp_path):
     monkeypatch.setattr(e2e_profiling, "_apply_pre_compare", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_evaluate_eager_precision", lambda *_: None)
     monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
-    backend = SimpleNamespace(device_type=lambda: "npu", has_device=lambda: False, inputs_from_numpy=lambda tc, ri: ri)
+    backend = SimpleNamespace(
+        device_type=lambda: "npu",
+        has_device=lambda: False,
+        set_device=lambda *_: None,
+        inputs_from_numpy=lambda tc, ri: ri,
+    )
 
     register_manual_data_directory_provider(provider)
     try:

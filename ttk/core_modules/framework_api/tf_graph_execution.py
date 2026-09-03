@@ -102,7 +102,14 @@ def _execute_tf_graph(
             )
 
         input_signature = _build_input_signature(testcase, dynamic)
-        wrapper = TfGraphWrapper(resolved, input_signature=input_signature, dynamic=dynamic, api_name=testcase.api_name)
+        wrapper = TfGraphWrapper(
+            resolved,
+            input_signature=input_signature,
+            dynamic=dynamic,
+            api_name=testcase.api_name,
+            call_args=args,
+            call_kwargs=kwargs,
+        )
 
         profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
         deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0

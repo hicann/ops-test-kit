@@ -54,7 +54,8 @@ class TfBackend(Backend):
 
         if arr is None:
             return None
-        arr = np.ascontiguousarray(arr)
+        # 0-D 本就连续；ascontiguousarray 会把标量提升为 (1,)，破坏 TF 0-D 参数校验
+        arr = np.ascontiguousarray(arr) if arr.ndim else arr
         arr = normalize_to_tf_dtype(arr)
         return tf.convert_to_tensor(arr)
 

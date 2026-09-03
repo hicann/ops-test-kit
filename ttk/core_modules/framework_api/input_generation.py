@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Version 2.0 (the "License").
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -50,10 +50,7 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
         plugin_inputs = backend.inputs_from_numpy(testcase, raw_inputs)
         use_numpy = backend.needs_numpy_fallback(testcase)
         dist = testcase.tensor_list_dist
-        if dist:
-            nested_for_plugin = apply_as_list(plugin_inputs, dist)
-        else:
-            nested_for_plugin = plugin_inputs
+        nested_for_plugin = apply_as_list(plugin_inputs, dist) if dist else plugin_inputs
         args, kwargs, extra_attrs = plan.build_args(nested_for_plugin)
         extra = {
             "backend": backend.device_type(),
@@ -147,7 +144,8 @@ def np_to_tf_inputs(testcase, raw_inputs):
         if arr is None:
             result.append(None)
             continue
-        contiguous = np.ascontiguousarray(arr)
+        # 0-D 本就连续；ascontiguousarray 会把标量提升为 (1,)，破坏 TF 0-D 参数校验
+        contiguous = np.ascontiguousarray(arr) if arr.ndim else arr
         contiguous = normalize_to_tf_dtype(contiguous)
         if idx in const_indexes:
             result.append(tf.constant(contiguous))
@@ -185,10 +183,7 @@ def override_tensors_from_attributes(testcase, raw_inputs):
     if not info or not testcase.attributes:
         return
     dist = testcase.tensor_list_dist
-    if dist:
-        nested_np = apply_as_list(raw_inputs, dist)
-    else:
-        nested_np = list(raw_inputs)
+    nested_np = apply_as_list(raw_inputs, dist) if dist else list(raw_inputs)
     tensor_params = info.tensors
     for idx, param in enumerate(tensor_params):
         if idx >= len(nested_np):
@@ -303,8 +298,5 @@ def to_non_contiguous_view(storage, view_shape, view_stride, view_offset):
 
     dtype = storage.dtype
     byte_strides = tuple(s * dtype.itemsize for s in view_stride)
-    if view_offset and view_offset > 0:
-        base = storage.ravel()[view_offset:]
-    else:
-        base = storage.ravel()
+    base = storage.ravel()[view_offset:] if view_offset and view_offset > 0 else storage.ravel()
     return np_as_strided_safe(base, shape=view_shape, strides=byte_strides)
