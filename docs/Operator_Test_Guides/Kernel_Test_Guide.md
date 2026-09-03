@@ -147,6 +147,7 @@ python3 -m ttk kernel -i add.csv --co
 | `--clear-atomic` | | 强制在算子执行前清零输出和workspace | 关闭 |
 | `--clear-ub` | | 执行前将UB填充为指定值（默认清零） | 关闭 |
 | `--clear-l1` | | 执行前将L1填充为指定值（默认清零） | 关闭 |
+| `--clear-l0` | | 执行前将L0A/L0B/L0C初始化为指定值（默认清零；L0A/L0B填充指定值，L0C为matmul计算结果，值为0时全零） | 关闭 |
 | `--simt-ub` | | SIMT 模式 UB 大小 | 无 |
 | `--simt-stack-dcu` | | SIMT 模式 DCU 栈大小 | 无 |
 | `--force-block-dim` | | 强制指定 block_dim | 无 |

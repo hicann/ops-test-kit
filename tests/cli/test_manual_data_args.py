@@ -3,12 +3,12 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """manual-data 两阶段模式测试：--manual-data-dirs / --no-prof 参数解析、
-prepare/replay 模式分发、互斥校验、--clear-ub/--clear-l1 数值解析。"""
+prepare/replay 模式分发、互斥校验、--clear-ub/--clear-l1/--clear-l0 数值解析。"""
 
 import argparse
 import logging
@@ -152,7 +152,7 @@ def test_prepare_accepts_explicit_output_directory(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "mutate, message",
+    ("mutate", "message"),
     [
         # output/full dump 不能在设备执行前生成
         (lambda sw: sw.dump_config.enable_output(), "--dump in,golden or --dump in"),
@@ -269,17 +269,17 @@ def test_manual_data_fields_survive_worker_pickle(tmp_path):
     switches.manual_data_mode = "replay"
     switches.manual_data_dirs = (str(tmp_path),)
 
-    restored = pickle.loads(pickle.dumps(switches))
+    restored = pickle.loads(pickle.dumps(switches))  # noqa: S301
 
     assert restored.manual_data_mode == "replay"
     assert restored.manual_data_dirs == (str(tmp_path),)
 
 
-# -- --clear-ub / --clear-l1 数值解析 ----------------------------------------
+# -- --clear-ub / --clear-l1 / --clear-l0 数值解析 ----------------------------------------
 
 
 @pytest.mark.parametrize(
-    "value, expected_type, expected",
+    ("value", "expected_type", "expected"),
     [
         ("7", np.int32, 7),
         ("0xff", np.int32, 255),
@@ -290,7 +290,7 @@ def test_manual_data_fields_survive_worker_pickle(tmp_path):
     ids=["int", "hex", "float", "typed-float16", "typed-uint8"],
 )
 def test_clear_value_parser_accepts_numeric_literals(value, expected_type, expected):
-    """--clear-ub/--clear-l1 解析十进制/十六进制/浮点/带 dtype 前缀的数值字面量。"""
+    """--clear-ub/--clear-l1/--clear-l0 解析十进制/十六进制/浮点/带 dtype 前缀的数值字面量。"""
     parsed = _parse_clean_val("UB", value)
 
     assert isinstance(parsed, expected_type)
@@ -298,9 +298,11 @@ def test_clear_value_parser_accepts_numeric_literals(value, expected_type, expec
 
 
 def test_clear_value_parser_accepts_inf_and_nan():
-    """--clear-ub/--clear-l1 解析特殊浮点值 inf/nan。"""
+    """--clear-ub/--clear-l1/--clear-l0 解析特殊浮点值 inf/nan。"""
     assert np.isinf(_parse_clean_val("L1", "float32(inf)"))
     assert np.isnan(_parse_clean_val("L1", "nan"))
+    assert np.isinf(_parse_clean_val("L0", "float32(inf)"))
+    assert np.isnan(_parse_clean_val("L0", "nan"))
 
 
 def test_clear_value_parser_rejects_code_injection():

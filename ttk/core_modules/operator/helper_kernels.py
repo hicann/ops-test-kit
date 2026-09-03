@@ -38,9 +38,7 @@ def clear_ub(ipt: dict, full_soc_version: str, core_type: str, kernel_name: str 
     return tik_instance
 
 
-def test_clear_ub(
-    output, full_soc_version: str, core_type: str, clean_val: numpy.generic, kernel_name: str = "test_clear_ub"
-):
+def test_clear_ub(output, full_soc_version: str, core_type: str, clean_val: numpy.generic, kernel_name: str):
     """Test UB data after clear"""
     tbe_platform.set_current_compile_soc_info(full_soc_version, core_type)
     tik_instance = tik.Tik()
@@ -120,6 +118,83 @@ def clear_l1(ipt: dict, full_soc_version: str, kernel_name: str = "clear_l1"):
             )
 
     tik_instance.BuildCCE(kernel_name=kernel_name, inputs=(input_gm,), outputs=())
+    return tik_instance
+
+
+def clear_l0(ipt: dict, full_soc_version: str, kernel_name: str = "clear_l0"):
+    """
+    clear L0A/L0B/L0C data via two-step matmul (GM->L1->L0A/L0B->L0C).
+    matmul internally uses mmad instruction to load L1->L0A/L0B and write L0C.
+    Step1 fills L0A fully and writes L0C; Step2 fills L0B fully and overwrites L0C.
+    On Ascend950, matmul uses f16f16f16 (L0C as float16) with api_check_support
+    patched because tik_api_map lacks the 950 entry.
+    On Ascend910B, matmul uses f16f16f32 (L0C as float32).
+    """
+    import tbe.common.platform.platform_info as _pi
+
+    _orig_check = _pi.api_check_support
+
+    def _patched_check(name, dtype_str):
+        if name == "tik.matmul" and dtype_str == "f16f16f16":
+            return True
+        if name == "tik.load2dv2" and dtype_str == "float16":
+            return True
+        return _orig_check(name, dtype_str)
+
+    _pi.api_check_support = _patched_check
+    import tbe.tik.api.cube.matmul as _matmul_mod
+
+    _matmul_mod.api_check_support = _patched_check
+    import tbe.tik.tik_lib.tik_mmad_convert_api.tik_mmad_convert_operation as _load2d_mod
+
+    _load2d_mod.api_check_support = _patched_check
+
+    tbe_platform.set_current_compile_soc_info(full_soc_version, "AiCore")
+    tik_instance = tik.Tik()
+    core_num = tbe_platform.get_soc_spec("CORE_NUM")
+
+    l0a_size = tbe_platform.get_soc_spec(tbe_platform.L0A_SIZE)
+    l0b_size = tbe_platform.get_soc_spec(tbe_platform.L0B_SIZE)
+    dtype = "float16"
+    dtype_bytes = numpy.dtype(dtype).itemsize
+
+    short_soc = full_soc_version
+    is_950 = "950" in short_soc or "Ascend950" in short_soc
+    l0c_dtype = dtype if is_950 else "float32"
+
+    matrix_k = 16
+    matrix_m = l0a_size // (matrix_k * dtype_bytes)
+    matrix_n = l0b_size // (matrix_k * dtype_bytes)
+
+    input_bytes = 128 * 1024
+    input_gm = tik_instance.Tensor(dtype, (input_bytes // dtype_bytes,), name="input_gm", scope=tik.scope_gm)
+
+    src_a1 = tik_instance.Tensor(dtype, (matrix_m, matrix_k), name="src_a1", scope=tik.scope_cbuf)
+    src_b1 = tik_instance.Tensor(dtype, (matrix_k, matrix_k), name="src_b1", scope=tik.scope_cbuf)
+    src_a2 = tik_instance.Tensor(dtype, (matrix_k, matrix_k), name="src_a2", scope=tik.scope_cbuf)
+    src_b2 = tik_instance.Tensor(dtype, (matrix_k, matrix_n), name="src_b2", scope=tik.scope_cbuf)
+    dst_l0c = tik_instance.Tensor(l0c_dtype, (matrix_m, matrix_k), name="dst_l0c", scope=tik.scope_cc)
+
+    a1_burst = matrix_m * matrix_k * dtype_bytes // 32
+    b2_burst = matrix_k * matrix_n * dtype_bytes // 32
+    small_burst = matrix_k * matrix_k * dtype_bytes // 32
+
+    with tik_instance.for_range(0, core_num, block_num=core_num):
+        tik_instance.data_move(dst=src_a1, src=input_gm, sid=0, nburst=1, burst=a1_burst, src_stride=0, dst_stride=0)
+        tik_instance.data_move(dst=src_b1, src=input_gm, sid=0, nburst=1, burst=small_burst, src_stride=0, dst_stride=0)
+        tik_instance.matmul(dst=dst_l0c, a=src_a1, b=src_b1, m=matrix_m, k=matrix_k, n=matrix_k, init_l1out=True)
+
+        tik_instance.data_move(dst=src_a2, src=input_gm, sid=0, nburst=1, burst=small_burst, src_stride=0, dst_stride=0)
+        tik_instance.data_move(dst=src_b2, src=input_gm, sid=0, nburst=1, burst=b2_burst, src_stride=0, dst_stride=0)
+        tik_instance.matmul(dst=dst_l0c, a=src_a2, b=src_b2, m=matrix_k, k=matrix_k, n=matrix_n, init_l1out=True)
+
+    try:
+        tik_instance.BuildCCE(kernel_name=kernel_name, inputs=(input_gm,), outputs=())
+    finally:
+        _pi.api_check_support = _orig_check
+        _matmul_mod.api_check_support = _orig_check
+        _load2d_mod.api_check_support = _orig_check
+
     return tik_instance
 
 

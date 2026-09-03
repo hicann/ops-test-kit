@@ -186,6 +186,9 @@ class AclInterface:
     def clear_l1(self, switches: "ttk.utilities.SWITCHES"):
         self._rts_interface.clear_l1(switches)
 
+    def clear_l0(self, switches: "ttk.utilities.SWITCHES"):
+        self._rts_interface.clear_l0(switches)
+
     def clear_ub(self, switches: "ttk.utilities.SWITCHES"):
         self._rts_interface.clear_ub(switches)
 
@@ -253,10 +256,9 @@ class AclInterface:
             return self._create_acl_tensor_from_numpy(
                 tensor, view_format, storage_shape, view_shape_override, acl_dtype_override
             )
-        else:
-            return self._create_acl_tensor_from_torch(
-                tensor, view_format, storage_shape, view_shape_override, acl_dtype_override
-            )
+        return self._create_acl_tensor_from_torch(
+            tensor, view_format, storage_shape, view_shape_override, acl_dtype_override
+        )
 
     def _create_acl_tensor_from_torch(
         self,
@@ -392,9 +394,8 @@ class AclInterface:
         for t in acl_tensor_ptr_lst:
             if t is None:
                 continue
-            if isinstance(t, ctypes.c_void_p):
-                t = t.value
-            self._acl_tensors.remove(t)
+            ptr = t.value if isinstance(t, ctypes.c_void_p) else t
+            self._acl_tensors.remove(ptr)
         return c_ptr
 
     def create_acl_scalar(self, val: Union[numpy.ndarray, "torch.Tensor"]) -> ctypes.c_void_p:
@@ -439,9 +440,8 @@ class AclInterface:
         for s in acl_scalar_ptr_lst:
             if s is None:
                 continue
-            if isinstance(s, ctypes.c_void_p):
-                s = s.value
-            self._acl_scalars.remove(s)
+            ptr = s.value if isinstance(s, ctypes.c_void_p) else s
+            self._acl_scalars.remove(ptr)
         return c_ptr
 
     def create_acl_array(self, val_lst: Union[tuple, list], typ: str) -> ctypes.c_void_p:
@@ -451,10 +451,7 @@ class AclInterface:
         cnt = len(val_lst)
         c_type = self.AclArrayDict[typ]
         c_size = ctypes.c_uint64(cnt)
-        if cnt == 0:
-            c_value = None
-        else:
-            c_value = (c_type * cnt)(*val_lst)
+        c_value = None if cnt == 0 else (c_type * cnt)(*val_lst)
         c_ptr = self._opbase_api_call_with_ptr_return(
             f"aclCreate{typ}Array", f"Args: value={val_lst}, size={cnt}", c_value, c_size
         )
@@ -569,7 +566,7 @@ class AclInterface:
             self._free_acl_scalar_list(self._acl_scalar_lists.pop())
         while self._acl_scalars:
             self._free_acl_scalar(self._acl_scalars.pop())
-        for typ in self.AclArrayDict.keys():
+        for typ in self.AclArrayDict:
             array_sets = getattr(self, f"_acl_{typ.lower()}_arrays")
             while array_sets:
                 self._free_acl_array(array_sets.pop(), typ)

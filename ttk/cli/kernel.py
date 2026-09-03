@@ -1,3 +1,10 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 from ttk.cli.bridge import (
     apply_kernel_args,
     args_to_switches,
@@ -76,6 +83,13 @@ def _add_kernel_args(parser):
     )
     parser.add_argument(
         "--clear-l1", dest="clear_l1", default=None, help="Clear L1 to specified value before execution (default: 0)"
+    )
+    parser.add_argument(
+        "--clear-l0",
+        dest="clear_l0",
+        default=None,
+        help="Clear L0A/L0B/L0C to specified value before execution (default: 0). "
+        "L0A/L0B are filled with the value; L0C is the matmul result (0 when value is 0).",
     )
 
     parser.add_argument("--simt-ub", dest="simt_ub", default=None, help="Force SIMT UB size in bytes")

@@ -47,9 +47,7 @@ class NpuInstance(InstanceBase):
         still needs one logical worker. That mode deliberately sets the stored
         count to one and avoids querying DSMI hardware.
         """
-        if getattr(self.switches, "manual_data_mode", None) == "prepare":
-            self.switches.device_count = 1
-        elif self.switches.mode.is_model():
+        if getattr(self.switches, "manual_data_mode", None) == "prepare" or self.switches.mode.is_model():
             self.switches.device_count = 1
         elif self.switches.device_count <= 0:
             if self.switches.compile_only:
@@ -72,27 +70,25 @@ class NpuInstance(InstanceBase):
         if self.switches.dev_plat == "AUTO":
             if self.switches.mode.is_model():
                 raise RuntimeError(f"Please specify your platform type with --plat in {self.switches.mode.name} mode")
-            else:
-                try:
-                    self.switches.dev_plat = DSMIInterface().get_chip_info(0).get_complete_platform()
-                except Exception as e:
-                    if (
-                        self.switches.compile_only
-                        or self.switches.validate_only
-                        or getattr(self.switches, "manual_data_mode", None) == "prepare"
-                    ):
-                        raise RuntimeError(
-                            "Try to get Ascend platform failed. Please specify it with option like: --plat=Ascend910A"
-                        ) from e
-                    else:
-                        raise
+            try:
+                self.switches.dev_plat = DSMIInterface().get_chip_info(0).get_complete_platform()
+            except Exception as e:
+                if (
+                    self.switches.compile_only
+                    or self.switches.validate_only
+                    or getattr(self.switches, "manual_data_mode", None) == "prepare"
+                ):
+                    raise RuntimeError(
+                        "Try to get Ascend platform failed. Please specify it with option like: --plat=Ascend910A"
+                    ) from e
+                raise
         hw_info = get_npu_hw_info(self.switches.dev_plat)
         self.switches.short_soc_version = hw_info.get("short_soc_version")
         os.environ["TTK_FULL_SOC_VERSION"] = self.switches.dev_plat
         os.environ["TTK_SHORT_SOC_VERSION"] = self.switches.short_soc_version
 
     def setup_profile_object(self):
-        params = tuple([self.task_keeper, self.mp_context])
+        params = (self.task_keeper, self.mp_context)
         if "api_name" in self.case_original_headers:
             from .op_api import ApiProfileObject
 
@@ -185,4 +181,5 @@ class NpuInstance(InstanceBase):
     def _compile_help_kernels():
         Opc().compile_ub_clear()
         Opc().compile_l1_clear()
+        Opc().compile_l0_clear()
         Opc().compile_warmup_kernel()

@@ -233,8 +233,7 @@ class Opc(metaclass=Singleton):
             "api_config",
         ):
             return getattr(self._opc, item)
-        else:
-            return super().__getattribute__(item)
+        return super().__getattribute__(item)
 
     @property
     def core_type(self) -> str:
@@ -249,7 +248,7 @@ class Opc(metaclass=Singleton):
         self._all_opc_invoke("set_compile_soc_info", dev_plat, self._core_type)
 
     def switch_opc(self, opc_type: str):
-        if opc_type not in self.OpcImplement.keys():
+        if opc_type not in self.OpcImplement:
             raise ValueError(f"Invalid opc type: {opc_type}")
         self._opc = getattr(self, f"_{opc_type}_opc")
 
@@ -311,6 +310,125 @@ class Opc(metaclass=Singleton):
                     f"Compile clear_l1 failed. kernel or json file does not exist in {switches.kernel_meta}"
                 )
 
+    def compile_l0_clear(self):
+        switches = get_global_storage()
+        opc = self._tbe_opc
+        if switches.force_clear_l0 is not None:
+            obj_file = os.path.join(switches.kernel_meta, "clear_l0.o")
+            if os.path.exists(obj_file):
+                os.remove(obj_file)
+            full_soc_version = opc.get_soc_spec("FULL_SOC_VERSION")
+            short_soc_version = opc.get_soc_spec("SHORT_SOC_VERSION")
+
+            from ttk.utilities.platform import PLATFORM_BEFORE_DAVID
+
+            if short_soc_version not in PLATFORM_BEFORE_DAVID:
+                self._compile_l0_clear_ascendc(switches.kernel_meta, full_soc_version)
+            else:
+                from .helper_kernels import clear_l0
+
+                with opc.op_context.OpContext("pre-static") as cxt:
+                    tensor = {"shape": (1,), "range": ((1, None),), "dtype": "float16", "format": "ND"}
+                    attrs = {"full_soc_version": full_soc_version, "kernel_name": "clear_l0"}
+                    op_info = opc.op_info.OpInfo("ClearL0", "ClearL0")
+                    cxt.add_op_info(op_info)
+                    cxt.add_addition("op_name", "ClearL0")
+                    clear_l0(tensor, **attrs)
+            if not os.path.exists(obj_file) or not os.path.exists(os.path.join(switches.kernel_meta, "clear_l0.json")):
+                raise RuntimeError(
+                    f"Compile clear_l0 failed. kernel or json file does not exist in {switches.kernel_meta}"
+                )
+
+    @staticmethod
+    def _compile_l0_clear_ascendc(kernel_meta: str, full_soc_version: str):
+        """
+        David-generation chips have no TIK cube intrinsics (mmad/load2dv2/fixpipe),
+        so the clear_l0 helper kernel is implemented with Ascend C tensor_api and
+        compiled with ccec directly (see ascendc_kernels/clear_l0_ascendc.cpp).
+        Tile dimensions and --npu-arch are derived from the target chip's platform
+        config so the kernel adapts to different L0A/L0B/L0C sizes.
+        """
+        import json
+        import subprocess
+
+        import tbe.common.platform as tbe_platform
+
+        from ttk.utilities.platform import get_l0_clear_tile_params
+
+        tbe_platform.set_current_compile_soc_info(full_soc_version, "AiCore")
+        core_num = tbe_platform.get_soc_spec("CORE_NUM")
+        m_dim, k_dim, n_dim, npu_arch = get_l0_clear_tile_params(full_soc_version)
+
+        ascend_home = os.environ.get("ASCEND_HOME_PATH", "")
+        asc_dir = os.path.join(ascend_home, "asc")
+        os.makedirs(kernel_meta, mode=0o700, exist_ok=True)
+        src_file = os.path.join(os.path.dirname(__file__), "ascendc_kernels", "clear_l0_ascendc.cpp")
+        i_obj_file = os.path.join(kernel_meta, "clear_l0.i")
+
+        ccec_cmd = [
+            "ccec",
+            "-O2",
+            "--asc-aicore-lang",
+            src_file,
+            f"-DM_DIM={m_dim}",
+            f"-DK_DIM={k_dim}",
+            f"-DN_DIM={n_dim}",
+            "-I",
+            asc_dir,
+            "-I",
+            os.path.join(asc_dir, "include"),
+            "-I",
+            os.path.join(asc_dir, "include", "basic_api"),
+            f"--npu-arch={npu_arch}",
+            "--cce-aicore-only",
+            "-o",
+            i_obj_file,
+            "-mllvm",
+            "--cce-aicore-jump-expand=true",
+            "-mllvm",
+            "-cce-aicore-addr-transform",
+            "-mllvm",
+            "-cce-aicore-stack-size=0x8000",
+            "-mllvm",
+            "-cce-aicore-function-stack-size=0x8000",
+            "-mllvm",
+            "-cce-aicore-record-overflow=false",
+            "-mllvm",
+            "-cce-aicore-dcci-insert-for-scalar=false",
+            "-mllvm",
+            "-cce-aicore-dcci-before-kernel-end=false",
+        ]
+        result = subprocess.run(ccec_cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"clear_l0 ccec compilation failed: {result.stderr}")
+
+        ld_cmd = [
+            "ld.lld",
+            "-m",
+            "aicorelinux",
+            "-Ttext=0",
+            i_obj_file,
+            "-static",
+            "-o",
+            os.path.join(kernel_meta, "clear_l0.o"),
+        ]
+        result = subprocess.run(ld_cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"clear_l0 ld.lld failed: {result.stderr}")
+        if os.path.exists(i_obj_file):
+            os.remove(i_obj_file)
+
+        kernel_info = {
+            "binFileName": "clear_l0",
+            "binFileSuffix": ".o",
+            "blockDim": core_num,
+            "coreType": "AiCore",
+            "kernelName": "clear_l0",
+            "magic": "RT_DEV_BINARY_MAGIC_ELF",
+        }
+        with open(os.path.join(kernel_meta, "clear_l0.json"), "w", encoding="UTF-8") as f:
+            json.dump(kernel_info, f, indent=4)
+
     def compile_warmup_kernel(self):
         switches = get_global_storage()
         opc = self._tbe_opc
@@ -335,14 +453,14 @@ class Opc(metaclass=Singleton):
                 )
 
     def _get_any_opc(self) -> Optional[IOpc]:
-        for k in self.OpcImplement.keys():
+        for k in self.OpcImplement:
             opc = getattr(self, f"_{k}_opc")
             if opc.is_initialized():
                 return opc
         return None
 
     def _all_opc_invoke(self, func, *args, **kwargs):
-        for k in self.OpcImplement.keys():
+        for k in self.OpcImplement:
             opc: IOpc = getattr(self, f"_{k}_opc")
             if not opc.is_initialized():
                 continue

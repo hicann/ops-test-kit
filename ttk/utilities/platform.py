@@ -21,6 +21,7 @@ __all__ = [
     "get_ascend_full_soc_version",
     "get_npu_hw_info",
     "get_npu_available_device_ids",
+    "get_l0_clear_tile_params",
     "PLATFORM_BEFORE_DAVID",
 ]
 
@@ -63,7 +64,7 @@ def get_opp_paths(source: str) -> list:
         if not opp_path:
             raise RuntimeError("Environment `ASCEND_OPP_PATH` is not set.")
         return [opp_path]
-    elif source == "vendor":
+    if source == "vendor":
         opp_path = os.getenv("ASCEND_OPP_PATH", "")
         if not opp_path:
             return []
@@ -74,12 +75,12 @@ def get_opp_paths(source: str) -> list:
             return [custom_path] if os.path.isdir(custom_path) else []
         vendors = []
         with open(config_file) as f:
-            for line in f:
-                line = line.strip()
-                if not line.startswith("load_priority="):
+            for raw_line in f:
+                stripped_line = raw_line.strip()
+                if not stripped_line.startswith("load_priority="):
                     continue
-                for name in line.split("=", 1)[1].split(","):
-                    name = name.strip()
+                for raw_name in stripped_line.split("=", 1)[1].split(","):
+                    name = raw_name.strip()
                     if not name:
                         continue
                     p = os.path.join(opp_path, "vendors", name)
@@ -87,7 +88,7 @@ def get_opp_paths(source: str) -> list:
                         vendors.append(p)
                 break
         return vendors
-    elif source == "custom":
+    if source == "custom":
         env_val = os.getenv("ASCEND_CUSTOM_OPP_PATH", "")
         if not env_val:
             return []
@@ -110,9 +111,9 @@ def get_op_impl_paths(source: str) -> list:
     """Return {opp}/op_impl paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
     if source == "builtin":
         return [os.path.join(get_opp_paths("builtin")[0], _builtin_op_impl_rel())]
-    elif source == "vendor":
+    if source == "vendor":
         return [os.path.join(p, "op_impl") for p in get_opp_paths("vendor")]
-    elif source == "custom":
+    if source == "custom":
         return [os.path.join(p, "op_impl") for p in get_opp_paths("custom")]
     raise ValueError(f"Unknown source: {source}, must be one of {_VALID_SOURCES}")
 
@@ -122,9 +123,9 @@ def get_impl_base_paths(source: str) -> list:
     """Return {opp}/op_impl/ai_core/tbe paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
     if source == "builtin":
         return [os.path.join(get_opp_paths("builtin")[0], _builtin_op_impl_rel(), "ai_core", "tbe")]
-    elif source == "vendor":
+    if source == "vendor":
         return [os.path.join(p, "op_impl", "ai_core", "tbe") for p in get_opp_paths("vendor")]
-    elif source == "custom":
+    if source == "custom":
         return [os.path.join(p, "op_impl", "ai_core", "tbe") for p in get_opp_paths("custom")]
     raise ValueError(f"Unknown source: {source}, must be one of {_VALID_SOURCES}")
 
@@ -136,7 +137,7 @@ def get_ascend_scene_info() -> Tuple[str, str]:
     scene_os, scene_arch = "", ""
     if os.path.isfile(scene_file):
         with open(scene_file) as f:
-            scene_info = list(map(lambda x: x.strip(), f.readlines()))
+            scene_info = [line.strip() for line in f.readlines()]
             for item_info in scene_info:
                 if "os=" in item_info:
                     scene_os = item_info.split("=")[-1]
@@ -150,9 +151,9 @@ def get_op_info_paths(source: str, soc_lower: str) -> list:
     """Return {impl_base}/config/{soc_lower} paths. source: 'builtin' | 'vendor' | 'custom'. Always returns list."""
     if source == "builtin":
         return [os.path.join(get_impl_base_paths("builtin")[0], "config", soc_lower)]
-    elif source == "vendor":
+    if source == "vendor":
         return [os.path.join(p, "op_impl", "ai_core", "tbe", "config", soc_lower) for p in get_opp_paths("vendor")]
-    elif source == "custom":
+    if source == "custom":
         return [os.path.join(p, "op_impl", "ai_core", "tbe", "config", soc_lower) for p in get_opp_paths("custom")]
     raise ValueError(f"Unknown source: {source}, must be one of {_VALID_SOURCES}")
 
@@ -192,7 +193,8 @@ def get_npu_hw_info(full_soc_version):
     Returns:
         dict with keys: short_soc_version, ccec_aic_version, npu_arch,
         ai_core_cnt, cube_core_cnt, vector_core_cnt, cv_split,
-        core_type_list, support_bf16, support_inf_nan
+        core_type_list, support_bf16, support_inf_nan,
+        l0_a_size, l0_b_size, l0_c_size
 
     Raises:
         FileNotFoundError: if ini file not found
@@ -213,6 +215,7 @@ def get_npu_hw_info(full_soc_version):
     raw_fields = {
         "short_soc_version": ("version", "Short_SoC_version"),
         "ccec_aic_version": ("version", "CCEC_AIC_version"),
+        "npu_arch": ("version", "NpuArch"),
         "ai_core_cnt": ("SoCInfo", "ai_core_cnt"),
         "cube_core_cnt": ("SoCInfo", "cube_core_cnt"),
         "vector_core_cnt": ("SoCInfo", "vector_core_cnt"),
@@ -220,11 +223,14 @@ def get_npu_hw_info(full_soc_version):
         "core_type_list": ("SoCInfo", "core_type_list"),
         "support_bf16": ("SoCInfo", "support_bf16"),
         "support_inf_nan": ("SoCInfo", "support_inf_nan"),
+        "l0_a_size": ("AICoreSpec", "l0_a_size"),
+        "l0_b_size": ("AICoreSpec", "l0_b_size"),
+        "l0_c_size": ("AICoreSpec", "l0_c_size"),
     }
 
-    int_fields = {"ai_core_cnt", "cube_core_cnt", "vector_core_cnt"}
+    int_fields = {"ai_core_cnt", "cube_core_cnt", "vector_core_cnt", "l0_a_size", "l0_b_size", "l0_c_size"}
     bool_fields = {"support_bf16", "support_inf_nan"}
-    int_defaults = {"cube_core_cnt": 0, "vector_core_cnt": 0}
+    int_defaults = {"cube_core_cnt": 0, "vector_core_cnt": 0, "l0_a_size": 0, "l0_b_size": 0, "l0_c_size": 0}
 
     result = {}
     missing = []
@@ -266,6 +272,76 @@ def get_npu_hw_info(full_soc_version):
     result["full_soc_version"] = full_soc_version
 
     return result
+
+
+@lru_cache(maxsize=None)
+def get_l0_clear_tile_params(full_soc_version: str) -> Tuple[int, int, int, str]:
+    """Compute M/K/N tile dimensions and npu_arch for the clear_l0 Ascend C helper kernel.
+
+    The kernel performs one mmad pass (fp16 A x fp16 B -> fp32 C) that covers the
+    full L0A/L0B and as much of L0C as a single pass allows:
+
+        L0A tile: M * K * 2B  (fp16, full L0A)
+        L0B tile: K * N * 2B  (fp16, full L0B)
+        L0C tile: M * N * 4B  (fp32, <= L0C)
+
+    K is chosen as the smallest multiple of 16 that:
+      1. Divides both L0A_SIZE / dtype_bytes and L0B_SIZE / dtype_bytes evenly.
+      2. Satisfies M * N * 4 <= L0C_SIZE.
+
+    Args:
+        full_soc_version: e.g. 'Ascend950DT_9596'
+
+    Returns:
+        (M_DIM, K_DIM, N_DIM, npu_arch) where npu_arch is the ccec --npu-arch value
+        (e.g. 'dav-3510').
+
+    Raises:
+        RuntimeError: if L0 sizes are zero or no valid K can be found.
+    """
+    import math
+
+    hw_info = get_npu_hw_info(full_soc_version)
+    l0a_size = hw_info.get("l0_a_size", 0)
+    l0b_size = hw_info.get("l0_b_size", 0)
+    l0c_size = hw_info.get("l0_c_size", 0)
+
+    if l0a_size == 0 or l0b_size == 0 or l0c_size == 0:
+        raise RuntimeError(
+            f"[{full_soc_version}] L0 sizes are zero (l0a={l0a_size}, l0b={l0b_size}, l0c={l0c_size}), "
+            "clear_l0 Ascend C kernel not supported"
+        )
+
+    dtype_bytes = 2  # fp16
+    l0c_dtype_bytes = 4  # fp32
+
+    l0a_elems = l0a_size // dtype_bytes
+    l0b_elems = l0b_size // dtype_bytes
+
+    # Minimum K so that M * N * l0c_dtype_bytes <= l0c_size
+    # M = l0a_elems / K, N = l0b_elems / K
+    # => l0a_elems * l0b_elems * l0c_dtype_bytes / K^2 <= l0c_size
+    # => K >= sqrt(l0a_elems * l0b_elems * l0c_dtype_bytes / l0c_size)
+    min_k_sq = math.ceil(l0a_elems * l0b_elems * l0c_dtype_bytes / l0c_size)
+    min_k = max(16, math.isqrt(min_k_sq))
+    # Round up to multiple of 16 (cube instruction alignment)
+    k_dim = ((min_k + 15) // 16) * 16
+    # K must divide both element counts evenly
+    while k_dim <= min(l0a_elems, l0b_elems):
+        if l0a_elems % k_dim == 0 and l0b_elems % k_dim == 0:
+            break
+        k_dim += 16
+    else:
+        raise RuntimeError(
+            f"[{full_soc_version}] cannot find K (multiple of 16, divisor of "
+            f"l0a_elems={l0a_elems} and l0b_elems={l0b_elems}) satisfying L0C constraint"
+        )
+
+    m_dim = l0a_elems // k_dim
+    n_dim = l0b_elems // k_dim
+    npu_arch = f"dav-{hw_info.get('npu_arch', '')}"
+
+    return m_dim, k_dim, n_dim, npu_arch
 
 
 @lru_cache(maxsize=None)

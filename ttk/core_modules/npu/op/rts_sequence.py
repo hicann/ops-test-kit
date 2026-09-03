@@ -38,22 +38,20 @@ def _process_total_cycles(results: list):
     # kick-off UNKNOWN
     kicked_prof_task = [ele for ele in results if ele != "UNKNOWN"]
     # Check if profiling result is valid
-    profiling_data_valid = kicked_prof_task and all([isinstance(ele, (int, float)) for ele in kicked_prof_task])
+    profiling_data_valid = kicked_prof_task and all(isinstance(ele, (int, float)) for ele in kicked_prof_task)
     logging.debug(f"HWTS Task Profiling result: {results}")
     if profiling_data_valid:
         kicked_prof_task.sort()
         return numpy.median(kicked_prof_task)
-    else:
-        task_data = tuple(map(str, results))
-        return ",".join(task_data)
+    task_data = tuple(map(str, results))
+    return ",".join(task_data)
 
 
 def rts_profiling(device: RTSInterfaceBase, profiling_param: RTSProfilingParam):
     if isinstance(device, RTSInterface):
         online_obj = OnlineRtsProfiling(device, profiling_param)
         return online_obj.do()
-    else:
-        raise RuntimeError(f"Unrecognized device type: {type(device)}")
+    raise RuntimeError(f"Unrecognized device type: {type(device)}")
 
 
 class OnlineRtsProfiling:
@@ -167,14 +165,13 @@ class OnlineRtsProfiling:
                     f"RTS Register Binary failed, kernel object {kernel_full_path} does not exist or is invalid."
                 )
                 return RTSProfilingResult.fail("RTS_BINARY_FAILURE")
-            else:
-                logging.error(
-                    f"RTS Register Function failed, "
-                    f"Expect symbol {self._param.kernel_main_func_name} does not exist "
-                    f"in {kernel_full_path}. "
-                    f"this is usually caused by wrong tiling key"
-                )
-                return RTSProfilingResult.fail("RTS_FUNCTION_FAILURE")
+            logging.error(
+                f"RTS Register Function failed, "
+                f"Expect symbol {self._param.kernel_main_func_name} does not exist "
+                f"in {kernel_full_path}. "
+                f"this is usually caused by wrong tiling key"
+            )
+            return RTSProfilingResult.fail("RTS_FUNCTION_FAILURE")
 
     def _rts_kernel_sequence_v2(self, stream: Optional[ctypes.c_void_p] = None):
         # Profiling Preparation
@@ -198,8 +195,9 @@ class OnlineRtsProfiling:
             ) as profiler:
                 for repeat_idx in range(self._run_time):
                     profiler.step()
-                    self._device.clear_l1(self._switches)
+                    self._device.clear_l0(self._switches)
                     self._device.clear_ub(self._switches)
+                    self._device.clear_l1(self._switches)
                     # self._device.test_clear_ub(self._switches)
                     # Prepare Memory on HBM
                     self._alloc_device_memory(repeat_idx)
@@ -257,9 +255,8 @@ class OnlineRtsProfiling:
         ipt_ids = [id(i) for i in self._param.flatten_input_arrays if isinstance(i, numpy.ndarray)]
         inplace_ids = []
         for o in self._param.flatten_output_arrays:
-            if isinstance(o, numpy.ndarray):
-                if id(o) in ipt_ids:
-                    inplace_ids.append(id(o))
+            if isinstance(o, numpy.ndarray) and id(o) in ipt_ids:
+                inplace_ids.append(id(o))
         return inplace_ids
 
     def _alloc_hbm(self):
@@ -298,9 +295,8 @@ class OnlineRtsProfiling:
                 # tensor list
                 refs = []
                 for t in oa:
-                    if isinstance(t, numpy.ndarray):
-                        if id(t) in inplace_ids:
-                            refs.append(id(t))
+                    if isinstance(t, numpy.ndarray) and id(t) in inplace_ids:
+                        refs.append(id(t))
                 if refs:
                     # inplace dynamic tensor-list
                     if len(refs) != len(oa):
@@ -371,9 +367,8 @@ class OnlineRtsProfiling:
         for a in arrays:
             if a is None:
                 continue
-            else:
-                mem = self._nd_array_maps[id(a)]
-                self._device.copy_nparray_to_hbm_ptr(a, mem)
+            mem = self._nd_array_maps[id(a)]
+            self._device.copy_nparray_to_hbm_ptr(a, mem)
 
     def _free_device_memory(self):
         for _, dev_address in self._nd_array_maps.items():
@@ -615,7 +610,7 @@ class OnlineRtsProfiling:
                 pass
 
         if op_prof:
-            op_prof = list(x["duration"] for x in op_prof)
+            op_prof = [x["duration"] for x in op_prof]
             results = [op_prof[0]]
             if len(op_prof) > 1:
                 results = op_prof[1:]
@@ -629,8 +624,8 @@ class OnlineRtsProfiling:
         cmds = ["nm", kernel_full_path]
         try:
             out = subprocess.check_output(cmds).decode("utf-8")
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.debug(f"nm command failed for {kernel_full_path}: {exc}")
         else:
             if out:
                 splits = re.split(r"[ \n]", out)
@@ -670,8 +665,5 @@ class OnlineRtsProfiling:
             self._device.set_task_fail_callback()
             self._rts_task_fail_cb_set = True
         # rtSetExceptionExtInfo
-        try:
+        with contextlib.suppress(RuntimeError):
             self._device.set_exception_extend_info(ctypes.c_void_p(ctypes.addressof(self._task_fail_cb_invoked)))
-        except RuntimeError:
-            # if fail, just pass.
-            pass

@@ -432,8 +432,9 @@ class AclOpExecutor:
                 for repeat_idx in range(self._run_time):
                     if not skip_profiler and profiler:
                         profiler.step()
-                    self._dvc.clear_l1(self._switches)
+                    self._dvc.clear_l0(self._switches)
                     self._dvc.clear_ub(self._switches)
+                    self._dvc.clear_l1(self._switches)
                     logging.debug(
                         f"[AclOpExecutor dev={self._dvc.device_id}] building phase1 params, "
                         f"group={self._ctx.attributes.get('group', 'N/A')}"

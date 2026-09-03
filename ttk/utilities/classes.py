@@ -44,7 +44,7 @@ class MODE(Enum):
         return None
 
     def is_online_board(self) -> bool:
-        return True if self in [MODE.ASCEND_ONBOARD] else False
+        return self in [MODE.ASCEND_ONBOARD]
 
     def has_device(self) -> bool:
         return self.is_online_board()
@@ -145,6 +145,7 @@ class SWITCHES:
         "force_block_dim",
         "force_clear_ub",
         "force_clear_l1",
+        "force_clear_l0",
         "force_simt_ub_size",
         "progress_output",
         "proc_no_reuse",
@@ -214,8 +215,7 @@ class SWITCHES:
     def run_time(self) -> int:
         if self.mode.is_model():
             return self._run_time or 1
-        else:
-            return self._run_time or 3
+        return self._run_time or 3
 
     @run_time.setter
     def run_time(self, val):
@@ -276,6 +276,7 @@ class SWITCHES:
         self.force_block_dim = [None, None, None]
         self.force_clear_ub = None
         self.force_clear_l1 = None
+        self.force_clear_l0 = None
         self.force_simt_ub_size = [None, None, None]  # dynamic/const/binary
         self.proc_no_reuse = False
         # Hidden switches
@@ -368,13 +369,13 @@ class SubKernelJsonInfo:
 
     @classmethod
     def from_dict(cls, json_dict: dict):
-        parameters = json_dict.get("parameters", None)
+        parameters = json_dict.get("parameters")
         if parameters is not None:
             parameters = tuple(parameters)
-        magic = json_dict.get("magic", None)
-        core_type = json_dict.get("coreType", None)
+        magic = json_dict.get("magic")
+        core_type = json_dict.get("coreType")
         kernel_name = json_dict["kernelName"]
-        task_ration = json_dict.get("taskRation", None)
+        task_ration = json_dict.get("taskRation")
         if task_ration is not None:
             if not isinstance(task_ration, str) or ":" not in task_ration:
                 raise ValueError(f"task_ration [{task_ration}] is invalid. It may be a bug of compiler.")
@@ -517,14 +518,13 @@ class KernelJsonInfo:
         sub_kernel_name = f"{self.kernel_name}_{tiling_key}"
         if sub_kernel_name not in self.sub_kernels:
             return self
-        elif sub_kernel_name in self._sub_kernel_cache:
+        if sub_kernel_name in self._sub_kernel_cache:
             return self._sub_kernel_cache[sub_kernel_name]
-        else:
-            sk = self.sub_kernels[sub_kernel_name]
-            ret = copy.deepcopy(self)
-            self._migrate(sk, ret)
-            self._sub_kernel_cache[sub_kernel_name] = ret
-            return ret
+        sk = self.sub_kernels[sub_kernel_name]
+        ret = copy.deepcopy(self)
+        self._migrate(sk, ret)
+        self._sub_kernel_cache[sub_kernel_name] = ret
+        return ret
 
     def dynamic_param_is_folded(self):
         return self.dynamic_param_mode == "folded_with_desc"
@@ -725,8 +725,7 @@ class DynamicCompilationResult(BaseCompilationResult):
     def block_dim(self) -> int:
         if not self.tiling_result or not self.tiling_result.block_dim:
             return 0
-        else:
-            return self.tiling_result.block_dim
+        return self.tiling_result.block_dim
 
     @block_dim.setter
     def block_dim(self, value):

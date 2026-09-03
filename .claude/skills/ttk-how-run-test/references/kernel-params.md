@@ -57,6 +57,7 @@ python3 -m ttk kernel -i cases.csv --co
 | `--clear-atomic` | 强制在算子执行前清零输出和 workspace | 关闭 |
 | `--clear-ub` | 执行前将 UB 填充为指定值（默认清零） | 关闭 |
 | `--clear-l1` | 执行前将 L1 填充为指定值（默认清零） | 关闭 |
+| `--clear-l0` | 执行前将 L0A/L0B/L0C 初始化为指定值（默认清零；L0A/L0B 填充指定值，L0C 为 matmul 计算结果，值为 0 时全零） | 关闭 |
 | `--simt-ub` | SIMT 模式 UB 大小 | 无 |
 | `--simt-stack-dcu` | SIMT 模式 DCU 栈大小 | 无 |
 | `--simt-stack-dvg` | SIMT 模式 DVG 栈大小 | 无 |

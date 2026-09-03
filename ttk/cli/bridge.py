@@ -1,3 +1,10 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 import logging
 import pathlib
 import re
@@ -187,6 +194,8 @@ def apply_kernel_args(sw, args):
         sw.force_clear_ub = _parse_clean_val("UB", args.clear_ub)
     if hasattr(args, "clear_l1") and args.clear_l1 is not None:
         sw.force_clear_l1 = _parse_clean_val("L1", args.clear_l1)
+    if hasattr(args, "clear_l0") and args.clear_l0 is not None:
+        sw.force_clear_l0 = _parse_clean_val("L0", args.clear_l0)
     if hasattr(args, "force_block_dim") and args.force_block_dim is not None:
         bd = args.force_block_dim
         if isinstance(bd, int):
@@ -457,9 +466,8 @@ def _apply_cce(sw, value):
                 sw.dyn_switches.realtime = False
             elif mode in ("c", "cst", "const"):
                 sw.cst_switches.realtime = False
-            elif mode in ("b", "bin", "binary"):
-                if sw.bin_switches.realtime != "release":
-                    sw.bin_switches.realtime = False
+            elif mode in ("b", "bin", "binary") and sw.bin_switches.realtime != "release":
+                sw.bin_switches.realtime = False
 
 
 def _apply_clear_atomic(sw, value):

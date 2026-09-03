@@ -530,23 +530,22 @@ class RTSInterface(RTSInterfaceBase):
                         ctypes.c_void_p(ctypes.addressof(c_device_ids)),
                     )
                     self.prof_switch_version = 0
+        elif self.prof_switch_version == 0:
+            self.api_call(
+                "rtProfilerStart",
+                None,
+                c_prof_config,
+                ctypes.c_int32(1),
+                ctypes.c_void_p(ctypes.addressof(c_device_ids)),
+            )
+        elif self.prof_switch_version == 1:
+            self.set_prof_switch(
+                rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
+            )
         else:
-            if self.prof_switch_version == 0:
-                self.api_call(
-                    "rtProfilerStart",
-                    None,
-                    c_prof_config,
-                    ctypes.c_int32(1),
-                    ctypes.c_void_p(ctypes.addressof(c_device_ids)),
-                )
-            elif self.prof_switch_version == 1:
-                self.set_prof_switch(
-                    rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
-                )
-            else:
-                self.set_prof_switch_v2(
-                    rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
-                )
+            self.set_prof_switch_v2(
+                rts_info.MsprofCommandHandleType.PROF_COMMANDHANDLE_TYPE_START, c_device_ids, c_prof_config
+            )
 
     def set_prof_switch(self, prof_switch_command_type, c_device_ids, c_prof_config):
         command_type = prof_switch_command_type.value
@@ -651,6 +650,32 @@ class RTSInterface(RTSInterfaceBase):
         input_np_array = numpy.array([clean_val.item(0)] * (128 * 1024 // dtype_bytes), dtype=clean_val.dtype)
         self._launch_helper_kernel(os.path.join(switches.kernel_meta, "clear_l1.o"), args=(input_np_array,))
 
+    def clear_l0(self, switches: "ttk.utilities.SWITCHES"):
+        if switches.force_clear_l0 is None or switches.mode.is_model():
+            return
+        clean_val = switches.force_clear_l0
+        verify_arg = None
+        from ttk.utilities.platform import PLATFORM_BEFORE_DAVID, get_l0_clear_tile_params
+
+        if self.short_soc_version not in PLATFORM_BEFORE_DAVID:
+            m_dim, k_dim, n_dim, _ = get_l0_clear_tile_params(switches.dev_plat)
+            input_np_array = numpy.array(
+                [numpy.float16(clean_val.item(0))] * (m_dim * k_dim + k_dim * n_dim), dtype=numpy.float16
+            )
+            # David-generation chips use an Ascend C tensor_api kernel
+            # (two GM args: input and fixpipe output)
+            output_np_array = numpy.zeros(m_dim * n_dim, dtype=numpy.float32)
+            args = (input_np_array, output_np_array)
+            # fp16 x fp16 -> fp32 mmad of all-clean_val matrices: every element == K * v^2 exactly
+            v = numpy.float32(numpy.float16(clean_val.item(0)))
+            verify_arg = (1, v * v * numpy.float32(k_dim))
+        else:
+            input_np_array = numpy.array([numpy.float16(clean_val.item(0))] * (128 * 1024 // 2), dtype=numpy.float16)
+            args = (input_np_array,)
+        logging.info(f"[clear_l0] launching helper kernel, clean_val={clean_val}, device={self.device_id}")
+        self._launch_helper_kernel(os.path.join(switches.kernel_meta, "clear_l0.o"), args=args, verify_arg=verify_arg)
+        logging.info("[clear_l0] helper kernel launched successfully")
+
     def clear_ub(self, switches: "ttk.utilities.SWITCHES"):
         if switches.force_clear_ub is None or switches.mode.is_model():
             return
@@ -674,6 +699,7 @@ class RTSInterface(RTSInterfaceBase):
         kernel: str,
         args: Optional[Union[type(None), numpy.ndarray]] = None,
         print_arg_indices: Optional[tuple] = None,
+        verify_arg: Optional[tuple] = None,
     ):
         stream = self.create_stream()
         kernel_name = Path(kernel).stem
@@ -706,6 +732,22 @@ class RTSInterface(RTSInterfaceBase):
                         byte_size = int(math.ceil(np_array.size * get_dtype_width(np_array.dtype)))
                         byte_array = self.get_data_from_hbm(npu_ptr, byte_size)
                         print(numpy.frombuffer(byte_array, dtype=np_array.dtype))
+                if verify_arg is not None:
+                    idx, expected = verify_arg
+                    npu_ptr, np_array = dev_mem_addrs[idx], args[idx]
+                    byte_size = int(math.ceil(np_array.size * get_dtype_width(np_array.dtype)))
+                    got = numpy.frombuffer(self.get_data_from_hbm(npu_ptr, byte_size), dtype=np_array.dtype)
+                    mismatch = int((got != expected).sum())
+                    if mismatch == 0:
+                        logging.info(
+                            f"[{kernel_name}] device result verified: all {got.size} elems == {expected}, "
+                            "full GM->L1->L0A/L0B->Mmad->L0C->fixpipe chain executed"
+                        )
+                    else:
+                        logging.warning(
+                            f"[{kernel_name}] device result VERIFICATION FAILED: {mismatch}/{got.size} "
+                            f"elems != {expected}"
+                        )
             except Exception as e:
                 logging.exception(f"synchronize_with_stream [{kernel_name}] failed. {e}")
         finally:
@@ -799,8 +841,7 @@ class RTSInterface(RTSInterfaceBase):
             self.api_call("rtGetC2cCtrlAddr", None, ret_addr, ret_len)
             ffts_addr = ctypes.c_void_p(ret_addr[0])
             return 0 if self.is_model() and ffts_addr.value is None else ffts_addr
-        else:
-            return None
+        return None
 
     def _launch_kernel_v2(self, launch_args: rts_structures.LaunchKernelArgs, stream: Optional[ctypes.c_void_p] = None):
         launch_args.insert_ffts_addr(self._get_c2c_ctrl_addr(launch_args.mix_kernel))
@@ -864,10 +905,9 @@ class RTSInterface(RTSInterfaceBase):
     def _build_rt_task_cfg_info(self, simt_share_memory_size: int, schedule_mode: int):
         if simt_share_memory_size <= 0 and schedule_mode == 0:
             return None
-        elif self._is_0903_branch():
+        if self._is_0903_branch():
             return rts_structures.RtTaskCfgInfoBranch0903(simt_share_memory_size, schedule_mode)
-        else:
-            return rts_structures.RtTaskCfgInfo(simt_share_memory_size, schedule_mode)
+        return rts_structures.RtTaskCfgInfo(simt_share_memory_size, schedule_mode)
 
     def _set_simt_stack_size(self, typ: int, stack_size: int, device_id: Optional[int] = None):
         if stack_size < 0:
@@ -895,19 +935,19 @@ class RTSInterface(RTSInterfaceBase):
         if "AICORE_TRAP_EXCEPTION" in exception:
             logging.error("Reached AICORE Trap Exception")
             return "TRAP"
-        elif "AICORE_EXCEPTION" in exception:
+        if "AICORE_EXCEPTION" in exception:
             logging.error("AIC_ERROR encountered")
             return "AIC_ERROR"
-        elif "VECTOR_CORE_EXCEPTION" in exception:
+        if "VECTOR_CORE_EXCEPTION" in exception:
             logging.error("VEC_ERROR encountered")
             return "VEC_ERROR"
-        elif "AICORE_TIMEOUT" in exception or "RT_STREAM_SYNC_TIMEOUT" in exception:
+        if "AICORE_TIMEOUT" in exception or "RT_STREAM_SYNC_TIMEOUT" in exception:
             logging.error("AIC Task TIMEOUT")
             return "TIMEOUT"
-        elif "HEARTBEAT" in exception:
+        if "HEARTBEAT" in exception:
             logging.critical("Detected critical device heartbeat lost exception, process will halt.")
             if shutil.which("msnpureport") is not None:
-                os.system(f"mkdir -p errors/{os.getpid()} && cd errors/{os.getpid()} && msnpureport && cd -")
+                os.system(f"mkdir -p errors/{os.getpid()} && cd errors/{os.getpid()} && msnpureport && cd -")  # noqa: S605
             while True:
                 time.sleep(10)
                 logging.critical("This testcase is killing device!!!! AND DEVICE WAS ALREADY DEAD")
@@ -921,8 +961,7 @@ class RTSInterface(RTSInterfaceBase):
             raise TypeError(f"Copy numpy array to hbm supports ndarray only, but received {str(type(_nparray))}")
         if is_4bit_dtype(_nparray.dtype):
             return pack_4bits(_nparray)
-        else:
-            return _nparray.flatten()
+        return _nparray.flatten()
 
     @staticmethod
     def _parse_error_code(error_type: int, error_code: int) -> str:
@@ -981,18 +1020,16 @@ class RTSInterface(RTSInterfaceBase):
     def int_magic(magic: str) -> int:
         if magic in rts_info.rt_binary_magic_dict:
             return rts_info.rt_binary_magic_dict[magic]
-        else:
-            raise RuntimeError(f"Unknown kernel magic: {magic}")
+        raise RuntimeError(f"Unknown kernel magic: {magic}")
 
     @staticmethod
     def core_type_to_magic(core_type: str) -> int:
         if core_type == "AiCore":
             return rts_info.rt_binary_magic_dict["RT_DEV_BINARY_MAGIC_ELF"]
-        elif core_type == "VectorCore":
+        if core_type == "VectorCore":
             return rts_info.rt_binary_magic_dict["RT_DEV_BINARY_MAGIC_ELF_AIVEC"]
-        elif core_type == "CubeCore":
+        if core_type == "CubeCore":
             return rts_info.rt_binary_magic_dict["RT_DEV_BINARY_MAGIC_ELF_AICUBE"]
-        elif core_type == "AiCpu":
+        if core_type == "AiCpu":
             return rts_info.rt_binary_magic_dict["RT_DEV_BINARY_MAGIC_ELF_AICPU"]
-        else:
-            raise RuntimeError(f"Unknown core type: {core_type}")
+        raise RuntimeError(f"Unknown core type: {core_type}")
