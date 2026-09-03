@@ -1,3 +1,14 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+import contextlib
 import ctypes
 import ctypes.util
 import glob
@@ -35,20 +46,18 @@ def _find_ascend_root():
         candidates.append(opp.rstrip("/opp").rstrip("/"))  # noqa: B005
 
     if not candidates:
-        user_path = "/usr/local/Ascend" if os.getuid() == 0 else os.path.expanduser("~/Ascend")
-        if os.path.isdir(os.path.join(user_path, "cann", "bin")):
-            candidates.append(os.path.join(user_path, "cann"))
-        else:
-            candidates.append(os.path.join(user_path, "latest"))
+        for base in (os.path.expanduser("~/Ascend"), "/usr/local/Ascend"):
+            for sub in ("cann", "ascend-toolkit/latest"):
+                root = os.path.join(base, sub)
+                if os.path.isdir(root):
+                    candidates.append(root)
 
     for root in candidates:
-        root = root.rstrip("/")
-        if os.path.isdir(os.path.join(root, "compiler")) and os.path.isdir(os.path.join(root, "opp")):
-            return root
-        if root.endswith("/latest"):
-            parent = root.rsplit("/", 1)[0]
-            if os.path.isdir(os.path.join(parent, "compiler")) and os.path.isdir(os.path.join(parent, "opp")):
-                return parent
+        normalized_root = root.rstrip("/")
+        if os.path.isdir(os.path.join(normalized_root, "compiler")) and os.path.isdir(
+            os.path.join(normalized_root, "opp")
+        ):
+            return normalized_root
     return None
 
 
@@ -78,8 +87,18 @@ def _restore_ld_paths(segments):
 
 
 def _source_setenv_bash(ascend_root):
-    setenv = os.path.join(ascend_root, "bin", "setenv.bash")
-    if not os.path.isfile(setenv):
+    setenv = None
+    for candidate in (os.path.join(ascend_root, "set_env.sh"), os.path.join(ascend_root, "bin", "setenv.bash")):
+        if os.path.isfile(candidate):
+            setenv = candidate
+            break
+    if setenv is None:
+        return
+
+    # A sourced parent shell already owns the complete CANN environment.  Do
+    # not source it again: setenv.bash rebuilds LD_LIBRARY_PATH and can move an
+    # ESL/NPUSim runtime behind the real CANN libraries.
+    if os.getenv("ASCEND_TOOLKIT_HOME") and os.getenv("ASCEND_OPP_PATH"):
         return
 
     sim_paths = _sim_ld_paths()
@@ -87,6 +106,7 @@ def _source_setenv_bash(ascend_root):
         result = subprocess.run(
             ["bash", "-c", f'source "{setenv}" && env -0'],
             capture_output=True,
+            check=False,
             text=True,
             timeout=10,
         )
@@ -129,9 +149,9 @@ def _get_vendor_impl_parent_paths(opp_path):
         for line in f:
             if line.strip().startswith("load_priority="):
                 for name in line.split("=", 1)[1].split(","):
-                    name = name.strip()
-                    if name:
-                        tbe = os.path.join(opp_path, "vendors", name, "op_impl", "ai_core", "tbe")
+                    vendor = name.strip()
+                    if vendor:
+                        tbe = os.path.join(opp_path, "vendors", vendor, "op_impl", "ai_core", "tbe")
                         if os.path.isdir(tbe):
                             paths.append(tbe)
                 break
@@ -241,10 +261,8 @@ def _setup_runtime_env():
 def _cleanup_old_logs():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     for f in glob.glob(os.path.join(base_dir, "ttk-*.log")):
-        try:
+        with contextlib.suppress(OSError):
             os.remove(f)
-        except OSError:
-            pass
 
 
 def _ensure_log_dirs():

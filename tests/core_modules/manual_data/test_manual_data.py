@@ -3,7 +3,7 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
@@ -155,7 +155,7 @@ def test_e2e_and_aclnn_share_compact_inputs(tmp_path, file_format):
 
 
 @pytest.mark.parametrize(
-    "custom_dtype,e2e_shape,aclnn_shape",
+    ("custom_dtype", "e2e_shape", "aclnn_shape"),
     [("float8_e4m3fn", (4,), (4,)), ("float4_e2m1", (4,), (8,)), ("hifloat8", (4,), (4,))],
 )
 def test_raw_bin_uint8_reinterprets_portable_storage(tmp_path, custom_dtype, e2e_shape, aclnn_shape):
@@ -364,6 +364,38 @@ def test_e2e_none_golden_suppresses_optional_device_output(tmp_path):
     assert goldens[1] is None
 
 
+@pytest.mark.parametrize("file_format", ["bin", "npy", "pt"])
+def test_extra_goldens_are_loaded_for_operator_specific_compare(tmp_path, file_format):
+    """A cross-API cache keeps extra Goldens in file order for the custom compare."""
+    case = _e2e_case(f"extra_goldens_{file_format}")
+    goldens = [
+        np.full((2, 2), 1, np.float32),
+        np.full((3,), 2, np.float32),
+        np.full((1, 4), 3, np.float32),
+        np.full((2, 3), 4, np.float32),
+    ]
+    store = ManualDataStore(tmp_path)
+    store.write_case(
+        case,
+        "e2e",
+        [np.zeros((3, 3), np.float32), np.zeros((2, 2), np.float32)],
+        goldens,
+        file_format=file_format,
+    )
+
+    loaded = store.load_case(case, "e2e")
+    restored = loaded.load_goldens(
+        references=[
+            np.zeros_like(goldens[0]),
+            np.zeros_like(goldens[3]),
+        ]
+    )
+
+    assert len(restored) == len(goldens)
+    for actual, expected in zip(restored, goldens):
+        np.testing.assert_array_equal(actual, expected)
+
+
 def test_tensor_list_grouping_is_rebuilt_from_csv_structure(tmp_path):
     """TensorList 分组在加载后由 CSV 结构重建。"""
     case = _e2e_case("tensor_list")
@@ -395,7 +427,7 @@ def test_tensor_list_grouping_is_rebuilt_from_csv_structure(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "scenario, expected_match",
+    ("scenario", "expected_match"),
     [
         ("changed_dtype", "filename dtype"),
         ("corrupt_file", "byte size"),
@@ -573,9 +605,8 @@ def test_pt_load_type_error_does_not_fall_back_to_pickle(tmp_path, monkeypatch, 
         raise TypeError("payload decoder failed")
 
     monkeypatch.setattr(torch, "load", broken_load)
-    with caplog.at_level(logging.WARNING):
-        with pytest.raises(ManualDataError, match="payload decoder failed"):
-            store.load_case(case, "e2e")
+    with caplog.at_level(logging.WARNING), pytest.raises(ManualDataError, match="payload decoder failed"):
+        store.load_case(case, "e2e")
 
     assert "falling back to pickle-based loading" not in caplog.text
 
@@ -662,7 +693,7 @@ def test_zero_element_tensor_is_not_confused_with_none(tmp_path, file_format):
 
 
 @pytest.mark.parametrize(
-    "formats, expected_format, expected_value",
+    ("formats", "expected_format", "expected_value"),
     [
         (("pt", "npy"), "npy", 2.0),
         (("pt", "npy", "bin"), "bin", 3.0),
@@ -761,8 +792,7 @@ def test_missing_data_slot_is_rejected(tmp_path, filename):
     (case_dir / filename).unlink()
 
     with pytest.raises(ManualDataError, match="slot count|contiguous"):
-        loaded = store.load_case(case, "e2e")
-        loaded.load_goldens(references=[np.zeros((2, 2), np.float32)])
+        store.load_case(case, "e2e").load_goldens(references=[np.zeros((2, 2), np.float32)])
 
 
 @pytest.mark.parametrize("file_format", ["bin", "npy", "pt"])
@@ -821,7 +851,7 @@ def test_bin_golden_rejects_same_numel_wrong_device_shape(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "shape, token",
+    ("shape", "token"),
     [
         ((), "scalar"),
         ((0,), "0"),

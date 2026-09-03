@@ -62,7 +62,7 @@ class InstanceBase(metaclass=ABCMeta):
         self.result_path: str = ""
         # Testcase
         self.case_original_headers: List[str] = []
-        self.case_result_titles: Tuple[str] = tuple()
+        self.case_result_titles: Tuple[str] = ()
         # Multiprocessing
         self.mp_context: BaseContext = multiprocessing.get_context("forkserver")
         self.mp_manager = None
@@ -290,10 +290,7 @@ class InstanceBase(metaclass=ABCMeta):
                         )
                     )
                 if remain_count:
-                    if self.used_device:
-                        dev_id = self.used_device[-1]
-                    else:
-                        dev_id = loop_count * 2
+                    dev_id = self.used_device[-1] if self.used_device else loop_count * 2
                     lines.append(
                         (
                             *(
@@ -338,13 +335,28 @@ class InstanceBase(metaclass=ABCMeta):
 
         results = compare_batch_consistency(self.collected_results)
         if not results:
-            logging.info("No batch consistency groups found (testcases lack batch_seed)")
+            logging.info(
+                "No comparable level-3 batch groups found; cases either lack "
+                "complete batch metadata or share no relation signature"
+            )
             return
-        total = len(results)
-        passed = sum(1 for r in results if r["pass"])
-        logging.info(f"Batch consistency: {passed}/{total} groups passed")
+        supported_results = [result for result in results if result["supported"]]
+        unsupported_count = len(results) - len(supported_results)
+        passed = sum(1 for result in supported_results if result["pass"])
+        if supported_results:
+            logging.info(
+                "Batch consistency: %s/%s comparable groups passed; %s unsupported",
+                passed,
+                len(supported_results),
+                unsupported_count,
+            )
+        else:
+            logging.warning(
+                "No comparable level-3 batch groups: %s group(s) lack sliceable output",
+                unsupported_count,
+            )
         for r in results:
-            status = "PASS" if r["pass"] else "FAIL"
+            status = "PASS" if r["pass"] else ("UNSUPPORTED" if not r["supported"] else "FAIL")
             names = [m["testcase"] for m in r["members"]]
             logging.info(f"  [{status}] group={r['batch_consistency_id'][:32]}... members={names}")
 
@@ -451,7 +463,7 @@ class InstanceBase(metaclass=ABCMeta):
             sheet = self._resolved_output_sheet()
             tag = ""
             if sheet:
-                tag = "_" + sheet.translate(str.maketrans({c: "_" for c in '\\/:*?"<>| '}))
+                tag = "_" + sheet.translate(str.maketrans(dict.fromkeys('\\/:*?"<>| ', "_")))
             self.result_path = root + tag + "_result.csv"
             logging.info(f"Output csv file is not specified. It will be set as {self.result_path}")
         if not self.result_path.endswith(".csv"):
@@ -467,7 +479,7 @@ class InstanceBase(metaclass=ABCMeta):
             existing_header = self._read_existing_header(self.result_path)
             header_match = existing_header is not None and tuple(existing_header) == self.case_result_titles
             if header_match:
-                self.result_csv_file = open(self.result_path, newline="", mode="a+")
+                self.result_csv_file = open(self.result_path, newline="", mode="a+")  # noqa: SIM115
                 self.result_csv_writer = csv.writer(self.result_csv_file)
                 self._header_flushed = True
                 self._precision_status_idx = self._resolve_precision_status_idx(self.case_result_titles)
@@ -479,11 +491,11 @@ class InstanceBase(metaclass=ABCMeta):
                     f"current expects {len(self.case_result_titles)}). "
                     f"Overwriting {self.result_path}"
                 )
-                self.result_csv_file = open(self.result_path, newline="", mode="w+")
+                self.result_csv_file = open(self.result_path, newline="", mode="w+")  # noqa: SIM115
                 self.result_csv_writer = csv.writer(self.result_csv_file)
                 self._flush(self.case_result_titles)
         else:
-            self.result_csv_file = open(self.result_path, newline="", mode="w+")
+            self.result_csv_file = open(self.result_path, newline="", mode="w+")  # noqa: SIM115
             self.result_csv_writer = csv.writer(self.result_csv_file)
             self._prepare_output_titles()
             self._flush(self.case_result_titles)
@@ -504,7 +516,7 @@ class InstanceBase(metaclass=ABCMeta):
     def _initialize_device_lock(self) -> tuple:
         self.mp_manager = self.mp_context.Manager()
         if self.switches.device_whitelist:
-            blacklist = list(set([i for i in range(self.switches.device_count)]) - set(self.switches.device_whitelist))
+            blacklist = list(set(range(self.switches.device_count)) - set(self.switches.device_whitelist))
             self.switches.device_blacklist = list(set(blacklist).union(set(self.switches.device_blacklist)))
         # Print Device blacklist info
         if self.switches.device_blacklist:
@@ -564,9 +576,8 @@ class InstanceBase(metaclass=ABCMeta):
                 if self._try_push_multi_device_task(task):
                     self._multi_device_running = True
                     return
-                else:
-                    self.task_keeper.insert(task)
-                    break
+                self.task_keeper.insert(task)
+                break
             pg.push(task)
 
     def _try_push_multi_device_task(self, task: TaskA) -> bool:
@@ -593,9 +604,8 @@ class InstanceBase(metaclass=ABCMeta):
                     if self._try_push_multi_device_task(task):
                         self._multi_device_running = True
                         return
-                    else:
-                        self.task_keeper.insert(task)
-                        break
+                    self.task_keeper.insert(task)
+                    break
                 max_pg.push(task)
             else:
                 break

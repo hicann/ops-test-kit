@@ -96,7 +96,9 @@ class ManualDataCase:
 
         Raw ``bin`` payloads do not carry shape metadata, so non-None bin Golden
         filenames encode it. E2E passes device outputs as references, while ACLNN
-        passes returned output shapes and the CSV output dtypes.
+        passes returned output shapes and the CSV output dtypes. A cache may carry
+        additional operator-specific Goldens; those are restored from their own
+        file metadata and left for a custom compare hook to interpret.
         """
         if references is not None and shapes is not None:
             raise ManualDataError("golden references and explicit shapes are mutually exclusive")
@@ -143,10 +145,15 @@ class ManualDataCase:
             expected_shapes = [_UNKNOWN_SHAPE] * len(self._golden_files)
             storage_shapes = [_UNKNOWN_SHAPE] * len(self._golden_files)
 
-        if len(expected_shapes) != len(self._golden_files):
-            raise ManualDataError(
-                f"golden slot count {len(self._golden_files)} != device output count {len(expected_shapes)}"
-            )
+        golden_count = len(self._golden_files)
+        output_count = len(expected_shapes)
+        if golden_count < output_count:
+            raise ManualDataError(f"golden slot count {golden_count} < device output count {output_count}")
+        if golden_count > output_count:
+            # Different APIs of one operator may expose different output subsets,
+            # so no positional shape mapping is valid when their counts differ.
+            expected_shapes = [_UNKNOWN_SHAPE] * golden_count
+            storage_shapes = [_UNKNOWN_SHAPE] * golden_count
 
         values = []
         for entry, expected_shape, storage_shape in zip(self._golden_files, expected_shapes, storage_shapes):
@@ -158,15 +165,17 @@ class ManualDataCase:
             if expected_shape is None:
                 values.append(_load_none(entry, "golden"))
                 continue
-            if entry.saved_shape is not None:
-                if expected_shape is not _UNKNOWN_SHAPE and tuple(expected_shape) != entry.saved_shape:
-                    raise ManualDataError(
-                        f"golden[{entry.index}] saved shape {entry.saved_shape} "
-                        f"!= device output shape {tuple(expected_shape)}"
-                    )
-            if storage_shape is _UNKNOWN_SHAPE:
-                storage_shape = entry.saved_shape
-            values.append(_load_array(entry, storage_shape))
+            if (
+                entry.saved_shape is not None
+                and expected_shape is not _UNKNOWN_SHAPE
+                and tuple(expected_shape) != entry.saved_shape
+            ):
+                raise ManualDataError(
+                    f"golden[{entry.index}] saved shape {entry.saved_shape} "
+                    f"!= device output shape {tuple(expected_shape)}"
+                )
+            resolved_storage_shape = entry.saved_shape if storage_shape is _UNKNOWN_SHAPE else storage_shape
+            values.append(_load_array(entry, resolved_storage_shape))
         return values
 
 
@@ -299,12 +308,12 @@ def _encode_shape(shape: Sequence[int]) -> str:
     return "scalar" if not shape else "x".join(str(dimension) for dimension in shape)
 
 
-def _decode_shape(token: Optional[str]) -> Optional[Tuple[int, ...]]:
-    if token is None:
+def _decode_shape(encoded_shape: Optional[str]) -> Optional[Tuple[int, ...]]:
+    if encoded_shape is None:
         return None
-    if token == "scalar":
+    if encoded_shape == "scalar":
         return ()
-    return tuple(int(dimension) for dimension in token.split("x"))
+    return tuple(int(dimension) for dimension in encoded_shape.split("x"))
 
 
 def _as_numpy(value, label: str) -> numpy.ndarray:
@@ -548,7 +557,6 @@ def _load_none(entry: _ManualDataFile, role: str):
         raise ManualDataError(f"{role}[{entry.index}] should be None but file dtype is {entry.dtype!r}")
     if entry.path.stat().st_size != 0:
         raise ManualDataError(f"None marker must be empty: {entry.path}")
-    return None
 
 
 class ManualDataStore:

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-"""Batch consistency comparison — level=2 cross-testcase slice MD5 check.
+"""Batch consistency comparison for level-3 cross-testcase output slices.
 
 Groups testcases by batch_consistency_id, extracts output slices per
 batch_axis/batch_slice_info, and compares MD5 of corresponding slices
@@ -19,31 +22,87 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 
 
+def _is_slice_triple(value):
+    return (
+        isinstance(value, (tuple, list))
+        and len(value) == 3
+        and all(isinstance(item, (int, np.integer)) for item in value)
+    )
+
+
+def _normalize_axis_slices(value):
+    if _is_slice_triple(value):
+        return (tuple(value),)
+    if not isinstance(value, (tuple, list)) or not value:
+        raise ValueError("batch slice group must contain at least one slice")
+    if not all(_is_slice_triple(item) for item in value):
+        raise ValueError("batch slice must be a (start, stop, step) integer triple")
+    return tuple(tuple(item) for item in value)
+
+
 def _extract_slice(arr, batch_axis, batch_slice_info):
-    """Extract a slice from an array using batch_axis and batch_slice_info.
+    """Extract all relation samples from an array in deterministic order.
 
     batch_axis:    nested list of axis positions, e.g. [[0], [1]]
     batch_slice_info: nested list of (start, stop, step) triples, e.g. [[[0,5,1]], [[2,8,1]]]
 
-    Returns the sliced array (views, not copies).
+    Returns the relation samples and an optional unsupported reason.
     """
     if arr is None or not isinstance(arr, np.ndarray):
-        return arr
+        return None, "UNSLICEABLE_OUTPUT"
     if batch_axis is None or batch_slice_info is None:
-        return arr
+        return None, "MISSING_SLICE"
 
-    result = arr
     try:
+        if len(batch_axis) != len(batch_slice_info):
+            raise ValueError("batch metadata top-level counts differ")
+        active_groups = []
         for axis_group, slice_group in zip(batch_axis, batch_slice_info):
-            for axis, slc in zip(axis_group, slice_group):
-                if axis is None or slc is None:
-                    continue
-                start, stop, step = slc[0], slc[1], slc[2]
-                result = np.take(result, range(start, stop, step), axis=axis)
+            if slice_group is None:
+                continue
+            if axis_group is None or len(axis_group) != len(slice_group):
+                raise ValueError("batch axis and slice counts differ")
+            normalized = tuple(
+                (axis, _normalize_axis_slices(axis_slices)) for axis, axis_slices in zip(axis_group, slice_group)
+            )
+            sample_counts = {len(axis_slices) for _axis, axis_slices in normalized}
+            if len(sample_counts) != 1:
+                raise ValueError("batch axes contain different relation counts")
+            active_groups.append(normalized)
+
+        # Output 0 can only have one relation declaration. Applying independent
+        # input-slot declarations to it would validate unrelated output bytes.
+        if len(active_groups) != 1:
+            raise ValueError("output has zero or multiple active relation groups")
+
+        normalized = active_groups[0]
+        if len({axis for axis, _axis_slices in normalized}) != len(normalized):
+            raise ValueError("batch relation repeats an output axis")
+        sample_count = len(normalized[0][1])
+        samples = []
+        for sample_index in range(sample_count):
+            result = arr
+            for axis, axis_slices in normalized:
+                if not isinstance(axis, (int, np.integer)):
+                    raise TypeError("batch axis must be an integer")
+                axis_index = int(axis)
+                if axis_index < 0 or axis_index >= result.ndim:
+                    raise IndexError(f"batch axis {axis_index} is outside output rank {result.ndim}")
+                start, stop, step = axis_slices[sample_index]
+                start, stop, step = int(start), int(stop), int(step)
+                if step <= 0 or start < 0 or stop <= start or stop > result.shape[axis_index]:
+                    raise ValueError(
+                        f"invalid output slice {(start, stop, step)} for axis {axis_index} "
+                        f"with extent {result.shape[axis_index]}"
+                    )
+                result = np.take(result, range(start, stop, step), axis=axis_index)
+            samples.append(np.ascontiguousarray(result))
+        if len({sample.shape for sample in samples}) != 1:
+            raise ValueError("batch relation samples produce different output shapes")
+        return tuple(samples), None
     except (IndexError, ValueError, TypeError) as e:
         logging.warning(f"Batch slice extraction failed: {e}")
-        return arr
-    return result
+        return None, "INVALID_SLICE"
 
 
 def _compute_md5(arr) -> str:
@@ -51,8 +110,37 @@ def _compute_md5(arr) -> str:
     if arr is None:
         return "None"
     if isinstance(arr, np.ndarray):
-        return hashlib.md5(arr.tobytes()).hexdigest()
-    return hashlib.md5(str(arr).encode()).hexdigest()
+        return hashlib.md5(arr.tobytes()).hexdigest()  # noqa: S324 - non-security data comparison
+    return hashlib.md5(str(arr).encode()).hexdigest()  # noqa: S324 - non-security data comparison
+
+
+def _sliceable_output(testcase, result):
+    """Return output 0 only when the worker retained shape-aware data."""
+    output_bytes = getattr(result, "output_bytes", None)
+    if output_bytes is None:
+        prof_result = getattr(testcase, "prof_result", None)
+        output_bytes = getattr(prof_result, "output_bytes", None)
+    if not isinstance(output_bytes, (list, tuple)) or not output_bytes:
+        return None, "NO_OUTPUT"
+
+    output = output_bytes[0]
+    if output is None:
+        return None, "NO_OUTPUT"
+    if not isinstance(output, np.ndarray):
+        # Raw bytes have no dtype or shape, so batch_axis cannot be applied.
+        return None, "UNSLICEABLE_OUTPUT"
+    return output, None
+
+
+def _member_label(member):
+    """Keep sentinel states readable instead of truncating NO_OUTPUT."""
+    sample_md5s = member.get("sample_md5s", ())
+    if member["status"] == "ok" and len(sample_md5s) > 1:
+        digests = ",".join(digest[:8] for digest in sample_md5s)
+        return f"{member['testcase']}=[{digests}]"
+    digest = member["md5"]
+    digest = digest[:8] if member["status"] == "ok" else digest
+    return f"{member['testcase']}={digest}"
 
 
 def compare_batch_consistency(
@@ -67,8 +155,11 @@ def compare_batch_consistency(
         List of per-group comparison result dicts:
           {
             "batch_consistency_id": id,
-            "members": [{"testcase": name, "md5": hash}, ...],
+            "members": [{"testcase": name, "md5": hash,
+                         "sample_md5s": (hash, ...), "status": status}, ...],
             "pass": bool,
+            "supported": bool,
+            "reason": optional_reason,
           }
     """
     groups: Dict[Any, List[Tuple[Any, Any]]] = {}
@@ -84,44 +175,63 @@ def compare_batch_consistency(
             continue
 
         member_infos = []
-        md5_set = set()
+        unsupported = []
 
         for testcase, result in members:
             batch_axis = getattr(testcase, "batch_axis", None)
             batch_slice_info = getattr(testcase, "batch_slice_info", None)
 
-            output_bytes = getattr(result, "output_bytes", None)
-            if output_bytes is None:
-                output_bytes = getattr(testcase, "prof_result", None)
-                if output_bytes is not None:
-                    output_bytes = getattr(output_bytes, "output_bytes", None)
-
-            if output_bytes and isinstance(output_bytes, (list, tuple)):
-                arr = output_bytes[0] if len(output_bytes) > 0 else None
-                if isinstance(arr, (bytes, bytearray)):
-                    sliced_md5 = hashlib.md5(bytes(arr)).hexdigest()
-                else:
-                    sliced = _extract_slice(arr, batch_axis, batch_slice_info)
-                    sliced_md5 = _compute_md5(sliced)
+            arr, unsupported_reason = _sliceable_output(testcase, result)
+            if unsupported_reason is None:
+                sliced, unsupported_reason = _extract_slice(arr, batch_axis, batch_slice_info)
+            if unsupported_reason is None:
+                sample_md5s = tuple(_compute_md5(sample) for sample in sliced)
+                sliced_md5 = sample_md5s[0]
+                status = "ok"
             else:
-                sliced_md5 = "NO_OUTPUT"
+                sample_md5s = ()
+                sliced_md5 = unsupported_reason
+                status = "unsupported"
+                unsupported.append(unsupported_reason)
 
             member_infos.append(
                 {
                     "testcase": testcase.testcase_name,
                     "md5": sliced_md5,
+                    "sample_md5s": sample_md5s,
+                    "status": status,
                 }
             )
-            md5_set.add(sliced_md5)
 
-        passed = len(md5_set) == 1
-        if not passed:
-            logging.error(
-                f"Batch consistency FAIL for group {bcid}: {[m['testcase'] + '=' + m['md5'][:8] for m in member_infos]}"
+        supported = not unsupported
+        sample_md5_groups = []
+        if supported:
+            sample_counts = {len(member["sample_md5s"]) for member in member_infos}
+            if len(sample_counts) != 1:
+                supported = False
+                unsupported.append("RELATION_COUNT_MISMATCH")
+            else:
+                sample_count = sample_counts.pop()
+                sample_md5_groups = [
+                    {member["sample_md5s"][index] for member in member_infos} for index in range(sample_count)
+                ]
+        # Different samples within one case represent different relations. Only
+        # hashes at the same relation position are comparable across cases.
+        passed = supported and all(len(sample_md5s) == 1 for sample_md5s in sample_md5_groups)
+        labels = [_member_label(member) for member in member_infos]
+        if not supported:
+            logging.warning(
+                "Batch consistency unsupported for group %s: %s; reason=%s",
+                bcid,
+                labels,
+                ",".join(sorted(set(unsupported))),
             )
+        elif not passed:
+            logging.error(f"Batch consistency FAIL for group {bcid}: {labels}")
         else:
+            digests = ",".join(next(iter(sample_md5s))[:8] for sample_md5s in sample_md5_groups)
             logging.info(
-                f"Batch consistency PASS for group {bcid}: {len(member_infos)} testcases, MD5={list(md5_set)[0][:8]}"
+                f"Batch consistency PASS for group {bcid}: {len(member_infos)} testcases, relation MD5=[{digests}]"
             )
 
         results.append(
@@ -129,6 +239,8 @@ def compare_batch_consistency(
                 "batch_consistency_id": str(bcid),
                 "members": member_infos,
                 "pass": passed,
+                "supported": supported,
+                "reason": None if supported else ",".join(sorted(set(unsupported))),
             }
         )
 

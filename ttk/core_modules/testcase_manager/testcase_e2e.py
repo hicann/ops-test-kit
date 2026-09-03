@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
 
@@ -442,11 +445,12 @@ class TestcaseE2e(TensorApiTestcaseBase):
                     start = sl[0]
                     stop = sl[1]
                     step = sl[2]
-                    if step <= 0 or start < 0 or stop < 0:
+                    try:
+                        length = len(range(start, stop, step)) if step > 0 and start >= 0 and stop >= 0 else 0
+                    except (TypeError, ValueError):
                         length = 0
-                    else:
-                        length = stop - start if stop > start else 0
-                    slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
+                    # Cross-case relations can live at different logical offsets.
+                    slice_id = f"{seed_value}_{axis_idx}_{length}_{step}"
                     if length == 0:
                         logging.warning(
                             f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid"
@@ -454,7 +458,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
                     slice_lens.append(slice_id)
                 slice_axes.append(tuple(slice_lens))
             slice_key.append(tuple(slice_axes))
-        self.batch_consistency_id = tuple(slice_key)
+        self.batch_consistency_id = tuple(slice_key) if slice_key else None
 
     def _check_tensor_configuration(self):
         """Validate tensor parameters match API definition in count and type."""
@@ -580,7 +584,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
             # A top-level None is an omitted optional Tensor, except for a
             # TensorList parameter where it represents an omitted list while
             # still occupying that parameter's position.
-            tensor_params = [p for p in info.overloads[0].layout.input_params]
+            tensor_params = list(info.overloads[0].layout.input_params)
             input_shapes = []
             skip_flags = []
             tensor_pos = 0
@@ -740,26 +744,26 @@ class TestcaseE2e(TensorApiTestcaseBase):
             elif layout.is_out_tensor_list:
                 if layout.out_expected_count > 0:
                     # Exact validation: we know the expected out tensor count
-                    if layout.is_out_required and out_count != layout.out_expected_count:
+                    if (
+                        layout.is_out_required
+                        and out_count != layout.out_expected_count
+                        or not layout.is_out_required
+                        and out_count not in (0, layout.out_expected_count)
+                    ):
                         continue
-                    elif not layout.is_out_required and out_count not in (0, layout.out_expected_count):
-                        continue
-                else:
-                    # Loose validation: TensorList but unknown count (e.g. TypeError path)
-                    if layout.is_out_required and out_count == 0:
-                        continue
+                # Loose validation: TensorList but unknown count (e.g. TypeError path)
+                elif layout.is_out_required and out_count == 0:
+                    continue
                 matching_overloads.append(oidx)
             else:
-                if layout.is_out_required and out_count != 1:
-                    continue
-                elif not layout.is_out_required and out_count > 1:
+                if layout.is_out_required and out_count != 1 or not layout.is_out_required and out_count > 1:
                     continue
                 matching_overloads.append(oidx)
         if not matching_overloads:
             any_out_required = any(ov.layout.is_out_required for ov in info.overloads)
             any_tensor_list_out = any(ov.layout.is_out_tensor_list for ov in info.overloads)
             if any_out_required and any_tensor_list_out:
-                expected = set(ov.layout.out_expected_count for ov in info.overloads if ov.layout.is_out_required)
+                expected = {ov.layout.out_expected_count for ov in info.overloads if ov.layout.is_out_required}
                 self.is_valid = False
                 self.fail_reason = "OUTPUT_COUNT_MISMATCH"
                 logging.error(

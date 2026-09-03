@@ -626,10 +626,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         for dtype in self.flat_tensor_dtypes:
             if dtype is not None and not is_torch_native_dtype(dtype):
                 return False
-        for dtype in self.scalar_dtypes:
-            if dtype is not None and not is_torch_native_dtype(dtype):
-                return False
-        return True
+        return all(dtype is None or is_torch_native_dtype(dtype) for dtype in self.scalar_dtypes)
 
     def is_multi_device(self) -> bool:
         return self.device_ids is not None and len(self.device_ids) > 1
@@ -671,7 +668,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             return None
 
     @staticmethod
-    def _tensor_param_valid(view_shape, view_stride, view_offset, storage_shape):
+    def _tensor_param_valid(view_shape, view_stride, view_offset, storage_shape):  # noqa: PLR0911
         """Validate that view_shape/stride/offset fit within storage_shape."""
         if not view_stride and not view_offset and not storage_shape:
             return True
@@ -739,22 +736,20 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         if len(view_shape) == 1:
             if view_shape[0] >= 1024 * 1024 * 512:  # 2GB for fp32, 1GB for bfp16/fp16
                 return (1,), view_shape + offset
-            else:
-                return (2,), self._infer_storage_shape(view_shape, (2,), offset)
-        elif all([view_shape[idx] == view_shape[0] for idx in range(len(view_shape))]):
+            return (2,), self._infer_storage_shape(view_shape, (2,), offset)
+        if all(view_shape[idx] == view_shape[0] for idx in range(len(view_shape))):
             stride = list(shape_stride(view_shape))
             ex_idx = sorted(numpy.random.choice(len(stride), size=2, replace=False))
             stride[ex_idx[0]], stride[ex_idx[1]] = stride[ex_idx[1]], stride[ex_idx[0]]
             ss = list(copy.deepcopy(view_shape))
             ss[-1] += offset
             return tuple(stride), tuple(ss)
-        else:
-            vs = list(view_shape)
-            ex_idx = sorted(numpy.random.choice(len(vs), size=2, replace=False))
-            vs[ex_idx[0]], vs[ex_idx[1]] = vs[ex_idx[1]], vs[ex_idx[0]]
-            stride = shape_stride(vs)
-            vs[-1] += offset
-            return stride, tuple(vs)
+        vs = list(view_shape)
+        ex_idx = sorted(numpy.random.choice(len(vs), size=2, replace=False))
+        vs[ex_idx[0]], vs[ex_idx[1]] = vs[ex_idx[1]], vs[ex_idx[0]]
+        stride = shape_stride(vs)
+        vs[-1] += offset
+        return stride, tuple(vs)
 
     def _check_api_name(self):
         """Validate api_name is specified and exists in OpApiInfo."""
@@ -848,7 +843,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 if len(view_shape) != len(view_strides[idx]):
                     # invalid !! leave it to validate later.
                     continue
-                if any([d < 0 for d in view_strides[idx]]):
+                if any(d < 0 for d in view_strides[idx]):
                     # invalid !! leave it to validate later.
                     continue
                 storage_shapes[idx] = self._infer_storage_shape(view_shape, view_strides[idx], view_offsets[idx])
@@ -923,17 +918,17 @@ class TestcaseAclnn(TensorApiTestcaseBase):
             name = api_param_names[idx]
             typ = op_api_info.params[name]["type"]
             if is_nested_fn(element):
-                if typ != list_type:
-                    self.is_valid = False
-                    self.fail_reason = "PARAM_TYPE_MISMATCH"
-                    logging.error(f"Parameter [{name}] type is [{typ}]. But got {kind}List.")
-                    return
-            elif element is not None:
-                if typ != single_type:
-                    self.is_valid = False
-                    self.fail_reason = "PARAM_TYPE_MISMATCH"
-                    logging.error(f"Parameter [{name}] type is [{typ}]. But got {kind}.")
-                    return
+                if typ == list_type:
+                    continue
+                self.is_valid = False
+                self.fail_reason = "PARAM_TYPE_MISMATCH"
+                logging.error(f"Parameter [{name}] type is [{typ}]. But got {kind}List.")
+                return
+            if element is not None and typ != single_type:
+                self.is_valid = False
+                self.fail_reason = "PARAM_TYPE_MISMATCH"
+                logging.error(f"Parameter [{name}] type is [{typ}]. But got {kind}.")
+                return
 
     @staticmethod
     def _is_tensor_list_element(element):
@@ -974,11 +969,12 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                     if sl is None:
                         continue
                     start, stop, step = sl[0], sl[1], sl[2]
-                    if step <= 0 or start < 0 or stop < 0:
+                    try:
+                        length = len(range(start, stop, step)) if step > 0 and start >= 0 and stop >= 0 else 0
+                    except (TypeError, ValueError):
                         length = 0
-                    else:
-                        length = stop - start if stop > start else 0
-                    slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
+                    # Cross-case relations can live at different logical offsets.
+                    slice_id = f"{seed_value}_{axis_idx}_{length}_{step}"
                     if length == 0:
                         logging.warning(
                             f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid"
