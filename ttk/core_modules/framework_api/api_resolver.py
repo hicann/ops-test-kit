@@ -15,6 +15,8 @@ Handles both module functions (torch.add) and Tensor methods (torch.Tensor.relu_
 Also supports TF APIs (tf.raw_ops.Add, tf.nn.relu, etc.).
 """
 
+from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
+
 _MODULE_ALIAS = {}
 
 
@@ -42,8 +44,9 @@ def resolve_api(api_name: str):
 
         return resolve_callable_str(api_name), False
 
-    # The extension package was imported by FrameworkApiInfoKeeper.get during
-    # validation in the parent process; forked workers inherit sys.modules.
+    # Framework API workers use forkserver so they must register custom torch
+    # extensions themselves instead of relying on the parent's sys.modules.
+    TorchOpsPackageLoader.ensure_registered(api_name)
 
     # torch.Tensor.xxx -> Tensor method
     if len(parts) >= 3 and parts[1] == "Tensor":

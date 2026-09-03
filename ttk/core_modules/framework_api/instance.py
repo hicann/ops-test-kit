@@ -65,10 +65,7 @@ class FrameworkApiInstance(InstanceBase):
         logging.info("E2E npusim: camodel runtime injected from %s", camodel)
 
     def env_prepare(self):
-        import multiprocessing
-
         self._register_mc2_apis()
-        self.mp_context = multiprocessing.get_context("fork")
 
     @staticmethod
     def _register_mc2_apis():
