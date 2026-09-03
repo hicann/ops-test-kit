@@ -181,3 +181,113 @@ def test_normal_chunked_generate_dtype_preserved():
     n = 2 * CHUNK_ELEMS + 8
     arr = RandomData("bfloat16", (n,), (-1.0, 1.0)).generate(distribution="normal")
     assert str(arr.dtype) == "bfloat16"
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    ["float16", "bfloat16", "float32", "float64", "int32", "int64", "uint8", "bool"],
+)
+def test_uniform_chunked_bitwise_equal(dtype):
+    """uniform 大 tensor 分块生成与单次全量生成逐位相同（含非整除尾块）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+    from ttk.utilities.dtypes import resolve_custom_numpy_dtypes
+
+    n = 2 * CHUNK_ELEMS + 1024
+    resolved = resolve_custom_numpy_dtypes([dtype])[0]
+
+    np.random.seed(42)
+    full = np.random.uniform(-1.0, 1.0, n).astype(resolved, copy=False)
+    np.random.seed(42)
+    chunked = RandomData._gen_uniform_data(-1.0, 1.0, resolved, (n,))
+    assert chunked.dtype == full.dtype
+    assert np.array_equal(chunked, full)
+
+
+def test_uniform_small_tensor_keeps_single_shot_path():
+    """elem_count <= 2*CHUNK_ELEMS 时保持单次全量路径（行为与改动前一致）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS
+
+    np.random.seed(42)
+    full = np.random.uniform(-1.0, 1.0, n).astype("float32", copy=False)
+    np.random.seed(42)
+    small = RandomData._gen_uniform_data(-1.0, 1.0, "float32", (n,))
+    assert np.array_equal(small, full)
+
+
+def test_uniform_chunked_generate_dtype_preserved():
+    """generate 入口走 uniform 分块路径后 dtype 保持声明值（防 float64 提升/降级）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS + 8
+    arr = RandomData("float32", (n,), (-1.0, 1.0)).generate()
+    assert str(arr.dtype) == "float32"
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        1,
+        4_000_000 - 1,
+    ],
+)
+def test_uniform_chunked_tail_boundaries_bitwise_equal(tail):
+    """非 4M 对齐边界：最小分块入口（2xCHUNK+1）与最大尾块（CHUNK-1）均逐位相同。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS + tail
+
+    np.random.seed(42)
+    full = np.random.uniform(-1.0, 1.0, n).astype("float32", copy=False)
+    np.random.seed(42)
+    chunked = RandomData._gen_uniform_data(-1.0, 1.0, "float32", (n,))
+    assert np.array_equal(chunked, full)
+
+
+def test_uniform_chunked_exact_multiple_bitwise_equal():
+    """整除边界（n = 3*CHUNK，无尾块）分块生成与单次全量逐位相同。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 3 * CHUNK_ELEMS
+
+    np.random.seed(42)
+    full = np.random.uniform(-1.0, 1.0, n).astype("float32", copy=False)
+    np.random.seed(42)
+    chunked = RandomData._gen_uniform_data(-1.0, 1.0, "float32", (n,))
+    assert np.array_equal(chunked, full)
+
+
+def test_uniform_chunked_actually_splits(monkeypatch):
+    """大 tensor 必须真实走分块路径：uniform 调用次数 >= 2（防阈值被误改后静默退化为单发）。"""
+    import numpy
+
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    calls = []
+    real_uniform = numpy.random.uniform
+
+    def counting_uniform(low, high, size):
+        calls.append(size)
+        return real_uniform(low, high, size)
+
+    monkeypatch.setattr("ttk.utilities.data.numpy.random.uniform", counting_uniform)
+    arr = RandomData("float32", (2 * CHUNK_ELEMS + 1,), (-1.0, 1.0)).generate()
+    assert len(calls) >= 2
+    assert arr.dtype == numpy.dtype("float32")  # dtype 保持
+
+
+def test_uniform_chunked_multidim_bitwise_equal():
+    """多维 shape（总元素数非 4M 对齐）分块生成与单次全量逐位相同（ravel 写入顺序一致）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    shape = (3, CHUNK_ELEMS // 2 + 17, 5)  # 总数 = 1.5*CHUNK 非对齐，含多维 stride
+    n = int(np.prod(shape))
+    assert n > 2 * CHUNK_ELEMS
+
+    np.random.seed(42)
+    full = np.random.uniform(-1.0, 1.0, shape).astype("float32", copy=False)
+    np.random.seed(42)
+    chunked = RandomData._gen_uniform_data(-1.0, 1.0, "float32", shape)
+    assert chunked.shape == shape
+    assert np.array_equal(chunked, full)

@@ -78,7 +78,7 @@ class RandomData:
                 low = 2**-3
             if not numpy.isfinite(high) or high <= low:
                 high = 2**7
-            f32 = numpy.random.uniform(low, high, self._shape).astype("float32")
+            f32 = self._gen_uniform_data(low, high, "float32", self._shape)
             from .dtypes import numpy_float8_e8m0
 
             np_array = f32.astype(numpy_float8_e8m0())
@@ -180,6 +180,24 @@ class RandomData:
             flat[start:end] = gen.rvs(end - start)
         return out
 
+    @staticmethod
+    def _gen_uniform_data(low, high, dtype, shape):
+        """Generate uniform samples into a pre-allocated typed buffer chunk by chunk.
+
+        numpy.random.uniform consumes the RandomState stream element by element
+        (low + (high-low) * next_double), so the chunked output is bitwise identical
+        to a single full-size uniform(...).astype(dtype) call.
+        """
+        elem_count = int(numpy.prod(shape)) if numpy.ndim(shape) else 1
+        if elem_count <= 2 * CHUNK_ELEMS:
+            return numpy.random.uniform(low, high, shape).astype(dtype, copy=False)
+        out = numpy.empty(shape, dtype=dtype)
+        flat = out.ravel()
+        for start in range(0, elem_count, CHUNK_ELEMS):
+            end = min(start + CHUNK_ELEMS, elem_count)
+            flat[start:end] = numpy.random.uniform(low, high, end - start)
+        return out
+
     def _random(
         self, dtype, shape: Union[list, tuple], is_complex_imag: bool = False, distribution: str = "uniform"
     ) -> numpy.ndarray:
@@ -228,7 +246,7 @@ class RandomData:
 
                         array = t.view(torch.uint16).numpy().view(np_bf16).reshape(shape)
                 else:
-                    array = numpy.random.uniform(low, high, shape).astype(dtype, copy=False)
+                    array = self._gen_uniform_data(low, high, dtype, shape)
         return self._mix_expect_data(array, dtype, shape, is_complex_imag)
 
     def _mix_expect_data(
