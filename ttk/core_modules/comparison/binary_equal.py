@@ -74,6 +74,8 @@ class BinaryComparison(ComparisonBase):
 
     @staticmethod
     def _numpy_binary_compare(output: np.ndarray, golden: np.ndarray):
+        if not output.flags["C_CONTIGUOUS"]:
+            output = np.ascontiguousarray(output)
         if not golden.flags["C_CONTIGUOUS"]:
             golden = np.ascontiguousarray(golden)
         if "float8_e8m0" in str(output.dtype):
