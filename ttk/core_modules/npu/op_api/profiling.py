@@ -602,6 +602,25 @@ def _aclnn_xpu_inputs(context: TestcaseAclnn) -> list:
     return inputs
 
 
+def _aclnn_xpu_input_dtypes(context: TestcaseAclnn) -> list:
+    """Logical tensor dtypes (pure outputs filtered) for XPU schema.
+
+    与 _aclnn_xpu_inputs 同款过滤（pure outputs 剔除、TensorList 保持嵌套），
+    保证 dtype 列表与 inputs 槽位一一对应。dtype 为 CSV 声明值（如 complex32），
+    嵌套结构与 np_storages 的 tensor_list_dist 重排一致。
+    """
+    dist = context.tensor_list_dist
+    flat_dtypes = context.flat_tensor_dtypes or ()
+    nested = apply_as_list(list(flat_dtypes), dist) if dist else list(flat_dtypes)
+    dtypes = []
+    real_idx = 0
+    for slot in nested:
+        if real_idx not in context.pure_output_indexes:
+            dtypes.append(slot)
+        real_idx += len(slot) if isinstance(slot, (list, tuple)) else 1
+    return dtypes
+
+
 def _aclnn_xpu_input_names(context: TestcaseAclnn) -> list:
     """Input tensor param names (pure outputs filtered) for XPU schema."""
     op_api_info = OpApiInfoKeeper().info_of(context.api_name)
@@ -2042,6 +2061,7 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
                 switches=switches,
                 need_data=need_3party,
                 param_order=_aclnn_param_order(context),
+                input_dtypes=_aclnn_xpu_input_dtypes(context),
             )
             if need_3party and third_parties is None:
                 logging.warning(

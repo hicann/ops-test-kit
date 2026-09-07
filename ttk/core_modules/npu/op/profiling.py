@@ -29,7 +29,6 @@ except ImportError:
     @contextlib.contextmanager
     def NULLCXT():
         """NULL CONTEXT"""
-        pass
 
     nullcontext = NULLCXT
 
@@ -195,6 +194,7 @@ def _do_xpu_profiling(context, xpu_mode):
         op_type=op_type,
         attributes=context.attributes if hasattr(context, "attributes") else {},
         input_formats=getattr(context, "input_formats", None),
+        input_dtypes=getattr(context, "input_dtypes", None),
         testcase_name=getattr(context, "testcase_name", context.op_name),
         switches=sw,
         need_data=need_data,
@@ -312,7 +312,7 @@ def _resolve_tolerance(context: TestcaseOp):
             switches.compare_method,
             input_dtypes=input_dtypes,
         )
-        need_3party = any(s.token == "cross_check" for s in standards)
+        need_3party = any(s.token == "cross_check" for s in standards)  # noqa: S105  # token 为比对标准名，非口令
         if need_3party:
             context.golden_mode_override = "Promote"
         return SimpleNamespace(
@@ -783,7 +783,7 @@ def __construct_profiling_param(context: TestcaseOp, mode: str, output_placehold
             context.testcase_name,  # 11
             mode,
         )  # 12
-    elif mode == "const":
+    if mode == "const":
         return (
             context.cst_compile_result,  # 0
             flat_input_arrays,  # 1
@@ -799,7 +799,7 @@ def __construct_profiling_param(context: TestcaseOp, mode: str, output_placehold
             context.testcase_name,  # 11
             mode,
         )  # 12
-    elif mode == "binary":
+    if mode == "binary":
         return (
             context.bin_compile_result,  # 0
             flat_input_arrays,  # 1
@@ -815,8 +815,7 @@ def __construct_profiling_param(context: TestcaseOp, mode: str, output_placehold
             context.testcase_name,  # 11
             mode,
         )  # 12
-    else:
-        raise RuntimeError(f"Unknown profiling mode {mode}")
+    raise RuntimeError(f"Unknown profiling mode {mode}")
 
 
 def _get_rts_interface(device_id: int, testcase_name: str, test_mode: str) -> RTSInterfaceBase:
@@ -844,7 +843,7 @@ def do_profiling(context: TestcaseOp, mode: str) -> RTSProfilingResult:
     output_placeholder: bool = OpInfoKeeper().op_output_defined(op_name)
     param = RTSProfilingParam(*__construct_profiling_param(context, mode, output_placeholder), op_name=op_name)
     if param.switch:
-        if not param.compile_result == "SUCC":
+        if param.compile_result != "SUCC":
             result = RTSProfilingResult.fail(param.compile_result)
         elif not param.is_valid:
             result = RTSProfilingResult.fail(param.fail_reason)
@@ -927,7 +926,7 @@ def handle_profiling_result(context: TestcaseOp):
             if result.cycle in off_flag:
                 return "PASS"
             cs = result.cycle.split(",")
-            if all([s.strip() == "OK" for s in cs]):  # in case  --task-prof=false
+            if all(s.strip() == "OK" for s in cs):  # in case  --task-prof=false
                 return "PASS"
             # NPUSim (ASCEND_CAMODEL) simulation reports no single-valued cycle
             # ("_process_model_cycles" hardcodes "UNKNOWN"); treat that as "not
@@ -936,7 +935,7 @@ def handle_profiling_result(context: TestcaseOp):
             if get_global_storage().mode.is_model() and result.cycle == "UNKNOWN":
                 return "PASS"
         elif get_global_storage().mode.is_model() and isinstance(result.cycle, (list, tuple)):
-            if all([isinstance(s, int) and s > 0 for s in result.cycle]):
+            if all(isinstance(s, int) and s > 0 for s in result.cycle):
                 return "PASS"
 
         _passed, _cycle_f = "EXCEPTION", "RTS_PROF_INVALID"
@@ -956,5 +955,5 @@ def handle_profiling_result(context: TestcaseOp):
     cst_pass = _get_cycle(context.cst_prof_result, fake_fail)
     bin_pass = _get_cycle(context.bin_prof_result, fake_fail)
 
-    passed = all([s == "PASS" for s in [dyn_pass, cst_pass, bin_pass]])
+    passed = all(s == "PASS" for s in (dyn_pass, cst_pass, bin_pass))
     return "PASS" if passed else "FAIL"

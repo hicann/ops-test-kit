@@ -3,7 +3,7 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
@@ -98,9 +98,47 @@ class TestInputSchema:
         a, b, c = np.array([1.0]), np.array([2.0]), np.array([3.0])
         schema = _build_input_schema(inputs=[[a, b], c], input_names=["x", "y"])
         assert schema == [
-            {"name": "x", "indices": [0, 1], "dtype": "float64", "format": None},
-            {"name": "y", "index": 2, "dtype": "float64", "format": None},
+            {"name": "x", "indices": [0, 1], "dtype": "float64", "format": None, "logical_dtype": None},
+            {"name": "y", "index": 2, "dtype": "float64", "format": None, "logical_dtype": None},
         ]
+
+    def test_build_schema_logical_dtypes(self):
+        # logical_dtype：逐 slot 嵌入 CSV 声明值（complex32 等）；TensorList 的
+        # 嵌套 dtype 取首叶子；越界/缺失 → None
+        import numpy as np
+
+        from ttk.remote.dispatcher import _build_input_schema
+
+        a = np.zeros((2, 3, 2), dtype=np.float16)  # complex32 物理存储布局
+        b = np.zeros((2, 3), dtype=np.float32)
+        c = np.zeros(4, dtype=np.float16)
+        schema = _build_input_schema(
+            inputs=[a, b, c],
+            input_names=["x", "y", "z"],
+            input_dtypes=["complex32", "float32", "float16"],
+        )
+        assert schema[0]["dtype"] == "float16"  # 物理 dtype 不变
+        assert schema[0]["logical_dtype"] == "complex32"
+        assert schema[1]["logical_dtype"] == "float32"
+        assert schema[2]["logical_dtype"] == "float16"
+
+    def test_build_schema_logical_dtype_tensor_list_first_leaf(self):
+        import numpy as np
+
+        from ttk.remote.dispatcher import _build_input_schema
+
+        a, b = np.zeros(2, dtype=np.float16), np.zeros(2, dtype=np.float16)
+        schema = _build_input_schema(
+            inputs=[[a, b]],
+            input_names=["x"],
+            input_dtypes=[("complex32", "complex32")],  # TensorList 嵌套声明
+        )
+        assert schema[0]["logical_dtype"] == "complex32"
+        # 无声明 → None；None slot / 尾部补齐 name 同样为 None
+        schema2 = _build_input_schema(inputs=[None, a], input_names=["p", "q", "r"])
+        assert schema2[0]["logical_dtype"] is None
+        assert schema2[1]["logical_dtype"] is None
+        assert schema2[2]["logical_dtype"] is None
 
 
 class TestSerialize:
@@ -241,7 +279,7 @@ def scripted(monkeypatch):
     _ScriptedConn.sent_modes = []
     monkeypatch.setattr("ttk.remote.dispatcher.http.client.HTTPConnection", _ScriptedConn)
     monkeypatch.setattr("ttk.remote.dispatcher.time.sleep", lambda *a, **k: None)
-    yield _ScriptedConn
+    return _ScriptedConn
 
 
 def _npz_body(*arrs):
@@ -300,10 +338,12 @@ class TestRoundTrip:
             flat = [npz[k] for k in npz.files]
             named = match_params_v1(schema, flat)  # 真实 server 函数
             # p0/p2 是 list（不是 merged 数组）,p3 是 None
-            assert isinstance(named["p0"], list) and len(named["p0"]) == 2
+            assert isinstance(named["p0"], list)
+            assert len(named["p0"]) == 2
             np.testing.assert_array_equal(named["p0"][0], a)
             np.testing.assert_array_equal(named["p0"][1], b)
-            assert isinstance(named["p2"], list) and len(named["p2"]) == 2
+            assert isinstance(named["p2"], list)
+            assert len(named["p2"]) == 2
             assert named["p3"] is None
         finally:
             import os

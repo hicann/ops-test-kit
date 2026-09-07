@@ -221,6 +221,25 @@ def _e2e_xpu_inputs(testcase, raw_inputs):
     return inputs
 
 
+def _e2e_xpu_input_dtypes(testcase):
+    """Logical tensor dtypes (pure outputs filtered) for XPU schema.
+
+    与 _e2e_xpu_inputs 同款过滤（输出槽剔除、TensorList 保持嵌套），dtype 为
+    CSV 声明值（如 complex32），与 raw_inputs 的 tensor_list_dist 重排一致。
+    """
+    dist = testcase.tensor_list_dist
+    flat_dtypes = testcase.flat_tensor_dtypes or ()
+    nested = apply_as_list(list(flat_dtypes), dist) if dist else list(flat_dtypes)
+    out_indices = set(testcase.output_tensor_indexes or ())
+    dtypes = []
+    real_idx = 0
+    for slot in nested:
+        if real_idx not in out_indices:
+            dtypes.append(slot)
+        real_idx += len(slot) if isinstance(slot, (list, tuple)) else 1
+    return dtypes
+
+
 def _e2e_xpu_input_names(testcase):
     """Input tensor param names (pure outputs filtered) for XPU schema."""
     plan = testcase.get_param_plan()
@@ -1349,6 +1368,7 @@ def _do_profile(  # noqa: PLR0911
                 testcase_name=testcase.testcase_name,
                 switches=switches,
                 need_data=need_3party,
+                input_dtypes=_e2e_xpu_input_dtypes(testcase),
             )
             if need_3party and third_parties is None:
                 logging.warning(

@@ -214,7 +214,19 @@ def _dtype_name(arr):
         return None
 
 
-def _build_input_schema(inputs: list, input_names: list, input_formats: Optional[list] = None) -> list:
+def _slot_logical_dtype(entry):
+    """Schema 每 slot 单值；TensorList 声明的嵌套 dtype 取首叶子。
+
+    与物理 dtype 的 leaves[0] 取法一致（同质假设：list 内 dtype 一致）。
+    """
+    if isinstance(entry, (list, tuple)):
+        return entry[0] if entry else None
+    return entry
+
+
+def _build_input_schema(
+    inputs: list, input_names: list, input_formats: Optional[list] = None, input_dtypes: Optional[list] = None
+) -> list:
     """Build X-Input-Schema from inputs and their names.
 
     嵌套为真相源：顶层 zip(input_names, inputs) 位置对齐，按 slot 类型分派。
@@ -224,8 +236,13 @@ def _build_input_schema(inputs: list, input_names: list, input_formats: Optional
     分支直接用 slot）。
 
     ``input_formats`` 为逐输入 format（与 input_names 位置对齐，可为空）——
-    嵌入每个 schema 条目（name/index/dtype/**format**），server 侧可据此把
+    嵌入每个 schema 条目（name/index/dtype/format），server 侧可据此把
     format 传给三方 compose（广播/归约轴判定用），不另设独立 header。
+
+    ``input_dtypes`` 为逐输入**逻辑** dtype（与 input_names 位置对齐，可为空），
+    即 CSV 声明值（如 complex32），区别于条目 ``dtype`` 字段的物理 numpy dtype
+    ——complex32 在 npz 里物理上是 float16+尾维[2]，服务端靠 logical_dtype
+    才能还原成 torch.complex32 逻辑张量。
 
     注意：tensor-list slot 的 dtype 取自首个叶子（leaves[0]），假设同一 list
     内 dtype 同质；混合 dtype 的 list slot 未完全支持——server 每个 name 只应用
@@ -239,12 +256,14 @@ def _build_input_schema(inputs: list, input_names: list, input_formats: Optional
     )
 
     fmts = list(input_formats) if input_formats else []
+    ldts = list(input_dtypes) if input_dtypes else []
     fi = 0
     schema: list = []
     for i, (name, slot) in enumerate(zip(input_names, inputs)):
         fmt = fmts[i] if i < len(fmts) else None
+        ldt = _slot_logical_dtype(ldts[i] if i < len(ldts) else None)
         if slot is None:
-            schema.append({"name": name, "index": None, "dtype": None, "format": fmt})
+            schema.append({"name": name, "index": None, "dtype": None, "format": fmt, "logical_dtype": ldt})
         elif isinstance(slot, (list, tuple)):
             leaves = [x for x in deep_flatten(slot) if x is not None]
             schema.append(
@@ -253,15 +272,16 @@ def _build_input_schema(inputs: list, input_names: list, input_formats: Optional
                     "indices": [fi + i for i in range(len(leaves))],
                     "dtype": _dtype_name(leaves[0]) if leaves else None,
                     "format": fmt,
+                    "logical_dtype": ldt,
                 }
             )
             fi += len(leaves)
         else:  # ndarray（含 0-d）/ numpy 标量 —— 单叶子,直接用 slot
-            schema.append({"name": name, "index": fi, "dtype": _dtype_name(slot), "format": fmt})
+            schema.append({"name": name, "index": fi, "dtype": _dtype_name(slot), "format": fmt, "logical_dtype": ldt})
             fi += 1
     # names 多于 inputs:尾部补 index:null
     for name in input_names[len(inputs) :]:
-        schema.append({"name": name, "index": None, "dtype": None, "format": None})
+        schema.append({"name": name, "index": None, "dtype": None, "format": None, "logical_dtype": None})
     return schema
 
 
@@ -403,6 +423,7 @@ def dispatch_to_remote(
     provider: str = "torch",
     attrs: Optional[dict] = None,
     input_formats: Optional[list] = None,
+    input_dtypes: Optional[list] = None,
     endpoint_host: str = "127.0.0.1",
     endpoint_port: int = 9090,
     tenant_id: str = "unknown",
@@ -437,7 +458,7 @@ def dispatch_to_remote(
 
     # KERNEL no-spec (api=None) relies on the server's _resolve_3party_api to
     # derive the API from op_name/op_type — do NOT infer client-side.
-    schema = _build_input_schema(inputs, input_names, input_formats)
+    schema = _build_input_schema(inputs, input_names, input_formats, input_dtypes)
     effective_count = _schema_leaf_count(schema)
     mode_int = _parse_client_mode(mode)
 

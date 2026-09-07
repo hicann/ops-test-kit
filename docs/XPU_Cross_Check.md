@@ -49,13 +49,18 @@ frameworks:
 在算子 TestSpec 插件中声明 `third_party`，告诉 TTK 用哪个 provider 和 API 作为参考：
 
 ```python
+__spec__ = {"add": "AddTestSpec"}
+
+
 class AddTestSpec:
-    __spec__ = "add"
     third_party = {
-        "torch": "torch.add",        # provider=torch, api=torch.add
+        "torch": "torch.add",  # provider=torch, api=torch.add（点分 API 路径）
     }
-    # 或用 spec 类（复杂自定义场景）
-    # third_party = {"torch": {"spec_file": "add_spec.py", "spec_class": "AddSpec"}}
+    # 或用类形式（复杂自定义场景）：dict 值传类对象，__call__ 按名收输入
+    # class ThirdPartyImpl:
+    #     def __call__(self, x, y, **kwargs):
+    #         return [x + y]
+    # third_party = {"torch": ThirdPartyImpl}
 ```
 
 没有 `third_party` 时，`cross_check` 会因无参考输出而 `GOLDEN_FAILURE`。
@@ -97,7 +102,36 @@ python3 -m ttk kernel -i cases.csv --compare cross_check --provider torch --conf
 
 `--provider` 是测试过滤器，只缩小 dispatch 范围，不覆盖 spec 中的 `third_party` 配置。未设置时使用 spec 的第一个 provider。
 
-### 2.5 失败处理
+### 2.5 complex32 输入输出的传递
+
+`complex32` 无 numpy 存储类型，wire 上以 **fp16 + 尾维 `[2]`（real, imag 交错）** 布局传输。X-Input-Schema 的每个条目在物理 `dtype` 之外携带 `logical_dtype`（CSV 声明值），server 端据此把该布局还原成**逻辑 shape 的 `torch.complex32` 张量**再喂给三方 API：
+
+```python
+import torch
+
+__spec__ = {"complex_mul": "ComplexMulTestSpec"}
+
+
+class ComplexMulTestSpec:
+    """complex_mul：complex32 输入的 third_party 参考实现"""
+
+    class TorchRefImpl:
+        # 参数按名绑定（契约同 golden 类形式）：x1/x2 输入喂给 __call__。
+        # complex32 已由 server 还原为逻辑 shape 的 torch.complex32，
+        # 无需处理 "fp16 + 尾维 [2]" 的存储布局。
+        def __call__(self, x1, x2, **kwargs):
+            return [x1 * x2]  # 输出 complex32，server 自动转交错 fp16 回传
+
+    third_party = {"torch": TorchRefImpl}
+    tolerance = {"complex32": {"standard": "cross_check"}}
+```
+
+- 同一算子混跑 `float16` / `complex32` 用例时，在 `__call__` 里按 `x1.dtype == torch.complex32`（或 `x1.is_complex()`）分支即可——逻辑 dtype 已随请求传递，不再依赖尾维启发式。
+- 字符串形式只接受点分 API 路径（如 `"torch.abs"`）；自定义实现传类或可调用对象。
+
+输出方向同理：三方返回的 complex32 张量由 server 转回 fp16 `[..., 2]` 交错布局回传，与 NPU 输出 / golden 的存储约定对齐后参与比对。第三方实现若返回 complex64/complex128（numpy 原生复数），元素数与交错布局不匹配会导致比对错位——complex32 输出请返回 complex32（或自行 `view(torch.float16)`）。
+
+### 2.6 失败处理
 
 - xpu-server 不可达 → `xpu_results={}`，cross_check 输出 `GOLDEN_FAILURE`
 - provider 解析失败 → 同上

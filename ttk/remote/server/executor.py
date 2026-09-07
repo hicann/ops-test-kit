@@ -571,8 +571,10 @@ def _to_numpy_pair(v, provider):
     bfloat16 can't round-trip through numpy savez, so it's stored as raw int16
     bits with 'bfloat16' declared (client reinterprets). float8 likewise has no
     numpy storage class — stored as raw uint8 bits with the float8 dtype name
-    declared. torch is imported ONLY for the torch path; tf/other paths never
-    touch it (tf bfloat16 ships a numpy bf16 dtype via
+    declared. complex32 also has no numpy storage class — stored as interleaved
+    fp16 with a trailing [2] dim (TTK storage convention: [..., 0]=real,
+    [..., 1]=imag). torch is imported ONLY for the torch path; tf/other paths
+    never touch it (tf bfloat16 ships a numpy bf16 dtype via
     tensorflow.bfloat16.as_numpy_dtype).
     """
     if provider == "torch":
@@ -582,6 +584,11 @@ def _to_numpy_pair(v, provider):
             if isinstance(v, torch.Tensor):
                 if v.dtype == torch.bfloat16:
                     return v.contiguous().view(torch.int16).cpu().numpy(), "bfloat16"
+                if "complex32" in str(v.dtype):
+                    fp16 = v.contiguous().view(torch.float16)
+                    shape = list(v.shape)
+                    out_shape = shape[:-1] + [shape[-1], 2] if shape else [2]
+                    return fp16.cpu().numpy().reshape(out_shape), "complex32"
                 if "float8" in str(v.dtype):
                     return v.contiguous().view(torch.uint8).cpu().numpy(), str(v.dtype).replace("torch.", "")
                 return v.detach().cpu().numpy(), str(v.dtype).replace("torch.", "")
@@ -627,19 +634,23 @@ def _outputs_to_numpy(outputs, provider):
     return schema, arrays
 
 
-def _to_vendor_tensor(value, provider, device_str, dtype_name=None):
+def _to_vendor_tensor(value, provider, device_str, dtype_name=None, logical_dtype=None):
     """Framework H2D: numpy input -> provider tensor on device.
 
     Inputs arrive as numpy (restored from the tmp_in savez). torch/tf callables
-    need tensors, so convert before binding. ``dtype_name`` is the dtype declared
-    in X-Input-Schema by the client (whose numpy knows the real dtype) — used to
-    convert dtypes the server's numpy can't represent (bfloat16) without guessing.
-    None / lists recurse; non-numpy / unknown provider pass through.
+    need tensors, so convert before binding. ``dtype_name`` is the physical dtype
+    declared in X-Input-Schema by the client (whose numpy knows the real dtype) —
+    used to convert dtypes the server's numpy can't represent (bfloat16) without
+    guessing. ``logical_dtype`` is the CSV-declared dtype (e.g. 'complex32'):
+    complex32 ships as interleaved fp16 with a trailing [2] dim (real, imag) —
+    reinterpreted into a real torch.complex32 tensor with the logical shape so
+    vendor APIs see the dtype they expect. None / lists recurse; non-numpy /
+    unknown provider pass through.
     """
     if value is None:
         return None
     if isinstance(value, (list, tuple)):
-        return type(value)(_to_vendor_tensor(v, provider, device_str, dtype_name) for v in value)
+        return type(value)(_to_vendor_tensor(v, provider, device_str, dtype_name, logical_dtype) for v in value)
     if provider == "torch":
         try:
             import torch
@@ -652,6 +663,15 @@ def _to_vendor_tensor(value, provider, device_str, dtype_name=None):
                 # numpy has no native bfloat16 (wire form is raw int16 bits);
                 # reinterpret then view as bfloat16.
                 return torch.from_numpy(value.view(np.int16)).view(torch.bfloat16).to(device_str)
+            if logical_dtype == "complex32" and value.dtype == np.float16:
+                # wire form is interleaved fp16 with a trailing [2] dim;
+                # view halves the trailing 2 -> 1, squeeze(-1) drops the
+                # artifact dim, leaving the logical shape.
+                if not hasattr(torch, "complex32"):
+                    raise RuntimeError(
+                        f"Current pytorch version [{torch.__version__}] is too old. Please update to at least v1.13.1"
+                    )
+                return torch.from_numpy(value).view(torch.complex32).squeeze(-1).to(device_str)
             return torch.from_numpy(value).to(device_str)
         return value
     if provider == "tf":
@@ -1056,10 +1076,15 @@ def execute_request(
             named = match_params_v1(input_schema, flat)
         # Framework H2D: numpy inputs -> provider tensors on the target device.
         # dtype is declared per-input in X-Input-Schema (the client's numpy knows
-        # the real dtype; the server's may not, e.g. bfloat16).
+        # the real dtype; the server's may not, e.g. bfloat16). logical_dtype is
+        # the CSV-declared dtype — complex32 arrives as fp16+尾维[2] and is
+        # reinterpreted into a torch.complex32 logical-shape tensor.
         device_str = format_device(provider, profile, "cpu" if not use_device else device_id)
         _dtypes = {e.get("name"): e.get("dtype") for e in (input_schema or [])}
-        named = {k: _to_vendor_tensor(v, provider, device_str, _dtypes.get(k)) for k, v in named.items()}
+        _logical = {e.get("name"): e.get("logical_dtype") for e in (input_schema or [])}
+        named = {
+            k: _to_vendor_tensor(v, provider, device_str, _dtypes.get(k), _logical.get(k)) for k, v in named.items()
+        }
 
         callable_fn, api_label = _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module, spec_class)
         # 输入 format 已内嵌在 X-Input-Schema 每个条目（name/index/dtype/format）——

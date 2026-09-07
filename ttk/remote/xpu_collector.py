@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 """XPU collector — endpoint routing + dispatch + result aggregation.
 
 Business-agnostic: takes pre-resolved ExecutionSpecs, handles endpoint
@@ -24,10 +33,8 @@ def _select_run_specs(specs, xpu_mode):
         DATA|PERF  -> all
     """
     priority = specs[0] if specs else None
-    if xpu_mode == DATA:
-        run = [priority] if priority else []
-    else:  # PERF or DATA|PERF -> all
-        run = list(specs)
+    # DATA -> priority only (save non-priority output transfer); PERF / DATA|PERF -> all
+    run = ([priority] if priority else []) if xpu_mode == DATA else list(specs)
     return run, priority
 
 
@@ -52,6 +59,7 @@ def collect_xpu_results(
     op_type=None,
     attrs=None,
     input_formats=None,
+    input_dtypes=None,
     spec_search_roots=None,
     tmp_root=None,
     runtime: int = 3,
@@ -68,6 +76,7 @@ def collect_xpu_results(
         op_name: operator name (for dispatch)
         op_type: operator type (for dispatch)
         attrs: operator attributes dict
+        input_dtypes: 逐输入逻辑 dtype（CSV 声明值，如 complex32），顶层对齐
         spec_search_roots: spec search paths (for 424 retry)
 
     Returns:
@@ -104,6 +113,7 @@ def collect_xpu_results(
                 provider=provider,
                 attrs=attrs or {},
                 input_formats=input_formats,
+                input_dtypes=input_dtypes,
                 endpoint_host=ep.host,
                 endpoint_port=ep.port,
                 tenant_id=tenant_id,

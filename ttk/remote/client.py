@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the CANN Open Software License Agreement Version 2.0
-# (the "License"). You may not use this file except in compliance with
-# the License. See LICENSE in the root of the software repository for the
-# full text of the License.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 """
 XPU 第三方输出采集客户端 —— 面向 core_modules 的门面。
 
@@ -45,7 +46,7 @@ def extract_spec_providers(tp) -> List[str]:
     (Empty -> caller lets EndpointView.resolve_providers use detect∩yaml∩alive.)
     """
     if isinstance(tp, dict):
-        return [_TP_ALIASES.get(k, k) for k in tp.keys()]
+        return [_TP_ALIASES.get(k, k) for k in tp]
     if isinstance(tp, str):
         from ttk.remote import _derive_provider_from_api
 
@@ -112,6 +113,7 @@ def dispatch_xpu(
     op_type: Optional[str],
     attributes: dict,
     input_formats: Optional[list] = None,
+    input_dtypes: Optional[list] = None,
     testcase_name: str,
     switches,
     need_data: bool,
@@ -169,6 +171,7 @@ def dispatch_xpu(
         op_type=op_type,
         attrs=attributes or {},
         input_formats=input_formats,
+        input_dtypes=input_dtypes,
         tmp_root=_tmp_root,
         runtime=getattr(switches, "run_time", 3),
         param_order=param_order,
@@ -188,6 +191,7 @@ def collect_third_party(
     need_data: bool = True,
     param_order: Optional[list] = None,
     input_formats: Optional[list] = None,
+    input_dtypes: Optional[list] = None,
 ) -> Tuple[Optional[str], Optional[list], Optional[dict]]:
     """门面：采集第三方输出，返回 (priority_provider, flat_third_parties, xpu_results)。
 
@@ -196,6 +200,10 @@ def collect_third_party(
 
     input_formats：逐输入 format（与 input_names 位置对齐，可为空）——转发给
     dispatch_xpu → X-Input-Schema，供服务端 compose 解析通道轴等 format 依赖场景
+
+    input_dtypes：逐输入**逻辑** dtype（与 input_names 位置对齐，可为空），即
+    CSV 声明值（如 complex32）——嵌入 X-Input-Schema 的 logical_dtype 字段，
+    供服务端把 complex32 的 float16+尾维[2] 存储布局还原成 torch.complex32。
 
     - 远端不可用 / 无 provider / 执行失败 → (None, None, None)
       （调用方传 None 给 compare → cross_check 返回 GOLDEN_FAILURE）
@@ -219,6 +227,7 @@ def collect_third_party(
         need_data=need_data,
         param_order=param_order,
         input_formats=input_formats,
+        input_dtypes=input_dtypes,
     )
 
     if need_data:

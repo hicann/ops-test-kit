@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 """
 GEIR profiling entry — runs in a subprocess.
 Generates inputs in Python, writes to files, executes C++ binary, compares.
 """
 
+import contextlib
 import gc
 import logging
 import os
@@ -174,13 +181,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     process_ctx.notify_status("OnResolveTolerance")
     from ..comparison.resolve import resolve_tolerance
 
-    tolerance = None
-    try:
-        from ttk.test_spec import get_spec_attr
-
-        tolerance = get_spec_attr(testcase.op_name, "tolerance", getattr(switches, "plugin_path", None))
-    except Exception:
-        pass
+    tolerance = _spec_attr_of(testcase, switches, "tolerance")
     standards = resolve_tolerance(
         tolerance,
         testcase.flat_precision_tolerances,
@@ -189,7 +190,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         switches.compare_method,
         input_dtypes=testcase.flat_input_dtypes,
     )
-    need_3party_outputs = any(s.token == "cross_check" for s in standards)
+    need_3party_outputs = any(s.token == "cross_check" for s in standards)  # noqa: S105  # token 为比对标准名，非口令
     if need_3party_outputs:
         testcase.golden_mode_override = "Promote"
 
@@ -232,6 +233,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             need_data=need_3party_outputs,
             param_order=_geir_param_order(testcase),
             input_formats=getattr(testcase, "input_formats", None),
+            input_dtypes=getattr(testcase, "input_dtypes", None),
         )
 
     # Build op-level source (cached) + per-case config + compile (cached)
@@ -383,7 +385,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             import hashlib
 
             md5_list.append(
-                hashlib.md5(
+                hashlib.md5(  # noqa: S324  # 非安全用途：确定性校验和
                     b"".join(arr.tobytes() if isinstance(arr, np.ndarray) else b"" for arr in run_outputs)
                 ).hexdigest()
             )
@@ -600,6 +602,7 @@ def _parse_msprof_task_duration(prof_path: str):
                 ["python3", msprof_py, "export", t, "-dir", prof_path],
                 capture_output=True,
                 timeout=120,
+                check=False,
             )
         except Exception as exc:
             logging.warning("msprof export %s failed: %s", t, exc)
@@ -645,10 +648,8 @@ def _extract_csv_task_duration(csv_path, duration_col, type_col, kernel_types):
         for row in reader:
             if row.get(type_col, "") not in kernel_types:
                 continue
-            try:
+            with contextlib.suppress(ValueError, KeyError):
                 results.append(float(row[duration_col]))
-            except (ValueError, KeyError):
-                pass
     return results
 
 

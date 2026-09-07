@@ -3,15 +3,17 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """XU round-trip 结构保真看护。嵌套组合 ((A,B), C, None, (D,E)) 两个方向。"""
 
+import importlib.util
 import io
 
 import numpy as np
+import pytest
 
 from ttk.remote.dispatcher import (
     _build_input_schema,
@@ -19,6 +21,11 @@ from ttk.remote.dispatcher import (
     _serialize_to_file,
 )
 from ttk.remote.server.executor import _outputs_to_numpy
+
+# torch_npu._C + tensorflow C extension 在同一进程 import 时符号冲突 → segfault。
+_has_torch_npu = importlib.util.find_spec("torch_npu") is not None
+_has_tf = importlib.util.find_spec("tensorflow") is not None
+_TORCH_NPU_TF_CONFLICT = _has_torch_npu and _has_tf
 
 
 def _sample():
@@ -47,12 +54,16 @@ def test_input_direction_client_to_server(tmp_path):
         )
     ]
     named = match_params_v1(schema, flat)
-    assert isinstance(named["in0"], list) and len(named["in0"]) == 2
-    assert np.array_equal(named["in0"][0], A) and np.array_equal(named["in0"][1], B)
+    assert isinstance(named["in0"], list)
+    assert len(named["in0"]) == 2
+    assert np.array_equal(named["in0"][0], A)
+    assert np.array_equal(named["in0"][1], B)
     assert np.array_equal(named["in1"], C)
     assert named["in2"] is None
-    assert isinstance(named["in3"], list) and len(named["in3"]) == 2
-    assert np.array_equal(named["in3"][0], D) and np.array_equal(named["in3"][1], E)
+    assert isinstance(named["in3"], list)
+    assert len(named["in3"]) == 2
+    assert np.array_equal(named["in3"][0], D)
+    assert np.array_equal(named["in3"][1], E)
 
 
 def test_output_direction_server_to_client():
@@ -65,9 +76,72 @@ def test_output_direction_server_to_client():
     buf.seek(0)
     loaded = _load_npz_outputs(buf, schema)
     # loaded[0] = [A, B], loaded[1] = C, loaded[2] = None, loaded[3] = [D, E]
-    assert isinstance(loaded[0], list) and len(loaded[0]) == 2
-    assert np.array_equal(loaded[0][0], A) and np.array_equal(loaded[0][1], B)
+    assert isinstance(loaded[0], list)
+    assert len(loaded[0]) == 2
+    assert np.array_equal(loaded[0][0], A)
+    assert np.array_equal(loaded[0][1], B)
     assert np.array_equal(loaded[1], C)
     assert loaded[2] is None
-    assert isinstance(loaded[3], list) and len(loaded[3]) == 2
-    assert np.array_equal(loaded[3][0], D) and np.array_equal(loaded[3][1], E)
+    assert isinstance(loaded[3], list)
+    assert len(loaded[3]) == 2
+    assert np.array_equal(loaded[3][0], D)
+    assert np.array_equal(loaded[3][1], E)
+
+
+def _complex32_storage():
+    """fp16 [2,3,2] 交错存储（real=1, imag=2），等价 complex32 logical [2,3]。"""
+    arr = np.empty((2, 3, 2), dtype=np.float16)
+    arr[..., 0] = 1.0
+    arr[..., 1] = 2.0
+    return arr
+
+
+@pytest.mark.skipif(_TORCH_NPU_TF_CONFLICT, reason="torch_npu._C + tensorflow C extension conflict → segfault")
+def test_complex32_input_direction(tmp_path):
+    """complex32 输入方向：schema logical_dtype → server 还原 torch.complex32 逻辑张量。"""
+    torch = pytest.importorskip("torch")
+    from ttk.remote.server.execution_container import match_params_v1
+    from ttk.remote.server.executor import _to_vendor_tensor
+
+    storage = _complex32_storage()
+    schema = _build_input_schema(inputs=[storage], input_names=["x"], input_dtypes=["complex32"])
+    assert schema[0]["dtype"] == "float16"  # 物理 dtype
+    assert schema[0]["logical_dtype"] == "complex32"
+    path = _serialize_to_file([storage], dir=str(tmp_path))
+    npz = np.load(path)
+    named = match_params_v1(schema, [npz["a0"]])
+    t = _to_vendor_tensor(named["x"], "torch", "cpu", schema[0]["dtype"], schema[0]["logical_dtype"])
+    assert t.dtype == torch.complex32
+    assert tuple(t.shape) == (2, 3)  # 尾维 [2] 被吸收为复数
+    ref = t.contiguous().view(torch.float16).reshape(2, 3, 2).numpy()
+    assert np.all(ref[..., 0] == 1.0)
+    assert np.all(ref[..., 1] == 2.0)
+    # 无 logical_dtype（旧客户端）：保持 fp16 [..., 2] 原样（向后兼容）
+    t_plain = _to_vendor_tensor(named["x"], "torch", "cpu", schema[0]["dtype"], None)
+    assert t_plain.dtype == torch.float16
+    assert tuple(t_plain.shape) == (2, 3, 2)
+
+
+@pytest.mark.skipif(_TORCH_NPU_TF_CONFLICT, reason="torch_npu._C + tensorflow C extension conflict → segfault")
+def test_complex32_output_direction():
+    """complex32 输出方向：server 转 fp16 [...,2] 交错布局回传（与 golden/NPU 输出对齐）。"""
+    torch = pytest.importorskip("torch")
+    from ttk.remote.server.executor import _to_numpy_pair
+
+    c = torch.complex(torch.ones(2, 3), torch.full((2, 3), 2.0)).to(torch.complex32)
+    arr, dt = _to_numpy_pair(c, "torch")
+    assert dt == "complex32"
+    assert arr.dtype == np.float16
+    assert arr.shape == (2, 3, 2)
+    assert np.all(arr[..., 0] == 1.0)
+    assert np.all(arr[..., 1] == 2.0)
+    # 端到端：_outputs_to_numpy → npz → _load_npz_outputs 布局保真
+    schema, arrays = _outputs_to_numpy([c], "torch")
+    buf = io.BytesIO()
+    np.savez_compressed(buf, **{f"a{i}": o for i, o in enumerate(arrays)})
+    buf.seek(0)
+    loaded = _load_npz_outputs(buf, schema)
+    assert loaded[0].shape == (2, 3, 2)
+    assert loaded[0].dtype == np.float16
+    assert np.all(loaded[0][..., 0] == 1.0)
+    assert np.all(loaded[0][..., 1] == 2.0)
