@@ -17,4 +17,4 @@ ACLNN 子命令复用全部通用参数，专属选项仅 `--no-prof`（准备�
 - 支持 TensorList 输入/输出（通过 `tensor_view_shapes` 嵌套结构表示）
 - 原地操作通过 `output_inplace_indexes` 指定
 - 标量参数通过 `scalar_dtypes` 指定数据类型
-- 精度比对走通用 `--compare`（默认 Spec.tolerance 路由，否则 `stat_rel_err`；支持 `stat_rel_err`/`cross_check` 等）
+- 精度比对走通用 `--compare`（默认 Spec.tolerance 路由，否则 `mixed`；支持 `mixed`/`stat_rel_err`/`cross_check` 等）

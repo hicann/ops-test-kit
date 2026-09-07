@@ -127,7 +127,7 @@ python3 -m ttk kernel -i examples/case_store/kernel/add.csv
 1. 使用 `--dump-on-fail` 在失败时自动Dump数据
 2. 使用 `--dump in,out,golden --dump-format npy` 保存输入、输出和Golden到npy文件
 3. 用 `-t case_name --single-log` 锁定到单个用例并产出独立日志
-4. 检查CSV中 `precision_tolerances` 和 `absolute_precision` 设置是否合理
+4. 检查CSV中 `precision_tolerances` 和 `absolute_precision` 设置是否合理（`precision_tolerances` 仅 `--compare close`/`cosine` 生效、`absolute_precision` 仅 `close` 生效；默认 `mixed` 需在 TestSpec `tolerance` 中调整）
 
 ```shell
 # 失败时自动Dump数据
@@ -141,11 +141,12 @@ python3 -m ttk kernel -i cases.csv --dump in,golden --dump-format npy
 
 | 场景 | 推荐方法 | 参数 |
 |------|---------|------|
-| 浮点运算常规测试（默认） | 统计相对误差（社区标准） | `--compare stat_rel_err`（默认） |
+| 浮点运算常规测试（默认） | 混合容差（生态算子开源精度标准） | `--compare mixed`（默认） |
+| 统计误差均值/最大值 | 统计相对误差（社区标准） | `--compare stat_rel_err` |
 | 逐点 isclose | 数值近似 | `--compare close` |
 | 大规模向量整体趋势 | 余弦相似度 | `--compare cosine` |
 | 整型运算/需要精确结果 | 二进制精确 | `--compare binary` |
-| float8类型 | 重量化 | `--compare requant`（自动） |
+| hifloat8类型 | 重量化 | `--compare requant`（自动） |
 | 三方交叉校验 | 三方交叉校验 | `--compare cross_check`（需 `third_party`） |
 
 ## 如何调整精度容差？
@@ -157,8 +158,16 @@ precision_tolerances,"((0.001, 0.001),)"
 absolute_precision,1e-8
 ```
 
-- `precision_tolerances`：每个输出的 (rtol, atol) 对
+- `precision_tolerances`：每个输出的 (rtol, ptol) 对
 - `absolute_precision`：全局绝对精度容差
+
+> 注意：这两个 CSV 字段是 legacy 字段，`precision_tolerances` 由 `--compare close` / `cosine` 读取、`absolute_precision` 仅 `close` 读取。默认的 `mixed` 不读 CSV 容差字段，需在 TestSpec 的 `tolerance` 中覆盖（需 `--plugin`）：
+>
+> ```python
+> tolerance = {"float32": {"standard": "mix_tolerance", "rtol": 0.002, "atol": 1e-5}}
+> ```
+>
+> 可覆盖项：`rtol` / `atol` / `required_matched_ratio` / `max_abs_error_limit`，详见[精度比对方法](../Precision_Comparison.md)。
 
 # 插件问题
 

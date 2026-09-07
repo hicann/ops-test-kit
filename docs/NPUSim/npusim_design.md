@@ -42,7 +42,7 @@ TTK（`ops-test-kit`）目前只能在真实 Ascend 芯片上执行算子。NPUS
 - **执行接缝点**：
   - kernel：`npu/op/profiling.py:725` `do_profiling()` → `OnlineRtsProfiling.do()`（`npu/op/rts_sequence.py:49-138`）→ `RTSInterface`（`runtime/rts_interface.py`，ctypes 加载 libruntime.so）→ `rtKernelLaunchWithFlagV2`。返回 `RTSProfilingResult(cycle, output_bytes, oob)`。
   - aclnn：`npu/op_api/profiling.py:505` `do_profiling()` → `AclOpExecutor._acl_sequence()` → `AclInterface`（`aclnn/acl_interface.py`，libascendcl.so + libnnopbase.so）→ `aclnnXxxGetWorkspaceSize` + `aclnnXxx`。返回 `ApiProfilingResult(success, api_prof, op_prof, output_bytes, output_view_shapes)`。
-- 比对：`comparison/comparison.py:27-90` `compare(outputs, goldens, dtypes, standards)`；选择逻辑 `comparison/resolve.py:107-134`；结果 `EachCompareResult(precision, is_pass, log, standard, metrics)`。
+- 比对：`comparison/comparison.py:23-94` `compare(outputs, goldens, dtypes, standards)`；选择逻辑 `comparison/resolve.py:199-245`；结果 `EachCompareResult(precision, is_pass, log, standard, metrics)`。
 - **已有 model 语义可复用**：`MODE.ASCEND_CAMODEL`（`classes.py:33`）时 `use_device()=False`、`run_time=1`、`RTSInterface(camodel=True)` 加载 `libruntime_camodel.so`、跳过 clear_l1/ub、`rts_stream=None`。
 - Manual Data 两阶段：`--no-prof --dump in,golden` prepare / `--manual-data-dirs` replay（`bridge.py::configure_manual_data`、`ttk/core_modules/manual_data.py`），文件命名 `input_{idx}_{dtype}__shape_{dims}.{ext}`、`golden_{idx}...`，支持 bin/npy/pt。
 

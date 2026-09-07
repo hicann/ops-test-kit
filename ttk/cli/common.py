@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 from ttk.remote import is_remote_configured
 
 
@@ -42,9 +51,9 @@ def _add_precision_args(parser):
     parser.add_argument(
         "--compare",
         default=None,
-        choices=["close", "stat_rel_err", "cosine", "binary", "requant", "cross_check"],
+        choices=["close", "stat_rel_err", "mixed", "cosine", "binary", "requant", "cross_check"],
         help="Comparison method. Default: per-output routing via Spec.tolerance "
-        "(requires --plugin), else stat_rel_err.",
+        "(requires --plugin), else mixed (mix_tolerance).",
     )
     parser.add_argument(
         "--golden-mode",

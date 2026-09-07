@@ -36,6 +36,9 @@ ttk/remote/server/ttk_tmp_dir/
 # Local config
 settings.local.json
 
+# OAT pre-commit scan reports
+oat_reports/
+
 # Misc temp
 test.py
 tests/**/*.html

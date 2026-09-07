@@ -1,4 +1,12 @@
-# ttk/core_modules/comparison/resolve.py
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -19,6 +27,19 @@ THRESHOLDS = {
 }
 DEFAULT_THRESHOLD = 2**-13
 
+# 生态算子开源精度标准（混合容差）阈值表（resolve 唯一解析点）。
+# max_abs_error_limit 表值为 "1e-X or 32*ULP"——满足任一即不超限，等价取 max；ULP 取 1.0 处（即 eps）。
+MIX_TOLERANCE = {
+    "float16": {"rtol": 2**-9, "atol": 2**-9, "max_abs_error_limit": max(1e-1, 32 * 2**-10)},
+    "bfloat16": {"rtol": 2**-6, "atol": 2**-6, "max_abs_error_limit": max(1e-0, 32 * 2**-7)},
+    "float32": {"rtol": 2**-10, "atol": 2**-16, "max_abs_error_limit": max(1e-2, 32 * 2**-23)},
+    "hifloat32": {"rtol": 2**-9, "atol": 2**-10, "max_abs_error_limit": max(1e-1, 32 * 2**-10)},
+    "float8_e4m3fn": {"rtol": 2**-2, "atol": 2**-4, "max_abs_error_limit": max(1e-0, 32 * 2**-3)},
+    "float8_e5m2": {"rtol": 2**-1, "atol": 2**-3, "max_abs_error_limit": max(1e-1, 32 * 2**-2)},
+}
+MIX_REQUIRED_MATCHED_RATIO = 0.99
+DEFAULT_MIX_TOLERANCE = MIX_TOLERANCE["float32"]  # 表外浮点 dtype（float64 等）回落 float32 档
+
 # cross_check level 预设（level 矩阵）
 LEVEL_PRESETS = {
     "L0": {"mare_ratio": 10.0, "mere_ratio": 2.0, "rmse_ratio": 2.0},
@@ -33,7 +54,7 @@ SMALL_VALUE = {
     "float32": {"small_value": 2**-14, "small_value_atol": 2**-30},
 }
 
-_REQUANT_DTYPES = {"float8_e5m2", "float8_e4m3fn", "hifloat8"}
+_REQUANT_DTYPES = {"hifloat8"}
 _BIN_DTYPES = {"float4_e2m1", "float4_e1m2", "float8_e8m0"}
 
 
@@ -51,7 +72,7 @@ def _dtype_str(dtype) -> str:
 
 
 def _is_int_or_bool(s: str) -> bool:
-    return s == "bool" or s.startswith("int") or s.startswith("uint")
+    return s == "bool" or s.startswith(("int", "uint"))
 
 
 def _is_complex(s: str) -> bool:
@@ -107,14 +128,14 @@ def _check_quant_applicable(dtype_str, input_dtypes):
 
 
 def _float_choice(tolerance: Optional[dict], dtype_str: str, compare_method: Optional[str]) -> str:
-    """普通浮点族的三级优先级：CLI > Spec.tolerance > stat_rel_err。"""
+    """普通浮点族的三级优先级：CLI > Spec.tolerance > mix_tolerance。"""
     if compare_method:  # a) CLI 显式指定
         return compare_method.lower()
     if tolerance and dtype_str in tolerance:  # b) Spec 配了该 dtype
         std = tolerance[dtype_str].get("standard")
         if std:
             return std.lower()
-    return "stat_rel_err"  # c) 默认社区标准
+    return "mix_tolerance"  # c) 默认生态算子开源精度标准（混合容差）
 
 
 def _resolve_params(standard, tolerance, dtype_str) -> dict:
@@ -125,7 +146,26 @@ def _resolve_params(standard, tolerance, dtype_str) -> dict:
         th = extra.pop("threshold", None) or THRESHOLDS.get(dtype_str, DEFAULT_THRESHOLD)
         return {"threshold": th}
 
-    elif standard == "cross_check":
+    if standard in ("mixed", "mix_tolerance"):  # mixed 是 --compare 的 CLI 简写
+        # threshold 是 stat_rel_err 专属参数，对 mix_tolerance 无效——不静默丢弃。
+        # 命中典型场景：Spec 只配 {"threshold": x} 未配 standard，默认路由从 stat_rel_err
+        # 切到 mix_tolerance 后阈值失效（宽松阈值误报 / 严格阈值漏报），必须当场报错。
+        if extra.get("threshold") is not None:
+            raise ValueError(
+                f"Spec.tolerance[{dtype_str!r}] 配置了 stat_rel_err 专属参数 'threshold'，"
+                f"但该输出本次解析到的判据是 mix_tolerance，threshold 不会生效。"
+                f"如需统计相对误差判据请显式声明 standard='stat_rel_err'（或 CLI --compare stat_rel_err）；"
+                f"如需混合容差请移除 threshold，改用 rtol/atol/required_matched_ratio/max_abs_error_limit。"
+            )
+        row = MIX_TOLERANCE.get(dtype_str, DEFAULT_MIX_TOLERANCE)
+        return {
+            "rtol": extra.get("rtol", row["rtol"]),
+            "atol": extra.get("atol", row["atol"]),
+            "required_matched_ratio": extra.get("required_matched_ratio", MIX_REQUIRED_MATCHED_RATIO),
+            "max_abs_error_limit": extra.get("max_abs_error_limit", row["max_abs_error_limit"]),
+        }
+
+    if standard == "cross_check":
         if dtype_str not in SMALL_VALUE:
             raise ValueError(f"[{dtype_str}] cross_check unsupported dtype; supported: {sorted(SMALL_VALUE)}")
         level = extra.get("level")
@@ -153,14 +193,13 @@ def _resolve_params(standard, tolerance, dtype_str) -> dict:
             "small_value_atol": extra.get("small_value_atol", sv_default["small_value_atol"]),
         }
 
-    else:
-        return {}
+    return {}
 
 
 def resolve_tolerance(
     tolerance, precision_tolerances, absolute_precision, output_dtypes, compare_method, input_dtypes=None
 ):
-    """input_dtypes 可选：仅供 quant 的护栏校验"输入是否全为浮点"，不参与判据选择。
+    """input_dtypes 可选：仅供 quant 的护栏校验"输入是否至少含一个浮点"，不参与判据选择。
     不传时跳过该校验，Spec 声明的 quant 依然生效——判据由算子作者的声明决定，
     拿不到输入 dtype 只是少了一道校验，不应反过来否定声明。
     未声明 quant 的存量算子不受影响（整数仍走 binary_equal）。"""
@@ -169,7 +208,7 @@ def resolve_tolerance(
         s = _dtype_str(dtype)
         spec_std = _spec_standard(tolerance, s)
         if dtype is None:
-            token = "binary_equal"
+            token = "binary_equal"  # noqa: S105
         elif spec_std == "quant":
             # Spec 显式声明 quant：算子自己知道输出是量化值，判据为绝对误差 <= 1。
             # 该分支排在整数短路之前——原先整数短路排在读 tolerance 之前，等于"算子说了不算"。
@@ -177,12 +216,12 @@ def resolve_tolerance(
             # 推断错会把该严的判松（漏报真缺陷且无人察觉），代价远大于漏声明导致的误报。
             _check_quant_applicable(s, input_dtypes)
             # 优先级仍守 CLI > Spec.tolerance > 默认，但只认【整数适用】的 CLI 取值：
-            # --compare 的其余取值（close/cosine/stat_rel_err/cross_check）是浮点判据，
+            # --compare 的其余取值（close/cosine/stat_rel_err/mixed/cross_check）是浮点判据，
             # 对量化整型输出无意义，不应连带覆盖掉算子的 quant 声明。
             cli = (compare_method or "").lower()
             token = cli if cli in _INT_APPLICABLE_TOKENS else "quant"
         elif _is_int_or_bool(s):
-            token = "binary_equal"
+            token = "binary_equal"  # noqa: S105
         elif _is_complex(s):
             choice = _float_choice(tolerance, s, compare_method)
             token = "binary_equal" if choice in ("bin", "binary") else "isclose"
@@ -190,7 +229,7 @@ def resolve_tolerance(
             choice = _float_choice(tolerance, s, compare_method)
             token = choice if choice in ("bin", "binary", "requant") else "requant"
         elif s in _BIN_DTYPES:
-            token = "bin"
+            token = "bin"  # noqa: S105
         else:
             token = _float_choice(tolerance, s, compare_method)
         params = _resolve_params(token, tolerance, s)

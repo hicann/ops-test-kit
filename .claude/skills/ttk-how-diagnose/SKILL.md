@@ -95,14 +95,15 @@ ls <sim_output>/<case>/record_out/cannsim_*/cannsim.log   # record 日志
 
 | 场景 | 方法 | 参数 |
 |------|------|------|
-| 浮点常规（默认） | 统计相对误差（社区标准） | `--compare stat_rel_err`（默认） |
+| 浮点常规（默认） | 混合容差（生态算子开源精度标准） | `--compare mixed`（默认） |
+| 统计误差均值/最大值 | 统计相对误差（社区标准） | `--compare stat_rel_err` |
 | 逐点 isclose | 数值近似 | `--compare close` |
 | 大规模向量整体趋势 | 余弦相似度 | `--compare cosine` |
 | 整型/精确结果 | 二进制精确 | `--compare binary` |
-| float8 类型 | 重量化 | `--compare requant`（自动） |
+| hifloat8 类型 | 重量化 | `--compare requant`（自动） |
 | 三方交叉校验 | 三方交叉校验 | `--compare cross_check`（需 `third_party`） |
 
-> 默认未设 `--compare` 时，按 `Spec.tolerance` 逐输出路由（需 `--plugin`），否则 `stat_rel_err`。
+> 默认未设 `--compare` 时，按 `Spec.tolerance` 逐输出路由（需 `--plugin`），否则 `mixed`。
 
 ### 4.2 Dump 数据分析
 
@@ -116,14 +117,14 @@ python3 -m ttk kernel -i cases.csv -t case_name --dump in,out,golden --dump-form
 
 ### 4.3 调整容差
 
-容差首选 `Spec.tolerance`（TestSpec 中按 dtype 声明，详见 `ttk-how-write-plugin`）；无 plugin 时用 CSV 字段兜底：
+容差首选 `Spec.tolerance`（TestSpec 中按 dtype 声明，详见 `ttk-how-write-plugin`）；无 plugin 时默认 `mixed` 走 dtype 阈值表，CSV `precision_tolerances` 仅对 `--compare close`/`cosine` 生效、`absolute_precision` 仅对 `close` 生效：
 
 ```csv
 precision_tolerances,"((0.001, 0.001),)"
 absolute_precision,1e-8
 ```
 
-> 完整优先级：`--compare`（CLI）> `Spec.tolerance`（TestSpec）> CSV 字段 > 方法默认（见 `references/precision-debug.md`）。
+> 完整优先级：`--compare`（CLI）> `Spec.tolerance`（TestSpec）> 方法默认阈值。CSV 字段为 legacy，`precision_tolerances` 由 `close`/`cosine` 读取、`absolute_precision` 仅 `close` 读取（见 `references/precision-debug.md`）。
 
 ### 4.4 常见精度原因
 

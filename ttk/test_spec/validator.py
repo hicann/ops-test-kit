@@ -1,11 +1,19 @@
-# ttk/test_spec/validator.py
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 
 from typing import Dict
 
 from . import InvalidSpecError
 
-# Spec.tolerance 只收 2.1 四标准；框架增强/别名走 CLI --compare
-_SPEC_TOLERANCE_STANDARDS = {"stat_rel_err", "binary_equal", "cross_check", "quant"}  # 2.1 官方
+# Spec.tolerance 只收官方标准（2.1 四标准 + 生态算子开源精度标准混合容差）；框架增强/别名走 CLI --compare
+_SPEC_TOLERANCE_STANDARDS = {"stat_rel_err", "binary_equal", "cross_check", "quant", "mix_tolerance"}
 _FRAMEWORK_TOKENS = {"isclose", "close", "cosine", "bin", "binary", "requant"}  # CLI-only
 
 # Valid types for each attribute: tuple of types
@@ -39,7 +47,7 @@ def validate(spec_cls: type) -> None:
     """
     errors = []
 
-    for attr_name in _CHECK_RULES:
+    for attr_name, rule_types in _CHECK_RULES.items():
         if not hasattr(spec_cls, attr_name):
             continue
 
@@ -50,7 +58,7 @@ def validate(spec_cls: type) -> None:
         # torch_graph 深语义:必须是 torch.nn.Module 子类(延迟 import torch)
         if attr_name == "torch_graph":
             try:
-                import torch.nn as nn
+                from torch import nn
 
                 ok = isinstance(value, type) and issubclass(value, nn.Module)
             except ImportError:
@@ -61,21 +69,18 @@ def validate(spec_cls: type) -> None:
                 )
             continue
 
-        # tolerance 深校验：只收 2.1 四标准；框架 token 指路 --compare；CamelCase → generic unknown
+        # tolerance 深校验：只收官方标准；框架 token 指路 --compare；CamelCase → generic unknown
         if attr_name == "tolerance":
             _validate_tolerance(spec_cls.__name__, value, errors)
             continue
 
         # isinstance check
         type_ok = False
-        if _CHECK_RULES[attr_name] and isinstance(value, _CHECK_RULES[attr_name]):
+        if rule_types and isinstance(value, rule_types):
             type_ok = True
         elif attr_name in _CALLABLE_OK and callable(value):
             # golden/third_party 允许 class;其余 callable 属性只接受 function
-            if isinstance(value, type) and attr_name not in _CLASS_OK:
-                type_ok = False
-            else:
-                type_ok = True
+            type_ok = not (isinstance(value, type) and attr_name not in _CLASS_OK)
 
         if not type_ok:
             errors.append(
@@ -113,7 +118,7 @@ def _validate_tolerance(spec_name, tolerance, errors):
         elif std in _FRAMEWORK_TOKENS:
             errors.append(
                 f"{spec_name}.tolerance[{dtype!r}].standard {std!r} is a framework enhancement/alias "
-                f"(CLI-only via --compare); Spec.tolerance only accepts 2.1 standards "
+                f"(CLI-only via --compare); Spec.tolerance only accepts official standards "
                 f"{sorted(_SPEC_TOLERANCE_STANDARDS)}"
             )
         else:

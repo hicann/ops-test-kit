@@ -26,7 +26,7 @@ python3 -m ttk info
 
 用例筛选与常用选项（定义见 `ttk/cli/common.py`）：
 - 筛选：`-t/--testcase add_01,add_02`、`--ti/--testcase-index 1-10`、`--op`、`--priority`、`--tc`（随机取 N 条；注意 `--seed` 只固定输入数据生成（`numpy.random.seed`），**不固定** `--tc` 的用例抽取（`random.sample` 未播种））
-- 精度：`--compare close|stat_rel_err|cosine|binary|requant|cross_check`（默认按 Spec.tolerance 路由，无插件时 stat_rel_err）
+- 精度：`--compare close|stat_rel_err|mixed|cosine|binary|requant|cross_check`（默认按 Spec.tolerance 路由，无插件时 mixed；Spec.tolerance 标准名为 `mix_tolerance`）
 - 排障/数据：`--rerun precision_status` 按上次结果 CSV 的列重跑失败用例（**`-i` 须指向含该列的结果 CSV**，不能是原始用例 CSV）；`--dump in,golden` 备数据、`--dump-on-fail` 失败自动 dump、`--dump-format npy|pt|bin|print`
 - 自定义 golden/输入：`--plugin <path>`，指向包含 TestSpec 的目录或文件
 - 手工数据两阶段：`--no-prof --dump in,golden` 准备数据，`--manual-data-dirs <dir>` 回放

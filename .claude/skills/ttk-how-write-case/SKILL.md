@@ -24,8 +24,8 @@ description: 编写测试用例。只要用户提到写用例、生成 CSV、构
 | `testcase_name` | 是 | 自动生成 | 用例唯一名称 |
 | `network_name` | 否 | None | 网络标签（如 `llama3_70b_train`） |
 | `input_data_ranges` | 否 | ((None,None),) | 每输入随机范围 `[min,max]`（闭区间，min 和 max 为边界值）。None 时 min=-2，max=2。可指定第 3 个及以上的必现值，会混入随机数据中保证出现。min==max 时生成固定值。如 `"((-1,1),(0,10))"` 或 `"((-1,1,0),(0,10))"` |
-| `precision_tolerances` | 否 | None | 每输出容差 `(rtol,atol)`。如 `"((0.001,0.001),)"` |
-| `absolute_precision` | 否 | 1e-8 | 绝对精度容差 |
+| `precision_tolerances` | 否 | None | 每输出容差 `(rtol,ptol)`。如 `"((0.001,0.001),)"`。legacy 字段，仅 `--compare close`/`cosine` 读取；默认 `mixed` 的容差在 TestSpec `tolerance` 中调整 |
+| `absolute_precision` | 否 | 1e-8 | 绝对精度容差。legacy 字段，仅 `--compare close` 读取 |
 | `is_enabled` | 否 | True | False 跳过用例 |
 | `remark` | 否 | None | 备注 |
 | `soc_series` | 否 | None | SoC 过滤。`('Ascend910A','-Ascend310P')` |

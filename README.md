@@ -7,7 +7,7 @@ TTK（ops Test Tool Kit）是[CANN](https://hiascend.com/software/cann)算子库
 * **全栈测试通路**：Kernel（AscendC）/ GEIR（GE图）/ ACLNN（aclnn* C API）/ E2E（torch/torch_npu），覆盖算子到框架各层
 * **多设备 + 仿真**：真实设备支持 NPU / MLU / CPU；仿真模式基于 CPU 模拟 NPU 行为，无需真实硬件即可开发调试
 * **多卡并行**：多 NPU 设备并行测试
-* **多种精度对比**：统计相对误差（社区标准）、余弦相似度、二进制精确、重量化、三方交叉校验
+* **多种精度对比**：混合容差（生态算子开源精度标准，默认）、统计相对误差、余弦相似度、二进制精确、重量化、三方交叉校验
 * **可扩展插件**：自定义 Golden / 输入生成，Kernel 与 ACLNN/E2E 独立命名空间
 
 [English Documentation](./README-EN.md)

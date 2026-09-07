@@ -96,7 +96,7 @@ python3 -m ttk list -i cases.xlsx --sheet Sheet2
 
 | 参数 | 缩写 | 默认值 | 说明 | 示例 |
 |------|------|--------|------|------|
-| `--compare` | | `stat_rel_err` | 精度对比方法。未指定时按 Spec.tolerance 路由（需 `--plugin`）。可选：`close`/`stat_rel_err`/`cosine`/`binary`/`requant`/`cross_check` | `--compare cosine` |
+| `--compare` | | `mixed` | 精度对比方法。未指定时按 Spec.tolerance 路由（需 `--plugin`）。可选：`close`/`stat_rel_err`/`mixed`/`cosine`/`binary`/`requant`/`cross_check` | `--compare cosine` |
 | `--input-dist` | | `uniform` | 输入数据分布，可选：`uniform`/`normal` | `--input-dist normal` |
 | `--seed` | | 随机 | 随机种子（可复现） | `--seed 42` |
 | `--golden-mode` | | `Enable` | Golden生成模式，可选：`Enable`/`Disable`/`Promote` | `--golden-mode Disable` |

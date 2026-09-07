@@ -1,3 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 """Full example: golden + third_party + tolerance + compare"""
 
 import numpy
@@ -29,12 +38,13 @@ class LayerNormFullSpec:
 
     third_party = {"torch": ThirdPartyImpl, "tf": "tf.raw_ops.LayerNorm"}
 
-    # -- tolerance — per-dtype 精度标准（2.1 规范名）--
-    # stat_rel_err 用 dtype 表内置阈值（float32=2^-13 等）；
-    # cross_check（2.1 商用标准）validator 接受但 P2 才实现。
+    # -- tolerance — per-dtype 精度标准（官方标准）--
+    # mix_tolerance（生态算子开源精度标准）是默认，用 dtype 表内置阈值，可省略；
+    # 如需覆盖阈值：{"standard": "mix_tolerance", "rtol": 0.002}。
+    # cross_check（需配合 third_party）见 Precision_Comparison.md。
     tolerance = {
-        "float32": {"standard": "stat_rel_err"},
-        "float16": {"standard": "stat_rel_err"},
+        "float32": {"standard": "mix_tolerance"},
+        "float16": {"standard": "mix_tolerance"},
     }
 
     # -- compare — custom comparison (optional, default cosine_similarity) --

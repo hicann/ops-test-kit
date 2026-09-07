@@ -156,22 +156,24 @@ def sort_golden(x, descending=False, **kwargs):
 
 ## tolerance（精度标准）
 
-按 dtype 声明 `standard` 字段，只接受 2.1 官方标准：
+按 dtype 声明 `standard` 字段，只接受官方标准：
 
 | standard 值 | 含义 | `--compare` 传参 |
 |-------------|------|------------------|
-| `stat_rel_err` | 统计相对误差（默认） | `stat_rel_err` |
+| `mix_tolerance` | 混合容差（默认，生态算子开源精度标准） | `mixed` |
+| `stat_rel_err` | 统计相对误差 | `stat_rel_err` |
 | `binary_equal` | 逐 bit 相等 | `binary`、`bin` |
 | `cross_check` | 交叉比对（需配合 `third_party`） | `cross_check` |
-| `quant` | 量化比对（待支持） | `requant` |
+| `quant` | 量化比对（int4/int8 量化输出，绝对误差 ≤ 1） | —（仅 Spec.tolerance 声明） |
 | `isclose` | numpy.isclose 容差比对 | `close` |
 | `cosine` | 余弦相似度 | `cosine` |
 
-> 前四行可写入 `Spec.tolerance`；`isclose` 和 `cosine` 为 CLI 框架增强，仅通过 `--compare` 指定。
+> 前五行可写入 `Spec.tolerance`；`isclose` 和 `cosine` 为 CLI 框架增强，仅通过 `--compare` 指定。
+> `mix_tolerance` 可用 `rtol`/`atol`/`required_matched_ratio`/`max_abs_error_limit` 覆盖默认阈值表。
 
 ```python
 tolerance = {
-    "float32": {"standard": "stat_rel_err"},
+    "float32": {"standard": "mix_tolerance"},
     "int8": {"standard": "binary_equal"},
 }
 ```

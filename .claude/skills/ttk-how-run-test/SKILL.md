@@ -116,13 +116,13 @@ python3 -m ttk e2e    --backend npusim -i cases.csv -t add_f32_01
 
 | 参数 | 说明 | 默认 |
 |------|------|------|
-| `--compare` | `close`/`stat_rel_err`/`cosine`/`binary`/`requant`/`cross_check` | Spec.tolerance 路由（需 `--plugin`），否则 `stat_rel_err` |
+| `--compare` | `close`/`stat_rel_err`/`mixed`/`cosine`/`binary`/`requant`/`cross_check` | Spec.tolerance 路由（需 `--plugin`），否则 `mixed` |
 | `--seed` | 随机种子。取相同值时，同一个用例每次执行生成的输入数据完全一致 | 随机 |
 | `--golden-mode` | `Enable`/`Disable`/`Promote` | `Enable` |
 | `--input-dist` | `uniform`/`normal` | `uniform` |
 | `--provider` | 指定待测三方 provider（如 `torch,tf`），用于 `cross_check` 筛选 | 自动 |
 
-> 完整容差优先级（`--compare` > `Spec.tolerance` > CSV > 默认）见 `ttk-how-diagnose/references/precision-debug.md`。
+> 完整容差优先级（`--compare` > `Spec.tolerance` > 方法默认）见 `ttk-how-diagnose/references/precision-debug.md`。CSV 字段为 legacy，`precision_tolerances` 由 `close`/`cosine` 读取、`absolute_precision` 仅 `close` 读取。
 
 ### 调试
 

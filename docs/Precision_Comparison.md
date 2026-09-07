@@ -6,19 +6,68 @@
 
 | 方法 | 参数值 | 公式核心 | 适用场景 | 默认容差 |
 |------|--------|---------|---------|---------|
-| 统计相对误差 | `stat_rel_err`（默认） | `|a-g| / (|g|+ε)` 的均值/最大值 | 浮点算子常规测试 | 按 dtype 阈值表 |
+| 混合容差 | `mixed`（默认） | `|a-g| <= atol + rtol*\|g\|` 逐元素 + 通过率 | 浮点算子常规测试（生态算子开源精度标准） | 按 dtype 阈值表 |
+| 统计相对误差 | `stat_rel_err` | `|a-g| / (|g|+ε)` 的均值/最大值 | 统计误差均值/最大值 | 按 dtype 阈值表 |
 | 数值近似 | `close` | `|a-g| <= atol + rtol*|g|` | 逐点 isclose 比对 | rtol=0.001/0.0001, atol=1e-8 |
 | 余弦相似度 | `cosine` | `dot(a,g) / (|a|*|g|)` | 大规模向量整体趋势 | 1-cos ≤ 0.01 |
 | 二进制精确 | `binary` | 逐 bit SHA-256 比对 | 整型运算/精确结果 | 无容差 |
-| 重量化 | `requant` | ULP 差 ≤ 1 | float8 类型（e5m2/e4m3fn/hifloat8） | ptol=0.001 |
+| 重量化 | `requant` | ULP 差 ≤ 1 | hifloat8 类型 | ptol=0.001 |
 | 量化 | `quant` | `|a-g| <= 1`（1 LSB） | 浮点输入 + int4/int8 量化输出 | ptol=0 |
 | 三方交叉校验 | `cross_check` | NPU/XPU 误差比值 | 多硬件精度对齐 | 按 level 预设 |
 
 > `a` = NPU 输出，`g` = Golden
 
-## 1. 统计相对误差（stat_rel_err）
+## 1. 混合容差（mixed）
 
-默认方法。按 dtype 统计相对误差的均值（mere）和最大值（mare），结合社区标准阈值判定。
+默认方法，生态算子开源精度标准（混合容差）。结合绝对容差（atol）和相对容差（rtol）逐元素比对。
+
+### 公式
+
+```
+元素通过：|a - g| <= atol + rtol * |g|
+matched_ratio = 通过元素数 / 总元素数
+passed = matched_ratio >= 0.99 AND max_abs_error <= max_abs_error_limit
+```
+
+- `atol`：绝对容差，保证小值（golden 接近 0）场景的合理误差，天然避免除零
+- `rtol`：相对容差，保证大值场景的相对精度
+- `max_abs_error_limit`：绝对误差硬上限，拦灾难性离群点（与 `32 * ULP` 取满足任一）
+
+### dtype 阈值表
+
+| dtype | rtol | atol | max_abs_error_limit |
+|-------|------|------|---------------------|
+| `float16` | 2^-9 (≈1.95e-3) | 2^-9 (≈1.95e-3) | 1e-1 or 32\*ULP |
+| `bfloat16` | 2^-6 (≈1.56e-2) | 2^-6 (≈1.56e-2) | 1e-0 or 32\*ULP |
+| `float32` | 2^-10 (≈9.77e-4) | 2^-16 (≈1.53e-5) | 1e-2 or 32\*ULP |
+| `hifloat32` | 2^-9 (≈1.95e-3) | 2^-10 (≈9.77e-4) | 1e-1 or 32\*ULP |
+| `float8_e4m3fn` | 2^-2 (0.25) | 2^-4 (0.0625) | 1e-0 or 32\*ULP |
+| `float8_e5m2` | 2^-1 (0.5) | 2^-3 (0.125) | 1e-1 or 32\*ULP |
+| 其他浮点（回退到 float32 档） | 2^-10 | 2^-16 | 1e-2 |
+
+`required_matched_ratio` 全 dtype 统一为 `0.99`。`hifloat8` 输出自动路由到[重量化（requant）](#6-重量化requant)判据，不适用本表。
+
+### 特殊处理
+
+- 双方同位置均为 NaN → 视为一致
+- 双方同位置均为 Inf 且同号 → 视为一致
+- NaN/Inf 位置不一致 → 视为无界误差，必超硬上限直接 FAIL
+
+### 使能方式
+
+```bash
+# CLI（显式指定）
+python3 -m ttk kernel -i cases.csv --compare mixed
+
+# Spec.tolerance（按 dtype 路由，需 --plugin；standard 用 mix_tolerance，可覆盖阈值）
+# class AddTestSpec:
+#     tolerance = {"float32": {"standard": "mix_tolerance", "rtol": 0.002}}
+# 未指定 --compare 且无 Spec.tolerance 时自动生效
+```
+
+## 2. 统计相对误差（stat_rel_err）
+
+按 dtype 统计相对误差的均值（mere）和最大值（mare），结合社区标准阈值判定。
 
 ### 公式
 
@@ -61,10 +110,10 @@ passed = mere < threshold AND mare < 10 * threshold
 python3 -m ttk kernel -i cases.csv --compare stat_rel_err
 
 # Spec.tolerance（按 dtype 路由，需 --plugin）
-# 未指定 --compare 且无 Spec.tolerance 时自动生效
+# 需显式指定（--compare 或 Spec.tolerance）；否则默认走 mixed
 ```
 
-## 2. 数值近似（close）
+## 3. 数值近似（close）
 
 使用 `np.isclose()` 逐元素比对，支持相对误差（rtol）和绝对误差（atol）双判据。
 
@@ -108,12 +157,10 @@ absolute_precision,1e-8
 # CLI
 python3 -m ttk kernel -i cases.csv --compare close
 
-# Spec.tolerance
-# class AddTestSpec:
-#     tolerance = {"float32": {"standard": "close"}}
+# Spec.tolerance 不支持 close（CLI 框架增强，仅通过 --compare 指定）
 ```
 
-## 3. 余弦相似度（cosine）
+## 4. 余弦相似度（cosine）
 
 计算输出与 Golden 的余弦相似度，衡量向量方向一致性而非数值精度。
 
@@ -142,12 +189,10 @@ passed = (1 - cosine) <= rtol
 # CLI
 python3 -m ttk kernel -i cases.csv --compare cosine
 
-# Spec.tolerance
-# class AddTestSpec:
-#     tolerance = {"float16": {"standard": "cosine"}}
+# Spec.tolerance 不支持 cosine（CLI 框架增强，仅通过 --compare 指定）
 ```
 
-## 4. 二进制精确（binary）
+## 5. 二进制精确（binary）
 
 逐 bit 比对 NPU 输出与 Golden，无容差概念。
 
@@ -179,14 +224,14 @@ SHA-256(output_bytes) == SHA-256(golden_bytes) → PASS
 # CLI
 python3 -m ttk kernel -i cases.csv --compare binary
 
-# Spec.tolerance
+# Spec.tolerance（需 --plugin；standard 用 binary_equal）
 # class AddTestSpec:
-#     tolerance = {"float16": {"standard": "binary"}}
+#     tolerance = {"float16": {"standard": "binary_equal"}}
 ```
 
-## 5. 重量化（requant）
+## 6. 重量化（requant）
 
-为 float8 类型设计，以 ULP（Unit in Last Place）为判据。
+为 hifloat8 类型设计，以 ULP（Unit in Last Place）为判据。float8（e5m2/e4m3fn）默认走 mixed，也可通过 `--compare requant` 显式选择本判据。
 
 ### 公式
 
@@ -199,27 +244,24 @@ passed = (diff <= 1 的元素占比) >= (1 - ptol)
 
 | dtype | ptol |
 |-------|------|
-| `float8_e5m2` / `float8_e4m3fn` / `hifloat8` | 0.001（允许 0.1% 元素 ULP 差 > 1） |
+| `hifloat8`（自动路由） | 0.001（允许 0.1% 元素 ULP 差 > 1） |
+| `float8_e5m2` / `float8_e4m3fn`（显式 `--compare requant`） | 0.001（允许 0.1% 元素 ULP 差 > 1） |
 
 ### 适用场景
 
-- float8 量化算子
-- FP8 精度对齐验证
+- hifloat8 量化算子（自动路由）
+- float8（e5m2/e4m3fn）显式选择 ULP 判据时
 
 ### 使能方式
 
 ```bash
 # CLI
 python3 -m ttk kernel -i cases.csv --compare requant
-
-# Spec.tolerance
-# class AddTestSpec:
-#     tolerance = {"float8_e4m3fn": {"standard": "requant"}}
 ```
 
-> 通常无需手动指定——`float8_e5m2` / `float8_e4m3fn` / `hifloat8` 会自动切换到 `requant`。
+> `hifloat8` 会自动切换到 `requant`；`float8_e5m2` / `float8_e4m3fn` 默认走 `mixed`（生态算子开源精度标准），也可通过 `--compare requant` 显式选择 ULP 判据。
 
-## 6. 量化（quant）
+## 7. 量化（quant）
 
 用于浮点输入 + int4/int8 量化输出的算子，判据为绝对误差 ≤ 1 LSB。
 
@@ -245,7 +287,7 @@ passed = (bad / golden_size) <= ptol
 
 ### 使能方式
 
-只能通过 Spec.tolerance 声明，不通过 `--compare` 指定。声明时会校验输出 dtype 为 int4/int8 且输入全为浮点：
+只能通过 Spec.tolerance 声明，不通过 `--compare` 指定。声明时会校验输出 dtype 为 int4/int8 且输入至少含一个浮点（否则无法构成浮点→整型量化）：
 
 ```python
 class PerTokenQuantTestSpec:
@@ -255,7 +297,7 @@ class PerTokenQuantTestSpec:
     }
 ```
 
-## 7. 三方交叉校验（cross_check）
+## 8. 三方交叉校验（cross_check）
 
 将 NPU 输出、Golden、第三方（XPU）输出三方做误差比值比对。完整使用方法详见 [XPU 三方交叉校验与性能采集](./XPU_Cross_Check.md)。
 
@@ -313,7 +355,7 @@ python3 -m ttk kernel -i cases.csv --compare cross_check --config ttk.conf.yaml 
 
 | 数据类型 | 自动切换到 | 原因 |
 |---------|-----------|------|
-| `float8_e5m2` / `float8_e4m3fn` / `hifloat8` | `requant` | FP8 需 ULP 判据 |
+| `hifloat8` | `requant` | 需 ULP 判据 |
 | `float4` / `int4` | `binary` | 打包格式需逐 bit |
 | `float8_e8m0` | `binary` | 无浮点语义 |
 | 整型 / 布尔 | `binary` | 精确结果 |
@@ -326,19 +368,21 @@ python3 -m ttk kernel -i cases.csv --compare cross_check --config ttk.conf.yaml 
 1. CLI --compare 参数（最高优先级）
 2. Spec.tolerance[dtype].standard（需 --plugin）
 3. dtype 自动切换规则
-4. stat_rel_err（默认兜底）
+4. mixed（默认兜底）
 ```
 
 `quant` 例外：只能通过 Spec.tolerance 声明，`--compare` 中的浮点判据不会覆盖 quant 声明。
 
 ## 容差自定义
 
-### CSV 字段
+### CSV 字段（legacy）
 
-| 字段 | 作用 | 格式 |
-|------|------|------|
-| `precision_tolerances` | 每输出的 `(rtol, ptol)` | `((0.001, 0.001),)` |
-| `absolute_precision` | 全局 atol | `1e-8` |
+| 字段 | 作用 | 格式 | 读取方 |
+|------|------|------|--------|
+| `precision_tolerances` | 每输出的 `(rtol, ptol)` | `((0.001, 0.001),)` | `close`、`cosine`（仅 rtol） |
+| `absolute_precision` | 全局 atol | `1e-8` | 仅 `close` |
+
+> 默认 `mixed` 不读 CSV 字段，需在 TestSpec `tolerance` 中覆盖（需 `--plugin`）。
 
 ### Spec.tolerance
 
@@ -346,8 +390,8 @@ python3 -m ttk kernel -i cases.csv --compare cross_check --config ttk.conf.yaml 
 class AddTestSpec:
     __spec__ = "add"
     tolerance = {
-        "float16": {"standard": "stat_rel_err", "threshold": 0.002},
-        "float32": {"standard": "close"},
+        "float16": {"standard": "mix_tolerance", "rtol": 0.004},
+        "float32": {"standard": "stat_rel_err", "threshold": 0.002},
         "bfloat16": {"standard": "cross_check", "level": "L2"},
         "int8": {"standard": "quant", "ptol": 0.001},
     }
@@ -357,10 +401,11 @@ class AddTestSpec:
 
 | 场景 | 推荐方法 | 参数 |
 |------|---------|------|
-| 浮点算子常规测试 | 统计相对误差 | `--compare stat_rel_err`（默认） |
+| 浮点算子常规测试 | 混合容差（生态算子开源精度标准） | `--compare mixed`（默认） |
+| 统计误差均值/最大值 | 统计相对误差 | `--compare stat_rel_err` |
 | 逐点 isclose | 数值近似 | `--compare close` |
 | 大规模向量整体趋势 | 余弦相似度 | `--compare cosine` |
 | 整型/索引/掩码/纯搬移/纯比较 | 二进制精确 | `--compare binary` |
-| float8 量化 | 重量化 | `--compare requant`（通常自动） |
+| hifloat8 量化 | 重量化 | `--compare requant`（自动） |
 | int4/int8 量化输出 | 量化 | Spec.tolerance 声明 `quant` |
 | 多硬件精度对齐 | 三方交叉校验 | `--compare cross_check`（需 XPU） |

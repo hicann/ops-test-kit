@@ -122,7 +122,7 @@ python3 -m ttk kernel -i cases.csv \
 | 结果列 | `xpu_metrics`（device_ms） | `precision_status` + `xpu_metrics` |
 | 需要 third_party | 否 | 是 |
 
-`--xpu-perf` 可与默认 `stat_rel_err` 比对同时使用：NPU 侧正常做 Golden 比对，XPU 侧额外采集性能数据。
+`--xpu-perf` 可与默认 `mixed` 比对同时使用：NPU 侧正常做 Golden 比对，XPU 侧额外采集性能数据。
 
 ### 3.3 结果输出
 
@@ -136,7 +136,7 @@ python3 -m ttk kernel -i cases.csv \
 
 | 参数 | cross_check | xpu-perf |
 |------|------------|----------|
-| `--compare` | 必须 `cross_check` | 任意（默认 `stat_rel_err`） |
+| `--compare` | 必须 `cross_check` | 任意（默认 `mixed`） |
 | `--config` | 必须（含 endpoints） | 必须（含 endpoints） |
 | `--plugin` | 必须（含 `third_party`） | 可选 |
 | `--provider` | 可选过滤 | 可选过滤 |

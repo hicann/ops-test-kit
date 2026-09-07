@@ -4,34 +4,35 @@
 
 | 方法 | 参数 | 原理 | 适用场景 |
 |------|------|------|---------|
-| 统计相对误差（社区标准） | `--compare stat_rel_err` | 按 dtype 统计相对误差，社区标准阈值 | 浮点运算常规测试（默认） |
+| 混合容差（生态算子开源精度标准） | `--compare mixed` | `|a-g| <= atol + rtol*\|g\|` 逐元素 + 通过率 ≥ 0.99 + 绝对误差硬上限 | 浮点运算常规测试（默认） |
+| 统计相对误差（社区标准） | `--compare stat_rel_err` | 按 dtype 统计相对误差，社区标准阈值 | 统计误差均值/最大值 |
 | 数值近似 | `--compare close` | `np.allclose(a, b, rtol, atol)` | 逐点 isclose 比对 |
 | 余弦相似度 | `--compare cosine` | 向量余弦距离 | 大规模向量整体趋势验证 |
 | 二进制精确 | `--compare binary` | 逐字节比对 | 整型运算、需要完全一致的结果 |
-| 重量化 | `--compare requant` | 重量化后比对 | 量化数据类型（fp8/fp4/int4 等，自动启用） |
+| 重量化 | `--compare requant` | 重量化后比对 | 量化数据类型（hifloat8 自动启用；float8 默认混合容差，可显式指定 requant） |
 | 三方交叉校验 | `--compare cross_check` | output/golden/third_party 误差比值 | 有 third_party 参考实现时（fp16/bf16/fp32） |
 
-> 默认未设 `--compare` 时，按 `Spec.tolerance` 逐输出路由（需 `--plugin`），否则 `stat_rel_err`。
+> 默认未设 `--compare` 时，按 `Spec.tolerance` 逐输出路由（需 `--plugin`），否则 `mixed`。
 
 ## 容差参数
 
-容差来源优先级：`--compare`（CLI）> `Spec.tolerance`（TestSpec，需 `--plugin`）> CSV `precision_tolerances`/`absolute_precision` > 方法默认阈值。
+容差来源优先级：`--compare`（CLI）> `Spec.tolerance`（TestSpec，需 `--plugin`）> 方法默认阈值。CSV `precision_tolerances`/`absolute_precision` 为 legacy 字段：`precision_tolerances` 由 `close`/`cosine` 读取，`absolute_precision` 仅 `close` 读取；默认 `mixed` 不读 CSV 字段。
 
 ### Spec.tolerance（首选）
 
 在 TestSpec 中按 dtype 声明精度标准（含 `standard` token + 阈值），逐输出路由：
 
 ```python
-# TestSpec：float32 走 stat_rel_err，阈值 0.001
-tolerance = {"float32": {"standard": "stat_rel_err", "threshold": 0.001}}
+# TestSpec：float32 走 mix_tolerance（生态算子开源精度标准，默认）
+tolerance = {"float32": {"standard": "mix_tolerance", "rtol": 0.002}}
 ```
 
 ### CSV 字段
 
 | 字段 | 默认 | 说明 |
 |------|------|------|
-| `precision_tolerances` | None | 每个输出的 `(rtol, atol)` 对。如 `"((0.001, 0.001),)"` |
-| `absolute_precision` | 1e-8 | 全局绝对精度容差。可以是单值或嵌套逐输出控制 |
+| `precision_tolerances` | None | 每个输出的 `(rtol, ptol)` 对。如 `"((0.001, 0.001),)"`。legacy 字段，仅 `--compare close`/`cosine` 读取 |
+| `absolute_precision` | 1e-8 | 全局绝对精度容差。可以是单值或嵌套逐输出控制。legacy 字段，仅 `--compare close` 读取 |
 
 ### 容差设置示例
 

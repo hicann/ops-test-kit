@@ -125,8 +125,11 @@ class GatherNdTestSpec:
 class MyOpTestSpec:
     def golden(x, **kwargs):
         return [numpy.abs(x)]
-    tolerance = {"float32": {"standard": "stat_rel_err"}, "float16": {"standard": "stat_rel_err"}}
+    # 默认即 mix_tolerance（生态算子开源精度标准）；可省略或按需覆盖阈值
+    tolerance = {"float32": {"standard": "mix_tolerance"}, "float16": {"standard": "mix_tolerance"}}
 ```
+
+> `mix_tolerance` 可用 `rtol` / `atol` / `required_matched_ratio` / `max_abs_error_limit` 覆盖默认阈值表；其余标准（`stat_rel_err`/`binary_equal`/`cross_check`/`quant`）见 SKILL.md tolerance 表。
 
 ## kwargs 字段
 

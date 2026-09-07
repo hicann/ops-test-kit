@@ -35,6 +35,7 @@ def compare(
     from .cosine_similarity import CosineSimilarityComparison  # noqa: F401
     from .cross_check import CrossCheckComparison  # noqa: F401
     from .is_close import CloseComparison  # noqa: F401
+    from .mix_tolerance import MixToleranceComparison  # noqa: F401
     from .quant import QuantComparison  # noqa: F401
     from .re_quantize import ReQuantizeComparison  # noqa: F401
     from .stat_rel_err import StatRelErrComparison  # noqa: F401
@@ -94,7 +95,7 @@ def compare(
 
 
 def _filter_fake_fail(output: str):
-    if output in (
+    return output in (
         "DYN_OFF",
         "STC_OFF",
         "CST_OFF",
@@ -109,7 +110,4 @@ def _filter_fake_fail(output: str):
         "BIN_OPERATOR_NOT_FOUND",
         "SUPPRESSED",
         "DYN_INPUT_MISSING",
-    ):
-        return True
-    else:
-        return False
+    )

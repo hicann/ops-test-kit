@@ -120,8 +120,8 @@ python3 -m ttk aclnn  --backend npusim -i cases.csv --op add   --sim-cores 0
 ## 6. 精度比对
 
 - **golden**：CPU 端 numpy / torch 生成（`--golden-mode` 语义与真实模式一致）。
-- **容差**：沿用 CSV 的 `precision_tolerances` / `absolute_precision` 或 TestSpec 的 `tolerance`。
-- **对比方法**：`--compare close|stat_rel_err|cosine|binary|requant|cross_check`（默认按 Spec.tolerance 路由）。
+- **容差**：沿用 TestSpec 的 `tolerance`（默认 `mixed`）；CSV 的 `precision_tolerances` / `absolute_precision` 为 legacy 字段，`precision_tolerances` 由 `close`/`cosine` 读取、`absolute_precision` 仅 `close` 读取。
+- **对比方法**：`--compare close|stat_rel_err|mixed|cosine|binary|requant|cross_check`（默认按 Spec.tolerance 路由）。
 - **自定义 golden / 输入**：`--plugin <path>` 加载 TestSpec，与真实模式一致。
 
 ---

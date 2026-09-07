@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
-# See LICENSE in the root directory of the software repository for the full text of the License.
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 
 """
 End-to-end integration of compare(): spec.tolerance → resolve_tolerance → compare(standards=) → 4-tuple → metrics.
@@ -19,11 +22,21 @@ def test_compare_returns_4tuple_with_metrics():
     """compare() 返回 4-tuple，metrics 含 standard 字段。"""
     outputs = [np.array([1.0, 2.0], np.float32)]
     goldens = [np.array([1.0, 2.0], np.float32)]
-    standards = resolve_tolerance(None, None, None, ["float32"], None)  # -> stat_rel_err
+    standards = resolve_tolerance(None, None, None, ["float32"], None)  # -> mix_tolerance
     precision, log, is_pass, metrics = compare(outputs, goldens, ("float32",), standards=standards)
     assert is_pass is True
     assert 0 in metrics
-    assert metrics[0]["standard"] == "stat_rel_err"
+    assert metrics[0]["standard"] == "mix_tolerance"
+
+
+def test_cli_mixed_alias_end_to_end():
+    """--compare mixed（CLI 简写）→ registry 命中混合容差，metrics 仍报官方名 mix_tolerance。"""
+    standards = resolve_tolerance(None, None, None, ["float32"], "mixed")
+    outputs = [np.array([1.0, 2.0], np.float32)]
+    goldens = [np.array([1.0, 2.0], np.float32)]
+    _p, _l, is_pass, metrics = compare(outputs, goldens, ("float32",), standards=standards)
+    assert is_pass is True
+    assert metrics[0]["standard"] == "mix_tolerance"
 
 
 # —— 端到端:Spec.tolerance → resolve → compare → metrics → structure（CR5-I2）——
@@ -40,7 +53,8 @@ def test_threshold_override_flows_to_metrics():
     _p, _l, _ip, metrics = compare(outputs, goldens, ("float32",), standards=standards)
     assert metrics[0]["threshold"] == 1e-3
     assert metrics[0]["standard"] == "stat_rel_err"
-    assert "mere" in metrics[0] and "mare" in metrics[0]
+    assert "mere" in metrics[0]
+    assert "mare" in metrics[0]
 
 
 def test_metrics_flow_to_comparison_result():
@@ -55,7 +69,7 @@ def test_metrics_flow_to_comparison_result():
     nested = {"dyn": metrics, "cst": metrics, "bin": metrics}
     cr = ComparisonResult(None).set("PASS", "PASS", "PASS", "PASS", nested)
     assert cr.metrics == nested
-    assert cr.metrics["dyn"][0]["standard"] == "stat_rel_err"
+    assert cr.metrics["dyn"][0]["standard"] == "mix_tolerance"
 
 
 def test_metrics_flow_to_api_structure():
@@ -73,7 +87,7 @@ def test_metrics_flow_to_api_structure():
     prs = ApiProfilingReturnStructure()
     prs.construct(None, acr)  # context=None ok for this structure
     assert prs.precision_metrics == metrics
-    assert prs.precision_metrics[0]["standard"] == "stat_rel_err"
+    assert prs.precision_metrics[0]["standard"] == "mix_tolerance"
 
 
 def test_output_none_fails():

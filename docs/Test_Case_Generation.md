@@ -49,8 +49,8 @@ TTK 支持两种等价的输入文件格式，表头与字段定义完全相同�
 | `testcase_name` | STRING | **是** | 自动生成 | 用例唯一名称。缺失时自动生成为 `auto_testcase_name_N`。 |
 | `network_name` | STRING | 否 | `None` | 网络/模型名称标签（如 `llama3_70b_train`）。 |
 | `input_data_ranges` | FLOAT_RANGE_NESTED | 否 | `((None, None),)` | 每个输入张量的随机数据范围。每个元素为 `[min, max]`（闭区间，min 和 max 为边界值），None 时 min=-2、max=2。第 3 个及以上的值为必现值，会混入随机数据中保证出现。min==max 时生成固定值。支持TensorList嵌套。如 `"((-1, 1), (0, 10))"` 或 `"((-1, 1, 0), (0, 10))"` |
-| `precision_tolerances` | FLOAT_RANGE_NESTED | 否 | `None` | 每个输出的精度容差对 `(rtol, atol)`。如 `"((0.001, 0.001),)"` |
-| `absolute_precision` | FLOAT_OR_NESTED | 否 | `1e-8` | 默认绝对精度容差。可以是单个浮点数或嵌套容器实现逐输出控制。 |
+| `precision_tolerances` | FLOAT_RANGE_NESTED | 否 | `None` | 每个输出的精度容差对 `(rtol, ptol)`。如 `"((0.001, 0.001),)"`。legacy 字段，仅 `--compare close`/`cosine` 读取；默认 `mix_tolerance` 的容差在 TestSpec `tolerance` 中调整 |
+| `absolute_precision` | FLOAT_OR_NESTED | 否 | `1e-8` | 默认绝对精度容差。可以是单个浮点数或嵌套容器实现逐输出控制。legacy 字段，仅 `--compare close` 读取 |
 | `is_enabled` | BOOL | 否 | `True` | 设为 `False` 跳过此用例。 |
 | `remark` | STRING | 否 | `None` | 自由备注信息。 |
 | `soc_series` | STRING_TUPLE | 否 | `None` | SoC过滤。前缀 `-` 表示排除。如 `('Ascend910A', '-Ascend310P')` |

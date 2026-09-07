@@ -7,7 +7,7 @@ TTK (ops Test Tool Kit) is a full-pipeline, automated, batch operator testing fr
 * **Full-stack test paths**: Kernel (AscendC) / GEIR (GE graph) / ACLNN (aclnn\* C API) / E2E (torch/torch_npu) — covering operator to framework layers
 * **Multi-device + simulation**: Real devices support NPU / MLU / CPU; simulation mode mimics NPU behavior on CPU, enabling development and debugging without real hardware
 * **Multi-card parallel**: Multi-NPU parallel testing
-* **Multiple comparison methods**: Statistical relative error (community standard), cosine similarity, binary exact, requantization, cross-check
+* **Multiple comparison methods**: Mixed tolerance (ecosystem open-source standard, default), statistical relative error, cosine similarity, binary exact, requantization, cross-check
 * **Extensible plugins**: Custom Golden / input generation, separate namespaces for Kernel and ACLNN/E2E
 
 [中文文档](./README.md)
