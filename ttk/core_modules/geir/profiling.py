@@ -621,7 +621,10 @@ def _parse_msprof_task_duration(prof_path: str):
         "KERNEL_AICORE",
     )
     prof_dir = pathlib.Path(prof_path)
-    csv_files = sorted(prof_dir.glob("**/*.csv"))
+    # prof 目录跨运行复用（makedirs exist_ok），且 msprof export 每次产出带时间戳的
+    # 新 CSV（如 op_summary_YYYYMMDDHHMMSS.csv）——按路径字符串排序会永远命中最旧
+    # 一次运行的文件。按 mtime 降序（文件名降序 tie-break 同秒场景）保证解析最新。
+    csv_files = sorted(prof_dir.glob("**/*.csv"), key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
     durations = []
     for item in csv_files:
         if item.name.startswith("op_summary_"):
