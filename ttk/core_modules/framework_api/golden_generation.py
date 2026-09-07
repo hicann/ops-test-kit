@@ -154,10 +154,19 @@ def _run_api_on_cpu(api_name, raw_inputs, testcase, dist, api_info=None, cpu_bac
         framework = detect_framework(api_name)
         cpu_backend = _get_cpu_backend(framework)
     cpu_inputs = [cpu_backend.from_numpy(x.copy()) if x is not None else None for x in raw_inputs]
-    if dist:
-        nested = apply_as_list(cpu_inputs, dist)
-    else:
-        nested = cpu_inputs
+    from .tf_stateful import get_mutable_param_indexes
+
+    # is_ref 下标与张量参数对位; TensorList 会造成 flat 下标偏移, 此时不用启用
+    # (mutable-ref 算子没有 TensorList 参数; dist 编码: 0=普通张量, >0=TensorList)。
+    # import tensorflow 放进分支: torch 进程后加载 TF 的 C 扩展会段错误
+    mutable_idx = get_mutable_param_indexes(api_name) if not any(d > 0 for d in (dist or ())) else ()
+    if mutable_idx:
+        import tensorflow as tf
+
+        for idx in mutable_idx:
+            if idx < len(cpu_inputs) and cpu_inputs[idx] is not None:
+                cpu_inputs[idx] = tf.Variable(cpu_inputs[idx])
+    nested = apply_as_list(cpu_inputs, dist) if dist else cpu_inputs
 
     if api_info is not None:
         args, kwargs, oidx = build_positional_args(

@@ -133,12 +133,21 @@ def np_to_tf_inputs(testcase, raw_inputs):
     TF tensors are immutable, so non-contiguous views cannot use as_strided.
     Instead, we generate contiguous tensors from the raw numpy views.
     Tensors sourced from attributes use tf.constant for graph-mode const folding.
+    Mutable-ref params (OpDef is_ref) are wrapped as tf.Variable — see
+    tf_stateful.py.
     """
     import tensorflow as tf
 
     from ttk.utilities.dtypes import normalize_to_tf_dtype
 
+    from .tf_stateful import get_mutable_param_indexes
+
     const_indexes = getattr(testcase, "const_input_indexes", None) or set()
+    # is_ref 下标与张量参数列表对位; TensorList 参数会造成 flat 下标偏移, 而
+    # mutable-ref 算子没有 TensorList 参数, 此时直接不启用
+    # (dist 编码: 0=普通张量, >0=TensorList 子张量数)
+    dist = testcase.tensor_list_dist or ()
+    mutable_idx = set(get_mutable_param_indexes(testcase.api_name)) if not any(d > 0 for d in dist) else set()
     result = []
     for idx, arr in enumerate(raw_inputs):
         if arr is None:
@@ -149,6 +158,9 @@ def np_to_tf_inputs(testcase, raw_inputs):
         contiguous = normalize_to_tf_dtype(contiguous)
         if idx in const_indexes:
             result.append(tf.constant(contiguous))
+        elif idx in mutable_idx:
+            # tf.Variable 随默认设备放置; 勿强制 CPU 放置(见 tf_stateful 模块 docstring)
+            result.append(tf.Variable(contiguous))
         else:
             result.append(tf.convert_to_tensor(contiguous))
     return result

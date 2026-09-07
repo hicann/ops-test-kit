@@ -67,6 +67,13 @@ class NpuTfBackend(TfBackend):
         return 1
 
     def to_device(self, tensor, dev_id=0, preserve_stride=False):
+        import tensorflow as tf
+
+        if isinstance(tensor, (tf.Tensor, tf.Variable)):
+            # np_to_tf_inputs 已在 set_device 之后的 NPU 默认设备上下文创建,
+            # 透传即可; from_numpy 往返是纯 D2H+H2D 开销。fallback 路径的
+            # numpy 入参仍走 from_numpy 转换
+            return tensor
         return self.from_numpy(tensor)
 
     def synchronize(self, dev_id=0):

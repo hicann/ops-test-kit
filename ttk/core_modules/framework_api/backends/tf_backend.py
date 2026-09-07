@@ -38,6 +38,11 @@ class TfBackend(Backend):
     def to_device(self, tensor, dev_id: int = 0, preserve_stride: bool = False):
         import tensorflow as tf
 
+        if isinstance(tensor, (tf.Tensor, tf.Variable)):
+            # 张量由 np_to_tf_inputs 在当前默认设备上下文创建, 透传即可;
+            # from_numpy 往返无收益(NPU 路径更是纯 D2H+H2D 开销), 且对
+            # Variable 会丢失变量身份。fallback 路径的 numpy 入参仍走转换
+            return tensor
         t = self.from_numpy(tensor)
         if self.tf_device_type and self.tf_device_type != "cpu":
             with tf.device(f"/{self.tf_device_type}:{dev_id}"):
@@ -79,6 +84,9 @@ class TfBackend(Backend):
     def clone(self, tensor):
         import tensorflow as tf
 
+        if isinstance(tensor, tf.Variable):
+            # 变量含状态, 克隆需复制当前值到新变量(随默认设备放置)
+            return tf.Variable(tensor.read_value())
         return tf.identity(tensor)
 
     def restore_inplace(self, target, backup):

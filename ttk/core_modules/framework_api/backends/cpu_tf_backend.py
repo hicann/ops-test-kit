@@ -46,9 +46,6 @@ class CpuTfBackend(TfBackend):
         with tf.device("/CPU:0"):
             return tf.convert_to_tensor(arr)
 
-    def to_device(self, tensor, dev_id=0, preserve_stride=False):
-        return self.from_numpy(tensor)
-
     def device_scope(self, dev_id=0):
         import tensorflow as tf
 

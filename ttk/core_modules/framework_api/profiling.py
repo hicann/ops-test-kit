@@ -459,27 +459,40 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
     )
 
     inplace_input_indexes = getattr(testcase, "inplace_input_indexes", None) or ()
+    # 键约定: int = args 下标; str = kwargs 参数名(TF raw_ops 全部按名传参, args 为空)
     inplace_idxs = set()
     if is_inplace and args and args[0] is not None:
         inplace_idxs.add(0)
+    from .tf_stateful import get_mutable_param_names, is_ref_variable
+
+    # mutable-ref 算子(OpDef is_ref)原地修改变量, warmup/run 多轮需每轮换
+    # 新变量, 否则前几轮的更新会叠加到测量轮结果上。按参数名遍历, 兼容
+    # 非 ref 命名的 mutable 参数(如 var/accum)。
+    inplace_idxs.update(
+        name for name in get_mutable_param_names(testcase.api_name) if is_ref_variable(kwargs.get(name))
+    )
     inplace_idxs.update(i for i in inplace_input_indexes if i < len(args) and args[i] is not None)
 
     backups = {}
-    for idx in inplace_idxs:
-        backups[idx] = backend.clone(args[idx])
+    for key in inplace_idxs:
+        backups[key] = backend.clone(args[key] if isinstance(key, int) else kwargs[key])
 
     total = warmup_count + run_count
     clones = {}
-    for idx, backup in backups.items():
-        clones[idx] = [backend.clone(backup) for _ in range(total)]
+    for key, backup in backups.items():
+        clones[key] = [backend.clone(backup) for _ in range(total)]
 
     result = None
     md5_list = []
     with profiler:
         for i in range(total):
             is_warmup = i < warmup_count
-            for idx in clones:
-                args[idx] = clones[idx][i]
+            for key in clones:
+                value = clones[key][i]
+                if isinstance(key, int):
+                    args[key] = value
+                else:
+                    kwargs[key] = value
             with backend.device_scope(dev_id):
                 if is_tensor_method:
                     r = getattr(args[0], resolved)(*args[1:], **kwargs) if args[0] is not None else None
