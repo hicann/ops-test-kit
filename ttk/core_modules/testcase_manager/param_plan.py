@@ -124,7 +124,12 @@ def match_overload(api_name, input_tensor_count, attributes=None, tensor_distrib
         input_tensors = [p for p in overload_params if p.is_tensor_like and p.name != "out"]
         has_var = any(getattr(p, "is_var_positional", False) for p in input_tensors)
         required = sum(1 for p in input_tensors if not p.is_optional and not getattr(p, "is_var_positional", False))
-        scalar_cover = sum(1 for p in input_tensors if p.name in attrs and p.name != "self")
+        # Shapes fill tensor params positionally in signature order; attributes
+        # for those shape-covered params only override values (const folding),
+        # not the param count. Only tensor params beyond the shape-covered
+        # prefix may be satisfied by scalar attributes.
+        shape_covered = min(input_tensor_count, len(input_tensors))
+        scalar_cover = sum(1 for p in input_tensors[shape_covered:] if p.name in attrs and p.name != "self")
         effective_count = input_tensor_count + scalar_cover
         if has_var:
             if effective_count < required:
@@ -209,10 +214,9 @@ def coerce_value(raw, target_type):
             _REDUCTION_STR_TO_INT = {"none": 0, "mean": 1, "sum": 2, "elementwise_mean": 1}
             if raw.lower() in _REDUCTION_STR_TO_INT:
                 return _REDUCTION_STR_TO_INT[raw.lower()]
-            else:
-                torch_obj = str_to_torch_dtype(raw)
-                if torch_obj is not None:
-                    return torch_obj
+            torch_obj = str_to_torch_dtype(raw)
+            if torch_obj is not None:
+                return torch_obj
         try:
             return int(raw)
         except (ValueError, TypeError) as e:

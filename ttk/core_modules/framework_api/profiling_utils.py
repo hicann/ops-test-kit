@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under
-# the terms of conditions of CANN Open Software License Agreement Version 2.0
-# (the "License").
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
 
@@ -13,6 +15,7 @@ Profiling utility functions shared between profiling.py and graph_execution.py.
 Framework-neutral — all framework-specific logic is delegated to backend methods.
 """
 
+import contextlib
 import hashlib
 import logging
 
@@ -23,7 +26,9 @@ def compute_output_md5(arrays):
     """Compute MD5 hash of numpy output arrays for deterministic check."""
     if not isinstance(arrays, (list, tuple)):
         arrays = [arrays]
-    return hashlib.md5(b"".join(arr.tobytes() if isinstance(arr, np.ndarray) else b"" for arr in arrays)).hexdigest()
+    return hashlib.md5(  # noqa: S324  # 非安全用途：确定性校验和
+        b"".join(arr.tobytes() if isinstance(arr, np.ndarray) else b"" for arr in arrays)
+    ).hexdigest()
 
 
 def finalize_det_status(md5_list, testcase_name):
@@ -47,11 +52,10 @@ def apply_format_cast(tensors, formats):
 
     import torch_npu
 
-    result = []
-    for tensor, fmt in zip(tensors, formats):
-        if fmt and fmt in PRIVATE_FORMATS:
-            tensor = torch_npu.npu_format_cast(tensor, FORMAT_DICT[fmt])
-        result.append(tensor)
+    result = [
+        torch_npu.npu_format_cast(t, FORMAT_DICT[fmt]) if fmt and fmt in PRIVATE_FORMATS else t
+        for t, fmt in zip(tensors, formats)
+    ]
     return result
 
 
@@ -88,11 +92,14 @@ def prepare_device_args(testcase, backend, dev_id, plan, raw_inputs):
         dev_tensors = [backend.to_device(x, dev_id) if x is not None else None for x in raw_inputs]
     if testcase.tensor_formats and backend.supports_format_cast():
         dev_tensors = apply_format_cast(dev_tensors, testcase.flat_tensor_formats)
+    const_values = getattr(testcase, "const_input_values", None) or {}
+    if const_values and getattr(backend, "tf_device_type", None):
+        # TF const 位以记录的 Python 标量传入：tf.function 只把 Python 值折叠
+        # 为 Const 节点，EagerTensor（含 tf.constant）入参一律 trace 成
+        # Placeholder，GE infershape（如 CombinedNonMaxSuppression）读不到值
+        dev_tensors = [const_values.get(i, t) for i, t in enumerate(dev_tensors)]
     dist = testcase.tensor_list_dist
-    if dist:
-        nested_tensors = apply_as_list(dev_tensors, dist)
-    else:
-        nested_tensors = dev_tensors
+    nested_tensors = apply_as_list(dev_tensors, dist) if dist else dev_tensors
     args, kwargs, _ = plan.build_args(nested_tensors)
     return args, kwargs
 
@@ -120,8 +127,6 @@ def unpack_4bit_outputs(testcase, result_nps):
             continue
         ds = str(dtype_str)
         if ("float4" in ds or "int4" in ds) and result_nps[idx].dtype == np.uint8:
-            try:
+            with contextlib.suppress(Exception):
                 result_nps[idx] = unpack_4bits(result_nps[idx], ds)
-            except Exception:
-                pass
     return result_nps

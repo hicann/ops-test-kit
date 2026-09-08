@@ -27,7 +27,16 @@ class TfGraphWrapper:
     so tf.function tracing passes them as kwargs.
     """
 
-    def __init__(self, api_func, input_signature=None, dynamic=False, api_name=None, call_args=None, call_kwargs=None):
+    def __init__(
+        self,
+        api_func,
+        input_signature=None,
+        dynamic=False,
+        api_name=None,
+        call_args=None,
+        call_kwargs=None,
+        sig_idx=None,
+    ):
         import tensorflow as tf
 
         self._api_func = api_func
@@ -35,11 +44,13 @@ class TfGraphWrapper:
         self._api_name = api_name
         self._input_signature = input_signature
         self._param_names = self._extract_tensor_param_names(api_func, api_name)
+        self._sig_param_names = None
 
         if self._param_names and input_signature is not None:
-            self._tf_func = self._build_kw_function(
-                api_func, self._param_names, input_signature, call_args, call_kwargs
+            self._tf_func, sig_param_names = self._build_kw_function(
+                api_func, self._param_names, input_signature, call_args, call_kwargs, sig_idx
             )
+            self._sig_param_names = set(sig_param_names)
         elif input_signature is not None:
             self._tf_func = tf.function(api_func, input_signature=input_signature, autograph=False)
             self._tf_func.get_concrete_function()
@@ -47,38 +58,49 @@ class TfGraphWrapper:
             self._tf_func = tf.function(api_func, autograph=False)
 
     @staticmethod
-    def _build_kw_function(api_func, param_names, input_signature, call_args=None, call_kwargs=None):
+    def _build_kw_function(api_func, param_names, input_signature, call_args=None, call_kwargs=None, sig_idx=None):
         """Build tf.function with explicit named params matching input_signature.
 
         tf.raw_ops.* require keyword args; we generate a wrapper with explicit
         parameter names (matching param_names) so input_signature binds correctly,
-        and the wrapper forwards them as kwargs to the API. Non-tensor params
-        (scalars from attributes) are baked into the closure as Python values —
-        tf.function traces them as Const nodes, which is also what GE infershape
-        passes (e.g. CombinedNonMaxSuppression) require.
+        and the wrapper forwards them as kwargs to the API. Params outside the
+        signature are baked into the closure: Python scalars trace as Const
+        nodes (what GE infershape requires), tf.Variable keeps its identity via
+        resource capture (what state_ops mutable-ref APIs require — a Variable
+        bound to a TensorSpec slot degrades to a SymbolicTensor and crashes on
+        ref._lazy_read).
+
+        sig_idx maps signature entry j to param_names[sig_idx[j]] (flat tensor
+        index == tensor param position; mutable/const positions are excluded
+        from the signature by the caller). Falls back to binding the first
+        len(input_signature) params when absent.
         """
         import tensorflow as tf
 
-        n_sig = len(input_signature)
-        tensor_names = param_names[:n_sig]
-        scalar_values = {}
         call_args = list(call_args or [])
+        if sig_idx and all(i < len(param_names) for i in sig_idx):
+            tensor_names = [param_names[i] for i in sig_idx]
+            sig_pos = set(sig_idx)
+        else:
+            tensor_names = param_names[: len(input_signature)]
+            sig_pos = set(range(len(input_signature)))
+        closure_values = {}
         for i, name in enumerate(param_names):
-            if i < n_sig:
+            if i in sig_pos:
                 continue
             if i < len(call_args):
-                scalar_values[name] = call_args[i]
+                closure_values[name] = call_args[i]
             elif call_kwargs and name in call_kwargs:
-                scalar_values[name] = call_kwargs[name]
+                closure_values[name] = call_kwargs[name]
 
         def wrapper(*args):
             kwargs = dict(zip(tensor_names, args))
-            kwargs.update(scalar_values)
+            kwargs.update(closure_values)
             return api_func(**kwargs)
 
         tf_func = tf.function(wrapper, input_signature=input_signature, autograph=False)
         tf_func.get_concrete_function()
-        return tf_func
+        return tf_func, tensor_names
 
     @staticmethod
     def _extract_tensor_param_names(api_func, api_name):
@@ -107,7 +129,10 @@ class TfGraphWrapper:
                     call_kwargs[name] = args[i]
                 elif name in kwargs and kwargs[name] is not None:
                     call_kwargs[name] = kwargs[name]
-            n_sig = len(self._input_signature) if self._input_signature else len(call_kwargs)
-            call_kwargs = {k: v for i, (k, v) in enumerate(call_kwargs.items()) if i < n_sig}
+            if self._sig_param_names is not None:
+                call_kwargs = {k: v for k, v in call_kwargs.items() if k in self._sig_param_names}
+            else:
+                n_sig = len(self._input_signature) if self._input_signature else len(call_kwargs)
+                call_kwargs = {k: v for i, (k, v) in enumerate(call_kwargs.items()) if i < n_sig}
             return self._tf_func(*call_kwargs.values())
         return self._tf_func(*args, **kwargs)

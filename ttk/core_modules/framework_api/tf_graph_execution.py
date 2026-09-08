@@ -30,24 +30,40 @@ def _build_input_signature(testcase, dynamic):
 
     static (dynamic=False): fixed shapes → corresponds to -c/--const
     dynamic (dynamic=True):  None dimensions → corresponds to -d/--dynamic
+
+    Returns (signature, sig_idx): signature is the TensorSpec list (or None),
+    sig_idx lists the flat tensor index each signature entry binds to.
     """
     import tensorflow as tf
 
     from ttk.utilities.dtypes import str_to_tf_dtype
 
+    from .tf_stateful import get_mutable_param_indexes
+
     sig = []
+    sig_idx = []
     flat_shapes = testcase.flat_tensor_view_shapes
     flat_dtypes = testcase.flat_tensor_dtypes
-    for shape, dtype_str in zip(flat_shapes, flat_dtypes):
-        if shape is None:
+    # const 来源的 0-D 位不进 signature：GE infershape 要求其以 Const 节点
+    # 进入图，由 TfGraphWrapper 闭包（Python 标量）而非 Placeholder 提供
+    const_indexes = getattr(testcase, "const_input_indexes", None) or set()
+    # mutable-ref 位不进 signature：tf.function 按 TensorSpec 追踪会把
+    # tf.Variable 降级为 SymbolicTensor，state_ops.*scatter 系列随即在
+    # ref.handle/_lazy_read 上崩溃；ref 只能经闭包捕获保持 Variable 身份
+    # (见 tf_stateful.py 与 TfGraphWrapper._build_kw_function)
+    dist = testcase.tensor_list_dist or ()
+    mutable_idx = set(get_mutable_param_indexes(testcase.api_name)) if not any(d > 0 for d in dist) else set()
+    for idx, (shape, dtype_str) in enumerate(zip(flat_shapes, flat_dtypes)):
+        if shape is None or idx in const_indexes or idx in mutable_idx:
             continue
         dims = list(shape) if not dynamic else [None] * len(shape)
         tf_dtype = str_to_tf_dtype(dtype_str)
         if tf_dtype is None:
             logging.warning(f"Cannot map dtype {dtype_str} to tf.dtype, skipping input_signature")
-            return None
+            return None, ()
         sig.append(tf.TensorSpec(dims, tf_dtype))
-    return sig if sig else None
+        sig_idx.append(idx)
+    return (sig if sig else None), sig_idx
 
 
 def _execute_tf_graph(
@@ -101,7 +117,7 @@ def _execute_tf_graph(
                 device_scope=lambda: backend.device_scope(dev_id),
             )
 
-        input_signature = _build_input_signature(testcase, dynamic)
+        input_signature, sig_idx = _build_input_signature(testcase, dynamic)
         wrapper = TfGraphWrapper(
             resolved,
             input_signature=input_signature,
@@ -109,13 +125,28 @@ def _execute_tf_graph(
             api_name=testcase.api_name,
             call_args=args,
             call_kwargs=kwargs,
+            sig_idx=sig_idx,
         )
+
+        from .tf_stateful import is_ref_variable
+
+        # mutable-ref 变量经闭包捕获，resource 句柄在 trace 时固化，无法像 eager
+        # 路径那样在窗口外换新克隆、窗口内纯引用替换。改为两阶段(基准测试常规
+        # 模式)：Phase 1 带复位跑正确性(窗口外)，Phase 2 纯图执行跑计时(窗口内
+        # 无复位 op，采集天然干净，无需事后按 op 名剔除)。计时有效性依据：kernel
+        # 耗时只与 shape/dtype 相关，与数据值无关，Phase 2 的状态累积不影响计时
+        mutable_backups = [(v, v.read_value()) for v in (*args, *kwargs.values()) if is_ref_variable(v)]
+
+        def reset_mutable_refs():
+            for var, backup in mutable_backups:
+                var.assign(backup)
 
         profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
         deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
         run_count = switches.run_time
         if switches.warmup and profiling_enabled:
             for _ in range(WARMUP_COUNT):
+                reset_mutable_refs()
                 wrapper(*args, **kwargs)
             backend.synchronize(dev_id)
 
@@ -133,14 +164,30 @@ def _execute_tf_graph(
         )
         md5_list = []
         result = None
-        with profiler:
+        if mutable_backups:
+            # Phase 1 正确性: 每轮复位回初值, 产出比对结果与确定性 MD5
             for _ in range(run_count):
+                reset_mutable_refs()
                 result = wrapper(*args, **kwargs)
                 if deterministic:
                     backend.synchronize(dev_id)
-                    run_nps = backend.result_to_numpy(result)
-                    md5_list.append(compute_output_md5(run_nps))
+                    md5_list.append(compute_output_md5(backend.result_to_numpy(result)))
             backend.synchronize(dev_id)
+            # Phase 2 性能: 窗口内仅图执行
+            if profiling_enabled and run_count:
+                with profiler:
+                    for _ in range(run_count):
+                        wrapper(*args, **kwargs)
+                    backend.synchronize(dev_id)
+        else:
+            with profiler:
+                for _ in range(run_count):
+                    result = wrapper(*args, **kwargs)
+                    if deterministic:
+                        backend.synchronize(dev_id)
+                        run_nps = backend.result_to_numpy(result)
+                        md5_list.append(compute_output_md5(run_nps))
+                backend.synchronize(dev_id)
 
         perf = profiler.result(backend, run_count)
         result_nps = backend.result_to_numpy(result)
