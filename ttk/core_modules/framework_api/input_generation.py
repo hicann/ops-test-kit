@@ -78,14 +78,34 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
         else:
             kwargs.update({k: v for k, v in extra.items() if k in sig.parameters})
         input_func(*args, **kwargs)
-
-    _set_runtime_tensors(testcase, raw_inputs, backend)
+        # 重建 testcase.tensors，并把插件在输入上置的 requires_grad 重放到重建后的
+        # tensor 上（经 _set_runtime_tensors 的 plugin_tensors 参数）。这样
+        # testcase.tensors 始终是重建产物（净化语义统一），插件对象不进 runtime tensors。
+        #
+        # 背景：op-plugin 一类算子会按输入 requires_grad 门控（如
+        # RotaryMulBackwardKernelNpuOpApi.cpp 用 r1.requires_grad() 短路 xOptional
+        # 输入，requires_grad=False 时只算 dx、dcos/dsin 全 0）。ttk 此前无条件从
+        # raw_inputs 重建 testcase.tensors，会丢弃插件置的 requires_grad，导致这类
+        # 算子 e2e 无法比对 dcos/dsin。插件按约定以 x[:] = value 原地改数据
+        # （from_numpy 共享内存），数据与重建路径一致；此处仅重放 requires_grad。
+        _set_runtime_tensors(testcase, raw_inputs, backend, plugin_tensors=plugin_inputs)
+    else:
+        _set_runtime_tensors(testcase, raw_inputs, backend)
     return raw_inputs
 
 
-def _set_runtime_tensors(testcase, raw_inputs, backend):
-    """Rebuild framework tensors and TensorList nesting from backing storages."""
+def _set_runtime_tensors(testcase, raw_inputs, backend, plugin_tensors=None):
+    """Rebuild framework tensors and TensorList nesting from backing storages.
+
+    plugin_tensors: 可选，input 插件处理过的 flat tensor 列表（与 raw_inputs 逐索引
+    对齐）。重建后按索引把插件置的 requires_grad 重放到新 tensor 上——重建产物
+    （数据/shape）始终来自 raw_inputs，插件对象不进 testcase.tensors，净化语义统一。
+    """
     flat_tensors = backend.inputs_from_numpy(testcase, raw_inputs)
+    if plugin_tensors is not None:
+        for i, pt in enumerate(plugin_tensors):
+            if i < len(flat_tensors) and pt is not None and getattr(pt, "requires_grad", False):
+                flat_tensors[i].requires_grad_(True)
     dist = testcase.tensor_list_dist
     if dist:
         testcase.tensors = apply_as_list(flat_tensors, dist)

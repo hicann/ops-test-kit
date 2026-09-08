@@ -85,7 +85,12 @@ class TorchBackend(Backend):
         storage_numel = src_storage.size() // elem_size
         src_flat = torch.empty(0, dtype=tensor.dtype, device=tensor.device).set_(src_storage, 0, (storage_numel,), (1,))
         new_flat = src_flat.to(dst_device) if dst_device else src_flat.clone()
-        return torch.as_strided(new_flat, tensor.shape, tensor.stride(), tensor.storage_offset())
+        result = torch.as_strided(new_flat, tensor.shape, tensor.stride(), tensor.storage_offset())
+        # src_flat 由 torch.empty 起底，requires_grad 默认 False，重建视图会丢标记；
+        # 非连续输入经此路径到设备执行时需把源 tensor 的 requires_grad 带过去。
+        if tensor.requires_grad:
+            result.requires_grad_(True)
+        return result
 
     def clone(self, tensor):
         """Clone a tensor preserving its non-contiguous stride and gap data.
