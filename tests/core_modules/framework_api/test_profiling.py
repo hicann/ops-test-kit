@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """
@@ -14,6 +17,7 @@
 - _try_custom_compare: 自定义 compare 的跳过条件、返回值适配、错误处理、端到端集成。
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -95,6 +99,104 @@ def _compare_single_dict(*outputs):
     return {"pass": True, "precision": 99.5}
 
 
+class TestDeterministicContract:
+    """The level-3 option stays independent from an optional batch relation."""
+
+    @pytest.mark.parametrize("cli_level", [0, 1, 2, 3])
+    @pytest.mark.parametrize("case_level", [None, 0, 1, 2, 3])
+    def test_level_priority_matrix(self, cli_level, case_level):
+        from ttk.core_modules.deterministic import resolve_deterministic_level
+
+        case = SimpleNamespace(attributes={"batch_deterministic_level": case_level})
+        assert resolve_deterministic_level(_make_switches(deterministic_level=cli_level), case) == (
+            cli_level or case_level or 0
+        )
+
+    @pytest.mark.parametrize("case_level", [True, "3", 3.0, -1, 4])
+    def test_invalid_case_level_is_rejected(self, case_level):
+        from ttk.core_modules.deterministic import resolve_deterministic_level
+
+        with pytest.raises(ValueError, match="batch_deterministic_level"):
+            resolve_deterministic_level(
+                _make_switches(), SimpleNamespace(attributes={"batch_deterministic_level": case_level})
+            )
+
+    def test_reused_worker_resets_level_and_retries_failed_set(self):
+        from ttk.core_modules.framework_api.profiling import _ensure_deterministic_level_e2e
+
+        process = SimpleNamespace(storage={})
+        backend = MagicMock()
+        backend.is_npu.return_value = True
+        backend.set_deterministic_level.side_effect = [RuntimeError("transient"), None, None]
+        case = SimpleNamespace(testcase_name="case")
+        _ensure_deterministic_level_e2e(process, backend, case, 3)
+        assert "_deterministic_level" not in process.storage
+        _ensure_deterministic_level_e2e(process, backend, case, 3)
+        _ensure_deterministic_level_e2e(process, backend, case, 3)
+        _ensure_deterministic_level_e2e(process, backend, case, 0)
+        assert [call.args[0] for call in backend.set_deterministic_level.call_args_list] == [3, 3, 0]
+        assert process.storage["_deterministic_level"] == 0
+
+    @pytest.mark.parametrize("prepare", [False, True])
+    @pytest.mark.parametrize("cli_level", [0, 1, 3])
+    @pytest.mark.parametrize(
+        "missing",
+        [(), ("batch_axis",), ("batch_slice_info",), ("batch_seed",), ("batch_axis", "batch_slice_info", "batch_seed")],
+    )
+    def test_batch_execution_log(self, prepare, cli_level, missing, caplog):
+        from ttk.core_modules.infra.instance_base import InstanceBase
+
+        malformed = SimpleNamespace(is_enabled=True, is_valid=True, attributes={"batch_deterministic_level": "bad"})
+        case = SimpleNamespace(
+            testcase_name="case",
+            is_enabled=True,
+            is_valid=True,
+            attributes={"batch_deterministic_level": 3},
+            batch_axis=((0,),),
+            batch_slice_info=((((0, 1, 1),),),),
+            batch_seed=(((7,),),),
+        )
+        for name in missing:
+            setattr(case, name, None)
+        instance = SimpleNamespace(
+            switches=_make_switches(
+                test_mode="framework-api",
+                deterministic_level=cli_level,
+                manual_data_mode="prepare" if prepare else None,
+            ),
+            flatten_testcases=[malformed, case] if cli_level == 0 else [case],
+        )
+        with caplog.at_level("INFO"):
+            InstanceBase._log_batch_execution_mode(instance, before_execution=True)
+            assert "fia_compare_batch_consistency.py" not in caplog.text
+            InstanceBase._log_batch_execution_mode(instance)
+        active = cli_level != 1 and not prepare
+        assert ("fia_compare_batch_consistency.py" in caplog.text) == (not missing and active)
+        warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == int(bool(missing) and active)
+        if warnings:
+            assert all(name in caplog.text for name in missing)
+            assert "continuing ordinary level-3 execution" in caplog.text
+        assert "wrote dumps" not in caplog.text
+
+    @pytest.mark.parametrize("complete", [False, True])
+    def test_npu_preprocess_forwards_only_complete_batch_relation(self, complete):
+        """Keep preprocessing aligned with ordinary input/golden relation forwarding."""
+        from ttk.core_modules.deterministic import BATCH_RELATION_FIELDS
+        from ttk.core_modules.npu_preprocess import _hook_extras
+
+        testcase = SimpleNamespace(
+            attributes={"batch_axis": "ignored-as-attribute"},
+            testcase_name="case",
+            batch_axis=((0,),),
+            batch_slice_info=((((0, 1, 1),),),) if complete else None,
+            batch_seed=(((7,),),),
+        )
+        extras = _hook_extras(testcase, _make_switches(), SimpleNamespace(overload_params=()))
+        forwarded = {name: extras[name] for name in BATCH_RELATION_FIELDS if name in extras}
+        assert forwarded == ({name: getattr(testcase, name) for name in BATCH_RELATION_FIELDS} if complete else {})
+
+
 class TestToNonContiguousView:
     """to_non_contiguous_view: 通过 as_strided 构造非连续视图。"""
 
@@ -134,7 +236,7 @@ class TestApplyPreCompareSkip:
         return sw
 
     @pytest.mark.parametrize(
-        "api_name, plugin_path, spec_return, result_init, golden_init, expected_result, expected_golden",
+        ("api_name", "plugin_path", "spec_return", "result_init", "golden_init", "expected_result", "expected_golden"),
         [
             pytest.param(
                 "softmax_v2",
@@ -242,9 +344,10 @@ class TestApplyPreCompareReturnMode:
         sw.plugin_path = "/fake/path"
         result = [np.array([1.0])]
         golden = [np.array([2.0])]
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=pre_compare):
-            with pytest.raises(RuntimeError, match="boom"):
-                _apply_pre_compare(case, result, golden, sw)
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=pre_compare), pytest.raises(
+            RuntimeError, match="boom"
+        ):
+            _apply_pre_compare(case, result, golden, sw)
 
 
 class TestPreCompareEndToEnd:
@@ -313,7 +416,7 @@ class TestTryCustomCompareSkip:
         return sw
 
     @pytest.mark.parametrize(
-        "api_name, plugin_path, spec_return, result_arr, golden_arr",
+        ("api_name", "plugin_path", "spec_return", "result_arr", "golden_arr"),
         [
             pytest.param(
                 "add",
@@ -362,7 +465,7 @@ class TestTryCustomCompareAdapt:
         return sw
 
     @pytest.mark.parametrize(
-        "output_dist, compare_fn, result_arr, golden_arr, expected_p, expected_is_pass",
+        ("output_dist", "compare_fn", "result_arr", "golden_arr", "expected_p", "expected_is_pass"),
         [
             pytest.param(
                 (),
@@ -387,7 +490,7 @@ class TestTryCustomCompareAdapt:
         assert is_pass == expected_is_pass
 
     @pytest.mark.parametrize(
-        "compare_return, match, result_arr, golden_arr",
+        ("compare_return", "match", "result_arr", "golden_arr"),
         [
             pytest.param(
                 {"precision": 99.0},
@@ -407,9 +510,10 @@ class TestTryCustomCompareAdapt:
 
         case = self._make_case()
         sw = self._make_switches()
-        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=compare):
-            with pytest.raises(ValueError, match=match):
-                _try_custom_compare(case, result_arr, golden_arr, sw)
+        with patch("ttk.core_modules.framework_api.profiling.get_spec_attr", return_value=compare), pytest.raises(
+            ValueError, match=match
+        ):
+            _try_custom_compare(case, result_arr, golden_arr, sw)
 
 
 class TestCustomCompareEndToEnd:

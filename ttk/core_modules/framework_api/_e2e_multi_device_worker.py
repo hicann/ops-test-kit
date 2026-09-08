@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
+import contextlib
 import datetime
 import importlib
 import json
@@ -65,7 +66,7 @@ _TORCH_NPU_MOE_TENSOR_PARAMS = {
 
 def _uses_private_moe_backend(api_name):
     """Return whether the API needs TTK's private CANN MoE extension path."""
-    return api_name.startswith("cann_ops_transformer.") or api_name.startswith("torch.ops.cann_ops_transformer.")
+    return api_name.startswith(("cann_ops_transformer.", "torch.ops.cann_ops_transformer."))
 
 
 def _call_torch_npu_moe(api_name, dev_tensors, hcomm, world_size, attrs):
@@ -526,14 +527,12 @@ def _call_api(api_name, dev_tensors, hcomm, world_size, attrs):
 
     if "npu_all_gather_base_mm" in api_name:
         return resolved(dev_tensors[0], dev_tensors[1], hcomm, world_size, **kw)
-    elif "npu_all_gather_quant_mm" in api_name:
+    if "npu_all_gather_quant_mm" in api_name:
         kw.pop("comm_mode", None)
         return resolved(dev_tensors[0], dev_tensors[1], hcomm, world_size, **kw)
-    elif "npu_mm_reduce_scatter_base" in api_name:
+    if "npu_mm_reduce_scatter_base" in api_name or "npu_quant_mm_reduce_scatter" in api_name:
         return resolved(dev_tensors[0], dev_tensors[1], hcomm, world_size, **kw)
-    elif "npu_quant_mm_reduce_scatter" in api_name:
-        return resolved(dev_tensors[0], dev_tensors[1], hcomm, world_size, **kw)
-    elif "npu_mm_all_reduce_add_rms_norm" in api_name:
+    if "npu_mm_all_reduce_add_rms_norm" in api_name:
         kw.pop("world_size", None)
         reduce_op = kw.pop("reduce_op", "sum")
         epsilon = kw.pop("epsilon", 1e-6)
@@ -547,21 +546,21 @@ def _call_api(api_name, dev_tensors, hcomm, world_size, attrs):
             epsilon=epsilon,
             **kw,
         )
-    elif "npu_mm_all_reduce_base" in api_name:
+    if "npu_mm_all_reduce_base" in api_name:
         bias = dev_tensors[2] if len(dev_tensors) > 2 and dev_tensors[2] is not None else None
         return resolved(dev_tensors[0], dev_tensors[1], hcomm, bias=bias)
-    elif "npu_matmul_all_to_all" in api_name:
+    if "npu_matmul_all_to_all" in api_name:
         # Match mc2_test: explicitly pass bias=None and all2all_axes=None
         kw.setdefault("bias", None)
         kw.setdefault("all2all_axes", None)
         return resolved(dev_tensors[0], dev_tensors[1], hcomm, world_size, **kw)
-    elif "npu_all_to_all_matmul" in api_name:
+    if "npu_all_to_all_matmul" in api_name:
         kw.setdefault("bias", None)
         kw.setdefault("all2all_axes", None)
         return resolved(dev_tensors[0], dev_tensors[1], hcomm, world_size, **kw)
-    elif "npu_all_to_all_quant_matmul" in api_name:
+    if "npu_all_to_all_quant_matmul" in api_name:
         return resolved(dev_tensors[0], dev_tensors[1], hcomm, world_size, **kw)
-    elif "npu_gmm_alltoallv" in api_name:
+    if "npu_gmm_alltoallv" in api_name:
         send_counts = kw.pop("sendCounts", kw.pop("send_counts", []))
         recv_counts = kw.pop("recvCounts", kw.pop("recv_counts", []))
         ep_ws = int(kw.pop("ep_world_size", kw.pop("epWorldSize", world_size)))
@@ -588,7 +587,7 @@ def _call_api(api_name, dev_tensors, hcomm, world_size, attrs):
             mm_weight=mm_weight,
             **kw,
         )
-    elif "npu_alltoallv_gmm" in api_name:
+    if "npu_alltoallv_gmm" in api_name:
         send_counts = kw.pop("sendCounts", kw.pop("send_counts", []))
         recv_counts = kw.pop("recvCounts", kw.pop("recv_counts", []))
         ep_ws = int(kw.pop("ep_world_size", kw.pop("epWorldSize", world_size)))
@@ -616,7 +615,7 @@ def _call_api(api_name, dev_tensors, hcomm, world_size, attrs):
             mm_weight=mm_weight,
             **kw,
         )
-    elif "bmm_reducescatter_alltoall" in api_name:
+    if "bmm_reducescatter_alltoall" in api_name:
         ep_ws = int(kw.pop("group_ep_worldsize", kw.pop("epWorldSize", 0)))
         tp_ws = int(kw.pop("group_tp_worldsize", kw.pop("tpWorldSize", 0)))
         ep_hc = kw.pop("ep_hcomm", hcomm)
@@ -627,7 +626,7 @@ def _call_api(api_name, dev_tensors, hcomm, world_size, attrs):
         # Drop all remaining attrs not in API schema
         kw.clear()
         return resolved(dev_tensors[0], dev_tensors[1], ep_hc, ep_ws, tp_hc, tp_ws, bias=bias, shard_type=shard)
-    elif "alltoall_allgather_bmm" in api_name:
+    if "alltoall_allgather_bmm" in api_name:
         ep_ws = int(kw.pop("group_ep_worldsize", kw.pop("epWorldSize", 0)))
         tp_ws = int(kw.pop("group_tp_worldsize", kw.pop("tpWorldSize", 0)))
         ep_hc = kw.pop("ep_hcomm", hcomm)
@@ -665,10 +664,9 @@ def _call_api(api_name, dev_tensors, hcomm, world_size, attrs):
             need_allgather_out=need_ag,
             need_activation_feature=need_act,
         )
-    else:
-        kw["hcom"] = hcomm
-        kw["world_size"] = world_size
-        return resolved(*dev_tensors, **kw)
+    kw["hcom"] = hcomm
+    kw["world_size"] = world_size
+    return resolved(*dev_tensors, **kw)
 
 
 class _MC2GraphModel(torch.nn.Module):
@@ -809,8 +807,11 @@ def worker(rank, world_size, port, input_path, plan_path, result_path, error_pat
     with open(plan_path) as _pf:
         _plan = json.load(_pf)
     _timeout = int(_plan.get("proc_timeout", 3600))
+    _deterministic_level = int(_plan.get("deterministic_level", 0) or 0)
     try:
         torch.npu.set_device(rank)
+        if _deterministic_level:
+            torch_npu.npu.set_deterministic_level(_deterministic_level)
         dist.init_process_group(
             backend="hccl",
             rank=rank,
@@ -878,7 +879,7 @@ def worker(rank, world_size, port, input_path, plan_path, result_path, error_pat
         if my_indices:
             rank0_keys = sorted([k for k in data.files if k.startswith("inp_0_")], key=lambda x: int(x.split("_")[2]))
             rank0_by_idx = {int(k.split("_")[2]): k for k in rank0_keys}
-            max_idx = max(max(my_indices), max(rank0_by_idx.keys()) if rank0_by_idx else 0)
+            max_idx = max(*my_indices, max(rank0_by_idx.keys()) if rank0_by_idx else 0)
             for idx in range(max_idx + 1):
                 if idx not in my_indices and idx in rank0_by_idx:
                     my_input_keys.append(rank0_by_idx[idx])
@@ -959,10 +960,8 @@ def worker(rank, world_size, port, input_path, plan_path, result_path, error_pat
             for part in (remark or "").split(","):
                 kv = part.split("=", 1)
                 if len(kv) == 2 and kv[0].strip() == "seed":
-                    try:
+                    with contextlib.suppress(ValueError):
                         seed_val = int(kv[1].strip())
-                    except ValueError:
-                        pass
             ep_ws = int(attrs.get("epWorldSize", world_size))
             epc = int(dev_tensors[1].shape[0]) if len(dev_tensors) > 1 else 1
             M_per_rank = int(dev_tensors[0].shape[0]) if len(dev_tensors) > 0 else 0
@@ -1059,10 +1058,8 @@ def worker(rank, world_size, port, input_path, plan_path, result_path, error_pat
                 logging.info("[BMM_IO rank=%s] loaded r=%s t=%.1fs", rank, r, time.time() - t0)
             dist.barrier()
             logging.info("[BMM_IO rank=%s] barrier2 t=%.1fs", rank, time.time() - t0)
-            try:
+            with contextlib.suppress(Exception):
                 os.remove(rank_file)
-            except Exception:
-                pass
         else:
             for tensor_idx in range(len(cpu_inputs_for_rank)):
                 if not needs_cross_rank[tensor_idx]:
@@ -1229,10 +1226,8 @@ def worker(rank, world_size, port, input_path, plan_path, result_path, error_pat
         if rank == 0:
             with open(error_path, "w") as f:
                 f.write(traceback.format_exc())
-        try:
+        with contextlib.suppress(Exception):
             dist.destroy_process_group()
-        except Exception:
-            pass
 
 
 def _resolve_api(api_name):

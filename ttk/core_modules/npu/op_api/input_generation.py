@@ -29,6 +29,7 @@ from ....utilities import (
     resolve_custom_numpy_dtypes,
 )
 from ...aclnn import OpApiInfo, OpApiInfoKeeper
+from ...deterministic import batch_relation_kwargs, has_complete_batch_relation
 from ...plugin_loader import get_plugin_function
 
 # Third-party Packages
@@ -99,12 +100,7 @@ class InputGenerator:
             "input_ranges": self._ctx.input_data_ranges,
             "use_numpy": not self._ctx.is_torch_dtype_support(),
         }
-        if hasattr(self._ctx, "batch_axis") and self._ctx.batch_axis is not None:
-            kwargs["batch_axis"] = self._ctx.batch_axis
-        if hasattr(self._ctx, "batch_slice_info") and self._ctx.batch_slice_info is not None:
-            kwargs["batch_slice_info"] = self._ctx.batch_slice_info
-        if hasattr(self._ctx, "batch_seed") and self._ctx.batch_seed is not None:
-            kwargs["batch_seed"] = self._ctx.batch_seed
+        kwargs.update(batch_relation_kwargs(self._ctx))
         kwargs.update(extra_attrs)
         input_func(*args, **kwargs)
 
@@ -120,7 +116,7 @@ class InputGenerator:
 
         ranges = self._ctx.flat_input_data_ranges or ()
         base_seed = getattr(self._switch, "random_seed", None)
-        batch_seed = getattr(self._ctx, "batch_seed", None)
+        has_batch_relation = has_complete_batch_relation(self._ctx)
         for idx, vs in enumerate(flat_shapes):
             if vs is None:
                 arrays.append(None)
@@ -131,7 +127,7 @@ class InputGenerator:
             dtype = get(dtypes, idx)
             if idx not in self._ctx.pure_output_indexes:
                 # pure input & inplace output
-                if base_seed and batch_seed is not None:
+                if base_seed and has_batch_relation:
                     # batch consistency compare different case support same shape tensor has same value
                     numpy.random.seed(base_seed + idx)
                 rd = RandomData(dtype, ss, data_range)
@@ -242,10 +238,7 @@ class InputGenerator:
                         # numpy as_strided 的 strides 单位是字节，需要将元素 stride 转换
                         byte_strides = tuple(s * np_arr.itemsize for s in v_stride)
                         # 处理 storage_offset：偏移到起始位置
-                        if v_offset and v_offset > 0:
-                            base = np_arr.ravel()[v_offset:]
-                        else:
-                            base = np_arr.ravel()
+                        base = np_arr.ravel()[v_offset:] if v_offset and v_offset > 0 else np_arr.ravel()
                         view = np_as_strided_safe(base, shape=v_shape, strides=byte_strides)
                         np_views.append(view)
                 except Exception:
@@ -294,7 +287,4 @@ class InputGenerator:
         """
         if tensor is None:
             return False
-        for size, stride in zip(tensor.shape, tensor.stride()):
-            if size > 1 and stride == 0:
-                return True
-        return False
+        return any(size > 1 and stride == 0 for size, stride in zip(tensor.shape, tensor.stride()))

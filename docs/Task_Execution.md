@@ -100,7 +100,7 @@ python3 -m ttk list -i cases.xlsx --sheet Sheet2
 | `--input-dist` | | `uniform` | 输入数据分布，可选：`uniform`/`normal` | `--input-dist normal` |
 | `--seed` | | 随机 | 随机种子（可复现） | `--seed 42` |
 | `--golden-mode` | | `Enable` | Golden生成模式，可选：`Enable`/`Disable`/`Promote` | `--golden-mode Disable` |
-| `--deterministic-level` | `--dl` | `0` | 确定性等级：`0`=关闭，`1`=确定性计算（MD5一致），`2`=强一致，`3`=批一致性（跨用例切片比对） | `--dl=1` |
+| `--deterministic-level` | `--dl` | `0` | 确定性等级：`0`=关闭，`1`=确定性计算，`2`=强一致，`3`=确定性执行；FA 完整 batch relation 的切片比对在第二阶段完成 | `--dl=1` |
 
 > 精度比对方法的公式、容差及选择建议详见[精度比对方法](./Precision_Comparison.md)。确定性计算详见[确定性计算与批一致性](./Deterministic_Compute.md)。
 

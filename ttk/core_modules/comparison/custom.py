@@ -148,16 +148,12 @@ def apply_pre_compare(testcase, outputs, goldens, func):
 
 
 def _compare_kwargs(testcase):
-    kwargs = {}
-    for name in (
-        "batch_consistency_id",
-        "batch_axis",
-        "batch_seed",
-        "batch_slice_info",
-    ):
-        value = getattr(testcase, name, None)
-        if value is not None:
-            kwargs[name] = value
+    from ttk.core_modules.deterministic import batch_relation_kwargs
+
+    kwargs = batch_relation_kwargs(testcase)
+    batch_consistency_id = getattr(testcase, "batch_consistency_id", None)
+    if kwargs and batch_consistency_id is not None:
+        kwargs["batch_consistency_id"] = batch_consistency_id
     return kwargs
 
 

@@ -42,6 +42,7 @@ from ....utilities import (
 )
 from ....utilities.container_utils import apply_as_list, deep_flatten
 from ...aclnn import OpApiInfo, OpApiInfoKeeper
+from ...deterministic import batch_relation_kwargs
 from ...plugin_loader import get_plugin_function
 from ...testcase_manager import TestcaseAclnn
 
@@ -84,7 +85,6 @@ class GoldenGenerator:
     def _load_golden_from_file(self):
         # TODO
         logging.warning("Using manually configured golden data")
-        return None
 
     def _call_torch_api(self, gf):
         """ACLNN torch API golden:packaged tensors + torch-convention kwargs → gf(*tensors, **kwargs)。"""
@@ -103,12 +103,7 @@ class GoldenGenerator:
             "scalar_dtypes": self._ctx.scalar_dtypes,
             "use_numpy": not self._ctx.is_torch_dtype_support(),
         }
-        if hasattr(self._ctx, "batch_axis") and self._ctx.batch_axis is not None:
-            kwargs["batch_axis"] = self._ctx.batch_axis
-        if hasattr(self._ctx, "batch_slice_info") and self._ctx.batch_slice_info is not None:
-            kwargs["batch_slice_info"] = self._ctx.batch_slice_info
-        if hasattr(self._ctx, "batch_seed") and self._ctx.batch_seed is not None:
-            kwargs["batch_seed"] = self._ctx.batch_seed
+        kwargs.update(batch_relation_kwargs(self._ctx))
         kwargs.update(extra_attrs)
         results = gf(*args, **kwargs)
         return results
@@ -199,14 +194,13 @@ class GoldenGenerator:
         golden_func = get_plugin_function(self._ctx.api_name, "golden", "aclnn", self._switch.plugin_path)
         if golden_func:
             return golden_func
-        golden_func = ACLNN_GOLDEN.get(self._ctx.api_name, None)
+        golden_func = ACLNN_GOLDEN.get(self._ctx.api_name)
         if golden_func:
             return golden_func
-        else:
-            snake_api_name = camel_to_snake(self._ctx.api_name[5:])
-            func = self._auto_import_from_torch(snake_api_name)
-            # TD: skip searching next time. optimize later.
-            return func
+        snake_api_name = camel_to_snake(self._ctx.api_name[5:])
+        func = self._auto_import_from_torch(snake_api_name)
+        # TD: skip searching next time. optimize later.
+        return func
 
     def _find_torch_api(self, torch_module, snake_name: str):
         # find torch.snake_name
@@ -222,21 +216,19 @@ class GoldenGenerator:
                 f"for api {self._ctx.api_name} to generate golden."
             )
             return torch_api
-        else:
-            if snake_name.startswith("inplace_"):
-                return self._find_torch_api(torch_module, snake_name[len("inplace_") :])
-            elif snake_name.endswith("_scalar"):
-                return self._find_torch_api(torch_module, snake_name[: -len("_scalar")])
-            elif snake_name.endswith("_tensor"):
-                return self._find_torch_api(torch_module, snake_name[: -len("_tensor")])
-            elif snake_name.endswith("_v2"):
-                return self._find_torch_api(torch_module, snake_name[: -len("_v2")])
-            elif snake_name.endswith("s"):
-                return self._find_torch_api(torch_module, snake_name[: -len("s")])
-            elif not snake_name.startswith("_"):  # _add_relu
-                return self._find_torch_api(torch_module, "_" + snake_name)
-            else:
-                return None
+        if snake_name.startswith("inplace_"):
+            return self._find_torch_api(torch_module, snake_name[len("inplace_") :])
+        if snake_name.endswith("_scalar"):
+            return self._find_torch_api(torch_module, snake_name[: -len("_scalar")])
+        if snake_name.endswith("_tensor"):
+            return self._find_torch_api(torch_module, snake_name[: -len("_tensor")])
+        if snake_name.endswith("_v2"):
+            return self._find_torch_api(torch_module, snake_name[: -len("_v2")])
+        if snake_name.endswith("s"):
+            return self._find_torch_api(torch_module, snake_name[: -len("s")])
+        if not snake_name.startswith("_"):  # _add_relu
+            return self._find_torch_api(torch_module, "_" + snake_name)
+        return None
 
     def _auto_import_from_torch(self, snake_name: str):
         import torch
@@ -344,15 +336,12 @@ class GoldenGenerator:
             if ele in kwargs_snake:
                 del kwargs_snake[ele]
         # dtype from aclDType to torchDtype automatically
-        if "dtype" in kwargs_snake:
-            if isinstance(kwargs_snake["dtype"], int):
-                kwargs_snake["dtype"] = acl_to_torch_dtype([kwargs_snake["dtype"]])[0]
-        if "dim" in kwargs_snake:
-            if isinstance(kwargs_snake["dim"], list):
-                kwargs_snake["dim"] = tuple(kwargs_snake["dim"])
-        if "dims" in kwargs_snake:
-            if isinstance(kwargs_snake["dims"], list):
-                kwargs_snake["dims"] = tuple(kwargs_snake["dims"])
+        if "dtype" in kwargs_snake and isinstance(kwargs_snake["dtype"], int):
+            kwargs_snake["dtype"] = acl_to_torch_dtype([kwargs_snake["dtype"]])[0]
+        if "dim" in kwargs_snake and isinstance(kwargs_snake["dim"], list):
+            kwargs_snake["dim"] = tuple(kwargs_snake["dim"])
+        if "dims" in kwargs_snake and isinstance(kwargs_snake["dims"], list):
+            kwargs_snake["dims"] = tuple(kwargs_snake["dims"])
         return kwargs_snake
 
     def _package_golden_tensors(self) -> list:
@@ -362,8 +351,7 @@ class GoldenGenerator:
         for ct in case_tensors:
             if real_idx in self._ctx.pure_output_indexes:
                 continue
-            else:
-                golden_tensors.append(ct)
+            golden_tensors.append(ct)
             real_idx += len(ct) if isinstance(ct, (list, tuple)) else 1
         return golden_tensors
 

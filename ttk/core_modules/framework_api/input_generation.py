@@ -18,6 +18,7 @@ and converts to framework tensors (torch).
 
 import numpy as np
 
+from ttk.core_modules.deterministic import batch_relation_kwargs, has_complete_batch_relation
 from ttk.core_modules.plugin_loader import get_plugin_function
 from ttk.utilities import get
 from ttk.utilities.container_utils import apply_as_list
@@ -63,12 +64,7 @@ def generate_inputs(testcase, switches, backend, plan, stored_inputs=None):
         }
         extra.update(extra_attrs)
 
-        if hasattr(testcase, "batch_axis") and testcase.batch_axis is not None:
-            extra["batch_axis"] = testcase.batch_axis
-        if hasattr(testcase, "batch_slice_info") and testcase.batch_slice_info is not None:
-            extra["batch_slice_info"] = testcase.batch_slice_info
-        if hasattr(testcase, "batch_seed") and testcase.batch_seed is not None:
-            extra["batch_seed"] = testcase.batch_seed
+        extra.update(batch_relation_kwargs(testcase))
 
         import inspect
 
@@ -282,7 +278,7 @@ def generate_np_storages(testcase, switches):
     flat_dtypes = resolve_custom_numpy_dtypes(testcase.flat_tensor_dtypes)
     ranges = testcase.flat_input_data_ranges or ()
     base_seed = getattr(switches, "random_seed", None)
-    batch_seed = getattr(testcase, "batch_seed", None)
+    has_batch_relation = has_complete_batch_relation(testcase)
     for idx, view_shape in enumerate(flat_shapes):
         if view_shape is None:
             np_storages.append(None)
@@ -297,7 +293,7 @@ def generate_np_storages(testcase, switches):
         data_range = ranges[idx] if idx < len(ranges) else (None, None)
 
         if idx not in pure_output_indexes:
-            if base_seed and batch_seed is not None:
+            if base_seed and has_batch_relation:
                 # batch consistency compare different case support same shape tensor has same value
                 np.random.seed(base_seed + idx)
             rd = RandomData(dtype, s_shape, data_range)

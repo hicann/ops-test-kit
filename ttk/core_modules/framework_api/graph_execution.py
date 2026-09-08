@@ -19,6 +19,7 @@ import logging
 
 import torch
 
+from ttk.core_modules.deterministic import resolve_deterministic_level
 from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 from ttk.test_spec import get_spec_attr
 
@@ -80,9 +81,12 @@ def _run_compiled(
     testcase_name="",
     inplace_backups=None,
     inplace_kwargs_keys=None,
+    deterministic_level=None,
 ):
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
-    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
+    if deterministic_level is None:
+        deterministic_level = int(getattr(switches, "deterministic_level", 0) or 0)
+    deterministic = deterministic_level > 0
     run_count = switches.run_time
     is_kwargs_mode = inplace_kwargs_keys is not None
 
@@ -131,10 +135,9 @@ def _run_compiled(
                 if idx < len(args) and args[idx] is not None:
                     original_tensors[idx] = args[idx]
                     inplace_clones[idx] = [backend.clone(args[idx]) for _ in range(run_count - 1)]
-        if is_inplace and inplace_backup is not None and 0 not in original_tensors:
-            if args and args[0] is not None:
-                original_tensors[0] = args[0]
-                inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
+        if is_inplace and inplace_backup is not None and 0 not in original_tensors and args and args[0] is not None:
+            original_tensors[0] = args[0]
+            inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
 
     profiler = get_profiler(
         api_name,
@@ -156,13 +159,12 @@ def _run_compiled(
                 else:
                     for idx, clones in inplace_clones.items():
                         args[idx] = clones[i]
+            elif is_kwargs_mode:
+                for _idx, (key, orig) in original_tensors.items():
+                    kwargs[key] = orig
             else:
-                if is_kwargs_mode:
-                    for _idx, (key, orig) in original_tensors.items():
-                        kwargs[key] = orig
-                else:
-                    for idx, orig in original_tensors.items():
-                        args[idx] = orig
+                for idx, orig in original_tensors.items():
+                    args[idx] = orig
             r = compiled(*args, **kwargs)
             if not is_inplace:
                 result = r
@@ -200,6 +202,7 @@ def _execute_graph(
     raw_inputs,
     dynamic,
     is_aclgraph=False,
+    deterministic_level=None,
 ):
     """
     Execute API in GE graph mode via torch.compile with profiling.
@@ -222,6 +225,9 @@ def _execute_graph(
     if not backend.is_npu():
         logging.warning("Graph mode only supports NPU backend, skipping")
         return [], None, None
+
+    if deterministic_level is None:
+        deterministic_level = resolve_deterministic_level(switches, testcase)
 
     import torch_npu
 
@@ -286,10 +292,7 @@ def _execute_graph(
         model = GraphNetwork(api_caller)
         run_args, run_kwargs, run_inplace = args, kwargs, is_inplace
     try:
-        if is_aclgraph:
-            npu_backend = _get_npu_backend_aclgraph()
-        else:
-            npu_backend = _get_npu_backend()
+        npu_backend = _get_npu_backend_aclgraph() if is_aclgraph else _get_npu_backend()
     except Exception as e:
         logging.error(f"Failed to get TorchAir NPU backend: {e}")
         return [], None, None
@@ -313,19 +316,18 @@ def _execute_graph(
             testcase_name=testcase.testcase_name,
             inplace_backups=inplace_backups if inplace_input_indexes else None,
             inplace_kwargs_keys=inplace_kwargs_keys,
+            deterministic_level=deterministic_level,
         )
 
     except Exception as e:
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)
         return [], None, None
 
-    if result_nps:
-        if inplace_input_indexes:
-            if not custom_cls:
-                for idx in sorted(inplace_input_indexes):
-                    if idx < len(args) and args[idx] is not None:
-                        inplace_np = backend.to_numpy(args[idx].detach().clone())
-                        result_nps.append(inplace_np)
+    if result_nps and inplace_input_indexes and not custom_cls:
+        for idx in sorted(inplace_input_indexes):
+            if idx < len(args) and args[idx] is not None:
+                inplace_np = backend.to_numpy(args[idx].detach().clone())
+                result_nps.append(inplace_np)
 
     if inplace_backup is not None:
         del inplace_backup

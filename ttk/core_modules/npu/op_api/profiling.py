@@ -56,6 +56,7 @@ from ....utilities import (
 )
 from ....utilities.dtypes import is_4bit_dtype
 from ...aclnn import AclInterface, OpApiInfoKeeper
+from ...deterministic import resolve_deterministic_level
 from ...manual_data import (
     load_manual_data_case,
     prepare_manual_data_store,
@@ -337,6 +338,7 @@ class Phase1ParamBuilder:
 class AclOpExecutor:
     def __init__(self, context: TestcaseAclnn, device: AclInterface):
         self._switches = get_global_storage()
+        self._deterministic_level = resolve_deterministic_level(self._switches, context)
         self._phase1_param_builder = Phase1ParamBuilder(context, device)
         self._run_time = self._switches.run_time
         self._ctx = context
@@ -347,8 +349,8 @@ class AclOpExecutor:
     @contextlib.contextmanager
     def rts_context(self):
         self._dvc.create_context()
-        if self._switches.deterministic_level >= 1:
-            self._dvc.set_deterministic_level(self._switches.deterministic_level)
+        if self._deterministic_level >= 1:
+            self._dvc.set_deterministic_level(self._deterministic_level)
         try:
             yield
         finally:
@@ -369,6 +371,8 @@ class AclOpExecutor:
 
     def do(self, stream: ctypes.c_void_p = None, skip_context_creation: bool = False):
         if skip_context_creation and stream is not None:
+            if self._deterministic_level >= 1:
+                self._dvc.set_deterministic_level(self._deterministic_level)
             output_byte_arrays, output_view_shapes, success, _, _ = self._acl_sequence(stream, skip_profiler=True)
             return ApiProfilingResult(success, "UNKNOWN", "UNKNOWN", output_byte_arrays, output_view_shapes)
         with self.rts_context():
@@ -411,7 +415,7 @@ class AclOpExecutor:
         output_byte_arrays = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         output_view_shapes = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         status = "NOK"
-        deterministic = self._switches.deterministic_level == 1
+        deterministic = self._deterministic_level > 0
         md5_list = []
         det_status = None
         npu_memory = None

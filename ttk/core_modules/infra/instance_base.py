@@ -84,7 +84,6 @@ class InstanceBase(metaclass=ABCMeta):
             numpy.random.seed(self.switches.random_seed)
         self._commit_id: Optional[str] = None
         self.heartbeat_manager = None  # HeartbeatManager or None
-        self.collected_results: list = []
 
     @staticmethod
     def _read_existing_header(path: str):
@@ -129,6 +128,7 @@ class InstanceBase(metaclass=ABCMeta):
             raise RuntimeError(f"Device count is invalid: {self.switches.device_count}")
         logging.info(f"Device Count: {self.switches.device_count}")
         self._parse_testcases()
+        self._log_batch_execution_mode(before_execution=True)
         self._start_heartbeat_process()  # after validate_only early-return, before setup_profile_object
         self.setup_profile_object()
         self.profile_object.setup()
@@ -151,8 +151,7 @@ class InstanceBase(metaclass=ABCMeta):
             )  # pacing before next iteration; avoids busy-spin 100% CPU on one core. Placed after the break-check so we don't sleep on the exiting iteration.
         # close all processes
         self.close_subprocesses()
-        # batch consistency post-processing (level=2)
-        self._post_process_batch_consistency()
+        self._log_batch_execution_mode()
         # clean up
         self._pre_exit()
 
@@ -325,40 +324,39 @@ class InstanceBase(metaclass=ABCMeta):
         )
         logging.info(summary)
 
-    def _post_process_batch_consistency(self):
-        """Level=3: cross-testcase batch consistency comparison."""
-        if self.switches.deterministic_level != 3:
-            return
-        if not self.collected_results:
-            return
-        from ttk.core_modules.comparison.batch_consistency import compare_batch_consistency
+    def _log_batch_execution_mode(self, *, before_execution=False):
+        """Warn before dispatch; leave the phase-two handoff at the end of execution."""
+        from ttk.core_modules.deterministic import BATCH_RELATION_FIELDS, resolve_deterministic_level
 
-        results = compare_batch_consistency(self.collected_results)
-        if not results:
-            logging.info(
-                "No comparable level-3 batch groups found; cases either lack "
-                "complete batch metadata or share no relation signature"
-            )
+        if self.switches.test_mode not in ("framework-api", "aclnn") or self.switches.manual_data_mode == "prepare":
             return
-        supported_results = [result for result in results if result["supported"]]
-        unsupported_count = len(results) - len(supported_results)
-        passed = sum(1 for result in supported_results if result["pass"])
-        if supported_results:
+        needs_comparison = False
+        for testcase in self.flatten_testcases:
+            if not testcase.is_enabled or not testcase.is_valid:
+                continue
+            try:
+                level = resolve_deterministic_level(self.switches, testcase)
+            except ValueError:
+                # The worker reports malformed levels through the normal case failure path.
+                continue
+            if level != 3:
+                continue
+            missing = [name for name in BATCH_RELATION_FIELDS if getattr(testcase, name, None) is None]
+            if missing and before_execution:
+                logging.warning(
+                    "%s: deterministic level 3 without complete batch metadata (missing: %s); "
+                    "continuing ordinary level-3 execution without batch consistency comparison.",
+                    testcase.testcase_name,
+                    ", ".join(missing),
+                )
+            elif not missing:
+                needs_comparison = True
+        if needs_comparison and not before_execution:
             logging.info(
-                "Batch consistency: %s/%s comparable groups passed; %s unsupported",
-                passed,
-                len(supported_results),
-                unsupported_count,
+                "Level-3 phase one does not compare batch relations. After successful execution with "
+                "--dump out --dump-format bin and NPU_DUMP_PATH set, run scripts/fia_compare_batch_consistency.py "
+                "with this result CSV to compare the output dumps."
             )
-        else:
-            logging.warning(
-                "No comparable level-3 batch groups: %s group(s) lack sliceable output",
-                unsupported_count,
-            )
-        for r in results:
-            status = "PASS" if r["pass"] else ("UNSUPPORTED" if not r["supported"] else "FAIL")
-            names = [m["testcase"] for m in r["members"]]
-            logging.info(f"  [{status}] group={r['batch_consistency_id'][:32]}... members={names}")
 
     def _prepare_device_locks(self):
         # TODO: device-id not start from 0 to max-count in docker.
@@ -668,8 +666,6 @@ class InstanceBase(metaclass=ABCMeta):
             output_data = self.profile_object.handle_task_result_runtime_error(task, result, pid)
         else:
             output_data, kill_proc = self.profile_object.handle_task_result_complete(task, result)
-            if self.switches.deterministic_level > 0:
-                self.collected_results.append((task.testcase, result))
             if self.switches.proc_no_reuse or kill_proc:
                 proc.close()
                 proc.resurrect()

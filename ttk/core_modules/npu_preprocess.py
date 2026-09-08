@@ -13,6 +13,7 @@
 import inspect
 from contextlib import nullcontext
 
+from ttk.core_modules.deterministic import BATCH_RELATION_FIELDS, batch_relation_kwargs
 from ttk.test_spec import get_spec_attr
 
 
@@ -35,7 +36,11 @@ def _parameter_names(plan):
 def _hook_extras(testcase, switches, plan):
     parameter_names = _parameter_names(plan)
     attributes = dict(getattr(testcase, "attributes", None) or {})
-    extra = {name: value for name, value in attributes.items() if name not in parameter_names and name != "context"}
+    extra = {
+        name: value
+        for name, value in attributes.items()
+        if name not in parameter_names and name not in (*BATCH_RELATION_FIELDS, "context")
+    }
     extra.update(
         {
             "testcase_name": getattr(testcase, "testcase_name", None),
@@ -46,10 +51,9 @@ def _hook_extras(testcase, switches, plan):
             "input_ranges": getattr(testcase, "input_data_ranges", None),
         }
     )
-    for name in ("batch_axis", "batch_slice_info", "batch_seed"):
-        value = getattr(testcase, name, None)
-        if value is not None:
-            extra[name] = value
+    # Batch relation fields form one contract.  Do not expose a partial triple
+    # to an operator hook when this is only a deterministic execution case.
+    extra.update(batch_relation_kwargs(testcase))
     return extra
 
 

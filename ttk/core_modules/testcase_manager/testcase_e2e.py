@@ -415,11 +415,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
             self.output_tensor_indexes = (0,)
 
     def _generate_batch_consistency_id(self):
-        """根据 batch_seed batch和 batch_slice_info 的切片长度生成 batch_consistency_id。
-
-        相同 batch_seed 且切片长度相同的用例，生成相同 id,
-        标识这些用例的输出切片可以做 batch 一致性比较。
-        """
+        """根据 batch_seed、batch_axis 和完整切片生成 batch_consistency_id。"""
         if self.batch_seed is None:
             self.batch_consistency_id = None
             return
@@ -438,7 +434,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
                     slice_id = "None"
                     slice_axes.append(slice_id)
                     continue
-                slice_lens = []
+                slice_ids = []
                 for sl, seed_value in zip(slices_idx, seed_idx):
                     if sl is None:
                         continue
@@ -449,14 +445,15 @@ class TestcaseE2e(TensorApiTestcaseBase):
                         length = len(range(start, stop, step)) if step > 0 and start >= 0 and stop >= 0 else 0
                     except (TypeError, ValueError):
                         length = 0
-                    # Cross-case relations can live at different logical offsets.
-                    slice_id = f"{seed_value}_{axis_idx}_{length}_{step}"
+                    # Keep the established identity contract. Phase-two grouping
+                    # deliberately derives its own seed/axis key from metadata.
+                    slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
                     if length == 0:
                         logging.warning(
                             f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid"
                         )
-                    slice_lens.append(slice_id)
-                slice_axes.append(tuple(slice_lens))
+                    slice_ids.append(slice_id)
+                slice_axes.append(tuple(slice_ids))
             slice_key.append(tuple(slice_axes))
         self.batch_consistency_id = tuple(slice_key) if slice_key else None
 

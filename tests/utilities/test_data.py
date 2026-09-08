@@ -11,6 +11,7 @@
 
 import numpy as np
 import pytest
+import torch
 
 from ttk.utilities.data import RandomData
 
@@ -275,6 +276,23 @@ def test_uniform_chunked_actually_splits(monkeypatch):
     arr = RandomData("float32", (2 * CHUNK_ELEMS + 1,), (-1.0, 1.0)).generate()
     assert len(calls) >= 2
     assert arr.dtype == numpy.dtype("float32")  # dtype 保持
+
+
+@pytest.mark.skipif(_missing_en_dtypes(), reason="en_dtypes is not installed")
+def test_hifloat4_uses_packed_uint8_without_a_torch_dtype():
+    """HIF4 logical storage remains packed uint8 when torch lacks E1M2."""
+    from ttk.utilities.dtypes import numpy_hifloat4, numpy_to_torch_tensor
+
+    logical = np.zeros((2, 4), dtype=numpy_hifloat4())
+    logical.view(np.uint8)[:] = np.arange(logical.size, dtype=np.uint8).reshape(logical.shape)
+    packed = numpy_to_torch_tensor(logical)
+    expected_dtype = getattr(torch, "float4_e1m2fn_x2", None)
+
+    assert tuple(packed.shape) == (2, 2)
+    if isinstance(expected_dtype, torch.dtype):
+        assert packed.dtype == expected_dtype
+    else:
+        assert packed.dtype == torch.uint8
 
 
 def test_uniform_chunked_multidim_bitwise_equal():

@@ -21,6 +21,7 @@ with profiling.py — same plan, same (*args, **kwargs) layout.
 
 import logging
 
+from ttk.core_modules.deterministic import batch_relation_kwargs
 from ttk.core_modules.plugin_loader import get_plugin_function
 from ttk.core_modules.testcase_manager.param_plan import build_positional_args
 from ttk.utilities import DTYPE_PROMOTE_MAP
@@ -209,12 +210,7 @@ def _call_plugin_with_plan(testcase, func, switches=None, backend="cpu", cpu_bac
     }
     extra.update(extra_attrs)
 
-    if hasattr(testcase, "batch_axis") and testcase.batch_axis is not None:
-        extra["batch_axis"] = testcase.batch_axis
-    if hasattr(testcase, "batch_slice_info") and testcase.batch_slice_info is not None:
-        extra["batch_slice_info"] = testcase.batch_slice_info
-    if hasattr(testcase, "batch_seed") and testcase.batch_seed is not None:
-        extra["batch_seed"] = testcase.batch_seed
+    extra.update(batch_relation_kwargs(testcase))
 
     import inspect
 

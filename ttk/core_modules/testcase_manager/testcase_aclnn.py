@@ -964,7 +964,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                 if axis_idx is None or slices_idx is None or seed_idx is None:
                     slice_axes.append("None")
                     continue
-                slice_lens = []
+                slice_ids = []
                 for sl, seed_value in zip(slices_idx, seed_idx):
                     if sl is None:
                         continue
@@ -973,14 +973,15 @@ class TestcaseAclnn(TensorApiTestcaseBase):
                         length = len(range(start, stop, step)) if step > 0 and start >= 0 and stop >= 0 else 0
                     except (TypeError, ValueError):
                         length = 0
-                    # Cross-case relations can live at different logical offsets.
-                    slice_id = f"{seed_value}_{axis_idx}_{length}_{step}"
+                    # Keep the established identity contract. Phase-two grouping
+                    # deliberately derives its own seed/axis key from metadata.
+                    slice_id = f"{seed_value}_{axis_idx}_{start}_{stop}_{step}"
                     if length == 0:
                         logging.warning(
                             f"testcase: {self.testcase_name}, slice_id is: {slice_id}, slice is:{sl} this slice is Invalid"
                         )
-                    slice_lens.append(slice_id)
-                slice_axes.append(tuple(slice_lens))
+                    slice_ids.append(slice_id)
+                slice_axes.append(tuple(slice_ids))
             slice_key.append(tuple(slice_axes))
         self.batch_consistency_id = tuple(slice_key) if slice_key else None
 

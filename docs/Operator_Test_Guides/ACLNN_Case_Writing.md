@@ -64,36 +64,14 @@
 
 ## 批一致性字段
 
-配合 `--deterministic-level 3` 使用，用于跨用例输出切片比对。详见 [确定性计算与批一致性](../Deterministic_Compute.md)。
+`--deterministic-level 3` 控制确定性执行。
+只有下列三字段齐全才构成 relation，单独配置 level 3 仍可正常执行。
 
-| 字段 | 类型 | 是否必填 | 默认值 | 说明 |
-|------|------|---------|--------|------|
-| `batch_seed` | FREE_EVAL | 否 | `None` | 分组标识，相同 seed 的用例归为一组。每个输出一个 seed，嵌套列表对应多输出。如 `(100,)` |
-| `batch_axis` | FREE_EVAL | 否 | `None` | 切片所在轴。嵌套结构为 `输出 → 张量组 → 轴`。如 `(([0],),)` 表示第 0 个输出的第 0 个张量组在轴 0 上切片 |
-| `batch_slice_info` | FREE_EVAL | 否 | `None` | 切片范围 `(start, stop, step)`，嵌套结构与 `batch_axis` 对齐。如 `(([[0,5,1]],),)` 表示切片 `[0:5:1]` |
-
-> `batch_consistency_id` 由 `batch_seed` + `batch_axis` + `batch_slice_info` 自动生成，无需填写。相同 seed 且切片结构相同的用例归入同一比对组。
-
-### 字段嵌套结构
-
-三个字段按 `输出 → 张量组 → 切片` 三层嵌套，逐层 zip 对齐：
-
-```
-batch_seed        = ( (100,), )        # 第0个输出的第0个张量组的seed=100
-batch_axis        = ( ([0],) )         # 第0个输出的第0个张量组，轴=0
-batch_slice_info  = ( ([[0,5,1]],) )   # 第0个输出的第0个张量组，切片[0:5:1]
-```
-
-### CSV 示例
-
-```csv
-testcase_name,api_name,tensor_view_shapes,batch_seed,batch_axis,batch_slice_info,...
-slice_0,aclnnAdd,"((5,8),)",(100,),(([0],),),(([[0,5,1]],),),...
-slice_1,aclnnAdd,"((5,8),)",(100,),(([0],),),(([[5,10,1]],),),...
-full,aclnnAdd,"((10,8),)",(100,),,,...
-```
-
-上例中 `slice_0` 取输出轴 0 的 `[0:5]`，`slice_1` 取 `[5:10]`，`full` 不切片取全部。三者 seed 相同，`slice_0` + `slice_1` 的切片长度之和等于 `full`，归入同一比对组。
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `batch_seed` | FREE_EVAL | `None` | `输入槽 -> 轴组 -> sample seed` |
+| `batch_axis` | FREE_EVAL | `None` | `输入槽 -> 逻辑轴` |
+| `batch_slice_info` | FREE_EVAL | `None` | `输入槽 -> 轴组 -> sample 切片`，每个切片为 `(start, stop, step)` |
 
 ## 参考用例
 

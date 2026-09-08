@@ -1,3 +1,14 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+
 def add_device_args(parser):
     parser.add_argument("--dev", "--device", dest="device", type=int, help="Number of devices to use (default: all)")
     parser.add_argument(
@@ -32,5 +43,5 @@ def add_device_args(parser):
         help="Deterministic level: 0=off (default), 1=deterministic "
         "compute (MD5 consistent across NPU runs), "
         "2=strong consistency, "
-        "3=batch consistency (cross-testcase slice compare)",
+        "3=deterministic execution; complete batch fields enable phase-two slice compare",
     )

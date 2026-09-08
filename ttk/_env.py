@@ -13,6 +13,7 @@ import ctypes
 import ctypes.util
 import glob
 import importlib.util
+import logging
 import os
 import resource
 import subprocess
@@ -101,6 +102,11 @@ def _source_setenv_bash(ascend_root):
     if os.getenv("ASCEND_TOOLKIT_HOME") and os.getenv("ASCEND_OPP_PATH"):
         return
 
+    logging.getLogger(__name__).warning(
+        "CANN environment is incomplete (ASCEND_TOOLKIT_HOME/ASCEND_OPP_PATH); "
+        "TTK is automatically sourcing %s. Source the CANN environment in your shell before running TTK.",
+        setenv,
+    )
     sim_paths = _sim_ld_paths()
     try:
         result = subprocess.run(

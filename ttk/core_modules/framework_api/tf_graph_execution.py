@@ -17,6 +17,7 @@ dispatch internally, no separate compiler backend needed.
 
 import logging
 
+from ttk.core_modules.deterministic import resolve_deterministic_level
 from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 
 from .profiling_utils import compute_output_md5, finalize_det_status, prepare_device_args
@@ -78,6 +79,7 @@ def _execute_tf_graph(
     raw_inputs,
     dynamic,
     is_aclgraph=False,
+    deterministic_level=None,
 ):
     """Execute API in TF graph mode via tf.function with profiling.
 
@@ -142,7 +144,9 @@ def _execute_tf_graph(
                 var.assign(backup)
 
         profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
-        deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
+        if deterministic_level is None:
+            deterministic_level = resolve_deterministic_level(switches, testcase)
+        deterministic = deterministic_level > 0
         run_count = switches.run_time
         if switches.warmup and profiling_enabled:
             for _ in range(WARMUP_COUNT):

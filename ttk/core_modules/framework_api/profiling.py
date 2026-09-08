@@ -30,6 +30,7 @@ import numpy as np
 from ttk.core_modules.comparison.comparison import compare
 from ttk.core_modules.comparison.custom import apply_pre_compare, try_custom_compare
 from ttk.core_modules.comparison.resolve import resolve_tolerance
+from ttk.core_modules.deterministic import resolve_deterministic_level
 from ttk.core_modules.manual_data import (
     load_manual_data_case,
     prepare_manual_data_store,
@@ -295,9 +296,10 @@ def profile_process(
         process_ctx.notify_status("OnWaitingForMemory")
         waiting_for_memory()
 
-    backend = _get_or_create_backend(switches)
-    _ensure_deterministic_level_e2e(process_ctx, backend, testcase)
     try:
+        backend = _get_or_create_backend(switches)
+        deterministic_level = resolve_deterministic_level(switches, testcase)
+        _ensure_deterministic_level_e2e(process_ctx, backend, testcase, deterministic_level)
         if is_multi_device and device_ids:
             testcase.device_ids = tuple(device_ids)
             _do_profile_multi_device(
@@ -374,18 +376,23 @@ def _dump_on_fail(testcase, raw_inputs, result_nps, golden_nps, switches):
             _dump_data(golden, f"{testcase.testcase_name}_golden_{idx}", switches)
 
 
-def _ensure_deterministic_level_e2e(process_ctx, backend, testcase):
-    """e2e 模式：设置 NPU 确定性计算级别"""
-    det_level = getattr(get_global_storage(), "deterministic_level", 0)
-    if process_ctx.storage.get("_deterministic_level_set"):
+def _ensure_deterministic_level_e2e(process_ctx, backend, testcase, deterministic_level):
+    """Set the NPU level for this testcase without leaking a previous level."""
+    previous_level = process_ctx.storage.get("_deterministic_level")
+    if previous_level == deterministic_level:
         return
     if backend.is_npu():
         try:
-            backend.set_deterministic_level(det_level)
-            logging.info(f"NPU deterministic level set (e2e batch consistency for {testcase.testcase_name})")
+            backend.set_deterministic_level(deterministic_level)
+            logging.info(
+                "NPU deterministic level=%s for %s",
+                deterministic_level,
+                testcase.testcase_name,
+            )
         except Exception as e:
             logging.warning(f"Failed to set deterministic level: {e}")
-    process_ctx.storage["_deterministic_level_set"] = True
+            return
+    process_ctx.storage["_deterministic_level"] = deterministic_level
 
 
 _npu_memory_hint_shown = False
@@ -445,7 +452,18 @@ def _capture_stdout_npu_memory(testcase, return_struct, fn, *args, **kwargs):
                 os.unlink(cap_name)
 
 
-def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tensor_method, is_inplace, raw_inputs):
+def _execute_eager(
+    testcase,
+    backend,
+    dev_id,
+    switches,
+    plan,
+    resolved,
+    is_tensor_method,
+    is_inplace,
+    raw_inputs,
+    deterministic_level=None,
+):
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf, det_status)."""
     backend.set_device(dev_id)
     resolved = backend.wrap_eager_callable(resolved)
@@ -462,7 +480,9 @@ def _execute_eager(testcase, backend, dev_id, switches, plan, resolved, is_tenso
         )
 
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
-    deterministic = int(getattr(switches, "deterministic_level", 0) or 0) > 0
+    if deterministic_level is None:
+        deterministic_level = resolve_deterministic_level(switches, testcase)
+    deterministic = deterministic_level > 0
     run_count = switches.run_time
     warmup_count = WARMUP_COUNT if (switches.warmup and profiling_enabled) else 0
     profiler = get_profiler(
@@ -956,6 +976,7 @@ def _do_profile_multi_device(  # noqa: PLR0911
             "remark": testcase.remark or "",
             "tensor_view_shapes": list(testcase.tensor_view_shapes) if testcase.tensor_view_shapes else [],
             "testcase_name": getattr(testcase, "testcase_name", ""),
+            "deterministic_level": resolve_deterministic_level(switches, testcase),
             "proc_timeout": int(getattr(switches, "proc_timeout", 0) or 3600),
         }
 
@@ -1115,6 +1136,7 @@ def _do_profile(  # noqa: PLR0911
 ):
     """Core profiling logic."""
     process_ctx = get_process_context()
+    deterministic_level = resolve_deterministic_level(switches, testcase)
     return_struct.batch_consistency_id = getattr(testcase, "batch_consistency_id", None)
     plan = testcase.get_param_plan()
     if plan is None:
@@ -1247,6 +1269,7 @@ def _do_profile(  # noqa: PLR0911
                 is_tensor_method,
                 is_inplace,
                 raw_inputs,
+                deterministic_level,
             )
         if graph_enabled:
             from .framework_detector import detect_framework
@@ -1273,6 +1296,7 @@ def _do_profile(  # noqa: PLR0911
                     raw_inputs,
                     dynamic=False,
                     is_aclgraph=True,
+                    deterministic_level=deterministic_level,
                 )
             if switches.cst_switches.enabled:
                 process_ctx.notify_status("OnGraphCst")
@@ -1287,6 +1311,7 @@ def _do_profile(  # noqa: PLR0911
                     is_inplace,
                     raw_inputs,
                     dynamic=False,
+                    deterministic_level=deterministic_level,
                 )
             if switches.dyn_switches.enabled:
                 process_ctx.notify_status("OnGraphDyn")
@@ -1301,6 +1326,7 @@ def _do_profile(  # noqa: PLR0911
                     is_inplace,
                     raw_inputs,
                     dynamic=True,
+                    deterministic_level=deterministic_level,
                 )
     gc.collect()
     _collect_sim_report(testcase, switches)

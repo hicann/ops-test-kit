@@ -45,3 +45,4 @@ tests/**/*.html
 lib/
 LLMAnalysisTool/
 examples/case_store/generate_xlsx_examples.py
+oat_reports/
