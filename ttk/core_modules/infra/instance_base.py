@@ -417,9 +417,17 @@ class InstanceBase(metaclass=ABCMeta):
         result_path = self.switches.output_file_name
         if not result_path.endswith(".csv"):
             result_path += ".csv"
-        with open(result_path, "w", newline="", encoding="utf-8") as f:
+        header = ("testcase_name", "api_name", "status", "fail_reason")
+        append = False
+        if self.switches.append_mode and os.path.exists(result_path) and os.path.getsize(result_path) > 0:
+            existing_header = self._read_existing_header(result_path)
+            append = existing_header is not None and tuple(existing_header) == header
+            if not append:
+                logging.warning(f"Append mode: existing file header does not match, overwriting {result_path}")
+        with open(result_path, "a" if append else "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(("testcase_name", "api_name", "status", "fail_reason"))
+            if not append:
+                writer.writerow(header)
             for tc in sorted(self.flatten_testcases, key=lambda t: t.testcase_name):
                 api = getattr(tc, "api_name", "")
                 if tc.is_valid:
