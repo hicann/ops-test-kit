@@ -88,6 +88,8 @@ python3 -m ttk list -i cases.csv
 python3 -m ttk list -i cases.csv --op add
 ```
 
+> 注：`ttk list` 仅列出用例名，不做字段校验；校验请用对应模式 `--validate`。
+
 # 执行问题
 
 ## 算子太大执行超时或超出内存

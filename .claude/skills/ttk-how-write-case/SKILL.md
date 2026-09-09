@@ -50,10 +50,11 @@ CSV 解析器以逗号为字段分隔符。**shape 元组和 dtype 列表内部�
 
 ## Step 4: 验证
 
-写完 CSV 后用 `--validate` 校验（不下设备，三种模式均支持）：
+写完 CSV 后用 `--validate` 校验（不下设备，四种模式均支持）：
 
 ```shell
 python3 -m ttk kernel -i cases.csv --validate
+python3 -m ttk geir -i cases.csv --validate
 python3 -m ttk aclnn -i cases.csv --validate
 python3 -m ttk e2e -i cases.csv --validate
 

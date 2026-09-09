@@ -18,7 +18,7 @@ export ASCEND_CUSTOM_PATH=/path/to/cann
 ```shell
 python3 -m ttk -v        # 版本检查
 python3 -m ttk info       # 设备信息（NPU卡数、CANN版本）
-python3 -m ttk list -i cases.csv  # 预览用例列表
+python3 -m ttk list -i cases.csv  # 预览用例列表（仅列名，不校验）
 python3 -m ttk list -i cases.csv --op add  # 按算子名筛选
 ```
 

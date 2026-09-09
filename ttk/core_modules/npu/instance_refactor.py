@@ -89,7 +89,7 @@ class NpuInstance(InstanceBase):
 
     def setup_profile_object(self):
         params = (self.task_keeper, self.mp_context)
-        if "api_name" in self.case_original_headers:
+        if self.switches.test_mode == "aclnn":
             from .op_api import ApiProfileObject
 
             self.profile_object = ApiProfileObject(*params)

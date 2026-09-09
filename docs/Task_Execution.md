@@ -32,6 +32,8 @@ python3 -m ttk geir --help
 
 # 设备信息与用例预览
 
+> `ttk list` 仅列出用例名（含 `--op` 过滤、`--sheet` 选择、跳过 `is_enabled=false` 的行），不做字段校验；也不做表头体检与重名改写；字段校验请使用对应模式的 `--validate`。
+
 ```shell
 # 查看设备信息
 python3 -m ttk info

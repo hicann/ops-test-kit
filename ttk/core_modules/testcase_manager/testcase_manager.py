@@ -31,37 +31,35 @@ class PLACEHOLDER:
     Simple Placeholder
     """
 
-    pass
-
 
 class UniversalTestcaseFactory:
     """
     Universal Testcase Factory
     """
 
-    __slots__ = ["raw_data", "header", "real_header_indexes", "testcase_instance", "testcases", "_skip_validate"]
+    __slots__ = ["raw_data", "header", "real_header_indexes", "testcase_instance", "testcases"]
 
-    def __init__(self, file: TextIO, skip_validate=False):
+    def __init__(self, file: TextIO):
         """
         Store the whole Testcases in the csv file into memory
         """
-        self._init_common(skip_validate)
+        self._init_common()
         header, rows = read_csv_rows(file)
         self._init_from_rows(header, rows)
 
     @classmethod
-    def from_path(cls, path: str, sheet: Optional[str] = None, skip_validate=False):
+    def from_path(cls, path: str, sheet: Optional[str] = None):
         """
         Load testcases from a CSV or XLSX file by path. XLSX uses openpyxl
         and honors ``sheet`` (default: first worksheet); CSV ignores it.
         """
         self = cls.__new__(cls)
-        self._init_common(skip_validate)
+        self._init_common()
         header, rows = read_table(path, sheet)
         self._init_from_rows(header, rows)
         return self
 
-    def _init_common(self, skip_validate=False):
+    def _init_common(self):
         # Raw rows
         self.raw_data: List[List[str]] = []
         # Headers
@@ -72,7 +70,6 @@ class UniversalTestcaseFactory:
         self.testcase_instance: Optional[TestcaseBase] = None
         # testcase.
         self.testcases: List[TestcaseBase] = []
-        self._skip_validate = skip_validate
 
         set_process_name("TestcaseManager")
         set_thread_name("Initialization")
@@ -128,10 +125,9 @@ class UniversalTestcaseFactory:
                             if isinstance(equivalent_header_value, PLACEHOLDER):
                                 # Equivalent not exist either, check for next equivalent
                                 continue
-                            else:
-                                value = equivalent_header_value
-                                resolved = True
-                                break
+                            value = equivalent_header_value
+                            resolved = True
+                            break
                         if not resolved:
                             placeholder_queue.append(header)
                             continue
@@ -206,11 +202,11 @@ class UniversalTestcaseFactory:
             if not enabled_soc and not disabled_soc:  # both enabled_soc and disabled_soc are empty
                 enabled = True
             elif not disabled_soc:  # only enabled_soc
-                enabled = True if current_soc in enabled_soc else False
+                enabled = current_soc in enabled_soc
             elif not enabled_soc:  # only disabled_soc
-                enabled = True if current_soc not in disabled_soc else False
+                enabled = current_soc not in disabled_soc
             else:  # enabled_soc and disabled_soc all fill with options
-                enabled = True if current_soc in enabled_soc and current_soc not in disabled_soc else False
+                enabled = current_soc in enabled_soc and current_soc not in disabled_soc
             if not enabled:
                 logging.debug(
                     f"Testcase {testcase_struct.testcase_name} skipped bcz it's disabled in current soc {current_soc}."
@@ -221,44 +217,28 @@ class UniversalTestcaseFactory:
     @staticmethod
     def _check_testcase_name_selection(testcase_name: str) -> bool:
         if get_global_storage().selected_testcases:
-            if testcase_name in [s for s in get_global_storage().selected_testcases]:
-                return True
-        else:
-            return True
-        return False
+            return testcase_name in list(get_global_storage().selected_testcases)
+        return True
 
     @staticmethod
     def _check_testcase_indexes_selection(testcase_idx: int) -> bool:
         if get_global_storage().selected_testcase_indexes:
-            if testcase_idx in get_global_storage().selected_testcase_indexes:
-                return True
-        else:
-            return True
-        return False
+            return testcase_idx in get_global_storage().selected_testcase_indexes
+        return True
 
     @staticmethod
     def _check_testcase_operator_selection(testcase_op_name: str) -> bool:
         if get_global_storage().selected_operators:
-            if testcase_op_name in get_global_storage().selected_operators:
-                return True
-            else:
-                return False
-        elif get_global_storage().excluded_operators:
-            if testcase_op_name in get_global_storage().excluded_operators:
-                return False
-            else:
-                return True
-        else:
-            return True
+            return testcase_op_name in get_global_storage().selected_operators
+        if get_global_storage().excluded_operators:
+            return testcase_op_name not in get_global_storage().excluded_operators
+        return True
 
     @staticmethod
     def _check_testcase_priority_selection(priority: int) -> bool:
         if not get_global_storage().priorities:
             return True
-        for p in get_global_storage().priorities:
-            if p[0] <= priority <= p[1]:
-                return True
-        return False
+        return any(p[0] <= priority <= p[1] for p in get_global_storage().priorities)
 
     @staticmethod
     def _rename_duplicate_case_name(ori_name: str, op_name: str, conflict_names: set):
@@ -268,9 +248,8 @@ class UniversalTestcaseFactory:
             if new_name in conflict_names:
                 i = i + 1
                 continue
-            else:
-                logging.warning(f"Detected duplicate testcase name: {ori_name}. Rename it to {new_name}")
-                return new_name
+            logging.warning(f"Detected duplicate testcase name: {ori_name}. Rename it to {new_name}")
+            return new_name
 
     def _testcase_hdr_check(self):
         set_thread_name("HeaderCheckTestcaseName")
@@ -283,24 +262,16 @@ class UniversalTestcaseFactory:
             for idx, row in enumerate(self.raw_data):
                 row.append(f"auto_testcase_name_{idx + 1}")
 
-        if "api_name" in self.header:
-            # Auto-detect from api_name values: aclnnXxx -> aclnn, others -> framework-api
-            first_api = None
-            api_idx = self.header.index("api_name")
-            for row in self.raw_data:
-                if api_idx < len(row) and row[api_idx]:
-                    first_api = row[api_idx].strip()
-                    break
+        test_mode = get_global_storage().test_mode
+        if test_mode == "aclnn":
+            from .testcase_aclnn import TestcaseAclnn
 
-            if first_api and not first_api.lower().startswith("aclnn"):
-                from .testcase_e2e import TestcaseE2e
+            self.testcase_instance = TestcaseAclnn()
+        elif test_mode == "framework-api":
+            from .testcase_e2e import TestcaseE2e
 
-                self.testcase_instance = TestcaseE2e()
-            else:
-                from .testcase_aclnn import TestcaseAclnn
-
-                self.testcase_instance = TestcaseAclnn()
-        elif get_global_storage().test_mode == "geir":
+            self.testcase_instance = TestcaseE2e()
+        elif test_mode == "geir":
             from ttk.core_modules.geir.testcase import GeirTestcase
 
             self.testcase_instance = GeirTestcase()
@@ -414,10 +385,9 @@ class UniversalTestcaseFactory:
                         if isinstance(equivalent_header_value, PLACEHOLDER):
                             # Equivalent not exist either, check for next equivalent
                             continue
-                        else:
-                            value = equivalent_header_value
-                            resolved = True
-                            break
+                        value = equivalent_header_value
+                        resolved = True
+                        break
                     if not resolved:
                         placeholder_queue.append(current_header_name)
                         continue
@@ -484,8 +454,7 @@ class UniversalTestcaseFactory:
             if not self._check_testcase_rerun(testcase_struct):
                 continue
             set_thread_name(testcase_struct.testcase_name)
-            if not self._skip_validate:
-                testcase_struct.validate()
+            testcase_struct.validate()
             if testcase_struct not in self.testcases:
                 self.testcases.append(testcase_struct)
                 if testcase_struct.testcase_name in testcase_names:

@@ -47,7 +47,7 @@ tests/assets/
 
 PR上库要求：
 
-- 用例文件：CSV格式符合TTK规范，字段名、数据类型、shape等填写正确，可通过`python3 -m ttk list -i cases.csv`验证。
+- 用例文件：CSV格式符合TTK规范，字段名、数据类型、shape等填写正确，可通过对应模式`python3 -m ttk <mode> -i cases.csv --validate`验证（`ttk list` 仅列出用例名，不做字段校验）。
 - 插件文件（如有）：遵循TestSpec规范，参考`.claude/skills/ttk-how-write-plugin/SKILL.md`。
 - 精度要求：用例需通过精度校验，Golden实现正确，容差设置合理。
 - PR提交：通过`git`命令提交目标分支PR，检查PR标题是否清晰、PR描述是否规范（指明更改内容和原因、是否关联对应Issue）、是否签署CLA。
