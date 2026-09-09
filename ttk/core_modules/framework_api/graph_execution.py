@@ -57,11 +57,11 @@ def _compile_model(model, backend, dynamic, fullgraph):
     return compiled
 
 
-def _compile_model_aclgraph(model, backend):
+def _compile_model_aclgraph(model, backend, fullgraph):
     """以 aclgraph 模式编译模型"""
     compiled = torch.compile(
         model,
-        fullgraph=False,
+        fullgraph=fullgraph,
         backend=backend,
         dynamic=False,
     )
@@ -300,7 +300,7 @@ def _execute_graph(
     use_fullgraph = bool(switches.fullgraph)
     try:
         if is_aclgraph:
-            compiled = _compile_model_aclgraph(model, npu_backend)
+            compiled = _compile_model_aclgraph(model, npu_backend, use_fullgraph)
         else:
             compiled = _compile_model(model, npu_backend, dynamic, use_fullgraph)
         result_nps, perf, det_status = _run_compiled(

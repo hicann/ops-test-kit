@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import numpy as np
+
 REPORT_HEADERS = (
     "testcase_name",
     "api_name",
@@ -720,6 +722,381 @@ class IndexerProfile(BatchProfile):
         }
 
 
+class CompressorProfile(BatchProfile):
+    name = "Compressor"
+    API_SUFFIXES = frozenset(
+        (
+            "compressor",
+            "aclnnCompressor",
+            "quant_compressor",
+            "aclnnQuantCompressor",
+        )
+    )
+    OUTPUT_DTYPE = "bfloat16"
+
+    _ATTR_ALIASES = {
+        "cmp_ratio": "cmpRatio",
+        "cache_mode": "cacheMode",
+        "coff": "coff",
+        "start_pos": "startPos",
+        "seqused": "seqused",
+        "cu_seqlens": "cuSeqlens",
+        "state_cache_stride_dim0": "stateCacheStrideDim0",
+    }
+
+    def __init__(self):
+        super().__init__("Compressor", self.API_SUFFIXES, 5, self.OUTPUT_DTYPE)
+
+    def supports(self, api_name: str) -> bool:
+        return api_name.rsplit(".", 1)[-1] in self.API_SUFFIXES
+
+    # ------------------------------------------------------------------
+    # attribute helpers (snake_case + camelCase compatible)
+    # ------------------------------------------------------------------
+
+    def _attr(self, attributes, key, default=None):
+        if attributes is None:
+            return default
+        if key in attributes:
+            return attributes[key]
+        camel = self._ATTR_ALIASES.get(key, key)
+        if camel in attributes:
+            return attributes[camel]
+        snake = next((k for k, v in self._ATTR_ALIASES.items() if v == key), key)
+        if snake in attributes:
+            return attributes[snake]
+        return default
+
+    def _get_start_pos_list(self, attrs):
+        raw = self._attr(attrs, "start_pos_values", self._attr(attrs, "start_pos"))
+        if raw is None:
+            return [0]
+        if isinstance(raw, (list, tuple)):
+            return [int(v) for v in raw]
+        try:
+            return [int(raw)]
+        except (ValueError, TypeError):
+            return [0]
+
+    def _get_seqused_list(self, attrs, batch_size):
+        raw = self._attr(attrs, "seqused_values", self._attr(attrs, "seqused"))
+        if raw is None:
+            return None
+        if isinstance(raw, (list, tuple)):
+            return [int(v) for v in raw]
+        try:
+            return [int(raw)] * batch_size
+        except (ValueError, TypeError):
+            return None
+
+    def _get_cuseqlens_list(self, attrs):
+        raw = self._attr(attrs, "cu_seqlens_values", self._attr(attrs, "cu_seqlens"))
+        if raw is None:
+            return None
+        return [int(v) for v in raw]
+
+    # ------------------------------------------------------------------
+    # batch_consistency_id parsing
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_slice_id(slice_id):
+        parts = str(slice_id).split("_")
+        if len(parts) < 5:
+            return None
+        try:
+            return {
+                "seed": int(parts[0]),
+                "axis": int(parts[1]),
+                "start": int(parts[2]),
+                "end": int(parts[3]),
+                "step": int(parts[4]),
+            }
+        except (ValueError, IndexError):
+            return None
+
+    @staticmethod
+    def _flatten_consistency_id(bcid):
+        result = []
+        for tensor_idx, tensor_id in enumerate(bcid or ()):
+            if tensor_id is None:
+                continue
+            if isinstance(tensor_id, str):
+                if tensor_id and tensor_id != "None":
+                    result.append(
+                        (
+                            tensor_id,
+                            {
+                                "tensor_idx": tensor_idx,
+                                "axis_idx": 0,
+                                "slice_idx": 0,
+                            },
+                        )
+                    )
+                continue
+            for axis_idx, axis_id in enumerate(tensor_id):
+                if axis_id is None:
+                    continue
+                if isinstance(axis_id, str):
+                    if axis_id and axis_id != "None":
+                        result.append(
+                            (
+                                axis_id,
+                                {
+                                    "tensor_idx": tensor_idx,
+                                    "axis_idx": axis_idx,
+                                    "slice_idx": 0,
+                                },
+                            )
+                        )
+                    continue
+                for slice_idx, sid in enumerate(axis_id):
+                    if sid is None or not isinstance(sid, str) or sid == "None":
+                        continue
+                    result.append(
+                        (
+                            sid,
+                            {
+                                "tensor_idx": tensor_idx,
+                                "axis_idx": axis_idx,
+                                "slice_idx": slice_idx,
+                            },
+                        )
+                    )
+        return result
+
+    # ------------------------------------------------------------------
+    # geometry / region calculation
+    # ------------------------------------------------------------------
+
+    def _infer_layout(self, row):
+        shapes = parse_cell(row, "tensor_view_shapes")
+        if shapes and shapes[0] is not None:
+            return len(tuple(shapes[0])) == 2
+        return False
+
+    def _compute_cmpkv_shape(self, row, attrs):
+        shapes = parse_cell(row, "tensor_view_shapes")
+        if not shapes or shapes[0] is None or len(shapes) < 2 or shapes[1] is None:
+            return None
+        x_shape = tuple(shapes[0])
+        wkv_shape = tuple(shapes[1])
+        cmp_ratio = int(self._attr(attrs, "cmp_ratio", 4))
+        coff = int(self._attr(attrs, "coff", 1))
+        d = wkv_shape[0] // coff
+        if len(x_shape) == 2:  # TH
+            t = x_shape[0]
+            cu_seqlens = self._get_cuseqlens_list(attrs)
+            b = len(cu_seqlens) - 1 if cu_seqlens and len(cu_seqlens) > 1 else 1
+            sr = min(t, t // cmp_ratio + b)
+            return (sr, d)
+        b, s = x_shape[0], x_shape[1]
+        sr = (s + cmp_ratio - 1) // cmp_ratio
+        return (b, sr, d)
+
+    def _get_slice_info(self, row, info, parsed):
+        batch_slice_info = parse_cell(row, "batch_slice_info")
+        if batch_slice_info is not None and info["tensor_idx"] < len(batch_slice_info):
+            tensor_slices = batch_slice_info[info["tensor_idx"]]
+            if tensor_slices is not None and info["axis_idx"] < len(tensor_slices):
+                axis_slices = tensor_slices[info["axis_idx"]]
+                if axis_slices is not None and info["slice_idx"] < len(axis_slices):
+                    sl = axis_slices[info["slice_idx"]]
+                    if isinstance(sl, (tuple, list)) and len(sl) >= 2:
+                        step = int(sl[2]) if len(sl) >= 3 else 1
+                        return {"start": int(sl[0]), "stop": int(sl[1]), "step": step}
+        return {"start": parsed["start"], "stop": parsed["end"], "step": parsed["step"]}
+
+    def _get_companion_bidx(self, row, tensor_idx, slice_idx):
+        """BSH combined slice: get the batch index from the axis-0 slice."""
+        batch_slice_info = parse_cell(row, "batch_slice_info")
+        if batch_slice_info is None or tensor_idx >= len(batch_slice_info):
+            return 0
+        tensor_slices = batch_slice_info[tensor_idx]
+        if tensor_slices is None or len(tensor_slices) < 1:
+            return 0
+        axis_0_slices = tensor_slices[0]
+        if axis_0_slices is None or slice_idx >= len(axis_0_slices):
+            return 0
+        sl = axis_0_slices[slice_idx]
+        if sl is None or len(sl) < 1:
+            return 0
+        return int(sl[0])
+
+    @staticmethod
+    def _compute_token_region(start, stop, start_pos, cmp_ratio):
+        head_size = cmp_ratio - (start + start_pos) % cmp_ratio
+        compare_len = (stop - start - head_size % cmp_ratio) // cmp_ratio
+        cache_len = cmp_ratio - start_pos % cmp_ratio
+        if head_size == cmp_ratio:
+            start_idx = (start - cache_len) // cmp_ratio + 1
+        else:
+            start_idx = (start + head_size + cmp_ratio - 1) // cmp_ratio
+        compare_len = max(compare_len, 0)
+        return start_idx, compare_len
+
+    def _find_th_batch(self, start, length, cu_seqlens, seqused_list, cmp_ratio):
+        base = cu_seqlens[0] if cu_seqlens else 0
+        batch_size = len(cu_seqlens) - 1
+        tc_idx = 0
+        b_idx = 0
+        for b_idx in range(batch_size):
+            if start >= cu_seqlens[b_idx + 1] - base:
+                if seqused_list and b_idx < len(seqused_list):
+                    tc_idx += seqused_list[b_idx] // cmp_ratio
+                continue
+            adjusted_start = start - cu_seqlens[b_idx]
+            return b_idx, tc_idx, adjusted_start, adjusted_start + length
+        # Fallback: last batch
+        last = max(batch_size - 1, 0)
+        adjusted_start = start - (cu_seqlens[last] if last < len(cu_seqlens) else 0)
+        return last, tc_idx, adjusted_start, adjusted_start + length
+
+    # ------------------------------------------------------------------
+    # output loading
+    # ------------------------------------------------------------------
+
+    def _load_output_array(self, row, dump_dir):
+        testcase_name = row["testcase_name"]
+        if row.get("precision_status", "").upper() != "PASS":
+            raise ValueError(f"{testcase_name}: precision_status is not PASS")
+        prefix = str(row.get("dump_file_prefix") or "").strip()
+        dump_names = (prefix, testcase_name) if prefix and prefix != testcase_name else (testcase_name,)
+        output_paths = tuple(dump_dir / f"{name}_output_0.bin" for name in dump_names)
+        output_path = next((path for path in output_paths if path.is_file()), None)
+        if output_path is None:
+            expected = ", ".join(str(p) for p in output_paths)
+            raise ValueError(f"{testcase_name}: missing cmp_kv output dump; expected one of {expected}")
+        raw_bytes = output_path.read_bytes()
+        raw = np.frombuffer(raw_bytes, dtype=np.uint16)
+        return (raw.astype(np.uint32) << 16).view(np.float32)
+
+    @staticmethod
+    def _reshape_output(array, expected_shape):
+        if expected_shape is None:
+            return array
+        expected_size = product(expected_shape) if expected_shape else 0
+        if expected_size > 0 and array.size == expected_size:
+            return array.reshape(expected_shape)
+        if len(expected_shape) == 2:
+            last = expected_shape[-1]
+            if last and array.size % last == 0:
+                return array.reshape((array.size // last, last))
+        elif len(expected_shape) == 3:
+            first, last = expected_shape[0], expected_shape[-1]
+            if first and last and array.size % (first * last) == 0:
+                return array.reshape((first, array.size // (first * last), last))
+        return array
+
+    # ------------------------------------------------------------------
+    # sample construction
+    # ------------------------------------------------------------------
+
+    def make_samples(self, row, dump_dir):
+        bcid = parse_cell(row, "batch_consistency_id")
+        if bcid is None:
+            return []
+        flat = self._flatten_consistency_id(bcid)
+        if not flat:
+            return []
+        attrs = dict(parse_cell(row, "attributes", {}))
+        is_th = self._infer_layout(row)
+        cmp_ratio = int(self._attr(attrs, "cmp_ratio", 4))
+        cache_mode = int(self._attr(attrs, "cache_mode", 1))
+        coff = int(self._attr(attrs, "coff", 1))
+        start_pos_list = self._get_start_pos_list(attrs)
+        cu_seqlens = self._get_cuseqlens_list(attrs)
+        batch_size = (
+            len(cu_seqlens) - 1
+            if cu_seqlens and len(cu_seqlens) > 1
+            else (len(start_pos_list) if start_pos_list else 1)
+        )
+        seqused_list = self._get_seqused_list(attrs, batch_size)
+        cmpkv_shape = self._compute_cmpkv_shape(row, attrs)
+        array = self._load_output_array(row, dump_dir)
+        array = self._reshape_output(array, cmpkv_shape)
+
+        shapes = parse_cell(row, "tensor_view_shapes")
+        wkv_shape = tuple(shapes[1]) if shapes and len(shapes) > 1 and shapes[1] is not None else None
+        wgate_shape = tuple(shapes[2]) if shapes and len(shapes) > 2 and shapes[2] is not None else None
+        ape_shape = tuple(shapes[4]) if shapes and len(shapes) > 4 and shapes[4] is not None else None
+
+        samples: List[Sample] = []
+        for slice_id, info in flat:
+            parsed = self._parse_slice_id(slice_id)
+            if parsed is None:
+                continue
+            slice_info = self._get_slice_info(row, info, parsed)
+            if slice_info is None:
+                continue
+
+            start = slice_info["start"]
+            stop = slice_info["stop"]
+            length = stop - start
+            axis = parsed["axis"]
+            seed = parsed["seed"]
+
+            value = b""
+            shape: Tuple[int, ...] = (0,)
+
+            if is_th:
+                # TH layout: find owning batch via cu_seqlens
+                if cu_seqlens and len(cu_seqlens) > 1:
+                    b_idx, tc_idx, adj_start, adj_stop = self._find_th_batch(
+                        start, length, cu_seqlens, seqused_list, cmp_ratio
+                    )
+                else:
+                    b_idx, tc_idx, adj_start, adj_stop = 0, 0, start, stop
+                sp = start_pos_list[b_idx] if b_idx < len(start_pos_list) else 0
+                start_idx, compare_len = self._compute_token_region(adj_start, adj_stop, sp, cmp_ratio)
+                start_idx += tc_idx
+                if compare_len > 0 and array.ndim >= 2:
+                    region = array[start_idx : start_idx + compare_len, :]
+                    value = np.ascontiguousarray(region).tobytes()
+                    shape = (compare_len, array.shape[-1])
+            elif axis == 0 and array.ndim == 3:
+                if stop > start:
+                    if seqused_list and start < len(seqused_list):
+                        valid_blocks = seqused_list[start] // cmp_ratio
+                    else:
+                        valid_blocks = array.shape[1]
+                    end_block = min(valid_blocks, array.shape[1])
+                    region = array[start:stop, :end_block, :]
+                    value = np.ascontiguousarray(region).tobytes()
+                    shape = (stop - start, end_block, array.shape[-1])
+            elif axis == 1 and array.ndim == 3:
+                # BSH token axis: use companion batch slice for bidx
+                bidx = self._get_companion_bidx(row, info["tensor_idx"], info["slice_idx"])
+                sp = start_pos_list[bidx] if bidx < len(start_pos_list) else 0
+                start_idx, compare_len = self._compute_token_region(start, stop, sp, cmp_ratio)
+                if compare_len > 0:
+                    region = array[bidx, start_idx : start_idx + compare_len, :]
+                    value = np.ascontiguousarray(region).tobytes()
+                    shape = (compare_len, array.shape[-1])
+            else:
+                continue
+
+            relation = Relation(
+                axes=(axis,),
+                slices=((start, stop, slice_info.get("step", 1)),),
+                seed=seed,
+            )
+            context = {
+                "api_name": row.get("api_name"),
+                "layout": "TH" if is_th else "BSH",
+                "cmp_ratio": cmp_ratio,
+                "cache_mode": cache_mode,
+                "coff": coff,
+                "wkv_shape": wkv_shape,
+                "wgate_shape": wgate_shape,
+                "ape_shape": ape_shape,
+                "output_dtype": self.OUTPUT_DTYPE,
+            }
+            samples.append(Sample(row, self, relation, value, shape, self.OUTPUT_DTYPE, context))
+
+        return samples
+
+
 PROFILES = (
     MlaProfile("SMLA", ("sparse_flash_mla", "sparse_flash_mla_ttk", "aclnnSparseFlashMla"), 18),
     MlaProfile(
@@ -737,6 +1114,7 @@ PROFILES = (
     IndexerProfile(
         "QLI_V2", ("quant_lightning_indexer", "quant_lightning_indexer_v2", "aclnnQuantLightningIndexerV2"), 13
     ),
+    CompressorProfile(),
 )
 
 
