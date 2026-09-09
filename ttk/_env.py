@@ -44,7 +44,10 @@ def _find_ascend_root():
 
     opp = os.getenv("ASCEND_OPP_PATH")
     if opp:
-        candidates.append(opp.rstrip("/opp").rstrip("/"))  # noqa: B005
+        normalized_opp = os.path.normpath(opp)
+        if os.path.basename(normalized_opp) == "opp":
+            normalized_opp = os.path.dirname(normalized_opp)
+        candidates.append(normalized_opp)
 
     if not candidates:
         for base in (os.path.expanduser("~/Ascend"), "/usr/local/Ascend"):
