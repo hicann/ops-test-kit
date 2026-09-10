@@ -12,6 +12,7 @@ Operator Compilation Interface
 """
 
 # Standard Packages
+import ast
 import copy
 import functools
 import importlib
@@ -137,8 +138,8 @@ class OperatorInterface(metaclass=Singleton):
             raise RuntimeError(f"mode [{mode}] is not supported.")
         if OpInfoKeeper().op_output_defined(op_name):  # for ApplyAdamWV2
             return ipt, opt
-        else:  # for ApplyAdamWV2
-            return ipt, ()
+        # for ApplyAdamWV2
+        return ipt, ()
 
     @staticmethod
     def _build_tensor_dict_group(shapes, dtypes, formats, ori_shapes, ori_formats, ranges):
@@ -305,9 +306,8 @@ class OperatorInterface(metaclass=Singleton):
                 for ti in pt:
                     if ti is not None and "range" in ti:
                         del ti["range"]
-            else:
-                if "range" in pt:
-                    del pt["range"]
+            elif "range" in pt:
+                del pt["range"]
 
     def prepare_tiling_params(self, testcase: TestcaseOp) -> Tuple[tuple, tuple, tuple]:
         attrs = self.construct_optiling_attrs(testcase.op_name, testcase.attributes or {})
@@ -329,7 +329,7 @@ class OperatorInterface(metaclass=Singleton):
         """
         Dynamic shape operator compilation
         """
-        use_static_context = True if mode == "Cst" else False
+        use_static_context = mode == "Cst"
         operator_func = self.get_dyn_operator(testcase)
         if operator_func is None:
             return None
@@ -342,19 +342,33 @@ class OperatorInterface(metaclass=Singleton):
 
         def _compile_dynamic_shape():
             int64_shape_enable = self._enable_shape_int64(tensor_list_list)
-            with self._opc.api_config.bit_width_64() if int64_shape_enable else self._opc.api_config.bit_width_32():
-                with self._opc.op_context.OpContext("dynamic" if not use_static_context else "static") as cxt:
-                    self.set_dynamic_compile_context(cxt, testcase, operator_func, kernel_name, dyn_params)
-                    compile_time = self._compile_op(
-                        mode, testcase.op_name, operator_func, op_func_parameters, tensor_list_list, op_kwargs
-                    )
-                    compile_info = self._opc.get_compile_info()
-                    tiling_op_type = self._opc.get_tiling_op_type()
-                    logging.debug(f"Received op_type from operator context: {tiling_op_type}")
+            api_ctx = self._opc.api_config.bit_width_64() if int64_shape_enable else self._opc.api_config.bit_width_32()
+            op_ctx = self._opc.op_context.OpContext("dynamic" if not use_static_context else "static")
+            with api_ctx, op_ctx as cxt:
+                self.set_dynamic_compile_context(cxt, testcase, operator_func, kernel_name, dyn_params)
+                compile_time = self._compile_op(
+                    mode, testcase.op_name, operator_func, op_func_parameters, tensor_list_list, op_kwargs
+                )
+                compile_info = self._opc.get_compile_info()
+                tiling_op_type = self._opc.get_tiling_op_type()
+                logging.debug(f"Received op_type from operator context: {tiling_op_type}")
             return (str(tiling_op_type), compile_info, compile_time, tuple(op_func_parameters))
 
         # Call function
         return _compile_dynamic_shape()
+
+    @contextmanager
+    def _core_limit_tiling_context(self):
+        core_limit = get_global_storage().core_limit
+        if not core_limit or not isinstance(core_limit, tuple) or not any(core_limit):
+            yield
+            return
+        ai_limit, vec_limit = core_limit
+        with self._opc.op_context.OpContext("core_limit_tiling") as cxt:
+            cxt.add_addition("_op_aicore_num", str(ai_limit or 0))
+            cxt.add_addition("_op_vectorcore_num", str(vec_limit or 0))
+            logging.info(f"Tiling with core limit aicore={ai_limit or 0}, vectorcore={vec_limit or 0}")
+            yield
 
     def call_const_op_tiling(
         self, compile_result: Union[DynamicCompilationResult, BinaryCompilationResult], testcase: TestcaseOp
@@ -374,7 +388,7 @@ class OperatorInterface(metaclass=Singleton):
         tiling_time = []
         build_cfg = self._build_compile_cfg()
         adapter_before_tiling(testcase, compile_result, final_inputs, final_outputs)
-        with self._opc.build_config(**build_cfg):
+        with self._core_limit_tiling_context(), self._opc.build_config(**build_cfg):
             for _ in range(get_global_storage().tiling_run_time):
                 tiling_time_temp = []
                 try:
@@ -489,7 +503,7 @@ class OperatorInterface(metaclass=Singleton):
             dtype_bytes = get_dtype_width(dtype)
             if shape_prod * dtype_bytes > int32_max:
                 return True
-            return
+            return None
 
         for t in tensors:
             if t is None:
@@ -498,9 +512,8 @@ class OperatorInterface(metaclass=Singleton):
                 for ti in t:
                     if _exceed_int32_max(ti):
                         return True
-            else:
-                if _exceed_int32_max(t):
-                    return True
+            elif _exceed_int32_max(t):
+                return True
         return False
 
     @staticmethod
@@ -529,10 +542,8 @@ class OperatorInterface(metaclass=Singleton):
                 op_param_distribution[param] = tensor_list_list[param_idx]
             param_idx += 1
         param_print = ["***Params***"]
-        for param in op_param_distribution:
-            param_print.append(
-                f"{param} {str(type(op_param_distribution[param]))}:\n{str(op_param_distribution[param])}"
-            )
+        for param, param_value in op_param_distribution.items():
+            param_print.append(f"{param} {str(type(param_value))}:\n{str(param_value)}")
         param_print.append("***Params***")
         return param_print
 
@@ -583,16 +594,16 @@ class OperatorInterface(metaclass=Singleton):
                     detected_type = typ.lower().replace("list", "list_")
                 result.append({"name": k, "value": v, "dtype": detected_type})
         else:
-            for k in attr_dictionary:
+            for k, v in attr_dictionary.items():
                 if str(k).startswith("!") or str(k).startswith("#") or str(k).startswith("@"):
                     continue
-                ret = construct_attr_info(k, attr_dictionary[k])
+                ret = construct_attr_info(k, v)
                 if ret is not None:
                     result.append(ret)
         # add private attributes
-        for k in attr_dictionary:
+        for k, v in attr_dictionary.items():
             if str(k).startswith("@"):
-                ret = construct_attr_info(k[1:], attr_dictionary[k])
+                ret = construct_attr_info(k[1:], v)
                 if ret is not None:
                     result.append(ret)
         return tuple(result)
@@ -614,9 +625,9 @@ class OperatorInterface(metaclass=Singleton):
     @staticmethod
     def add_addition_to_op_context(cxt, attrs: dict, op_info):
         cxt.add_addition("op_name", op_info.op_name)  # for RL bank search
-        for param in attrs:
+        for param, value in attrs.items():
             if param.startswith("!"):
-                cxt.add_addition(param[1:], attrs[param])
+                cxt.add_addition(param[1:], value)
 
     @staticmethod
     def add_private_attr_to_op_info(tiling_attr: tuple, attributes: dict, op_info):
@@ -669,9 +680,9 @@ class OperatorInterface(metaclass=Singleton):
             src_lines = inspect.getsource(operator_func).split("\n")
             for line in src_lines:
                 if "register_operator" in line:
-                    op_type = eval(line[line.index("register_operator") + 18 : -1].split(",")[0])
+                    op_type = ast.literal_eval(line[line.index("register_operator") + 18 : -1].split(",")[0])
                     break
-        except OSError:
+        except (OSError, ValueError, SyntaxError, IndexError):
             return None
         return op_type
 
@@ -679,7 +690,7 @@ class OperatorInterface(metaclass=Singleton):
     def get_op_func_params(operator_func=None, op_name: str = None) -> tuple:
         if isinstance(operator_func, Callable):
             return tuple(inspect.signature(operator_func).parameters)
-        elif op_name:
+        if op_name:
             op_cfg_info = OpInfoKeeper().info_of(op_name)
             if not op_cfg_info:
                 raise RuntimeError(f"Operator {op_name} is not configured in aic-**-ops-info.json")
@@ -688,14 +699,13 @@ class OperatorInterface(metaclass=Singleton):
                 + [po["name"] for po in op_cfg_info["outputs"]]
                 + [attr["name"] for attr in op_cfg_info["attr"]]
             )
-        else:
-            return ()
+        return ()
 
     @staticmethod
     def get_op_func_parameter_dict(operator_func=None, op_name: str = None):
         if isinstance(operator_func, Callable):
             return inspect.signature(operator_func).parameters
-        elif op_name:
+        if op_name:
             op_cfg_info = OpInfoKeeper().info_of(op_name)
             if not op_cfg_info:
                 raise RuntimeError(f"Operator {op_name} is not configured in aic-**-ops-info.json")
@@ -727,12 +737,23 @@ class OperatorInterface(metaclass=Singleton):
                         annotation=attr_type,
                     )
             return parameters
-        else:
-            return None
+        return None
 
-    @staticmethod
-    def dtype_str_to_type(s):
-        return list if s.startswith("list") else eval(s)
+    _DTYPE_STR_MAP = {
+        "int": int,
+        "float": float,
+        "bool": bool,
+        "str": str,
+        "list": list,
+        "tuple": tuple,
+        "dict": dict,
+    }
+
+    @classmethod
+    def dtype_str_to_type(cls, s):
+        if s.startswith("list"):
+            return list
+        return cls._DTYPE_STR_MAP.get(s, str)
 
 
 def adapter_before_tiling(
