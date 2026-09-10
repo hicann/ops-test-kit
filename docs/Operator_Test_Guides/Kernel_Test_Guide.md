@@ -151,6 +151,7 @@ python3 -m ttk kernel -i add.csv --co
 | `--simt-ub` | | SIMT 模式 UB 大小 | 无 |
 | `--simt-stack-dcu` | | SIMT 模式 DCU 栈大小 | 无 |
 | `--force-block-dim` | | 强制指定 block_dim | 无 |
+| `--core-limit` | | 限制 tiling 可见核数上限：`N` 仅限 AI 核，`a,v` 分别限制 AI 核与 Vector 核（如 `2,32`）；tiling 重新切分 block_dim，与 `--force-block-dim` 的精确覆盖不同 | 无 |
 
 示例：
 

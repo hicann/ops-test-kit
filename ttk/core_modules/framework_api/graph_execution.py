@@ -22,6 +22,7 @@ import torch
 from ttk.core_modules.deterministic import resolve_deterministic_level
 from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
 from ttk.test_spec import get_spec_attr
+from ttk.utilities.container_utils import get_global_storage
 
 from .graph_network import GraphNetwork, split_params
 from .profiler import ProfilerConfig, get_profiler
@@ -36,6 +37,13 @@ def _get_npu_backend():
     from torchair.configs.compiler_config import CompilerConfig
 
     config = CompilerConfig()
+    core_limit = get_global_storage().core_limit
+    if core_limit and isinstance(core_limit, tuple) and any(core_limit):
+        ai_limit, vec_limit = core_limit
+        props = torch.npu.get_device_properties(torch.npu.current_device())
+        ai_num = ai_limit if ai_limit is not None else props.cube_core_num
+        vec_num = vec_limit if vec_limit is not None else props.vector_core_num
+        config.ge_config.aicore_num = f"{ai_num}|{vec_num}"
     return torchair.get_npu_backend(compiler_config=config)
 
 
@@ -66,6 +74,21 @@ def _compile_model_aclgraph(model, backend, fullgraph):
         dynamic=False,
     )
     return compiled
+
+
+class _SuperKernelScopeModel(torch.nn.Module):
+    """Wrap a model so its whole forward runs inside a torchair SuperKernel scope."""
+
+    def __init__(self, model, scope_name):
+        super().__init__()
+        self._model = model
+        self._scope_name = scope_name
+
+    def forward(self, *args, **kwargs):
+        import torchair
+
+        with torchair.scope.super_kernel(self._scope_name, ""):
+            return self._model(*args, **kwargs)
 
 
 def _run_compiled(
@@ -298,6 +321,8 @@ def _execute_graph(
         return [], None, None
 
     use_fullgraph = bool(switches.fullgraph)
+    if switches.super_kernel_enabled:
+        model = _SuperKernelScopeModel(model, testcase.api_name)
     try:
         if is_aclgraph:
             compiled = _compile_model_aclgraph(model, npu_backend, use_fullgraph)

@@ -103,6 +103,13 @@ def _add_kernel_args(parser):
         "--force-block-dim", dest="force_block_dim", default=None, help="Force block dim, e.g. --force-block-dim=2"
     )
     parser.add_argument(
+        "--core-limit",
+        dest="core_limit",
+        default=None,
+        help="Cap the core count visible to op tiling (upper limit; tiling re-splits block_dim). "
+        "Single int caps AI cores, 'a,v' caps AI and vector cores separately, e.g. --core-limit=2 or 2,32",
+    )
+    parser.add_argument(
         "--xpu-perf",
         dest="xpu_perf",
         action="store_true",

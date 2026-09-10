@@ -20,6 +20,7 @@ __all__ = [
     "get_op_info_paths",
     "get_ascend_full_soc_version",
     "get_npu_hw_info",
+    "validate_core_limit",
     "get_npu_available_device_ids",
     "get_l0_clear_tile_params",
     "PLATFORM_BEFORE_DAVID",
@@ -272,6 +273,27 @@ def get_npu_hw_info(full_soc_version):
     result["full_soc_version"] = full_soc_version
 
     return result
+
+
+def validate_core_limit(core_limit, hw_info: dict):
+    """Validate --core-limit against physical SoC core counts from platform info.
+
+    core_limit: (ai_core_limit, vector_core_limit) tuple from SWITCHES, either side
+    optionally None. Raises ValueError when a set side exceeds the physical count.
+    Sides whose physical count is unavailable (0/None in hw_info) are skipped.
+    """
+    if not core_limit or not isinstance(core_limit, tuple):
+        return
+    ai_limit, vec_limit = core_limit
+    soc = hw_info.get("full_soc_version", "")
+    ai_cnt = int(hw_info.get("ai_core_cnt") or 0)
+    vec_cnt = int(hw_info.get("vector_core_cnt") or 0)
+    if ai_limit and ai_cnt and ai_limit > ai_cnt:
+        raise ValueError(f"--core-limit AI core value {ai_limit} exceeds physical ai_core_cnt {ai_cnt} of {soc}")
+    if vec_limit and vec_cnt and vec_limit > vec_cnt:
+        raise ValueError(
+            f"--core-limit vector core value {vec_limit} exceeds physical vector_core_cnt {vec_cnt} of {soc}"
+        )
 
 
 @lru_cache(maxsize=None)

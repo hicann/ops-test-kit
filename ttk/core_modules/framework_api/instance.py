@@ -563,6 +563,15 @@ class FrameworkApiInstance(InstanceBase):
             switches.dev_plat = self.backend.device_name()
         switches.short_soc_version = self.backend.soc_series()
         logging.info(f"Device platform: {switches.dev_plat}")
+        if switches.core_limit and self.backend.is_npu():
+            from ttk.utilities.platform import get_npu_hw_info, validate_core_limit
+
+            try:
+                hw_info = get_npu_hw_info(switches.dev_plat)
+            except (FileNotFoundError, RuntimeError) as e:
+                logging.warning(f"Skip --core-limit validation, platform info unavailable: {e}")
+            else:
+                validate_core_limit(switches.core_limit, hw_info)
 
     def setup_profile_object(self):
         self.profile_object = FrameworkApiProfileObject(self.task_keeper, self.mp_context, self.backend)

@@ -202,6 +202,8 @@ def apply_kernel_args(sw, args):
             sw.force_block_dim = [bd] * 3
         else:
             sw.force_block_dim = list(bd)
+    if hasattr(args, "core_limit") and args.core_limit is not None:
+        sw.core_limit = _parse_core_limit(args.core_limit)
     if hasattr(args, "simt_ub") and args.simt_ub is not None:
         v = args.simt_ub
         if isinstance(v, int):
@@ -235,6 +237,44 @@ def apply_e2e_args(sw, args):
         sw.fullgraph = args.fullgraph
     if getattr(args, "aclgraph", False):
         sw.aclgraph_enabled = True
+    if hasattr(args, "core_limit") and args.core_limit is not None:
+        sw.core_limit = _parse_core_limit(args.core_limit)
+    if getattr(args, "super_kernel", False):
+        sw.super_kernel_enabled = True
+        if sw.force_cpu:
+            raise ValueError("--super-kernel cannot be combined with --cpu")
+        if not (sw.dyn_switches.enabled or sw.cst_switches.enabled or sw.aclgraph_enabled):
+            raise ValueError("--super-kernel requires a graph mode: -c/-d/--aclgraph")
+
+
+def _parse_core_limit(value):
+    """Parse --core-limit into (ai_core_limit, vector_core_limit), either side optional."""
+    if isinstance(value, int):
+        return (value, None)
+    raw = str(value).strip()
+    if not raw:
+        raise ValueError("--core-limit requires at least one of 'a,v', got empty value")
+    ai_part, sep, vec_part = raw.partition(",")
+    if not sep and "|" in raw:
+        raise ValueError("--core-limit uses ',' as separator, e.g. 2,32")
+
+    def _to_int(part):
+        part = part.strip()
+        if not part:
+            return None
+        try:
+            parsed = int(part)
+        except ValueError as exc:
+            raise ValueError(f"--core-limit values must be integers, got {part!r}") from exc
+        if parsed < 1:
+            raise ValueError(f"--core-limit values must be >= 1, got {part!r}")
+        return parsed
+
+    ai_limit = _to_int(ai_part)
+    vec_limit = _to_int(vec_part)
+    if ai_limit is None and vec_limit is None:
+        raise ValueError(f"--core-limit requires at least one of 'a,v', got {value!r}")
+    return (ai_limit, vec_limit)
 
 
 def _configure_manual_data_prepare(sw, command, directories, complete_prepare, is_prepare_dump):

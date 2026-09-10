@@ -1,3 +1,10 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 from ttk.cli.bridge import (
     apply_e2e_args,
     args_to_switches,
@@ -57,6 +64,21 @@ def _add_e2e_args(parser):
         action="store_true",
         help="Collect 3rd-party (XPU) performance per case. "
         "Requires remote XPU config (ttk.conf.yaml or --config). PERF-only.",
+    )
+    parser.add_argument(
+        "--core-limit",
+        dest="core_limit",
+        default=None,
+        help="Cap core count visible to GE graph compilation (ge.aicoreNum). Single int caps AI cores, "
+        "'a,v' caps AI and vector cores separately; unset side falls back to physical count. Graph mode only",
+    )
+    parser.add_argument(
+        "--super-kernel",
+        dest="super_kernel",
+        action="store_true",
+        default=False,
+        help="Run graph mode ops through SuperKernel compilation (scope marking in GE graph mode, "
+        "super_kernel_optimize option in aclgraph mode); requires -c/-d/--aclgraph",
     )
     add_sim_args(parser)
 

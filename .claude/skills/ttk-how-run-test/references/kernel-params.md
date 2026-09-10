@@ -62,6 +62,7 @@ python3 -m ttk kernel -i cases.csv --co
 | `--simt-stack-dcu` | SIMT 模式 DCU 栈大小 | 无 |
 | `--simt-stack-dvg` | SIMT 模式 DVG 栈大小 | 无 |
 | `--force-block-dim` | 强制指定 block_dim | 无 |
+| `--core-limit` | 限制 tiling 可见核数上限：`N` 仅限 AI 核，`a,v` 分别限制 AI/Vector 核（tiling 重新切分，区别于 --force-block-dim 精确覆盖） | 无 |
 | `--deterministic-level` / `--dl` | 确定性级别：0=关、1=确定性计算（MD5 跨 NPU 一致）、2=强一致、3=批量一致性 | 0 |
 | `--xpu-perf` | 采集 XPU 远程性能（device_ms）；需远程 XPU 配置（`ttk.conf.yaml` 或 `--config`） | 关闭 |
 

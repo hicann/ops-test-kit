@@ -18,7 +18,7 @@ __all__ = ["NpuInstance"]
 import os
 
 from ...utilities import cpu_count
-from ...utilities.platform import get_npu_hw_info
+from ...utilities.platform import get_npu_hw_info, validate_core_limit
 
 # Third-Party Packages
 from ..dsmi import DSMIInterface
@@ -84,6 +84,7 @@ class NpuInstance(InstanceBase):
                 raise
         hw_info = get_npu_hw_info(self.switches.dev_plat)
         self.switches.short_soc_version = hw_info.get("short_soc_version")
+        validate_core_limit(self.switches.core_limit, hw_info)
         os.environ["TTK_FULL_SOC_VERSION"] = self.switches.dev_plat
         os.environ["TTK_SHORT_SOC_VERSION"] = self.switches.short_soc_version
 

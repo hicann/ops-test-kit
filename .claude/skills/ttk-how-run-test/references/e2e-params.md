@@ -10,6 +10,8 @@
 | `--aclgraph` | aclgraph 模式（torch.compile reduce-overhead） | 关闭 |
 | `-d`/`--dynamic` | 动态图 | 默认关闭 |
 | `-c`/`--const` | 静态图 | 默认关闭 |
+| `--core-limit` | 限制 GE 图编译可见核数上限（`ge.aicoreNum`）：`N` 仅限 AI 核，`a,v` 分别限制；未设置侧回落物理核数。仅图模式，eager/aclgraph 不支持 | 无 |
+| `--super-kernel` | 被测算子走 SuperKernel 编译流程（功能验证）：以 api_name 为 scope 标定（GE 图模式 -c/-d 与 aclgraph 模式均适用）。需搭配 -c/-d/--aclgraph，不支持 --cpu | 关闭 |
 
 > **仿真**：E2E 支持 `--backend npusim` 无卡仿真，但仅 **eager** 执行（graph/aclgraph/fullgraph 禁用），且仅支持 aclnn 算子——非 aclnn 的 legacy 自定义算子（如 `torch_npu.npu_conv2d`）会被 torch_npu 拒绝。详见 `npusim-params.md`。
 

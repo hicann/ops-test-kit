@@ -246,6 +246,28 @@ class Opc(metaclass=Singleton):
         dev_plat = get_global_storage().dev_plat
         logging.debug(f"Setting soc version to {dev_plat} for {self._core_type}")
         self._all_opc_invoke("set_compile_soc_info", dev_plat, self._core_type)
+        self._apply_core_limit()
+
+    def _apply_core_limit(self):
+        core_limit = get_global_storage().core_limit
+        if not core_limit or not isinstance(core_limit, tuple):
+            return
+        ai_limit, vec_limit = core_limit
+        res = {}
+        if self._core_type == "VectorCore":
+            if vec_limit:
+                res["vector_core_cnt"] = str(vec_limit)
+        elif self._core_type in ("AiCore", "CubeCore"):
+            if ai_limit:
+                res["ai_core_cnt"] = str(ai_limit)
+        else:
+            if ai_limit:
+                res["ai_core_cnt"] = str(ai_limit)
+            if vec_limit:
+                res["vector_core_cnt"] = str(vec_limit)
+        if res:
+            logging.info(f"Applying core limit {core_limit} for {self._core_type}: {res}")
+            self._all_opc_invoke("set_platform_info_res", 0, res)
 
     def switch_opc(self, opc_type: str):
         if opc_type not in self.OpcImplement:

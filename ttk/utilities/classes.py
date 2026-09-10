@@ -143,6 +143,8 @@ class SWITCHES:
         "no_memory_check",
         "force_clear_atomic",
         "force_block_dim",
+        "core_limit",
+        "super_kernel_enabled",
         "force_clear_ub",
         "force_clear_l1",
         "force_clear_l0",
@@ -274,6 +276,8 @@ class SWITCHES:
         self.no_memory_check = False
         self.force_clear_atomic = [None, None, None]
         self.force_block_dim = [None, None, None]
+        self.core_limit: Optional[Tuple[Optional[int], Optional[int]]] = None
+        self.super_kernel_enabled: bool = False
         self.force_clear_ub = None
         self.force_clear_l1 = None
         self.force_clear_l0 = None

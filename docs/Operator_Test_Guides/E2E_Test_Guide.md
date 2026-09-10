@@ -131,6 +131,8 @@ python3 -m ttk e2e -i torch_ops.csv --run=5
 | `--run` | 执行次数 | 板端3次 |
 | `--warmup` | Profiling前预热 | 开启 |
 | `--no-prof` | 禁用Profiling采集 | 关闭 |
+| `--core-limit` | 限制 GE 图编译可见核数上限（映射 `ge.aicoreNum`）：`N` 仅限 AI 核，`a,v` 分别限制（如 `2,32`）；未设置的一侧回落物理核数；仅图模式生效，eager/aclgraph 不支持 | 无 |
+| `--super-kernel` | 被测算子走 SuperKernel 编译流程（功能验证）：以 api_name 为 scope 标定，GE 图模式（-c/-d）与 aclgraph 模式均适用。需搭配 -c/-d/--aclgraph，不支持 --cpu | 关闭 |
 
 # 多卡并行
 

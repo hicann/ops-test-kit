@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """
@@ -17,12 +20,17 @@ import pytest
 import ttk.core_modules.operator.tbe_interface as _tbe_mod
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
+_real_opc = _tbe_mod.Opc
 _tbe_mod.Opc = MagicMock
 
 from ttk.core_modules.operator.op_interface import (  # noqa: E402, I001
     OperatorInterface,
     OperatorNotFoundError,
 )
+
+# 恢复真实 Opc：op_interface 已在上方导入时绑定了 mock，但 tbe_interface 模块属性
+# 不能永久污染——后续其他测试文件延迟导入 Opc 时仍应拿到真实类。
+_tbe_mod.Opc = _real_opc
 
 
 def _make_testcase(
@@ -83,7 +91,7 @@ def _mock_env(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _mock_singleton():
+def mock_singleton():
     """提供一个装配好 mock Opc 的 OperatorInterface 单例。"""
     p = patch("ttk.core_modules.operator.op_info_keeper.OpInfoKeeper")
     mock_cls = p.start()
@@ -98,8 +106,8 @@ def _mock_singleton():
 class TestWithCoreType:
     """with_core_type 链式设置算子核型并返回自身。"""
 
-    def test_sets_core_type(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_sets_core_type(self, mock_singleton):
+        oi = mock_singleton
         result = oi.with_core_type("VectorCore")
         assert result is oi
 
@@ -108,32 +116,32 @@ class TestGetOpGeneralizeFunc:
     """get_op_generalize_func 在空/None/合法 op_type 下的返回值。"""
 
     @pytest.mark.parametrize(
-        "op_type, expected",
+        ("op_type", "expected"),
         [("", None), (None, None), ("Add", "func")],
     )
-    def test_get_op_generalize_func(self, _mock_singleton, op_type, expected):
+    def test_get_op_generalize_func(self, mock_singleton, op_type, expected):
         if op_type == "Add":
-            _mock_singleton._opc.get_param_generalization.return_value = "func"
-        assert _mock_singleton.get_op_generalize_func(op_type) == expected
+            mock_singleton._opc.get_param_generalization.return_value = "func"
+        assert mock_singleton.get_op_generalize_func(op_type) == expected
 
 
 class TestSwitchOpc:
     """_switch_opc 仅对已知后端（tbe）切换，未知后端保持不变。"""
 
-    def test_switch_tbe(self, _mock_singleton):
-        _mock_singleton._switch_opc("tbe")
-        _mock_singleton._opc.switch_opc.assert_called_with("tbe")
+    def test_switch_tbe(self, mock_singleton):
+        mock_singleton._switch_opc("tbe")
+        mock_singleton._opc.switch_opc.assert_called_with("tbe")
 
-    def test_switch_invalid(self, _mock_singleton):
-        _mock_singleton._switch_opc("invalid")
-        _mock_singleton._opc.switch_opc.assert_not_called()
+    def test_switch_invalid(self, mock_singleton):
+        mock_singleton._switch_opc("invalid")
+        mock_singleton._opc.switch_opc.assert_not_called()
 
 
 class TestEnableShapeInt64:
     """_enable_shape_int64 根据 shape*numel*dtype 字节数判断是否需要 int64 索引。"""
 
     @pytest.mark.parametrize(
-        "data, expected",
+        ("data", "expected"),
         [
             ([{"shape": (np.iinfo(np.int32).max + 1,), "dtype": "float16"}], True),
             ([{"shape": (65536, 32768), "dtype": "float32"}], True),
@@ -230,15 +238,15 @@ class TestAddPrivateAttrToOpInfo:
 class TestConstructCompileContextOpInfo:
     """_construct_compile_context_op_info 解析 op_type、回退 UNKNOWN、应用 impl_mode。"""
 
-    def test_with_op_type(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_with_op_type(self, mock_singleton):
+        oi = mock_singleton
         with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as m:
             m.return_value.op_type_of.return_value = "AddOp"
             oi._construct_compile_context_op_info(lambda: None, "Add", "kernel", {})
         oi._opc.op_info.OpInfo.assert_called_with("AddOp", "AddOp")
 
-    def test_unknown_op_type(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_unknown_op_type(self, mock_singleton):
+        oi = mock_singleton
         with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as m, patch.object(
             OperatorInterface, "get_op_type_from_source_code", return_value=None
         ):
@@ -246,8 +254,8 @@ class TestConstructCompileContextOpInfo:
             oi._construct_compile_context_op_info(lambda: None, "Add", "kernel", {})
         oi._opc.op_info.OpInfo.assert_called_with("UNKNOWN", "UNKNOWN")
 
-    def test_with_impl_mode(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_with_impl_mode(self, mock_singleton):
+        oi = mock_singleton
         mock_oi = MagicMock()
         oi._opc.op_info.OpInfo.return_value = mock_oi
         with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as m:
@@ -260,15 +268,15 @@ class TestCompileOp:
     """_compile_op 对合法 func 返回编译耗时；不可调用或执行抛错时各自报错。"""
 
     @pytest.mark.parametrize(
-        "mode, func, expect_raises, match",
+        ("mode", "func", "expect_raises", "match"),
         [
             ("Dyn", MagicMock(), False, None),
             ("Dyn", MagicMock(side_effect=RuntimeError("err")), True, None),
             ("Cst", "str", True, "not callable"),
         ],
     )
-    def test_compile_op(self, _mock_singleton, mode, func, expect_raises, match):
-        oi = _mock_singleton
+    def test_compile_op(self, mock_singleton, mode, func, expect_raises, match):
+        oi = mock_singleton
         mock_gs = MagicMock(kernel_compile_options=[])
         with patch("ttk.core_modules.operator.op_interface.get_global_storage", return_value=mock_gs):
             if expect_raises:
@@ -282,8 +290,8 @@ class TestCompileOp:
 class TestSetCommonCompileContext:
     """set_common_compile_context 写入 master_pid 等公共编译附加项。"""
 
-    def test_basic(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_basic(self, mock_singleton):
+        oi = mock_singleton
         cxt = MagicMock()
         cxt.get_op_mode.return_value = "dynamic"
         case = _make_testcase()
@@ -297,8 +305,8 @@ class TestSetCommonCompileContext:
 class TestSetDynamicCompileContext:
     """set_dynamic_compile_context 在静态模式下装配输入信息。"""
 
-    def test_static_mode(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_static_mode(self, mock_singleton):
+        oi = mock_singleton
         cxt = MagicMock()
         cxt.get_op_mode.return_value = "static"
         mock_op_info = MagicMock()
@@ -316,8 +324,8 @@ class TestSetDynamicCompileContext:
 class TestGetDynOperator:
     """get_dyn_operator 找不到动态算子函数时返回 None。"""
 
-    def test_not_found(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_not_found(self, mock_singleton):
+        oi = mock_singleton
         with patch("ttk.core_modules.operator.op_interface.OpInfoKeeper") as m:
             m.return_value.get_operator_function.return_value = None
             assert oi.get_dyn_operator(_make_testcase()) is None
@@ -326,13 +334,13 @@ class TestGetDynOperator:
 class TestCompileDynamicShape:
     """compile_dynamic_shape 在算子缺失时返回 None，命中时走通编译流程。"""
 
-    def test_operator_not_found(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_operator_not_found(self, mock_singleton):
+        oi = mock_singleton
         with patch.object(oi, "get_dyn_operator", return_value=None):
             assert oi.compile_dynamic_shape((), _make_testcase(), "k") is None
 
-    def test_compile_success(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_compile_success(self, mock_singleton):
+        oi = mock_singleton
         case = _make_testcase()
         mock_gs = MagicMock(auto_switch=False, kernel_compile_options=[])
         dyn_params = (
@@ -377,14 +385,13 @@ class TestPrepareOperatorParametersConst:
                     return oi.prepare_operator_parameters_const(case)
             return oi.prepare_operator_parameters_const(case)
 
-    def test_operator_not_found(self, _mock_singleton):
-        oi = _mock_singleton
-        with patch.object(oi, "get_dyn_operator", return_value=None):
-            with pytest.raises(OperatorNotFoundError):
-                oi.prepare_operator_parameters_const(_make_testcase())
+    def test_operator_not_found(self, mock_singleton):
+        oi = mock_singleton
+        with patch.object(oi, "get_dyn_operator", return_value=None), pytest.raises(OperatorNotFoundError):
+            oi.prepare_operator_parameters_const(_make_testcase())
 
-    def test_normal_inputs_no_output(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_normal_inputs_no_output(self, mock_singleton):
+        oi = mock_singleton
         case = _make_testcase(
             input_shapes=((3, 4), (5, 6)),
             output_shapes=((3, 6),),
@@ -395,8 +402,8 @@ class TestPrepareOperatorParametersConst:
         assert ipt[1]["shape"] == (5, 6)
         assert opt == ()
 
-    def test_normal_inputs_with_output(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_normal_inputs_with_output(self, mock_singleton):
+        oi = mock_singleton
         case = _make_testcase(
             input_shapes=((3, 4), (5, 6)),
             output_shapes=((3, 6),),
@@ -407,15 +414,15 @@ class TestPrepareOperatorParametersConst:
         assert opt[0]["shape"] == (3, 6)
         assert opt[0]["dtype"] == "float16"
 
-    def test_none_input(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_none_input(self, mock_singleton):
+        oi = mock_singleton
         case = _make_testcase(input_shapes=(None, (3, 4)))
         ipt, opt = self._run(oi, case, op_output_defined=False)
         assert ipt[0] is None
         assert ipt[1]["shape"] == (3, 4)
 
-    def test_const_input(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_const_input(self, mock_singleton):
+        oi = mock_singleton
         op_info = {
             "inputs": [{"name": "x"}, {"name": "y", "valueDepend": "required"}],
             "outputs": [{"name": "z"}],
@@ -427,8 +434,8 @@ class TestPrepareOperatorParametersConst:
         assert ipt[1]["dtype"] == "float16"
         assert ipt[0]["shape"] == (3, 4)
 
-    def test_tl_input(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_tl_input(self, mock_singleton):
+        oi = mock_singleton
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 6)), (7, 8)),
             input_dtypes=(("float16", "float16"), "float16"),
@@ -443,8 +450,8 @@ class TestPrepareOperatorParametersConst:
         assert ipt[0][1]["dtype"] == "float16"
         assert ipt[1]["shape"] == (7, 8)
 
-    def test_tl_output(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_tl_output(self, mock_singleton):
+        oi = mock_singleton
         case = _make_testcase(
             input_shapes=((3, 4),),
             input_dtypes=("float16",),
@@ -457,8 +464,8 @@ class TestPrepareOperatorParametersConst:
         assert opt[0][0]["shape"] == (2, 3)
         assert opt[0][1]["shape"] == (4, 5)
 
-    def test_const_plus_tl_mixed(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_const_plus_tl_mixed(self, mock_singleton):
+        oi = mock_singleton
         op_info = {
             "inputs": [{"name": "x", "valueDepend": "required"}, {"name": "y"}, {"name": "z"}],
             "outputs": [{"name": "out"}],
@@ -488,8 +495,8 @@ class TestPrepareOperatorParametersConst:
         # pos2: non-const normal
         assert ipt[2]["shape"] == (7, 8)
 
-    def test_tl_input_and_tl_output(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_tl_input_and_tl_output(self, mock_singleton):
+        oi = mock_singleton
         case = _make_testcase(
             input_shapes=(((3, 4), (5, 6)), (7, 8)),
             input_dtypes=(("float16", "float16"), "float16"),
@@ -508,8 +515,8 @@ class TestPrepareOperatorParametersConst:
 class TestPrepareTilingParams:
     """prepare_tiling_params 装配输入/输出/属性三元组（属性为空）。"""
 
-    def test_basic(self, _mock_singleton):
-        oi = _mock_singleton
+    def test_basic(self, mock_singleton):
+        oi = mock_singleton
         case = _make_testcase()
         with patch.object(OperatorInterface, "construct_optiling_attrs", return_value=()), patch.object(
             oi,
@@ -524,15 +531,15 @@ class TestCallConstOpTiling:
     """call_const_op_tiling 成功返回含 tiling_time 的字典；undefined symbol 直接上抛，其余失败转 OPTILING_FAILURE。"""
 
     @pytest.mark.parametrize(
-        "tiling_side_effect, expected",
+        ("tiling_side_effect", "expected"),
         [
             ({"tiling_key": 0}, None),
             (RuntimeError("some error"), "OPTILING_FAILURE"),
             (RuntimeError("undefined symbol in foo"), "undefined symbol"),
         ],
     )
-    def test_call_const_op_tiling(self, _mock_singleton, tiling_side_effect, expected):
-        oi = _mock_singleton
+    def test_call_const_op_tiling(self, mock_singleton, tiling_side_effect, expected):
+        oi = mock_singleton
         mock_cr = MagicMock(tiling_op_type="Add", compile_info={})
         if isinstance(tiling_side_effect, Exception):
             oi._opc.do_op_tiling.side_effect = tiling_side_effect
@@ -556,7 +563,7 @@ class TestAdapterBeforeTiling:
     """adapter_before_tiling 对 Conv2D 输入格式做 FRACTAL_Z 转换，非 Conv2D 不变。"""
 
     @pytest.mark.parametrize(
-        "op_type_list, attributes, fi, expect_transform",
+        ("op_type_list", "attributes", "fi", "expect_transform"),
         [
             (["Matmul"], {}, (), False),
             (["Conv2D"], {"groups": 1}, [None, {"format": "NC1HWC0", "shape": (1, 1, 8, 8, 16)}], True),
