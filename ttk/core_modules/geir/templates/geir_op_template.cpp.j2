@@ -16,7 +16,9 @@
 #include "tensor.h"
 #include "ge_error_codes.h"
 #include "ge_api.h"
+{% if ge_prof_ok %}
 #include "ge_prof.h"
+{% endif %}
 #include "{{ proto_file }}"
 
 namespace ge {
@@ -228,24 +230,9 @@ static JsonValue jsonParseFile(const char* path) {
 
 static uint32_t GetDataTypeSize(DataType dt) {
     switch (dt) {
-        case DT_FLOAT:       return 4;
-        case DT_FLOAT16:     return 2;
-        case DT_BF16:        return 2;
-        case DT_INT32:       return 4;
-        case DT_INT16:       return 2;
-        case DT_INT8:        return 1;
-        case DT_UINT8:       return 1;
-        case DT_UINT16:      return 2;
-        case DT_UINT32:      return 4;
-        case DT_INT64:       return 8;
-        case DT_UINT64:      return 8;
-        case DT_DOUBLE:      return 8;
-        case DT_BOOL:        return 1;
-        case DT_FLOAT8_E4M3FN: return 1;
-        case DT_FLOAT8_E5M2:  return 1;
-        case DT_COMPLEX32:   return 4;
-        case DT_COMPLEX64:   return 8;
-        case DT_COMPLEX128:  return 16;
+{% for dt_enum, dt_size in dtype_size_cases %}
+        case {{ dt_enum }}: return {{ dt_size }};
+{% endfor %}
         default:             return 1;
     }
 }
@@ -296,11 +283,13 @@ static int LoadInputFromFile(const string& path, DataType dt,
     int64_t num_elements = ShapeSize(data_shape);
     int64_t expected;
     switch (dt) {
-        case DT_FLOAT4_E2M1:
-        case DT_FLOAT4_E1M2:
-        case DT_HIFLOAT4:
+{% for dt_enum in packed_float4_enums %}
+        case {{ dt_enum }}:
+{% endfor %}
+{% if packed_float4_enums %}
             expected = (num_elements + 1) / 2;
             break;
+{% endif %}
         default:
             expected = num_elements * GetDataTypeSize(dt);
     }
@@ -362,6 +351,7 @@ int main(int argc, char* argv[]) {
         return FAILED;
     }
 
+{% if ge_prof_ok %}
     bool prof_init_done = false;
     bool prof_started = false;
     aclgrphProfConfig* prof_cfg = nullptr;
@@ -372,10 +362,13 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "[TTK-GEIR] aclgrphProfInit failed, profiling disabled\n");
         }
     }
+{% endif %}
     auto finalize_all = [&]() {
+{% if ge_prof_ok %}
         if (prof_started && prof_cfg) { aclgrphProfStop(prof_cfg); prof_started = false; }
         if (prof_cfg) { aclgrphProfDestroyConfig(prof_cfg); prof_cfg = nullptr; }
         if (prof_init_done) { aclgrphProfFinalize(); prof_init_done = false; }
+{% endif %}
         GEFinalize();
     };
 
@@ -635,6 +628,7 @@ int main(int argc, char* argv[]) {
         return FAILED;
     }
 
+{% if ge_prof_ok %}
     if (prof_init_done) {
         uint32_t dev_list[1] = {(uint32_t)device_id};
         prof_cfg = aclgrphProfCreateConfig(dev_list, 1, kAicoreArithmeticUtilization,
@@ -645,6 +639,7 @@ int main(int argc, char* argv[]) {
             fprintf(stderr, "[TTK-GEIR] aclgrphProfStart failed\n");
         }
     }
+{% endif %}
 
     ret = session->RunGraph(graph_id, input_tensors, output_tensors);
     if (ret != SUCCESS) {

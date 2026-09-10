@@ -10,6 +10,7 @@
 csrc/build/
 csrc/*/build/
 ttk/_build_hash.py
+*.egg-info/
 
 # Logs
 **/*.log
@@ -21,6 +22,7 @@ kernel_meta/
 msprof/
 sim_output/
 **/*_result.csv
+fusion_result.json
 
 # Models & data
 *.bin

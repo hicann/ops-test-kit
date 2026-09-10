@@ -1,11 +1,67 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 
 import logging
 import os
+import re
 import subprocess
 from typing import Optional
+
+_DT_ENUM_RE = re.compile(r"^\s*(DT_[A-Za-z0-9_]+)\s*=", re.MULTILINE)
+_CANN_FEATURES = None
+
+
+def detect_cann_features():
+    """Probe installed CANN headers for symbols referenced by the GEIR template.
+
+    Returns None when the Ascend installation or graph/types.h cannot be located
+    (callers then keep the unfiltered template defaults). Otherwise returns
+    {"ge_enums": set of DT_* names defined in graph/types.h, "ge_prof_ok": whether
+    ge_prof.h exists and defines GE_PROF_SUCCESS}. Newer dtypes (DT_HIFLOAT4 etc.)
+    and GE_PROF_SUCCESS are absent on older CANN (e.g. 8.5.0) and must not be
+    emitted for those installations.
+    """
+    global _CANN_FEATURES
+    if _CANN_FEATURES is not None:
+        return _CANN_FEATURES
+    from ttk._env import _find_ascend_root
+
+    asc_path = _find_ascend_root()
+    if not asc_path:
+        return None
+    from ttk.utilities.platform import get_ascend_scene_info
+
+    scene_os, scene_arch = get_ascend_scene_info()
+    arch_dir = f"{scene_arch}-{scene_os}" if scene_arch and scene_os else "x86_64-linux"
+
+    def _read(*rel):
+        for base in (os.path.join(asc_path, arch_dir), asc_path):
+            path = os.path.join(base, *rel)
+            if os.path.isfile(path):
+                try:
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        return f.read()
+                except OSError:
+                    return None
+        return None
+
+    types_h = _read("include", "graph", "types.h")
+    if types_h is None:
+        return None
+    ge_prof_h = _read("include", "ge", "ge_prof.h")
+
+    _CANN_FEATURES = {
+        "ge_enums": set(_DT_ENUM_RE.findall(types_h)),
+        "ge_prof_ok": ge_prof_h is not None and "GE_PROF_SUCCESS" in ge_prof_h,
+    }
+    return _CANN_FEATURES
 
 
 class GeirCompiler:
@@ -80,7 +136,7 @@ class GeirCompiler:
 
         logging.info(f"GEIR compile: {' '.join(cmd)}")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=self._build_dir)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=self._build_dir, check=False)
             if result.returncode != 0:
                 logging.error(f"GEIR compile failed:\n{result.stderr}")
                 return None
@@ -100,7 +156,7 @@ class GeirCompiler:
 
         asc_path = _find_ascend_root() or ""
         parts.append(asc_path)
-        h = hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
+        h = hashlib.md5("|".join(parts).encode()).hexdigest()[:12]  # noqa: S324  # 非安全用途：缓存键校验和
         return f"{os.path.getmtime(source_path)}:{h}"
 
     def compile_op(
@@ -124,7 +180,8 @@ class GeirCompiler:
             fcntl.flock(lf, fcntl.LOCK_EX)
             if os.path.isfile(binary_path) and os.path.isfile(stamp_path):
                 try:
-                    cached_key = open(stamp_path).read().strip()
+                    with open(stamp_path) as sf:
+                        cached_key = sf.read().strip()
                 except OSError:
                     cached_key = ""
                 if cached_key == cache_key:
@@ -137,7 +194,7 @@ class GeirCompiler:
 
             logging.info(f"GEIR op compile: {' '.join(cmd)}")
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=op_dir)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=op_dir, check=False)
                 if result.returncode != 0:
                     logging.error(f"GEIR op compile failed:\n{result.stderr}")
                     return None
@@ -156,10 +213,9 @@ class GeirCompiler:
 
     def cleanup(self, input_prefix=None):
         if input_prefix:
+            import contextlib
             import glob
 
             for f in glob.glob(f"{input_prefix}_*.bin"):
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(f)
-                except OSError:
-                    pass

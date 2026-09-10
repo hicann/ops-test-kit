@@ -53,7 +53,7 @@ python3 -m ttk geir -i examples/case_store/kernel/add.csv
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
 
 # E2E：框架端到端（--cpu 强制 CPU 后端）
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.xlsx
 ```
 
 运行后终端输出每个用例的精度状态和整体通过率，加 `-o` 可输出结果 CSV。参数帮助执行 `python3 -m ttk kernel --help`。

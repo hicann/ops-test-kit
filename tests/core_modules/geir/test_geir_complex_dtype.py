@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 """Tests for GEIR complex32/64/128 dtype support."""
 
 import struct
@@ -84,10 +90,19 @@ def test_template_get_data_type_size_has_complex():
         attr_entries=[],
         dtype_map=[(v, v) for v in dt_enums],
         format_map=[("FORMAT_ND", "FORMAT_ND")],
+        dtype_size_cases=[
+            ("DT_FLOAT", 4),
+            ("DT_FLOAT16", 2),
+            ("DT_COMPLEX32", 4),
+            ("DT_COMPLEX64", 8),
+            ("DT_COMPLEX128", 16),
+        ],
+        packed_float4_enums=[],
+        ge_prof_ok=True,
     )
-    assert "case DT_COMPLEX32:   return 4;" in src
-    assert "case DT_COMPLEX64:   return 8;" in src
-    assert "case DT_COMPLEX128:  return 16;" in src
+    assert "case DT_COMPLEX32: return 4;" in src
+    assert "case DT_COMPLEX64: return 8;" in src
+    assert "case DT_COMPLEX128: return 16;" in src
     assert "DT_COMPLEX32" in src
     assert "DT_COMPLEX64" in src
     assert "DT_COMPLEX128" in src

@@ -13,7 +13,7 @@ TTK（ops Test Tool Kit）是昇腾 NPU 单算子测试框架：以 CSV 描述�
 python3 -m ttk kernel -i examples/case_store/kernel/add.csv
 python3 -m ttk geir   -i examples/case_store/kernel/add.csv
 python3 -m ttk aclnn  -i examples/case_store/aclnn/aclnn_cat.csv
-python3 -m ttk e2e    -i examples/case_store/e2e/torch_add.csv   # --cpu 强制 CPU 后端
+python3 -m ttk e2e    -i examples/case_store/e2e/torch_add.xlsx  # --cpu 强制 CPU 后端
 
 # NPUSim 仿真后端（kernel/aclnn/e2e 均支持，无真机即可跑）
 python3 -m ttk kernel -i examples/case_store/kernel/add.csv --backend npusim --sim-report

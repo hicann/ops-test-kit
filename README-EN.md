@@ -41,7 +41,7 @@ python3 -m ttk geir -i examples/case_store/kernel/add.csv
 python3 -m ttk aclnn -i examples/case_store/aclnn/aclnn_cat.csv
 
 # E2E: framework end-to-end (--cpu forces CPU backend)
-python3 -m ttk e2e -i examples/case_store/e2e/torch_add.csv
+python3 -m ttk e2e -i examples/case_store/e2e/torch_add.xlsx
 ```
 
 Per-case precision status and overall pass rate are printed to the terminal. Add `-o` to output a result CSV. Run `python3 -m ttk kernel --help` for parameters.

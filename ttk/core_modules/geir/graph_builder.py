@@ -50,6 +50,29 @@ _DTYPE_TO_GE_ENUM = {
     "complex128": "DT_COMPLEX128",
 }
 
+_DTYPE_SIZE_BY_ENUM = {
+    "DT_FLOAT": 4,
+    "DT_FLOAT16": 2,
+    "DT_BF16": 2,
+    "DT_INT32": 4,
+    "DT_INT16": 2,
+    "DT_INT8": 1,
+    "DT_UINT8": 1,
+    "DT_UINT16": 2,
+    "DT_UINT32": 4,
+    "DT_INT64": 8,
+    "DT_UINT64": 8,
+    "DT_DOUBLE": 8,
+    "DT_BOOL": 1,
+    "DT_FLOAT8_E4M3FN": 1,
+    "DT_FLOAT8_E5M2": 1,
+    "DT_COMPLEX32": 4,
+    "DT_COMPLEX64": 8,
+    "DT_COMPLEX128": 16,
+}
+
+_PACKED_FLOAT4_ENUMS = ("DT_FLOAT4_E2M1", "DT_FLOAT4_E1M2", "DT_HIFLOAT4")
+
 _FORMAT_TO_GE_ENUM = {
     "ND": "FORMAT_ND",
     "NC1HWC0": "FORMAT_NC1HWC0",
@@ -191,6 +214,14 @@ class GeirGraphBuilder:
 
         attr_entries = self._build_attr_entries(proto_info)
 
+        from .compiler import detect_cann_features
+
+        features = detect_cann_features()
+        ge_enums = features["ge_enums"] if features else None
+        dtype_map = [(v, v) for v in _DTYPE_TO_GE_ENUM.values() if ge_enums is None or v in ge_enums]
+        dtype_size_cases = [(e, s) for e, s in _DTYPE_SIZE_BY_ENUM.items() if ge_enums is None or e in ge_enums]
+        packed_float4_enums = [e for e in _PACKED_FLOAT4_ENUMS if ge_enums is None or e in ge_enums]
+
         source = _render_template(
             "geir_op_template.cpp.j2",
             proto_file=proto_info.proto_file,
@@ -200,8 +231,11 @@ class GeirGraphBuilder:
             dynamic_input_names=(proto_info.dynamic_inputs or []),
             dynamic_output_names=(proto_info.dynamic_outputs or []),
             attr_entries=attr_entries,
-            dtype_map=[(v, v) for v in _DTYPE_TO_GE_ENUM.values()],
+            dtype_map=dtype_map,
             format_map=[(v, v) for v in _FORMAT_TO_GE_ENUM.values()],
+            dtype_size_cases=dtype_size_cases,
+            packed_float4_enums=packed_float4_enums,
+            ge_prof_ok=(features["ge_prof_ok"] if features else True),
         )
 
         source_path = os.path.join(self._op_dir, f"{op_name}.cpp")
