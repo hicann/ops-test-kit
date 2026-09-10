@@ -89,9 +89,14 @@ class CrossCheckComparison(ComparisonBase):
         """Path A: 特殊位（NaN/Inf）三方交叉校验。
 
         规则（满足任一即通过）：
-          1. NPU 与 third_party 一致（不论 golden 为何值）→ 通过
-          2. golden 为 nan/inf/-inf 且 NPU 与 golden 一致（不论 third_party）→ 通过
-          以上都不满足 → 不通过
+          1. NPU 与 third_party 一致（同为 nan/+inf/-inf，或同为有限且数值相等）→ 通过
+          2. NPU 与 golden 一致（同为 nan/+inf/-inf，或同为有限且数值相等）→ 通过
+          以上都不满足（NPU 与 golden、third_party 双方均不一致）→ 不通过
+
+        规则2 不要求 golden 非有限：golden 有限时真值明确，NPU 与其一致即无偏差，
+        third_party 单方面的 NaN/Inf 属竞品缺陷（如 fp16 中间量溢出后 0*inf），
+        不应归因为 NPU 的测试失败——失败语义与 Path B 的比值哲学对齐：
+        只有 NPU 偏离 golden 且竞品能对上 golden 才判 NPU 失败。
         """
         if not special.any():
             return True
@@ -102,11 +107,10 @@ class CrossCheckComparison(ComparisonBase):
 
         # 规则1：NPU 与 third_party 一致（同为 nan/+inf/-inf，或同为有限且数值相等）
         tb_match = (t_nan & b_nan) | (t_pinf & b_pinf) | (t_ninf & b_ninf) | (t_fin & b_fin & (t == b))
-        # 规则2：golden 非有限 且 NPU 与 golden 一致（同为 nan/+inf/-inf）
-        g_special = ~g_fin
+        # 规则2：NPU 与 golden 一致（同为 nan/+inf/-inf，或同为有限且数值相等）
         tg_match = (t_nan & g_nan) | (t_pinf & g_pinf) | (t_ninf & g_ninf) | (t_fin & g_fin & (t == g))
 
-        pass_pos = tb_match | (g_special & tg_match)
+        pass_pos = tb_match | tg_match
         fail_pos = special & ~pass_pos
         return not fail_pos.any()
 

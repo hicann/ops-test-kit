@@ -135,7 +135,7 @@ def test_nan_inf_pass_npu_matches_third():
 
 
 def test_nan_inf_pass_npu_matches_golden():
-    """规则2：golden 为 nan/inf 且 NPU 与 golden 一致 → 通过（不论 third_party）。"""
+    """规则2：NPU 与 golden 一致 → 通过（不论 third_party、不论 golden 是否有限）。"""
     # golden=NaN, NPU=NaN, third=1.0 → NPU 与 golden 一致 → 通过
     g = np.array([np.nan], dtype=np.float32)
     out = np.array([np.nan], dtype=np.float32)
@@ -148,6 +148,30 @@ def test_nan_inf_pass_npu_matches_golden():
     g = np.array([np.inf], dtype=np.float32)
     out = np.array([np.inf], dtype=np.float32)
     third = np.array([-np.inf], dtype=np.float32)
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert is_pass
+
+
+def test_nan_inf_pass_npu_matches_finite_golden_third_special():
+    """规则2（golden 有限）：NPU 与有限 golden 一致、third_party 为 NaN/Inf → PASS。
+
+    竞品单方面特殊值（如 fp16 中间量溢出后 0*inf=NaN）属竞品缺陷，不应归因为
+    NPU 的测试失败；失败语义与 Path B 比值哲学对齐：只有 NPU 偏离 golden 且
+    竞品能对上 golden 才判 NPU 失败。
+    """
+    # golden=0, NPU=0, third=NaN → 通过
+    g = np.array([0.0], dtype=np.float32)
+    out = np.array([0.0], dtype=np.float32)
+    third = np.array([np.nan], dtype=np.float32)
+    c = _make(out, g, third, _NAN_PARAMS)
+    _, _, is_pass, _ = c.compare()
+    assert is_pass
+
+    # golden=39840, NPU=39840, third=+Inf → 通过
+    g = np.array([39840.0], dtype=np.float32)
+    out = np.array([39840.0], dtype=np.float32)
+    third = np.array([np.inf], dtype=np.float32)
     c = _make(out, g, third, _NAN_PARAMS)
     _, _, is_pass, _ = c.compare()
     assert is_pass

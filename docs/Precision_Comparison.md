@@ -318,6 +318,10 @@ rmse_ratio = rmse(a,g) / rmse(b,g)             # RMSE 比
 
 小值域（`|g| < small_value`）：NPU 误差计数 / XPU 误差计数 ≤ 2.0 → PASS
 
+### 特殊值处理（NaN/Inf）
+
+特殊位满足任一规则即通过：NPU 与 third_party 一致，或 NPU 与 golden 一致（同为 NaN/±Inf，或同为有限且数值相等）。仅当 NPU 与 golden、third_party 双方均不一致时才判 FAIL——即「NPU 偏离 golden 且竞品能对上 golden」。竞品单方面产出 NaN/Inf（NPU 与 golden 一致）不判失败。
+
 ### Level 预设
 
 | Level | mare_ratio | mere_ratio | rmse_ratio | 适用 |
