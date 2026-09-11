@@ -218,7 +218,11 @@ class GeirGraphBuilder:
 
         features = detect_cann_features()
         ge_enums = features["ge_enums"] if features else None
-        dtype_map = [(v, v) for v in _DTYPE_TO_GE_ENUM.values() if ge_enums is None or v in ge_enums]
+        # DT_UNDEFINED 供输出 desc 使用：dtype 置 DT_UNDEFINED 触发 GE 调算子
+        # InferDataType 回调，StringToDataType 需可解析该枚举。
+        dtype_map = [("DT_UNDEFINED", "DT_UNDEFINED")] + [
+            (v, v) for v in _DTYPE_TO_GE_ENUM.values() if ge_enums is None or v in ge_enums
+        ]
         dtype_size_cases = [(e, s) for e, s in _DTYPE_SIZE_BY_ENUM.items() if ge_enums is None or e in ge_enums]
         packed_float4_enums = [e for e in _PACKED_FLOAT4_ENUMS if ge_enums is None or e in ge_enums]
 
@@ -275,6 +279,11 @@ class GeirGraphBuilder:
 
         is_dynamic = mode.startswith("dynamic")
         is_binary = "binary" in mode
+        # 输出 desc 的 dtype 一律置 DT_UNDEFINED，GE 编译期必须调用算子的
+        # InferDataType 回调推导，否则 dtype 建图时已知、回调永不触发（issue #159）。
+        # 推导出的 dtype 由 GE 自行落位：回调缺失或执行失败会导致图编译/执行失败，
+        # 即完成功能验证；inplace 输出仍继承对应输入的 desc（dtype 已知），不参与
+        # 推导触发。
 
         proto_info = self._proto_loader.get_op_info(op_name)
         if proto_info is None:
@@ -493,7 +502,7 @@ class GeirGraphBuilder:
                         {
                             "data_shape": out_data_shape,
                             "desc_shape": out_desc_shape,
-                            "dtype": _resolve_dtype(edt),
+                            "dtype": "DT_UNDEFINED",
                             "format": _resolve_format(efmt),
                             "ori_format": _resolve_format(eori_fmt),
                             "ori_shape": (
@@ -516,7 +525,7 @@ class GeirGraphBuilder:
                     "name": name,
                     "data_shape": out_data_shape,
                     "desc_shape": out_desc_shape,
-                    "dtype": _resolve_dtype(dtype_str),
+                    "dtype": "DT_UNDEFINED",
                     "format": _resolve_format(fmt_str),
                     "ori_format": _resolve_format(ori_fmt_str),
                     "ori_shape": (
