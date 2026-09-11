@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 
 """
 Simple parameter extractor for torch/torch_npu APIs.
@@ -13,6 +19,7 @@ Returns APIParamInfo with typed parameter list including Tensor/List[Tensor]/Sca
 """
 
 import ast
+import contextlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -151,10 +158,8 @@ class APIParamInfo:
         func_name = parts[-1] if parts else ""
         is_inplace_name = func_name.endswith("_") and not func_name.startswith("_")
         if is_inplace_name:
-            try:
+            with contextlib.suppress(Exception):
                 self._detect_inplace_from_schema()
-            except Exception:
-                pass
             if not self.is_inplace:
                 self.is_inplace = True
                 tensor_params = [i for i, p in enumerate(self.params) if p.is_tensor_like]
@@ -229,9 +234,8 @@ class APIParamInfo:
             if layout.has_var_input:
                 if tensor_count < layout.required_input_count:
                     continue
-            else:
-                if tensor_count < layout.required_input_count or tensor_count > layout.input_count:
-                    continue
+            elif tensor_count < layout.required_input_count or tensor_count > layout.input_count:
+                continue
             if nested_flags is not None:
                 type_ok = True
                 non_var = [p for p in layout.input_params if not getattr(p, "is_var_positional", False)]
@@ -286,22 +290,22 @@ def _parse_params_from_signature(sig: str) -> Optional[List[ParamInfo]]:
     parts = _split_by_comma(sig)
     keyword_only = False
     for part in parts:
-        part = part.strip()
-        if not part or part == "/":
+        part_s = part.strip()
+        if not part_s or part_s == "/":
             continue
-        if part in ("*", "\\*"):
+        if part_s in ("*", "\\*"):
             keyword_only = True
             continue
         default = None
         is_optional = keyword_only
         is_var_positional = False
-        if "=" in part:
-            main_part, default = part.split("=", 1)
+        if "=" in part_s:
+            main_part, default = part_s.split("=", 1)
             main_part = main_part.strip()
             default = default.strip()
             is_optional = True
         else:
-            main_part = part
+            main_part = part_s
         # Detect *args (VAR_POSITIONAL) prefix, e.g. "*operands" or "*tensors"
         if main_part.startswith("*") and not main_part.startswith("**"):
             is_var_positional = True
@@ -606,7 +610,7 @@ def _normalize_args_type(type_str: str) -> str:
                 unique.append(n)
         if len(unique) >= 2:
             return "|".join(unique)
-        elif len(unique) == 1:
+        if len(unique) == 1:
             return unique[0]
         return ""
     # Handle comma-separated: "int, float, inf, -inf, 'fro', 'nuc'"
@@ -634,11 +638,11 @@ def _normalize_args_type(type_str: str) -> str:
                 unique.append(n)
         if len(unique) >= 2:
             return "|".join(unique)
-        elif len(unique) == 1:
+        if len(unique) == 1:
             return unique[0]
         return ""
     # Handle "tuple of ints", "list of Tensors"
-    if type_str.startswith("tuple of ") or type_str.startswith("list of "):
+    if type_str.startswith(("tuple of ", "list of ")):
         inner = type_str.split(" of ")[1].strip()
         if inner in ("ints", "int"):
             return "tuple of ints"
@@ -909,9 +913,9 @@ def _extract_params_from_type_error(obj) -> Optional[Tuple[List[ParamInfo], str,
         if "expected one of:" in error_msg:
             all_overloads = []
             for line in error_msg.split("\n"):
-                line = line.strip()
-                if line.startswith("*"):
-                    sig = line[1:].strip()
+                line_s = line.strip()
+                if line_s.startswith("*"):
+                    sig = line_s[1:].strip()
                     if sig.startswith("(") and sig.endswith(")"):
                         sig = sig[1:-1]
                     parsed = _parse_params_from_signature(sig)
@@ -925,8 +929,8 @@ def _extract_params_from_type_error(obj) -> Optional[Tuple[List[ParamInfo], str,
             params = _parse_params_from_signature(sig)
             if params:
                 return params, "TypeError(single-signature)", []
-    except Exception:
-        pass
+    except Exception as _e:
+        logging.debug("param extract skipped: %s", _e)
     return None
 
 
@@ -947,8 +951,8 @@ def _extract_params_from_tensor_call(obj) -> Optional[Tuple[List[ParamInfo], str
         obj(x)
     except TypeError as e:
         return _parse_simple_type_error(str(e))
-    except Exception:
-        pass
+    except Exception as _e:
+        logging.debug("param extract skipped: %s", _e)
     return None
 
 
@@ -1110,7 +1114,7 @@ def _extract_params_from_op_declaration(api_name: str) -> Optional[Tuple[List[Pa
         (params, source, return_count) or None
     """
     # Only handle NPU APIs: torch_npu.xxx or torch.npu_xxx
-    if not (api_name.startswith("torch_npu.") or api_name.startswith("torch.npu_")):
+    if not (api_name.startswith(("torch_npu.", "torch.npu_"))):
         return None
     obj = _resolve_function(api_name)
     if obj is None:
@@ -1179,20 +1183,20 @@ def _parse_npu_declaration(sig: str) -> Optional[List[ParamInfo]]:
     saw_star = False
     parts = _split_by_comma(sig)
     for part in parts:
-        part = part.strip()
-        if not part or part.startswith("->"):
+        part_s = part.strip()
+        if not part_s or part_s.startswith("->"):
             continue
-        if part == "*":
+        if part_s == "*":
             saw_star = True
             continue
-        m = re.match(r"(\w+(?:\([^)]*\))?(?:\[\d*\])?)\??\s+(\w+)(?:=(.+))?", part)
+        m = re.match(r"(\w+(?:\([^)]*\))?(?:\[\d*\])?)\??\s+(\w+)(?:=(.+))?", part_s)
         if m:
             type_hint = m.group(1)
             type_hint = re.sub(r"\([^)]*\)", "", type_hint)
             name = m.group(2)
             default = m.group(3) or None
             type_hint = _normalize_npu_type(type_hint)
-            is_optional = default is not None or "?" in part.split()[0]
+            is_optional = default is not None or "?" in part_s.split()[0]
             if default is not None:
                 default = _coerce_default_value(default, type_hint)
             params.append(
@@ -1261,11 +1265,27 @@ def _extract_params_from_aten_schemas(
     api_name: str,
 ) -> Optional[Tuple[List[ParamInfo], str, List[List[ParamInfo]], List[int]]]:
     obj = _resolve_function(api_name)
-    if obj is None or not hasattr(obj, "_schemas"):
+    if obj is None:
         return None
-    schemas = obj._schemas
+    if hasattr(obj, "_schemas"):
+        schemas = obj._schemas
+    elif hasattr(obj, "_schema"):
+        # api_name 钉死具名重载时 _resolve_function 返回 OpOverload, 它只有单数 _schema;
+        # 不取这一支会退到 inspect.signature, 而 OpOverload.__call__ 的签名是
+        # (*args, **kwargs), 只能解析出一个 "args", 下游按形参名派发时长度对不上。
+        schemas = {api_name.rsplit(".", 1)[-1]: obj._schema}
+    else:
+        return None
     if not schemas:
         return None
+    # api_name 若钉死了具体重载(如 torch.ops.aten._foreach_addcmul.Tensor)，只解析该重载。
+    # _resolve_function 会退回到 OpOverloadPacket(丢掉重载后缀)，若不在此过滤，整个
+    # packet 的重载都会被收进来——其中的 *_out 变体带 is_out_required=True，会让本来
+    # 靠返回值取输出的用例被误判为 MISSING_REQUIRED_OUTPUT；多重载并存也会导致
+    # CASE_FIELD_AMBIGUOUS。
+    overload_tail = api_name.rsplit(".", 1)[-1]
+    if overload_tail in schemas:
+        schemas = {overload_tail: schemas[overload_tail]}
     all_overloads = []
     return_counts = []
     for schema in schemas.values():
@@ -1602,10 +1622,7 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
     except TypeError as e:
         msg = str(e)
         m = re.search(r"missing \d+ required positional arguments?: (.+)", msg)
-        if m:
-            cpp_param_set = set(n.strip().strip("\"'") for n in m.group(1).split(","))
-        else:
-            cpp_param_set = None
+        cpp_param_set = {n.strip().strip("\"'") for n in m.group(1).split(",")} if m else None
     except Exception:
         cpp_param_set = None
 
@@ -1714,8 +1731,8 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
                     break
             if not fixed:
                 to_remove.append(idx)
-        except Exception:
-            pass
+        except Exception as _e:
+            logging.debug("param extract skipped: %s", _e)
     for idx in reversed(to_remove):
         params.pop(idx)
 
@@ -1769,8 +1786,8 @@ def _detect_keyword_only_by_probing(obj, params: List[ParamInfo]):
                         break
                 if not fixed:
                     to_remove.append(idx)
-            except Exception:
-                pass
+            except Exception as _e:
+                logging.debug("param extract skipped: %s", _e)
         removed_names = set()
         for idx in reversed(to_remove):
             removed_names.add(params[idx].name)
@@ -1805,8 +1822,8 @@ def _try_recover_removal(obj, pos_probes, params, removed_names):
             obj(*pos_probes, **{new_name: new_default})
         except TypeError:
             continue
-        except Exception:
-            pass
+        except Exception as _e:
+            logging.debug("param extract skipped: %s", _e)
         existing_kw = [p for p in params if p.is_keyword_only]
         insert_idx = len(params)
         if existing_kw:
@@ -2063,9 +2080,9 @@ def _extract_api_params_impl(api_name: str) -> Optional[APIParamInfo]:
     # NPU APIs (torch_npu.xxx, torch.npu_xxx, torch.ops.*):
     # Declaration is authoritative
     if (
-        api_name.startswith("torch.ops.")
-        or api_name.startswith("torch_npu.")
-        or (api_name.startswith("torch.npu_") and "torch_npu" not in api_name)
+        api_name.startswith(("torch.ops.", "torch_npu."))
+        or api_name.startswith("torch.npu_")
+        and "torch_npu" not in api_name
     ):
         result = _extract_params_from_op_declaration(api_name)
         if result:
@@ -2220,7 +2237,7 @@ def _normalize_pyi_type(t: str) -> str:
         if inner_type == "Tensor":
             return "tuple of Tensors"
         return f"tuple of {inner_type}s"
-    if t.startswith("tuple[") or t.startswith("Tuple["):
+    if t.startswith(("tuple[", "Tuple[")):
         inner = t.split("[", 1)[1].rstrip("]")
         inner_type = _normalize_pyi_type(inner.split(",")[0].strip())
         if inner_type == "Tensor":
@@ -2228,7 +2245,7 @@ def _normalize_pyi_type(t: str) -> str:
         if inner_type == "int":
             return "tuple of ints"
         return f"tuple of {inner_type}s"
-    if t.startswith("list[") or t.startswith("List["):
+    if t.startswith(("list[", "List[")):
         inner = t.split("[", 1)[1].rstrip("]")
         inner_type = _normalize_pyi_type(inner)
         if inner_type == "Tensor":
@@ -2242,21 +2259,21 @@ def _parse_pyi_param_str(param_str: str) -> Optional[List[ParamInfo]]:
     params = []
     kw_only = False
     for part in parts:
-        part = part.strip()
-        if not part or part == "/":
+        part_s = part.strip()
+        if not part_s or part_s == "/":
             continue
-        if part == "*":
+        if part_s == "*":
             kw_only = True
             continue
         default = None
         is_optional = kw_only
-        if "=" in part:
-            main_part, default_str = part.split("=", 1)
+        if "=" in part_s:
+            main_part, default_str = part_s.split("=", 1)
             main_part = main_part.strip()
             default_str = default_str.strip()
             is_optional = True
         else:
-            main_part = part
+            main_part = part_s
             default_str = None
         if ":" in main_part:
             name, type_hint = main_part.split(":", 1)
@@ -2298,8 +2315,8 @@ def _load_pyi_signatures():
                 if full_name not in _PYI_CACHE:
                     _PYI_CACHE[full_name] = []
                 _PYI_CACHE[full_name].append(parsed)
-    except Exception:
-        pass
+    except Exception as _e:
+        logging.debug("param extract skipped: %s", _e)
 
     _load_nn_functional_pyi(_PYI_CACHE)
     return _PYI_CACHE
@@ -2386,8 +2403,8 @@ def _load_nn_functional_pyi(cache):
                 if full_name not in cache:
                     cache[full_name] = []
                 cache[full_name].append(parsed)
-    except Exception:
-        pass
+    except Exception as _e:
+        logging.debug("param extract skipped: %s", _e)
 
 
 def _extract_params_from_pyi(api_name: str):
@@ -2415,7 +2432,15 @@ def _resolve_function(api_name: str):
             if len(parts) >= 4:
                 namespace = parts[2]
                 op_name = parts[3]
-                return getattr(torch.ops, namespace).__getattr__(op_name)
+                packet = getattr(torch.ops, namespace).__getattr__(op_name)
+                # api_name 钉死了具名重载(如 ...._foreach_addcdiv.Tensor)时取该重载:
+                # OpOverloadPacket 只在存在 default 重载时才有 _schema, 全具名重载的
+                # 算子(Scalar/ScalarList/Tensor)取不到, 会导致形参解析为空。
+                if len(parts) >= 5 and packet is not None:
+                    overload = getattr(packet, parts[4], None)
+                    if overload is not None:
+                        return overload
+                return packet
         if len(parts) >= 3 and parts[0] == "torch" and parts[1] == "Tensor":
             import torch
 

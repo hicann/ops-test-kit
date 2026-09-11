@@ -100,6 +100,20 @@ def generate_golden(testcase, raw_inputs, plugin_path=None, switches=None, backe
     golden_api = getattr(testcase, "golden_api", None)
     dist = testcase.tensor_list_dist
     api_name = testcase.api_name
+
+    # mutable-ref 算子原地改写变量, golden 生成在设备执行之后、与被测共用同一个
+    # tf.Variable —— 不复位等于在被测改过 N 遍的脏状态上再算一遍。
+    if str(api_name or "").startswith(("tf.", "tensorflow.")):
+        try:
+            from .tf_stateful import is_ref_variable
+
+            _flat = getattr(testcase, "flatten_tensors", None)
+            if _flat is not None:
+                for _i, _t in enumerate(_flat):
+                    if is_ref_variable(_t) and _i < len(raw_inputs) and raw_inputs[_i] is not None:
+                        _t.assign(raw_inputs[_i])
+        except Exception as _e:  # pragma: no cover
+            logging.warning(f"[golden] mutable-ref reset skipped: {_e}")
     framework = detect_framework(api_name)
     cpu_backend = _get_cpu_backend(framework)
 

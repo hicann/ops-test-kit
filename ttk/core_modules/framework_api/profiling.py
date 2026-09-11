@@ -502,13 +502,18 @@ def _execute_eager(
     inplace_idxs = set()
     if is_inplace and args and args[0] is not None:
         inplace_idxs.add(0)
-    from .tf_stateful import get_mutable_param_names, is_ref_variable
+    from .tf_stateful import get_mutable_param_indexes, get_mutable_param_names, is_ref_variable
 
     # mutable-ref 算子(OpDef is_ref)原地修改变量, warmup/run 多轮需每轮换
     # 新变量, 否则前几轮的更新会叠加到测量轮结果上。按参数名遍历, 兼容
     # 非 ref 命名的 mutable 参数(如 var/accum)。
     inplace_idxs.update(
         name for name in get_mutable_param_names(testcase.api_name) if is_ref_variable(kwargs.get(name))
+    )
+    # tf.compat.v1.* 由 ParamPlan 按**位置**下发(kwargs 为空), 只按名字查必然落空,
+    # 于是一次克隆都不做, warmup+run 在同一个变量上连续施加 -> var*prod^N 假红。
+    inplace_idxs.update(
+        i for i in get_mutable_param_indexes(testcase.api_name) if i < len(args) and is_ref_variable(args[i])
     )
     inplace_idxs.update(i for i in inplace_input_indexes if i < len(args) and args[i] is not None)
 

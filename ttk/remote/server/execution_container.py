@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
 """
 ExecutionContainer - Dual-mode dispatch and parameter matching.
 
@@ -57,8 +67,13 @@ def bind_params(func, name_to_value: dict, device: Optional[str] = None, warn_le
     has_var_keyword = False
     has_var_positional = False
     consumed = set()
+    # `self` 仅在**未绑定函数**上才是实例参数。传入的若是绑定方法(如 inst.__call__),
+    # Python 取签名时已经去掉实例参数, 此时残留的 `self` 是 API 的真实形参名——
+    # aten 惯例就是把主输入命名为 self(torch._foreach_addcmul(self, tensor1, ...))。
+    # 一律跳过会把第一个输入静默丢掉, 下游报 "missing 1 required positional argument"。
+    _self_is_instance = not inspect.ismethod(func)
     for name, param in sig.parameters.items():
-        if name == "self":
+        if name == "self" and _self_is_instance:
             continue
         kind = param.kind
         if kind is inspect.Parameter.VAR_KEYWORD:

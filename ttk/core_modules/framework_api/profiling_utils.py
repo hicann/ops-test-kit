@@ -90,6 +90,16 @@ def prepare_device_args(testcase, backend, dev_id, plan, raw_inputs):
         ]
     else:
         dev_tensors = [backend.to_device(x, dev_id) if x is not None else None for x in raw_inputs]
+    # mutable-ref(OpDef is_ref)变量在 testcase.tensors 上只创建一次, eager /
+    # graph-const / graph-dynamic 三条腿共用同一个对象; 图模式计时阶段按设计不复位,
+    # 后跑的腿会从前一条腿改过的状态起跑。每条腿入口按 raw_inputs 复位 ——
+    # raw_inputs 是原始 numpy 输入, 不被任何腿改写。
+    if str(getattr(testcase, "api_name", "") or "").startswith(("tf.", "tensorflow.")):
+        from .tf_stateful import is_ref_variable
+
+        for _i, _t in enumerate(dev_tensors):
+            if is_ref_variable(_t) and _i < len(raw_inputs) and raw_inputs[_i] is not None:
+                _t.assign(raw_inputs[_i])
     if testcase.tensor_formats and backend.supports_format_cast():
         dev_tensors = apply_format_cast(dev_tensors, testcase.flat_tensor_formats)
     const_values = getattr(testcase, "const_input_values", None) or {}

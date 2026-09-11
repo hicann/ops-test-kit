@@ -229,7 +229,12 @@ class TestcaseE2e(TensorApiTestcaseBase):
         flat_count = len(self.flat_tensor_view_shapes)
         if flat_count == 0:
             return self.tensor_dtypes
-        if len(self.tensor_dtypes) == flat_count:
+        # 条目数相同不代表已经展平: 校验阶段会按 tensor_list_dist 把 dtype 重新嵌套成
+        # "每参数一项"(TensorList 参数为元组), 当参数个数恰好等于张量个数时(即每个
+        # TensorList 都只含 1 个张量), 长度判断会误判为已展平, 把 ('float32',) 这样的
+        # 1 元组原样漏给 numpy.astype(), 触发 "TypeError: Tuple must have size 2"。
+        # 故还需确认条目本身不是容器, 否则继续按 dist 展平。
+        if len(self.tensor_dtypes) == flat_count and not any(isinstance(d, (tuple, list)) for d in self.tensor_dtypes):
             return self.tensor_dtypes
         dist = self.tensor_list_dist
         if dist and len(self.tensor_dtypes) == len(dist):
