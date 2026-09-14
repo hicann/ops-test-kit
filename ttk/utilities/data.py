@@ -9,6 +9,19 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """
 data generator
+
+Module constraints (do not violate in future changes):
+- numpy-only: do NOT import torch/tensorflow (or any other framework) here, not
+  even inside functions. TTK must work in environments with only numpy
+  installed (e.g. tensorflow-only e2e without torch). A historical torch.rand
+  branch broke this and was removed in the fix for issue #169.
+- _sample_distinct_positions must stay O(count) in time and memory regardless
+  of `total`. Replacing it with numpy.random.choice(total, count,
+  replace=False) regresses to O(total) (a full permutation: ~61MB temp for an
+  8M-element tensor, ~320MB for 40M) and, combined with a large per_count,
+  re-introduces both the memory spike and the collision-driven retry storm.
+  Benchmark reference: 8M tensor, 20k positions — choice ~167ms vs
+  unique+randint ~4ms; 40M fp32 generate end-to-end 77.8s -> 0.18s.
 """
 
 __all__ = ["RandomData", "fixed_np_array"]
@@ -229,25 +242,31 @@ class RandomData:
             elif distribution == "uniform" and self._is_full_value_range(dtype, low, high):
                 array = self._gen_exponential_data(dtype, shape)
             else:
-                elem_count = 1
-                for d in shape:
-                    elem_count *= d
-                if elem_count > 10_000_000 and dtype in ("float16", "bfloat16"):
-                    import torch
-
-                    torch_dtype = torch.float16 if dtype == "float16" else torch.bfloat16
-                    scale = high - low
-                    offset = low
-                    t = torch.rand(shape, dtype=torch_dtype)
-                    t.mul_(scale).add_(offset)
-                    array = t.numpy() if dtype == "float16" else None
-                    if dtype == "bfloat16":
-                        from ml_dtypes import bfloat16 as np_bf16
-
-                        array = t.view(torch.uint16).numpy().view(np_bf16).reshape(shape)
-                else:
-                    array = self._gen_uniform_data(low, high, dtype, shape)
+                array = self._gen_uniform_data(low, high, dtype, shape)
         return self._mix_expect_data(array, dtype, shape, is_complex_imag)
+
+    @staticmethod
+    def _sample_distinct_positions(total: int, count: int) -> numpy.ndarray:
+        """Draw `count` distinct random positions from [0, total) in O(count) time/memory.
+
+        PERFORMANCE CONTRACT — keep this O(count), never O(total):
+        do not "simplify" this back to numpy.random.choice(total, count,
+        replace=False): choice internally builds a full permutation of `total`
+        (~61MB temp for 8M elements, ~320MB for 40M) where this stays at KB
+        scale; see the module docstring for the benchmark history (issue #169).
+
+        Collision-driven retries converge in ~count^2/2total expected rounds,
+        which is negligible while per_count stays capped (2048) — keep the cap
+        if you touch the per_count formula, otherwise the retry loop degenerates
+        at high sampling density (k/n of 25% once measured 70s+).
+        """
+        positions = numpy.unique(numpy.random.randint(0, total, size=count))
+        while positions.size < count:
+            extra = numpy.random.randint(0, total, size=count - positions.size)
+            positions = numpy.unique(numpy.concatenate((positions, extra)))
+        # unique returns sorted positions; shuffle so that slicing per value does
+        # not concentrate each must-contain value in one region of the tensor.
+        return numpy.random.permutation(positions)
 
     def _mix_expect_data(
         self, np_array: numpy.ndarray, dtype, shape: Union[list, tuple], is_complex_imag: bool
@@ -255,8 +274,6 @@ class RandomData:
         replace_list = self._get_must_contain_dataset(dtype, is_complex_imag)
         replace_count = len(replace_list)
         if replace_count > 1 and np_array.size > 0:  # not only low == high
-            if np_array.size > 10_000_000:
-                return np_array
             if np_array.size <= replace_count:
                 # replace_list 先落成 np_array.dtype：直接 concatenate typed 数组与
                 # Python float 列表会被 numpy 提升成 float64（如 bf16 输入 + range(-0,+0)
@@ -266,8 +283,10 @@ class RandomData:
                 # use copy() to discard view of `candidate`
                 np_array = candidate[idx][: np_array.size].reshape(shape).copy()
             else:
-                per_count = 1 if np_array.size <= 4 * replace_count else int(0.25 * np_array.size / replace_count)
-                replace_idx = numpy.random.choice(np_array.size, per_count * replace_count, replace=False)
+                per_count = (
+                    1 if np_array.size <= 4 * replace_count else min(int(0.25 * np_array.size / replace_count), 2048)
+                )
+                replace_idx = self._sample_distinct_positions(np_array.size, per_count * replace_count)
                 for idx, x in enumerate(replace_list):
                     start, end = idx * per_count, (idx + 1) * per_count
                     np_array.flat[replace_idx[start:end]] = x

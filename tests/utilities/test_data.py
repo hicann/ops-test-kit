@@ -309,3 +309,48 @@ def test_uniform_chunked_multidim_bitwise_equal():
     chunked = RandomData._gen_uniform_data(-1.0, 1.0, "float32", shape)
     assert chunked.shape == shape
     assert np.array_equal(chunked, full)
+
+
+@pytest.mark.parametrize("dtype", ["float16", "bfloat16"])
+def test_large_float16_uniform_is_numpy_seeded(dtype):
+    """>10M float16/bfloat16 走 numpy 分块路径：同 seed 逐位可复现（torch RNG 不受 numpy seed 控制，必失败）。"""
+    n = 10_000_001  # 超过旧 torch 分支阈值
+    rd = RandomData(dtype, (n,), (-1.0, 1.0))
+
+    np.random.seed(42)
+    first = rd.generate()
+    np.random.seed(42)
+    second = rd.generate()
+
+    assert str(first.dtype) == dtype
+    assert np.array_equal(first, second)
+    assert float(first.min()) >= -1.0
+    assert float(first.max()) <= 1.0
+
+
+def test_large_uniform_mix_expect_bitwise_reproducible():
+    """>10M 混入走轻量采样路径：同 seed 整个 generate（含混入）逐位一致。"""
+    n = 10_000_001
+    rd = RandomData("float32", (n,), (-1.0, 1.0))
+
+    np.random.seed(42)
+    first = rd.generate()
+    np.random.seed(42)
+    second = rd.generate()
+
+    assert np.array_equal(first, second)
+
+
+def test_large_uniform_must_contain_values_present():
+    """>10M 混入不再跳过：data_range 端点值与显式边界值在结果中出现（uniform 连续采样打不中端点，出现即混入证明）。"""
+    n = 10_000_001
+    rd = RandomData("float32", (n,), (-1.0, 1.0, 3.5))
+    arr = rd.generate()
+
+    assert (arr == -1.0).any()
+    assert (arr == 1.0).any()
+    assert (arr == 3.5).any()
+    # 每值覆写次数封顶 2048（大 tensor 不再按 0.25% 比例膨胀，防高密度采样
+    # 崩溃与边界值淹没正常分布；uniform 本身也可能量化命中端点，故用 >=）
+    for v in (-1.0, 1.0, 3.5):
+        assert (arr == v).sum() >= 2048
