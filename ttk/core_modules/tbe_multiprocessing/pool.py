@@ -130,7 +130,7 @@ class DeviceLockManager:
 
     @classmethod
     def initialize(cls, available_devices):
-        cls.lock_holders = {dev_id: None for dev_id in available_devices}
+        cls.lock_holders = dict.fromkeys(available_devices)
         cls.pending = {dev_id: [] for dev_id in available_devices}
 
 
@@ -247,8 +247,8 @@ def _preload_plugin_frameworks(plugin_path):
     if not plugin_path:
         return
     paths = plugin_path if isinstance(plugin_path, (list, tuple)) else (plugin_path,)
-    for p in paths:
-        p = Path(p) if not isinstance(p, Path) else p
+    for raw_p in paths:
+        p = Path(raw_p) if not isinstance(raw_p, Path) else raw_p
         files = [p] if p.is_file() else (list(p.rglob("*.py")) if p.is_dir() else [])
         for py_file in files:
             try:
@@ -437,7 +437,7 @@ class SimpleCommandProcess:
         lock = None
         if isinstance(lock, mp.synchronize.Semaphore):
             raise RuntimeError("Subprocess dead while holding Semaphore")
-        elif isinstance(lock, mp.synchronize.Lock):
+        if isinstance(lock, mp.synchronize.Lock):
             # noinspection PyBroadException
             try:
                 lock.release()
@@ -466,6 +466,10 @@ class SimpleCommandProcess:
             "Profiling" in self.current_stage()
             or "Compilation" in self.current_stage()
             or "Gen" in self.current_stage()
+            # OnWaitingForMemory: worker 在 waiting_for_memory() 死循环等待内存
+            # 恢复（无管道消息，stage 不再刷新）——同样受 --proc-timeout 约束，
+            # 超时杀 worker、用例记 Process Timeout，避免内存不恢复时无限挂起。
+            or "Waiting" in self.current_stage()
         ):
             raise TimeoutError()
 
@@ -522,10 +526,7 @@ class SimpleCommandProcess:
                 logging.warning(f"{self.name} trying to access semaphore of another process: {name}")
         elif rpc_command == PROCESS_RPC.GET_SEMAPHORE:
             name = rpc_args[0]
-            if name in self.semaphores:
-                value = self.semaphores[name]
-            else:
-                value = None
+            value = self.semaphores.get(name, None)
             self.parent_pipe.send(value)
         elif rpc_command == PROCESS_RPC.RELEASE_SEMAPHORE:
             name = rpc_args[0]
@@ -605,7 +606,7 @@ class SimpleCommandProcess:
     def close(self, no_update=False):
         if not no_update:
             self.update()
-        if not self.status == PROCESS_STATUS_CODE.DEAD:
+        if self.status != PROCESS_STATUS_CODE.DEAD:
             # noinspection PyBroadException
             try:
                 self._parent_send_rpc(PROCESS_RPC.SUICIDE, ())

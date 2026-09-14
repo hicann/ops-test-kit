@@ -544,8 +544,17 @@ def _invoke_function(callable_fn, named, attrs, param_order):
         bind_error = exc
 
     # No straightforward call matched: zip positional values to the real
-    # parameter names from the signature (TF raw_ops-style).
-    sig = inspect.signature(callable_fn)
+    # parameter names from the signature (TF raw_ops-style). torch C builtins
+    # carry no Python signature (ValueError) — surface the phase-2 binding
+    # error instead of crashing with an opaque 500.
+    try:
+        sig = inspect.signature(callable_fn)
+    except ValueError:
+        raise TypeError(
+            f"{getattr(callable_fn, '__name__', callable_fn)} cannot be parameter-bound "
+            f"from inputs {list(named.keys())}: no Python signature, "
+            f"and both kwargs and positional invocation failed"
+        ) from bind_error
     param_names = _function_param_names(sig)
     if param_order:
         # attrs are already re-supplied as keywords below; keep them out
@@ -1087,12 +1096,10 @@ def execute_request(
         }
 
         callable_fn, api_label = _resolve_callable(exec_type, provider, api, op_name, op_type, spec_module, spec_class)
-        # 输入 format 已内嵌在 X-Input-Schema 每个条目（name/index/dtype/format）——
-        # 提取逐输入 format 并入 compose 的调用 kwargs，与 op attrs 并列；不混入算子属性。
-        # compose 可用 kwargs.get('input_formats') 读取（广播/归约轴判定用）。
+        # 输入 format 已内嵌在 X-Input-Schema 每个条目（name/index/dtype/format）
         compose_kwargs = dict(attrs or {})
         schema_formats = [e.get("format") for e in (input_schema or []) if e.get("format")]
-        if schema_formats:
+        if schema_formats and inspect.isclass(callable_fn):
             compose_kwargs["input_formats"] = schema_formats
         if has_perf(mode):
             raw_outputs, perf = _run_perf(
