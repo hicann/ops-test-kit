@@ -30,6 +30,14 @@ from .profiling_utils import compute_output_md5, finalize_det_status, prepare_de
 
 WARMUP_COUNT = 1
 
+# debug_per_op_max_core_num（单算子满核验证）仅 aclgraph/npugraph_ex 的
+# super_kernel_debug_options 支持；GE 图模式 scope options 走 op 编译白名单
+# （CANN 9.2.0 不含该选项，传入会导致 Compilation_Error E40021）。
+_ACLGRAPH_SUPER_KERNEL_OPTIONS = {
+    "super_kernel_optimize": True,
+    "super_kernel_debug_options": {"debug_per_op_max_core_num": 1},
+}
+
 
 @functools.lru_cache(maxsize=1)
 def _get_npu_backend():
@@ -65,13 +73,15 @@ def _compile_model(model, backend, dynamic, fullgraph):
     return compiled
 
 
-def _compile_model_aclgraph(model, backend, fullgraph):
+def _compile_model_aclgraph(model, backend, fullgraph, super_kernel=False):
     """以 aclgraph 模式编译模型"""
+    compile_kwargs = {"options": _ACLGRAPH_SUPER_KERNEL_OPTIONS} if super_kernel else {}
     compiled = torch.compile(
         model,
         fullgraph=fullgraph,
         backend=backend,
         dynamic=False,
+        **compile_kwargs,
     )
     return compiled
 
@@ -325,7 +335,7 @@ def _execute_graph(
         model = _SuperKernelScopeModel(model, testcase.api_name)
     try:
         if is_aclgraph:
-            compiled = _compile_model_aclgraph(model, npu_backend, use_fullgraph)
+            compiled = _compile_model_aclgraph(model, npu_backend, use_fullgraph, switches.super_kernel_enabled)
         else:
             compiled = _compile_model(model, npu_backend, dynamic, use_fullgraph)
         result_nps, perf, det_status = _run_compiled(
