@@ -75,3 +75,13 @@ class NpuTorchBackend(TorchBackend):
         import torch_npu
 
         torch_npu.npu.set_deterministic_level(level)
+
+    def reset_peak_memory_stats(self, dev_id: int = 0):
+        import torch_npu  # NPU-only: keep import in method body (lazy)
+
+        torch_npu.npu.reset_peak_memory_stats(dev_id)
+
+    def max_memory_allocated(self, dev_id: int = 0):
+        import torch_npu  # NPU-only: keep import in method body (lazy)
+
+        return int(torch_npu.npu.max_memory_allocated(dev_id))

@@ -210,6 +210,7 @@ def test_e2e_replay_skips_input_and_golden_generation(monkeypatch, tmp_path):
     backend = SimpleNamespace(
         device_type=lambda: "npu",
         has_device=lambda: False,
+        is_npu=lambda: False,
         set_device=lambda *_: None,
         inputs_from_numpy=lambda tc, ri: ri,
     )
@@ -266,6 +267,7 @@ def test_e2e_replay_custom_compare_receives_restored_inputs(monkeypatch, tmp_pat
     backend = SimpleNamespace(
         device_type=lambda: "npu",
         has_device=lambda: False,
+        is_npu=lambda: False,
         set_device=lambda *_: None,
         inputs_from_numpy=lambda tc, ri: ri,
     )
@@ -323,6 +325,7 @@ def test_e2e_provider_automatically_selects_replay(monkeypatch, tmp_path):
     backend = SimpleNamespace(
         device_type=lambda: "npu",
         has_device=lambda: False,
+        is_npu=lambda: False,
         set_device=lambda *_: None,
         inputs_from_numpy=lambda tc, ri: ri,
     )

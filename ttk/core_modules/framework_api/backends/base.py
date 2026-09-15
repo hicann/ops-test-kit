@@ -134,6 +134,12 @@ class Backend(ABC):
     def set_deterministic_level(self, level):  # noqa: B027
         """Set deterministic computation level. Default: no-op."""
 
+    def reset_peak_memory_stats(self, dev_id: int = 0):  # noqa: B027
+        """Reset peak memory stats. Default: no-op; NpuTorchBackend overrides."""
+
+    def max_memory_allocated(self, dev_id: int = 0):  # noqa: B027
+        """Current peak allocated device memory in bytes, or None if unsupported."""
+
     def set_device(self, dev_id: int = 0):  # noqa: B027
         """Set the current device for eager execution. Default: no-op.
 

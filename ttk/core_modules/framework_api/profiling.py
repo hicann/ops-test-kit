@@ -19,7 +19,6 @@ import gc
 import json
 import logging
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -395,61 +394,36 @@ def _ensure_deterministic_level_e2e(process_ctx, backend, testcase, deterministi
     process_ctx.storage["_deterministic_level"] = deterministic_level
 
 
-_npu_memory_hint_shown = False
+def _capture_peak_memory(backend, dev_id, return_struct, fn, *args, **kwargs):
+    """NPU: reset peak stats, run *fn*, record max_memory_allocated (MB) into npu_memory.
 
+    Same caliber as the GPU executor (remote/server/executor.py: reset_peak ->
+    invoke -> max_memory_allocated / 1e6): peak covers input allocations and
+    execution-time temporaries inside *fn*. CANN-internal workspace does not go
+    through the torch allocator and is not counted (GPU cuBLAS/cuDNN workspace
+    is likewise excluded). Non-NPU backends pass through, npu_memory stays None.
 
-def _capture_stdout_npu_memory(testcase, return_struct, fn, *args, **kwargs):
-    """Redirect fd 1 to a temp file during *fn*, extract workspace size from captured stdout.
-
-    Requires the user to set ``ASCEND_SLOG_PRINT_TO_STDOUT=1`` and
-    ``ASCEND_GLOBAL_LOG_LEVEL=1`` before running TTK; otherwise no CANN logs
-    reach stdout and ``npu_memory`` stays ``None``.
-
-    CANN logs workspace size as ``Workspace addr: 0x..., size: 16777728`` in
-    op_executor.cpp. Some versions may use ``workspaceSize: xxx``.
+    Memory-stat APIs are best-effort: any failure (like the GPU executor's
+    peak_memory_mb=NA) leaves npu_memory untouched instead of failing the case,
+    and never masks fn's own result/exception.
     """
-    global _npu_memory_hint_shown
-    # 捕获仅在日志走 stdout 且级别覆盖 INFO(workspace) 时才可能有结果，否则零开销直通
-    if os.environ.get("ASCEND_SLOG_PRINT_TO_STDOUT") != "1" or os.environ.get("ASCEND_GLOBAL_LOG_LEVEL", "3") not in (
-        "0",
-        "1",
-    ):
-        if not _npu_memory_hint_shown:
-            _npu_memory_hint_shown = True
-            logging.info(
-                "[E2E] npu_memory not captured: to enable, export "
-                "ASCEND_SLOG_PRINT_TO_STDOUT=1 ASCEND_GLOBAL_LOG_LEVEL=1 before running TTK"
-            )
+    if not backend.is_npu():
         return fn(*args, **kwargs)
-    sys.stdout.flush()
-    cap_name = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w+b", suffix=".stdout", delete=False) as cap:
-            cap_name = cap.name
-            orig_stdout = os.dup(1)
-            try:
-                os.dup2(cap.fileno(), 1)
-                result = fn(*args, **kwargs)
-            finally:
-                sys.stdout.flush()
-                os.dup2(orig_stdout, 1)
-                os.close(orig_stdout)
-
-        with open(cap_name, "rb") as f:
-            content = f.read().decode("utf-8", errors="replace")
-
-        for line in content.splitlines():
-            if "Workspace addr" not in line and "workspaceSize" not in line:
-                continue
-            logging.info("[E2E/%s] %s", testcase.testcase_name, line.strip())
-            m = re.search(r"(?:Workspace addr:.*?size:|workspaceSize:)\s*(\d+)", line)
-            if m:
-                return_struct.npu_memory = int(m.group(1))
-        return result
+        backend.reset_peak_memory_stats(dev_id)
+    except Exception:
+        logging.exception(f"[E2E] reset_peak_memory_stats failed on device {dev_id}; npu_memory not captured")
+        return fn(*args, **kwargs)
+    try:
+        return fn(*args, **kwargs)
     finally:
-        if cap_name:
-            with contextlib.suppress(OSError):
-                os.unlink(cap_name)
+        try:
+            peak = backend.max_memory_allocated(dev_id)
+        except Exception:
+            logging.exception(f"[E2E] max_memory_allocated failed on device {dev_id}; npu_memory not captured")
+            peak = None
+        if peak is not None:
+            return_struct.npu_memory = peak / 1e6
 
 
 def _execute_eager(
@@ -801,7 +775,6 @@ def _do_profile_multi_device(  # noqa: PLR0911
     Each thread gets its own copy of testcase with rank-specific data.
     """
     import subprocess
-    import tempfile
 
     ndev = len(device_ids)
     process_ctx = get_process_context()
@@ -1261,8 +1234,9 @@ def _do_profile(  # noqa: PLR0911
 
         process_ctx.notify_status("OnEagerProfiling")
         if not getattr(switches, "aclgraph_enabled", False):
-            result_nps, perf, eager_det_status = _capture_stdout_npu_memory(
-                testcase,
+            result_nps, perf, eager_det_status = _capture_peak_memory(
+                backend,
+                dev_id,
                 return_struct,
                 _execute_eager,
                 testcase,

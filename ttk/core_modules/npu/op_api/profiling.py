@@ -370,11 +370,21 @@ class AclOpExecutor:
                 self._dvc.destroy_stream_force(stream)
 
     def do(self, stream: ctypes.c_void_p = None, skip_context_creation: bool = False):
+        # npu_memory (MB) = workspace bytes from aclnn GetWorkspaceSize / 1e6
         if skip_context_creation and stream is not None:
             if self._deterministic_level >= 1:
                 self._dvc.set_deterministic_level(self._deterministic_level)
-            output_byte_arrays, output_view_shapes, success, _, _ = self._acl_sequence(stream, skip_profiler=True)
-            return ApiProfilingResult(success, "UNKNOWN", "UNKNOWN", output_byte_arrays, output_view_shapes)
+            output_byte_arrays, output_view_shapes, success, _, workspace = self._acl_sequence(
+                stream, skip_profiler=True
+            )
+            return ApiProfilingResult(
+                success,
+                "UNKNOWN",
+                "UNKNOWN",
+                output_byte_arrays,
+                output_view_shapes,
+                npu_memory=workspace / 1e6 if workspace is not None else None,
+            )
         with self.rts_context():
             self._dvc.warmup(self._switches)
             with self.rts_stream() as stm:
@@ -392,7 +402,7 @@ class AclOpExecutor:
                 output_byte_arrays,
                 output_view_shapes,
                 deterministic_status=det_status,
-                npu_memory=npu_memory,
+                npu_memory=npu_memory / 1e6 if npu_memory is not None else None,
             )
 
     @staticmethod
