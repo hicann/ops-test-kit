@@ -51,6 +51,7 @@
 | `dump_file_prefix` | 否 | None | Dump 文件名前缀 |
 | `manual_input_binaries` | 否 | `()` | 手动输入数据文件路径。支持 `.npy`、`.pt`、裸二进制格式。Python 表达式 |
 | `manual_golden_binaries` | 否 | `()` | 手动 Golden 数据文件路径。支持 `.npy`、`.pt`、裸二进制格式。Python 表达式 |
+| `manual_xpu_binaries` | 否 | `()` | 手动 XPU 输出文件路径。`cross_check` 时优先于远端 XPU，支持 `.npy`、`.pt`、裸二进制格式。配置后必须同时提供手动输入和 Golden。Python 表达式 |
 
 ### 回退链
 

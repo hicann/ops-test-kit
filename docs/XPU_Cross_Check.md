@@ -7,9 +7,11 @@
 | 场景 | 命令组合 | 说明 |
 |------|---------|------|
 | 三方交叉校验 | `--compare cross_check` + `--config` + `--plugin` | XPU 输出作为第三方参考，与 NPU 输出/Golden 做误差比值 |
+| 固定 XPU 输出 | `manual_xpu_binaries` + `--compare cross_check` | 使用本地 XPU 输出文件，跳过远端 dispatch |
+| XPU 输出落盘 | `--dump xpu` + `--config` | 保存远端 XPU 返回的第三方输出 |
 | XPU 性能采集 | `--xpu-perf` + `--config` | 只采集 XPU 侧 `device_ms`，不取数据，不影响精度比对 |
 
-> 两个场景都需要先部署 xpu-server，详见 [xpu-server 部署指南](../ttk/remote/server/README.md)。
+> 远端 XPU 场景需要先部署 xpu-server，详见 [xpu-server 部署指南](../ttk/remote/server/README.md)。
 
 ## 1. 前置准备
 
@@ -137,6 +139,45 @@ class ComplexMulTestSpec:
 - provider 解析失败 → 同上
 - XPU 执行报错 → 该 provider 标记为 `FAIL`，不参与比对
 
+### 2.6 固定 XPU 输出
+
+Kernel 用例可通过 `manual_xpu_binaries` 直接读取已生成的 XPU 输出：
+
+```csv
+manual_input_binaries,manual_golden_binaries,manual_xpu_binaries
+"('/data/input.bin',)","('/data/cpu_output.bin',)","('/data/gpu_output.bin',)"
+```
+
+该字段仅在 `cross_check` 比较中生效，并优先于远端 XPU dispatch。配置后必须同时提供
+`manual_input_binaries`（有输入算子）和 `manual_golden_binaries`，文件数量必须与输出数量一致。
+固定文件模式不需要 `--config` 或 `--provider`。
+
+### 2.7 XPU 输出落盘
+
+使用 `--dump xpu` 可将远端 XPU 返回的第三方输出保存到本地。`xpu` 是 `--dump` 的一个类别，
+可通过 `--dump in,out,golden,xpu` 与其他类别组合。该选项会请求 XPU 返回数据，
+即使当前比较标准不是 `cross_check` 也会执行 DATA 模式：
+
+```bash
+python3 -m ttk kernel -i cases.csv \
+  --config ttk.conf.yaml \
+  --provider torch \
+  --dump xpu \
+  --dump-format bin
+```
+
+默认文件名为：
+
+```text
+<testcase_name>_xpu_golden_<index>.bin
+```
+
+例如 `add_001_xpu_golden_0.bin`。文件名与 `manual_xpu_binaries` 归档回放契约一致，可直接上传归档平台参与 cross_check。
+多个 provider 同时产出时按 provider 分目录保存（如 `torch/add_001_xpu_golden_0.bin`），避免同名覆盖；嵌套 TensorList 输出会展平后编号。
+用例名或 provider 名包含路径字符时会附加短哈希，避免清洗后文件名冲突。
+输出目录优先使用环境变量 `NPU_DUMP_PATH`，未设置时使用 TTK 根目录；文件格式复用
+`--dump-format bin|npy|pt|print`。失败的 provider 和仅启用 `--xpu-perf` 的 PERF-only 结果不会生成输出文件。
+
 ## 3. XPU 性能采集
 
 ### 3.1 命令
@@ -168,14 +209,14 @@ python3 -m ttk kernel -i cases.csv \
 
 ## 4. 参数约束
 
-| 参数 | cross_check | xpu-perf |
-|------|------------|----------|
-| `--compare` | 必须 `cross_check` | 任意（默认 `mixed`） |
-| `--config` | 必须（含 endpoints） | 必须（含 endpoints） |
-| `--plugin` | 必须（含 `third_party`） | 可选 |
-| `--provider` | 可选过滤 | 可选过滤 |
-| `--no-prof` | 不兼容 | 不兼容 |
-| `--validate` | 不兼容 | 不兼容 |
+| 参数 | cross_check | xpu-perf | `--dump xpu` |
+|------|------------|----------|----------|
+| `--compare` | 必须 `cross_check` | 任意（默认 `mixed`） | 任意 |
+| `--config` | 必须（含 endpoints） | 必须（含 endpoints） | 必须（含 endpoints） |
+| `--plugin` | 必须（含 `third_party`） | 可选 | 可选 |
+| `--provider` | 可选过滤 | 可选过滤 | 可选过滤 |
+| `--no-prof` | 不兼容 | 不兼容 | 不执行 XPU dispatch |
+| `--validate` | 不兼容 | 不兼容 | 不执行 XPU dispatch |
 
 ## 5. 通路支持
 

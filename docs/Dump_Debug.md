@@ -1,6 +1,6 @@
 # Dump 数据调试
 
-通过 `--dump` 系列参数保存输入、输出和 Golden 数据到磁盘，便于事后分析精度问题、复现失败用例、或离线比对。
+通过 `--dump` 系列参数保存输入、输出、Golden 和远端 XPU 数据到磁盘，便于事后分析精度问题、复现失败用例、或离线比对。
 
 ## 适用场景
 
@@ -8,6 +8,7 @@
 |------|---------|------|
 | 主动 Dump 全量数据 | `--dump full` | 保存输入+输出+Golden |
 | 选择性 Dump | `--dump in,golden` | 只保存指定类别 |
+| XPU 输出 Dump | `--dump xpu --config ttk.conf.yaml` | 保存远端第三方输出 |
 | 失败时自动 Dump | `--dump-on-fail` | 精度比对失败时自动保存全部数据 |
 | 离线数据准备 | `--no-prof --dump in,golden` | prepare 阶段，详见[离线数据准备与导入](./Offline_Data_Prepare_and_Import.md) |
 
@@ -19,8 +20,10 @@
 | `out` | NPU 输出 tensor | 设备执行后、精度比对前 |
 | `golden` | Golden tensor | Golden 生成后 |
 | `full` | 以上全部 | 各阶段分别保存 |
+| `xpu` | 远端 XPU 返回的第三方输出 | XPU dispatch 成功后 |
 
-可组合指定，逗号分隔：`--dump in,golden`。
+可组合指定，逗号分隔：`--dump in,golden,xpu`。为保持兼容，`full` 仅代表
+`in,out,golden`，不会隐式连接远端 XPU；需要 XPU 输出时必须显式包含 `xpu`。
 
 ## 2. Dump 格式
 
@@ -86,6 +89,15 @@ add_01_geir_input_0.npy
 add_01_geir_output_0.npy
 add_01_geir_golden_0.npy
 ```
+
+远端 XPU 输出对齐归档回放契约：
+
+```
+add_01_xpu_golden_0.npy
+add_01_xpu_golden_1.npy
+```
+
+多 provider 时按 provider 分目录（如 `torch/add_01_xpu_golden_0.npy`）。
 
 失败时自动 Dump 的文件名带 `fail_` 前缀：
 
@@ -159,7 +171,9 @@ python3 -m ttk kernel -i cases.csv -t add_01 --dump full --dump-format npy --see
 | `--dump-format print` 与 `--no-prof` | 不兼容，prepare 需要可回读格式（bin/npy/pt） |
 | `--dump-on-fail` 与 `--no-prof` | 不兼容，`--no-prof` 跳过比对 |
 | `--dump-on-fail` 与 `--validate` | 不兼容，`--validate` 跳过执行和比对 |
+| `--dump xpu` | 需要远端 XPU 配置；`--no-prof` 和 `--validate` 不执行 XPU dispatch |
 
 ## 7. 通路支持
 
-所有通路（Kernel / ACLNN / GEIR / E2E）均支持 `--dump` 和 `--dump-on-fail`。
+所有通路（Kernel / ACLNN / GEIR / E2E）均支持 `--dump` 和 `--dump-on-fail`；
+各通路均可显式使用 `--dump xpu` 保存成功返回的远端第三方输出。

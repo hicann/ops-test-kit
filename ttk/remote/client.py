@@ -28,6 +28,7 @@ __all__ = [
     "collect_third_party",
 ]
 
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -82,11 +83,11 @@ def build_spec(provider: str, tp, spec_file: Optional[str], spec_class: Optional
 
 
 def xpu_mode_of(switches, need_data: bool) -> int:
-    """按位或：xpu_perf→PERF，need_data→DATA。返回 0/PERF/DATA/DATA|PERF。"""
+    """按位或：xpu_perf→PERF，need_data/--dump xpu→DATA。返回 0/PERF/DATA/DATA|PERF。"""
     mode = 0
     if getattr(switches, "xpu_perf", False):
         mode |= PERF
-    if need_data:
+    if need_data or switches.dump_config.is_xpu_enabled():
         mode |= DATA
     return mode
 
@@ -103,6 +104,49 @@ def extract_third_party(xpu_results, priority: Optional[str]):
     if entry.get("status") != "PASS" or "outputs" not in entry:
         return None
     return entry["outputs"]
+
+
+def _safe_dump_token(value, default: str) -> str:
+    text = str(value or default)
+    token = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in text)
+    if token != text:
+        token = f"{token or default}_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:8]}"
+    return token or default
+
+
+def _dump_xpu_outputs(xpu_results, testcase_name: str, switches) -> None:
+    """Persist successful XPU outputs when --dump xpu is enabled.
+
+    文件名对齐归档回放契约：``{testcase}_xpu_golden_{index}.bin``，可直接作为
+    ``manual_xpu_binaries`` 上传归档平台。多个 provider 同时产出时按 provider
+    分目录避免同名覆盖，各目录内文件名保持一致。
+    """
+    if not switches.dump_config.is_xpu_enabled() or not xpu_results:
+        return
+
+    from ttk.utilities import deep_flatten, dump_to_file
+
+    dump_path = os.getenv("NPU_DUMP_PATH") or getattr(switches, "root_path", os.getcwd())
+    file_format = getattr(getattr(switches, "dump_config", None), "file_format", "bin")
+    case_token = _safe_dump_token(testcase_name, "testcase")
+
+    def _has_outputs(entry):
+        return isinstance(entry, dict) and entry.get("status") == "PASS" and entry.get("outputs") is not None
+
+    multiple = sum(1 for entry in xpu_results.values() if _has_outputs(entry)) > 1
+
+    for provider, entry in xpu_results.items():
+        if not _has_outputs(entry):
+            continue
+        provider_token = _safe_dump_token(provider, "xpu")
+        target_dir = os.path.join(dump_path, provider_token) if multiple else dump_path
+        os.makedirs(target_dir, exist_ok=True)
+        for index, output in enumerate(deep_flatten(entry["outputs"])):
+            if output is None or isinstance(output, str):
+                continue
+            file_name = f"{case_token}_xpu_golden_{index}"
+            dump_to_file(output, target_dir, file_name, file_format=file_format)
+            logging.info("[%s] Dumped XPU output: %s/%s", testcase_name or "testcase", target_dir, file_name)
 
 
 def dispatch_xpu(
@@ -175,7 +219,9 @@ def dispatch_xpu(
         tmp_root=_tmp_root,
         runtime=getattr(switches, "run_time", 3),
         param_order=param_order,
+        dump_xpu=switches.dump_config.is_xpu_enabled(),
     )
+    _dump_xpu_outputs(xpu_results, testcase_name, switches)
     return xpu_results, (specs[0].provider if specs else None)
 
 

@@ -57,6 +57,7 @@
 | `dump_file_prefix` | STRING | 否 | `None` | 数据dump文件的自定义文件名前缀。 |
 | `manual_input_binaries` | EVAL | 否 | `()` | 手动输入二进制文件路径。作为Python表达式求值。支持TensorList嵌套。 |
 | `manual_golden_binaries` | EVAL | 否 | `()` | 手动Golden输出二进制文件路径。支持TensorList嵌套。 |
+| `manual_xpu_binaries` | EVAL | 否 | `()` | 已生成的 XPU 输出文件路径。`cross_check` 时优先使用并跳过远端 XPU dispatch；必须与手动输入和手动 Golden 成套配置。 |
 
 ## 参考用例
 

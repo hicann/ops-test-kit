@@ -30,6 +30,7 @@ python3 -m ttk info
 - 排障/数据：`--rerun precision_status` 按上次结果 CSV 的列重跑失败用例（**`-i` 须指向含该列的结果 CSV**，不能是原始用例 CSV）；`--dump in,golden` 备数据、`--dump-on-fail` 失败自动 dump、`--dump-format npy|pt|bin|print`
 - 自定义 golden/输入：`--plugin <path>`，指向包含 TestSpec 的目录或文件
 - 手工数据两阶段：`--no-prof --dump in,golden` 准备数据，`--manual-data-dirs <dir>` 回放
+- XPU 结果落盘：`--dump xpu`，可与 `in,out,golden` 组合，按 `<testcase_name>_<provider>_output_<index>.<format>` 保存第三方输出
 - NPUSim 仿真（参数定义见 `ttk/cli/sim_args.py`）：`--backend npusim` 切到仿真后端；`--sim-soc`（默认 `Ascend950`）、`--sim-output`（默认 `<root>/sim_output`）、`--sim-report`（生成 trace_core*.json 与 HTML 性能报告）、`--sim-cores`、`--sim-obj`。与 `--no-prof`、`--cpu` 互斥
 
 ### 开发/测试

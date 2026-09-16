@@ -656,6 +656,34 @@ def _aclnn_param_order(context: TestcaseAclnn) -> list:
     ]
 
 
+def _collect_xpu(context: TestcaseAclnn, switches, process_ctx, need_data: bool):
+    """Collect XPU outputs/performance for an ACLNN testcase."""
+    from ttk.remote.client import collect_third_party, xpu_mode_of
+
+    if not xpu_mode_of(switches, need_data):
+        return None, None
+    process_ctx.notify_status("OnXpuProfiling")
+    _, third_parties, xpu_results = collect_third_party(
+        op_name=context.api_name,
+        inputs=_aclnn_xpu_inputs(context),
+        input_names=_aclnn_xpu_input_names(context),
+        op_type=None,
+        attributes=context.xpu_attrs,
+        testcase_name=context.testcase_name,
+        switches=switches,
+        need_data=need_data,
+        param_order=_aclnn_param_order(context),
+        input_dtypes=_aclnn_xpu_input_dtypes(context),
+    )
+    if need_data and third_parties is None:
+        logging.warning(
+            "[%s] cross_check configured but no third_party output "
+            "(no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE",
+            context.testcase_name,
+        )
+    return third_parties, xpu_results
+
+
 def __dump_to_file(data, file_name: str, dtype: Optional[str] = None):
     switches = get_global_storage()
     file_path = os.getenv("NPU_DUMP_PATH") or switches.root_path
@@ -1959,14 +1987,21 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
         __profiling_end_print(context, compare_result)
         return return_structure
     if is_multi_device and device_ids and switches.golden_mode == "Disable":
-        thread_contexts = getattr(context, "_multi_device_thread_contexts", {})
-        all_passed = all(did in thread_contexts and not thread_contexts[did].prof_result.failed() for did in device_ids)
-        __release_retained_multi_device_resources(context, device_ids)
-        compare_result = ApiComparisonResult(None)
-        compare_result.set(
-            "EXECUTED" if all_passed else "MULTI_DEVICE_EXECUTION_FAILURE",
-            "PASS" if all_passed else "FAIL",
-        )
+        try:
+            if switches.dump_config.is_xpu_enabled() or getattr(switches, "xpu_perf", False):
+                _, xpu_results = _collect_xpu(context, switches, process_ctx, need_data=False)
+                context.xpu_metrics = _format_xpu_metrics(xpu_results) if xpu_results else {}
+            thread_contexts = getattr(context, "_multi_device_thread_contexts", {})
+            all_passed = all(
+                did in thread_contexts and not thread_contexts[did].prof_result.failed() for did in device_ids
+            )
+            compare_result = ApiComparisonResult(None)
+            compare_result.set(
+                "EXECUTED" if all_passed else "MULTI_DEVICE_EXECUTION_FAILURE",
+                "PASS" if all_passed else "FAIL",
+            )
+        finally:
+            __release_retained_multi_device_resources(context, device_ids)
         process_ctx.notify_status("OnReturning")
         return_structure = ApiProfilingReturnStructure()
         return_structure.construct(context, compare_result)
@@ -1986,6 +2021,17 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
         switches.compare_method,
     )
     need_3party = any(s.token == "cross_check" for s in standards)  # noqa: S105  # token 为精度标准类型名，非凭据
+    third_parties = None
+    xpu_results = None
+    xpu_collected = False
+    if is_multi_device and device_ids:
+        try:
+            third_parties, xpu_results = _collect_xpu(context, switches, process_ctx, need_3party)
+            xpu_collected = True
+        except Exception:
+            __release_retained_multi_device_resources(context, device_ids)
+            raise
+        context.xpu_metrics = _format_xpu_metrics(xpu_results) if xpu_results else {}
     if need_3party:
         context.golden_mode_override = "Promote"
     try:
@@ -2057,32 +2103,8 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
             del context.golden_mode_override
     process_ctx.notify_status("OnDumpOutputDataIfRequired")
     __dump_output(context)
-    third_parties = None
-    xpu_results = None
-    if not context.prof_result.failed():
-        from ttk.remote.client import collect_third_party, xpu_mode_of
-
-        xpu_mode = xpu_mode_of(switches, need_3party)
-        if xpu_mode:
-            process_ctx.notify_status("OnXpuProfiling")
-            _, third_parties, xpu_results = collect_third_party(
-                op_name=context.api_name,
-                inputs=_aclnn_xpu_inputs(context),
-                input_names=_aclnn_xpu_input_names(context),
-                op_type=None,
-                attributes=context.xpu_attrs,
-                testcase_name=context.testcase_name,
-                switches=switches,
-                need_data=need_3party,
-                param_order=_aclnn_param_order(context),
-                input_dtypes=_aclnn_xpu_input_dtypes(context),
-            )
-            if need_3party and third_parties is None:
-                logging.warning(
-                    "[%s] cross_check configured but no third_party output "
-                    "(no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE",
-                    context.testcase_name,
-                )
+    if not xpu_collected and not context.prof_result.failed():
+        third_parties, xpu_results = _collect_xpu(context, switches, process_ctx, need_3party)
     context.xpu_metrics = _format_xpu_metrics(xpu_results) if xpu_results else {}
     process_ctx.notify_status("OnComparison")
     compare_result = Comparator(context, standards, third_parties).compare()

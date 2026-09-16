@@ -68,6 +68,7 @@ class DumpConfig:
     mode: int = DumpLevel.NO.value
     file_format: str = "bin"
     dump_on_fail: bool = False
+    xpu: bool = False
 
     def is_input_enabled(self):
         return self.mode & DumpLevel.INPUT.value
@@ -78,6 +79,9 @@ class DumpConfig:
     def is_golden_enabled(self):
         return self.mode & DumpLevel.GOLDEN.value
 
+    def is_xpu_enabled(self):
+        return self.xpu
+
     def enable_input(self):
         self.mode |= DumpLevel.INPUT.value
 
@@ -86,6 +90,9 @@ class DumpConfig:
 
     def enable_golden(self):
         self.mode |= DumpLevel.GOLDEN.value
+
+    def enable_xpu(self):
+        self.xpu = True
 
     def enable_all(self):
         self.mode = DumpLevel.FULL.value

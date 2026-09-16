@@ -62,7 +62,9 @@ def _add_precision_args(parser):
         choices=["Enable", "Disable", "Promote"],
         help="Golden generation mode (default: Enable)",
     )
-    parser.add_argument("--dump", nargs="?", const="full", help="Dump data: full, in, out, golden (comma-separated)")
+    parser.add_argument(
+        "--dump", nargs="?", const="full", help="Dump data: full, in, out, golden, xpu (comma-separated)"
+    )
     parser.add_argument(
         "--dump-format",
         dest="dump_format",
@@ -137,6 +139,12 @@ def add_common_args(parser):
 
 
 def validate_xpu_perf_precondition(sw):
-    """--xpu-perf requires remote XPU config (ttk.conf.yaml or --config)."""
-    if sw.xpu_perf and not is_remote_configured():
-        raise RuntimeError("--xpu-perf requires remote XPU config (ttk.conf.yaml or --config), but none is configured.")
+    """XPU collection options require remote XPU config (ttk.conf.yaml or --config)."""
+    enabled = []
+    if getattr(sw, "xpu_perf", False):
+        enabled.append("--xpu-perf")
+    if sw.dump_config.is_xpu_enabled():
+        enabled.append("--dump xpu")
+    if enabled and not is_remote_configured():
+        options = "/".join(enabled)
+        raise RuntimeError(f"{options} requires remote XPU config (ttk.conf.yaml or --config), but none is configured.")

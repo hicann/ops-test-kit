@@ -1,9 +1,10 @@
+#!/usr/bin/env python3
 # ----------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
@@ -29,6 +30,13 @@ def test_xpu_perf_slot_default_and_assignable():
     assert sw.xpu_perf is True
 
 
+def test_dump_config_xpu_default_and_assignable():
+    sw = SWITCHES()
+    assert sw.dump_config.is_xpu_enabled() is False
+    sw.dump_config.enable_xpu()
+    assert sw.dump_config.is_xpu_enabled() is True
+
+
 def test_xpu_perf_flag_registered_on_kernel_parser():
     """--xpu-perf 在 kernel 子命令注册；不传时默认 False。"""
     from ttk.cli.kernel import _add_kernel_args
@@ -47,6 +55,40 @@ def test_xpu_perf_mapped_to_switches():
     assert sw_on.xpu_perf is True
     sw_off = args_to_switches(SimpleNamespace(input="x.csv", output="o.csv", xpu_perf=False))
     assert sw_off.xpu_perf is False
+
+
+def test_dump_xpu_option_and_combined_switch_mapping():
+    from ttk.cli.bridge import args_to_switches
+    from ttk.cli.common import add_common_args
+
+    parser = argparse.ArgumentParser()
+    add_common_args(parser)
+    args = parser.parse_args(["-i", "x.csv", "--dump", "xpu"])
+    assert args.dump == "xpu"
+    assert args_to_switches(args).dump_config.is_xpu_enabled() is True
+
+    combined = parser.parse_args(["-i", "x.csv", "--dump", "in,out,golden,xpu"])
+    dump_config = args_to_switches(combined).dump_config
+    assert dump_config.is_input_enabled()
+    assert dump_config.is_output_enabled()
+    assert dump_config.is_golden_enabled()
+    assert dump_config.is_xpu_enabled()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["-i", "x.csv", "--dump-xpu"])
+
+
+def test_dump_full_keeps_legacy_local_dump_scope():
+    from ttk.cli.bridge import args_to_switches
+    from ttk.cli.common import add_common_args
+
+    parser = argparse.ArgumentParser()
+    add_common_args(parser)
+    dump_config = args_to_switches(parser.parse_args(["-i", "x.csv", "--dump"])).dump_config
+    assert dump_config.is_input_enabled()
+    assert dump_config.is_output_enabled()
+    assert dump_config.is_golden_enabled()
+    assert dump_config.is_xpu_enabled() is False
 
 
 # -- _xpu_inputs 数据选择 ----------------------------------------------------
@@ -86,6 +128,15 @@ def test_xpu_mode_bitwise_or():
     assert prof._xpu_mode(sw_on, need_data=False) == PERF
     assert prof._xpu_mode(sw_on, need_data=True) == (DATA | PERF)
 
+    sw_dump = SWITCHES()
+    sw_dump.dump_config.enable_xpu()
+    assert prof._xpu_mode(sw_dump, need_data=False) == DATA
+
+    sw_both = SWITCHES()
+    sw_both.xpu_perf = True
+    sw_both.dump_config.enable_xpu()
+    assert prof._xpu_mode(sw_both, need_data=False) == (DATA | PERF)
+
 
 # -- validate_xpu_perf_precondition 前置校验 ---------------------------------
 
@@ -110,6 +161,17 @@ def test_validate_xpu_perf_precondition_three_branches(monkeypatch):
     sw.xpu_perf = False
     monkeypatch.setattr(common_mod, "is_remote_configured", lambda: False)
     common_mod.validate_xpu_perf_precondition(sw)
+
+
+def test_validate_dump_xpu_requires_remote(monkeypatch):
+    """--dump xpu 也必须有远端 XPU 配置。"""
+    from ttk.cli import common as common_mod
+
+    monkeypatch.setattr(common_mod, "is_remote_configured", lambda: False)
+    sw = SWITCHES()
+    sw.dump_config.enable_xpu()
+    with pytest.raises(RuntimeError, match="dump xpu"):
+        common_mod.validate_xpu_perf_precondition(sw)
 
 
 # -- _extract_third_party fail-closed ---------------------------------------

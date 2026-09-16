@@ -19,7 +19,7 @@ from ttk.remote import DATA, PERF
 from ttk.remote.dispatcher import RemoteExecutionError, dispatch_to_remote
 
 
-def _select_run_specs(specs, xpu_mode):
+def _select_run_specs(specs, xpu_mode, dump_xpu=False):
     """Choose which specs to run + identify priority.
 
     Availability filtering moved upstream into EndpointView.resolve_providers
@@ -29,21 +29,21 @@ def _select_run_specs(specs, xpu_mode):
     priority = first spec in input order.
     Mode dispatch:
         DATA       -> [priority] or []   (save non-priority output transfer)
+        DATA + dump_xpu -> all specs (the caller explicitly requested outputs)
         PERF       -> all
         DATA|PERF  -> all
     """
     priority = specs[0] if specs else None
-    # DATA -> priority only (save non-priority output transfer); PERF / DATA|PERF -> all
-    run = ([priority] if priority else []) if xpu_mode == DATA else list(specs)
+    run = ([priority] if priority else []) if xpu_mode == DATA and not dump_xpu else list(specs)
     return run, priority
 
 
-def _per_spec_mode(spec, priority, xpu_mode):
+def _per_spec_mode(spec, priority, xpu_mode, dump_xpu=False):
     """DATA|PERF: priority gets DATA|PERF, others get PERF (save non-priority
     output transfer). When priority is None (no available endpoint), every
     dispatched spec gets PERF only — no provider yields Data, but the run
     still completes for PERF (caller records accuracy-skipped via status)."""
-    if xpu_mode == (DATA | PERF):
+    if xpu_mode == (DATA | PERF) and not dump_xpu:
         return (DATA | PERF) if (priority and spec.provider == priority.provider) else PERF
     return xpu_mode
 
@@ -64,6 +64,7 @@ def collect_xpu_results(
     tmp_root=None,
     runtime: int = 3,
     param_order=None,
+    dump_xpu: bool = False,
 ):
     """Dispatch specs to xpu-server, return aggregated results.
 
@@ -72,6 +73,7 @@ def collect_xpu_results(
         inputs: numpy input arrays
         input_names: input parameter names
         mode: DATA / PERF / DATA|PERF
+        dump_xpu: request DATA for every selected provider when enabled
         tenant_id: tenant ID
         op_name: operator name (for dispatch)
         op_type: operator type (for dispatch)
@@ -91,7 +93,7 @@ def collect_xpu_results(
     from ttk.remote.endpoint_view import EndpointView
 
     ev = EndpointView()  # per-process Singleton; the ONLY endpoint decision point
-    run_specs, priority = _select_run_specs(specs, mode)
+    run_specs, priority = _select_run_specs(specs, mode, dump_xpu=dump_xpu)
     results = {}
 
     def _dispatch_one(spec, spec_mode):
@@ -153,13 +155,15 @@ def collect_xpu_results(
     # Specs not run simply do not appear in results — availability is decided
     # upstream by EndpointView.resolve_providers (contract).
     if len(run_specs) == 1:
-        p, r = _dispatch_one(run_specs[0], _per_spec_mode(run_specs[0], priority, mode))
+        p, r = _dispatch_one(run_specs[0], _per_spec_mode(run_specs[0], priority, mode, dump_xpu=dump_xpu))
         results[p] = r
     elif len(run_specs) > 1:
         threads = []
         for s in run_specs:
             t = threading.Thread(
-                target=lambda s=s: results.update([_dispatch_one(s, _per_spec_mode(s, priority, mode))])
+                target=lambda s=s: results.update(
+                    [_dispatch_one(s, _per_spec_mode(s, priority, mode, dump_xpu=dump_xpu))]
+                )
             )
             t.start()
             threads.append(t)

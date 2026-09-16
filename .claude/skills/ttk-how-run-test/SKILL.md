@@ -129,7 +129,7 @@ python3 -m ttk e2e    --backend npusim -i cases.csv -t add_f32_01
 | 参数 | 说明 | 默认 |
 |------|------|------|
 | `--dump-on-fail` | 精度失败时 Dump 全部数据 | 关闭 |
-| `--dump in,out,golden` | 指定 Dump 内容 | 关闭 |
+| `--dump in,out,golden,xpu` | 指定 Dump 内容；`xpu` 保存远端第三方输出 | 关闭 |
 | `--dump-format npy` | Dump 格式：`bin`/`npy`/`pt`/`print` | `bin` |
 | `--single-log` | 每个用例独立日志文件 | 关闭 |
 | `--plugin path.py` | 加载自定义插件 | 无 |

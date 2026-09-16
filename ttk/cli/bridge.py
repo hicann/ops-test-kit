@@ -483,14 +483,17 @@ def _apply_dump_config(dump_config, value):
     if value == "full":
         dump_config.enable_all()
         return
-    for m in value.lower().split(","):
-        if m == "in":
+    for raw_mode in value.lower().split(","):
+        mode = raw_mode.strip()
+        if mode == "in":
             dump_config.enable_input()
-        elif m == "out":
+        elif mode == "out":
             dump_config.enable_output()
-        elif m == "golden":
+        elif mode == "golden":
             dump_config.enable_golden()
-        elif m == "full":
+        elif mode == "xpu":
+            dump_config.enable_xpu()
+        elif mode == "full":
             dump_config.enable_all()
 
 

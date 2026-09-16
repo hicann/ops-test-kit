@@ -1345,6 +1345,7 @@ def _do_profile(  # noqa: PLR0911
 
     third_parties = None
     xpu_results = None
+    need_3party = False
     if golden_nps and not any(isinstance(g, str) for g in golden_nps):
         tolerance = get_spec_attr(testcase.api_name, "tolerance", switches.plugin_path)
         # 按被测输出的 dtype 解析容差(golden 可能已被 Promote 抬精度,拿它解析会走偏);
@@ -1359,28 +1360,28 @@ def _do_profile(  # noqa: PLR0911
             switches.compare_method,
         )
         need_3party = any(s.token == "cross_check" for s in standards)  # noqa: S105
-        from ttk.remote.client import collect_third_party, xpu_mode_of
+    from ttk.remote.client import collect_third_party, xpu_mode_of
 
-        xpu_mode = xpu_mode_of(switches, need_3party)
-        if xpu_mode:
-            process_ctx.notify_status("OnXpuProfiling")
-            _, third_parties, xpu_results = collect_third_party(
-                op_name=testcase.api_name,
-                inputs=_e2e_xpu_inputs(testcase, raw_inputs),
-                input_names=_e2e_xpu_input_names(testcase),
-                op_type=None,
-                attributes=testcase.attributes or {},
-                testcase_name=testcase.testcase_name,
-                switches=switches,
-                need_data=need_3party,
-                input_dtypes=_e2e_xpu_input_dtypes(testcase),
+    xpu_mode = xpu_mode_of(switches, need_3party)
+    if xpu_mode:
+        process_ctx.notify_status("OnXpuProfiling")
+        _, third_parties, xpu_results = collect_third_party(
+            op_name=testcase.api_name,
+            inputs=_e2e_xpu_inputs(testcase, raw_inputs),
+            input_names=_e2e_xpu_input_names(testcase),
+            op_type=None,
+            attributes=testcase.attributes or {},
+            testcase_name=testcase.testcase_name,
+            switches=switches,
+            need_data=need_3party,
+            input_dtypes=_e2e_xpu_input_dtypes(testcase),
+        )
+        if need_3party and third_parties is None:
+            logging.warning(
+                "[%s] cross_check configured but no third_party output "
+                "(no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE",
+                testcase.testcase_name,
             )
-            if need_3party and third_parties is None:
-                logging.warning(
-                    "[%s] cross_check configured but no third_party output "
-                    "(no XPU / endpoint down); cross_check outputs will GOLDEN_FAILURE",
-                    testcase.testcase_name,
-                )
     return_struct.xpu_metrics = _format_xpu_metrics(xpu_results) if xpu_results else {}
 
     if result_nps is None:

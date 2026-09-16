@@ -83,6 +83,7 @@ class TestcaseOp(TestcaseBase):
         # manual configurations
         "manual_input_binaries",
         "manual_golden_binaries",
+        "manual_xpu_binaries",
         # operator attributes
         "attributes",
         "attributes1",
@@ -149,6 +150,7 @@ class TestcaseOp(TestcaseBase):
         "_flat_input_arrays",
         "_flat_manual_input_binaries",
         "_flat_manual_golden_binaries",
+        "_flat_manual_xpu_binaries",
         "_dyn_clear_atomic",
         "_cst_clear_atomic",
         "_bin_clear_atomic",
@@ -194,6 +196,7 @@ class TestcaseOp(TestcaseBase):
         "dump_file_prefix": (FIELD_TYPES.STRING, None, None),
         "manual_input_binaries": (FIELD_TYPES.FREE_EVAL, None, ()),
         "manual_golden_binaries": (FIELD_TYPES.FREE_EVAL, None, ()),
+        "manual_xpu_binaries": (FIELD_TYPES.FREE_EVAL, None, ()),
     }
     complete_headers: Dict[str, tuple] = {**identity_headers, **property_headers, **option_headers}
     force_clear_atomic_ops = ("ones_like",)
@@ -615,6 +618,8 @@ class TestcaseOp(TestcaseBase):
         self._normalize_compressed_fields()
         self._check_manual_binaries()
         self._check_manual_output_binaries()
+        self._check_manual_xpu_binaries()
+        self._check_manual_xpu_dependencies()
         self._stc_shape_size_check()
         self._set_case_core_type()
         self._auto_set_inplace_indexes()
@@ -923,17 +928,15 @@ class TestcaseOp(TestcaseBase):
             self._check_none_alignment(binaries, self.flat_input_shapes, "flat")
 
     @staticmethod
-    def _check_none_alignment(binaries, inputs, context_label):
+    def _check_none_alignment(binaries, inputs, context_label, field_name="manual_input_binaries"):
         for i, inp in enumerate(inputs):
             binary = binaries[i] if i < len(binaries) else None
             if inp is not None and binary is None:
-                raise ValueError(
-                    f"manual_input_binaries {context_label}[{i}]: input is non-None but binary is missing/None"
-                )
+                raise ValueError(f"{field_name} {context_label}[{i}]: input is non-None but binary is missing/None")
             if inp is None and binary is not None:
-                raise ValueError(f"manual_input_binaries {context_label}[{i}]: input is None but binary is {binary!r}")
+                raise ValueError(f"{field_name} {context_label}[{i}]: input is None but binary is {binary!r}")
         if len(binaries) > len(inputs):
-            raise ValueError(f"manual_input_binaries {context_label}: {len(binaries)} entries > {len(inputs)} inputs")
+            raise ValueError(f"{field_name} {context_label}: {len(binaries)} entries > {len(inputs)} inputs")
 
     def _reshape_manual_binaries_impl(self):
         binaries = self.manual_input_binaries
@@ -971,35 +974,55 @@ class TestcaseOp(TestcaseBase):
     # ---------- Output manual binaries ----------
 
     def _check_manual_output_binaries(self):
+        self._check_manual_reference_binaries("manual_golden_binaries", "MANUAL_OUTPUT_BINARIES_INVALID")
+
+    def _check_manual_xpu_binaries(self):
+        self._check_manual_reference_binaries("manual_xpu_binaries", "MANUAL_XPU_BINARIES_INVALID")
+
+    def _check_manual_xpu_dependencies(self):
+        if not self.is_valid or not self.manual_xpu_binaries:
+            return
+        has_inputs = any(shape is not None for shape in (self.flat_input_shapes or ()))
+        if has_inputs and not self.manual_input_binaries:
+            self.is_valid = False
+            self.fail_reason = "MANUAL_XPU_INPUT_REQUIRED"
+            logging.error("manual_xpu_binaries requires manual_input_binaries")
+            return
+        if not self.manual_golden_binaries:
+            self.is_valid = False
+            self.fail_reason = "MANUAL_XPU_GOLDEN_REQUIRED"
+            logging.error("manual_xpu_binaries requires manual_golden_binaries")
+
+    def _check_manual_reference_binaries(self, field_name, failure_reason):
         if not self.is_valid:
             return
         # noinspection PyBroadException
         try:
-            self._normalize_manual_output_binaries_impl()
-            self._validate_manual_output_binaries_impl()
-            self._reshape_manual_output_binaries_impl()
+            self._normalize_manual_reference_binaries_impl(field_name)
+            self._validate_manual_reference_binaries_impl(field_name)
+            self._reshape_manual_reference_binaries_impl(field_name)
         except Exception:
             self.is_valid = False
-            self.fail_reason = "MANUAL_OUTPUT_BINARIES_INVALID"
-            logging.exception("manual_golden_binaries validation failed")
+            self.fail_reason = failure_reason
+            logging.exception("%s validation failed", field_name)
 
-    def _normalize_manual_output_binaries_impl(self):
+    def _normalize_manual_reference_binaries_impl(self, field_name):
         # binaries
-        binaries = self.manual_golden_binaries
+        binaries = getattr(self, field_name)
         if binaries:
             if isinstance(binaries, str):
-                self.manual_golden_binaries = (binaries,)
+                setattr(self, field_name, (binaries,))
             elif isinstance(binaries, (tuple, list)):
-                self.manual_golden_binaries = self._normalize_binaries_recursive(binaries)
+                setattr(self, field_name, self._normalize_binaries_recursive(binaries))
             else:
-                raise ValueError(f"Invalid manual_golden_binaries: {binaries}")
+                raise ValueError(f"Invalid {field_name}: {binaries}")
 
-    def _validate_manual_output_binaries_impl(self):
+    def _validate_manual_reference_binaries_impl(self, field_name):
         dist = self.output_distribution or ()
         flat_outputs = self.flat_output_shapes
 
         # validate binaries
-        binaries = self.manual_golden_binaries
+        binaries = getattr(self, field_name)
         if binaries:
             has_tensor_list = any(d > 0 for d in dist)
             is_nested = any(isinstance(b, (tuple, list)) for b in binaries)
@@ -1007,13 +1030,9 @@ class TestcaseOp(TestcaseBase):
 
             if is_nested:
                 if not has_tensor_list:
-                    raise ValueError(
-                        f"manual_golden_binaries must be flat when no TensorList in outputs, got nested: {binaries}"
-                    )
+                    raise ValueError(f"{field_name} must be flat when no TensorList in outputs, got nested: {binaries}")
                 if len(binaries) != n_params:
-                    raise ValueError(
-                        f"manual_golden_binaries top-level count {len(binaries)} != output params count {n_params}"
-                    )
+                    raise ValueError(f"{field_name} top-level count {len(binaries)} != output params count {n_params}")
                 offset = 0
                 for i, dist_val in enumerate(dist):
                     count = max(dist_val, 1)
@@ -1023,22 +1042,22 @@ class TestcaseOp(TestcaseBase):
                     if dist_val > 0:
                         if not isinstance(group, (tuple, list)):
                             raise ValueError(
-                                f"manual_golden_binaries param {i}: "
+                                f"{field_name} param {i}: "
                                 f"expected tuple/list for TensorList, got {type(group).__name__}"
                             )
-                        self._check_none_alignment(group, group_outputs, f"output group {i}")
+                        self._check_none_alignment(group, group_outputs, f"output group {i}", field_name)
                     else:
                         if isinstance(group, (tuple, list)):
                             raise ValueError(
-                                f"manual_golden_binaries param {i}: "
+                                f"{field_name} param {i}: "
                                 f"expected str/None for non-TensorList, got {type(group).__name__}"
                             )
-                        self._check_none_alignment((group,), group_outputs, f"output param {i}")
+                        self._check_none_alignment((group,), group_outputs, f"output param {i}", field_name)
             else:
-                self._check_none_alignment(binaries, flat_outputs, "output flat")
+                self._check_none_alignment(binaries, flat_outputs, "output flat", field_name)
 
-    def _reshape_manual_output_binaries_impl(self):
-        binaries = self.manual_golden_binaries
+    def _reshape_manual_reference_binaries_impl(self, field_name):
+        binaries = getattr(self, field_name)
         if not binaries:
             return
         dist = self.output_distribution or ()
@@ -1054,7 +1073,16 @@ class TestcaseOp(TestcaseBase):
             else:
                 result.append(flat_bins[offset])
             offset += max(d, 1)
-        self.manual_golden_binaries = tuple(result)
+        setattr(self, field_name, tuple(result))
+
+    def _normalize_manual_output_binaries_impl(self):
+        self._normalize_manual_reference_binaries_impl("manual_golden_binaries")
+
+    def _validate_manual_output_binaries_impl(self):
+        self._validate_manual_reference_binaries_impl("manual_golden_binaries")
+
+    def _reshape_manual_output_binaries_impl(self):
+        self._reshape_manual_reference_binaries_impl("manual_golden_binaries")
 
     @property
     def input_distribution(self):
@@ -1105,6 +1133,18 @@ class TestcaseOp(TestcaseBase):
 
             self._flat_manual_golden_binaries = deep_flatten(self.manual_golden_binaries)
         return self._flat_manual_golden_binaries
+
+    @property
+    def flat_manual_xpu_binaries(self):
+        if self._flat_manual_xpu_binaries is not None:
+            return self._flat_manual_xpu_binaries
+        if not self.manual_xpu_binaries or not self.output_distribution:
+            self._flat_manual_xpu_binaries = self.manual_xpu_binaries
+        else:
+            from ...utilities.container_utils import deep_flatten
+
+            self._flat_manual_xpu_binaries = deep_flatten(self.manual_xpu_binaries)
+        return self._flat_manual_xpu_binaries
 
     @property
     def flat_input_dtypes(self):
@@ -1399,6 +1439,7 @@ class TestcaseOp(TestcaseBase):
         self.dump_file_prefix = None
         self.manual_input_binaries: Optional[Tuple[str, ...]] = None
         self.manual_golden_binaries = None
+        self.manual_xpu_binaries = None
         # End of testcase valid configurations
         self.input_arrays = None
         self.original_input_arrays = None
@@ -1455,6 +1496,7 @@ class TestcaseOp(TestcaseBase):
         self._flat_input_arrays = None
         self._flat_manual_input_binaries = None
         self._flat_manual_golden_binaries = None
+        self._flat_manual_xpu_binaries = None
         # property override
         self._dyn_clear_atomic = None
         self._cst_clear_atomic = None

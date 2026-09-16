@@ -110,7 +110,7 @@ python3 -m ttk list -i cases.xlsx --sheet Sheet2
 
 | 参数 | 缩写 | 默认值 | 说明 | 示例 |
 |------|------|--------|------|------|
-| `--dump` | | 关闭 | Dump数据：`full`/`in`/`out`/`golden` | `--dump full` |
+| `--dump` | | 关闭 | Dump数据：`full`/`in`/`out`/`golden`/`xpu`，可逗号组合；`full` 保持为本地三类数据 | `--dump in,out,xpu` |
 | `--dump-format` | | `bin` | Dump格式：`bin`/`npy`/`pt`/`print` | `--dump-format npy` |
 | `--dump-on-fail` | | 关闭 | 精度失败时Dump全部数据 | `--dump-on-fail` |
 | `--manual-data-dirs` | | 无 | prepare输出目录或replay有序搜索目录 | `--manual-data-dirs /data/op` |

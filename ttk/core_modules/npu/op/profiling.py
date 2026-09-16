@@ -42,6 +42,7 @@ from ....utilities import (
     get,
     get_global_storage,
     get_str_tiling_data,
+    load_numpy_data,
     parse_tiling_data,
     resolve_custom_numpy_dtypes,
     table_print,
@@ -392,17 +393,27 @@ def _write_manual_prepare(context: TestcaseOp, prepare_store, prepared_inputs):
 def _run_xpu_and_workspace(context: TestcaseOp, need_3party):
     switches = get_global_storage()
     process_ctx = get_process_context()
-    process_ctx.notify_status("OnXpuProfiling")
-    xpu_mode = _xpu_mode(switches, need_3party)
-    xpu_priority = _do_xpu_profiling(context, xpu_mode) if xpu_mode else None
-    third_parties_nested = _extract_third_party(getattr(context, "xpu_results", None), xpu_priority)
-    if need_3party and third_parties_nested is None:
-        logging.warning(
-            "[%s] cross_check configured but no third_party output (no XPU / endpoint down); "
-            "cross_check outputs will GOLDEN_FAILURE",
-            context.op_name,
-        )
-    third_parties = list(deep_flatten(third_parties_nested)) if third_parties_nested is not None else None
+    if need_3party and context.manual_xpu_binaries:
+        process_ctx.notify_status("OnLoadManualXpu")
+        third_parties = _load_manual_xpu_binaries(context)
+        context.xpu_results = {
+            "manual_binary": {
+                "status": "PASS",
+                "api": "manual_xpu_binaries",
+            }
+        }
+    else:
+        process_ctx.notify_status("OnXpuProfiling")
+        xpu_mode = _xpu_mode(switches, need_3party)
+        xpu_priority = _do_xpu_profiling(context, xpu_mode) if xpu_mode else None
+        third_parties_nested = _extract_third_party(getattr(context, "xpu_results", None), xpu_priority)
+        if need_3party and third_parties_nested is None:
+            logging.warning(
+                "[%s] cross_check configured but no third_party output (no XPU / endpoint down); "
+                "cross_check outputs will GOLDEN_FAILURE",
+                context.op_name,
+            )
+        third_parties = list(deep_flatten(third_parties_nested)) if third_parties_nested is not None else None
     process_ctx.notify_status("OnGenWorkspace")
     context.dyn_workspace_arrays = __gen_workspaces(
         context.dyn_compile_result.workspaces, context.dyn_compile_result.debug_buf_size
@@ -418,6 +429,26 @@ def _run_xpu_and_workspace(context: TestcaseOp, need_3party):
     process_ctx.notify_status("OnDumpGoldenDataIfRequired")
     __dump_golden(context)
     return third_parties
+
+
+def _load_manual_xpu_binaries(context: TestcaseOp):
+    paths = context.flat_manual_xpu_binaries or ()
+    shapes = context.flat_output_shapes or ()
+    dtypes = resolve_custom_numpy_dtypes(context.flat_output_dtypes)
+    arrays = []
+    for index, shape in enumerate(shapes):
+        path = paths[index] if index < len(paths) else None
+        if path is None or shape is None:
+            arrays.append(None)
+            continue
+        logging.info("Reading manual XPU file: %s ...", path)
+        array = load_numpy_data(path, get(dtypes, index), shape)
+        if tuple(array.shape) != tuple(shape):
+            raise ValueError(
+                f"Manual XPU output[{index}] shape {tuple(array.shape)} does not match expected {tuple(shape)}"
+            )
+        arrays.append(array)
+    return arrays
 
 
 def _device_profiling(context: TestcaseOp, dev_id, device_grant_events, device_granted_indices):
