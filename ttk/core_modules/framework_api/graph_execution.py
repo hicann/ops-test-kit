@@ -34,6 +34,7 @@ WARMUP_COUNT = 1
 # super_kernel_debug_options 支持；GE 图模式 scope options 走 op 编译白名单
 # （CANN 9.2.0 不含该选项，传入会导致 Compilation_Error E40021）。
 _ACLGRAPH_SUPER_KERNEL_OPTIONS = {
+    "static_kernel_compile": True,
     "super_kernel_optimize": True,
     "super_kernel_debug_options": {"debug_per_op_max_core_num": 1},
 }

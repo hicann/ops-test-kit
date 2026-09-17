@@ -32,6 +32,7 @@ from ttk.utilities import (
     get,
     get_global_storage,
     is_4bit_dtype,
+    pack_4bits,
     resolve_custom_numpy_dtypes,
     unpack_4bits,
     waiting_for_memory,
@@ -165,6 +166,16 @@ def _geir_param_order(testcase) -> list:
     return [inp["name"] for inp in op_info["inputs"]] + [attr["name"] for attr in op_info["attr"]]
 
 
+def _write_input_bin(arr, path):
+    """写 GEIR 输入 bin。NumPy 4-bit dtype 是 unpacked（1 字节/元素），而 C++ 执行程序
+    按设备 packed 表示读取（每字节 2 个 4-bit 元素，见 geir_op_template.cpp.j2 的
+    LoadInputFromFile），写入前必须打包，否则输入数据错位（issue #179）。"""
+    if is_4bit_dtype(arr.dtype):
+        pack_4bits(np.ascontiguousarray(arr)).tofile(path)
+    else:
+        arr.tofile(path)
+
+
 def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     if getattr(switches, "deterministic_level", 0) == 3:
         logging.warning(
@@ -267,11 +278,11 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             # DYNAMIC_INPUT(TensorList):逐元素写 bin,索引与 graph_builder 的 elements 对齐
             for sub in arr:
                 if sub is not None:
-                    sub.tofile(f"{input_prefix}_{data_idx}.bin")
+                    _write_input_bin(sub, f"{input_prefix}_{data_idx}.bin")
                     data_idx += 1
             continue
         path = f"{input_prefix}_{data_idx}.bin"
-        arr.tofile(path)
+        _write_input_bin(arr, path)
         data_idx += 1
     testcase.original_input_arrays = None
 
@@ -304,11 +315,11 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
                 if isinstance(arr, (list, tuple)):
                     for sub in arr:
                         if sub is not None:
-                            sub.tofile(f"{input_prefix}_{data_idx}.bin")
+                            _write_input_bin(sub, f"{input_prefix}_{data_idx}.bin")
                             data_idx += 1
                     continue
                 path = f"{input_prefix}_{data_idx}.bin"
-                arr.tofile(path)
+                _write_input_bin(arr, path)
                 data_idx += 1
 
         data_r, data_w = os.pipe()
