@@ -40,6 +40,8 @@ MIX_TOLERANCE = {
 MIX_REQUIRED_MATCHED_RATIO = 0.99
 DEFAULT_MIX_TOLERANCE = MIX_TOLERANCE["float32"]  # 表外浮点 dtype（float64 等）回落 float32 档
 
+PROMOTE_GOLDEN_TOKENS = ("cross_check", "mixed", "mix_tolerance")
+
 # cross_check level 预设（level 矩阵）
 LEVEL_PRESETS = {
     "L0": {"mare_ratio": 10.0, "mere_ratio": 2.0, "rmse_ratio": 2.0},
@@ -243,3 +245,8 @@ def resolve_tolerance(
         }
         standards.append(ResolvedStandard(token, params))
     return standards
+
+
+def needs_promote_golden(standards) -> bool:
+    """任一输出判据属于 PROMOTE_GOLDEN_TOKENS 时返回 True（golden 须升精度生成）。"""
+    return any(s.token in PROMOTE_GOLDEN_TOKENS for s in standards)

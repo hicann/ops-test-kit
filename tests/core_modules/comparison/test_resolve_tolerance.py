@@ -165,3 +165,28 @@ def test_fp8_cli_requant_still_works():
 def test_hifloat8_defaults_requant():
     """hifloat8 不在混合容差阈值表内（表外量化 dtype），保持 requant 默认。"""
     assert _tokens(resolve_tolerance(None, None, None, ["hifloat8"], None)) == ["requant"]
+
+
+# —— needs_promote_golden（golden 强制升精度的判据路由，各 profiling 流程共用）——
+def test_needs_promote_golden_routes():
+    """cross_check/mixed/mix_tolerance 升精度；stat_rel_err/binary_equal/isclose 不升。"""
+    from ttk.core_modules.comparison.resolve import needs_promote_golden
+
+    assert needs_promote_golden(resolve_tolerance(None, None, None, ["float32"], None)) is True  # 默认 mix_tolerance
+    assert needs_promote_golden(resolve_tolerance(None, None, None, ["float32"], "mixed")) is True
+    assert (
+        needs_promote_golden(
+            resolve_tolerance({"float32": {"standard": "cross_check", "level": "L1"}}, None, None, ["float32"], None)
+        )
+        is True
+    )
+    assert (
+        needs_promote_golden(
+            resolve_tolerance({"float32": {"standard": "stat_rel_err"}}, None, None, ["float32"], None)
+        )
+        is False
+    )
+    assert needs_promote_golden(resolve_tolerance(None, None, None, ["int32"], None)) is False  # binary_equal
+    assert needs_promote_golden(resolve_tolerance(None, None, None, ["float32"], "close")) is False  # isclose
+    # 多输出任一命中即升精度
+    assert needs_promote_golden(resolve_tolerance(None, None, None, ["int32", "float32"], None)) is True

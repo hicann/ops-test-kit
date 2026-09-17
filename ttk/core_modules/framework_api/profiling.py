@@ -28,7 +28,7 @@ import numpy as np
 
 from ttk.core_modules.comparison.comparison import compare
 from ttk.core_modules.comparison.custom import apply_pre_compare, try_custom_compare
-from ttk.core_modules.comparison.resolve import resolve_tolerance
+from ttk.core_modules.comparison.resolve import needs_promote_golden, resolve_tolerance
 from ttk.core_modules.deterministic import resolve_deterministic_level
 from ttk.core_modules.manual_data import (
     load_manual_data_case,
@@ -556,13 +556,13 @@ def _execute_eager(
 
 
 def _needs_golden_promote(testcase, switches, ref_nps):
-    """判据是否为 cross_check —— 是则 golden 必须抬成高精度真值。
+    """判据是否要求 golden 升精度 —— cross_check（三方）与 mixed/mix_tolerance（单标杆）则是。
 
-    cross_check 时 golden 必须走 Promote,与 geir/profiling.py、npu/op/profiling.py 对齐。
-    此前 E2E 不设该 override,理由是「比值判据对 golden 自身舍入不敏感(分子分母共享)」——
-    该前提只在竞品是独立实现时成立;而 cross_check 的竞品与 E2E golden 同为 torch aten,
-    rmse_party/rel_party 恒为 0,safe_div 的 err 地板接管,判据退化成「与 torch 逐位一致」,
-    一次末位舍入即被放大成数倍比值。故 resolve 提前到 golden 生成之前,仅为取得该标志。
+    与 geir/profiling.py、npu/op/profiling.py 对齐。cross_check 时 golden 必须走 Promote:
+    竞品与 E2E golden 同为 torch aten,rmse_party/rel_party 恒为 0,safe_div 的 err 地板接管,
+    判据退化成「与 torch 逐位一致」,一次末位舍入即被放大成数倍比值。mix_tolerance 为
+    精度标准 2.3 单标杆比对,标杆须为更高精度的实现。故 resolve 提前到 golden 生成之前,
+    仅为取得该标志。
     """
     if not ref_nps:
         return False
@@ -575,14 +575,14 @@ def _needs_golden_promote(testcase, switches, ref_nps):
             dtypes,
             switches.compare_method,
         )
-        return any(s.token == "cross_check" for s in standards)  # noqa: S105
+        return needs_promote_golden(standards)
     except (KeyError, TypeError, ValueError):
         # 只兜 tolerance spec 配置类错误(字段缺失/类型不对/取值非法)。
         # 用 warning 而非 debug:此处静默跳过 Promote 正是本函数要修的症状
-        # (cross_check 误判 FAIL 却无任何提示),必须让用户看得见。
+        # (cross_check/mix_tolerance 误判 FAIL 却无任何提示),必须让用户看得见。
         logging.warning(
             "[%s] tolerance spec resolve failed, golden Promote skipped; "
-            "cross_check may misjudge without high-precision golden",
+            "cross_check/mix_tolerance may misjudge without high-precision golden",
             testcase.testcase_name,
             exc_info=True,
         )
@@ -590,7 +590,7 @@ def _needs_golden_promote(testcase, switches, ref_nps):
 
 
 def _generate_golden_maybe_promote(testcase, raw_inputs, switches, backend, ref_nps):
-    """cross_check 判据下临时挂上 golden_mode_override=Promote 再生成 golden。
+    """需升精度判据（cross_check / mixed / mix_tolerance）下临时挂上 golden_mode_override=Promote 再生成 golden。
 
     不用 del 还原(TestcaseE2e 不支持删除该属性),改为记录原值后回写。
     """

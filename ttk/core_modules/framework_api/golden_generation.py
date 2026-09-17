@@ -58,7 +58,7 @@ def _promote_raw_inputs(testcase, raw_inputs, switches=None):
     故在此补齐,语义与 npu/op/output_generation.py 的 __promote_dtype 一致。
     """
     # 模式判定放在此处而非调用点:让 generate_golden 少一层分支。
-    # golden_mode_override 由 profiling 侧在 cross_check 判据下设置。
+    # golden_mode_override 由 profiling 侧在 cross_check/mix_tolerance 判据下设置。
     mode = getattr(testcase, "golden_mode_override", None) or getattr(switches, "golden_mode", None)
     if mode != "Promote":
         return raw_inputs

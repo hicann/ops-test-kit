@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """
@@ -27,6 +30,7 @@ import numpy as np
 import pytest
 
 from ttk.core_modules.npu.op import output_generation as _mod
+from ttk.core_modules.npu.op.profiling import _resolve_tolerance as resolve_tolerance_routing
 from ttk.core_modules.testcase_manager.testcase_op import TestcaseOp
 
 _generate_golden = getattr(_mod, "__generate_golden")
@@ -117,3 +121,51 @@ class TestKernelPromoteWrapCoversAllForms:
             assert d == np.dtype("float32"), (
                 f"golden received UN-promoted dtype {d!r}; expected float32 (promoted from float16 under Promote mode)"
             )
+
+
+class TestKernelResolveToleranceSetsPromote:
+    """判据要求升精度（mixed/mix_tolerance）时 _resolve_tolerance 须设 golden_mode_override=Promote。"""
+
+    @staticmethod
+    def _switches():
+        sw = MagicMock()
+        sw.compare_method = None
+        sw.plugin_path = None
+        return sw
+
+    @classmethod
+    def _resolve(cls, case, compare_method=None):
+        sw = cls._switches()
+        sw.compare_method = compare_method
+        with patch("ttk.core_modules.npu.op.profiling.get_global_storage", return_value=sw), patch(
+            "ttk.core_modules.npu.op.profiling.get_spec_attr", return_value=None
+        ):
+            return resolve_tolerance_routing(case)
+
+    def test_mix_tolerance_default_sets_promote(self):
+        """float32 输出默认路由 mix_tolerance（单标杆）→ golden_mode_override=Promote。"""
+        case = _make_testcase(output_dtypes=("float32",))
+
+        tol_state, early = self._resolve(case)
+
+        assert early is None
+        assert case.golden_mode_override == "Promote"
+        assert tol_state.need_3party is False
+
+    def test_cli_mixed_alias_sets_promote(self):
+        """CLI 简写 mixed 与 mix_tolerance 同判据，同样升精度。"""
+        case = _make_testcase(output_dtypes=("float32",))
+
+        _, early = self._resolve(case, compare_method="mixed")
+
+        assert early is None
+        assert case.golden_mode_override == "Promote"
+
+    def test_int_output_no_promote(self):
+        """int32 输出路由 binary_equal，不设 override。"""
+        case = _make_testcase(output_dtypes=("int32",))
+
+        _, early = self._resolve(case)
+
+        assert early is None
+        assert not hasattr(case, "golden_mode_override")

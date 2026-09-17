@@ -296,6 +296,7 @@ def _generate_input(context: TestcaseOp, switches, process_ctx, manual_case, man
 
 
 def _resolve_tolerance(context: TestcaseOp):
+    from ...comparison.resolve import needs_promote_golden as _needs_promote_golden
     from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
 
     switches = get_global_storage()
@@ -314,7 +315,8 @@ def _resolve_tolerance(context: TestcaseOp):
             input_dtypes=input_dtypes,
         )
         need_3party = any(s.token == "cross_check" for s in standards)  # noqa: S105  # token 为比对标准名，非口令
-        if need_3party:
+        # cross_check（三方）与 mixed/mix_tolerance（单标杆，2.3 更高精度标杆）均要求 golden 升精度
+        if _needs_promote_golden(standards):
             context.golden_mode_override = "Promote"
         return SimpleNamespace(
             tolerance=tolerance,

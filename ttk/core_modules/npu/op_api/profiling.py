@@ -2008,6 +2008,7 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
         __profiling_end_print(context, compare_result)
         return return_structure
 
+    from ...comparison.resolve import needs_promote_golden as _needs_promote_golden
     from ...comparison.resolve import resolve_tolerance as _resolve_tolerance
 
     plugin_path = getattr(switches, "plugin_path", None)
@@ -2032,7 +2033,7 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
             __release_retained_multi_device_resources(context, device_ids)
             raise
         context.xpu_metrics = _format_xpu_metrics(xpu_results) if xpu_results else {}
-    if need_3party:
+    if _needs_promote_golden(standards):  # cross_check 三方 / mixed·mix_tolerance 单标杆均升精度
         context.golden_mode_override = "Promote"
     try:
         if is_multi_device and device_ids and hasattr(context, "_multi_device_thread_contexts"):

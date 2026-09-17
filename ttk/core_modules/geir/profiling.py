@@ -176,9 +176,10 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
     # Generate inputs (same as kernel mode)
     __gen_input(testcase)
 
-    # resolve 提前到 __gen_output 之前（唯一目的：cross_check 时设 golden_mode_override
-    # 让 golden 走 Promote 高精度真值）。与 npu/op/profiling.py:286-300 对齐。
+    # resolve 提前到 __gen_output 之前（唯一目的：判据要求升精度时设 golden_mode_override
+    # 让 golden 走 Promote 高精度真值）。与 npu/op/profiling.py 对齐。
     process_ctx.notify_status("OnResolveTolerance")
+    from ..comparison.resolve import needs_promote_golden as _needs_promote_golden
     from ..comparison.resolve import resolve_tolerance
 
     tolerance = _spec_attr_of(testcase, switches, "tolerance")
@@ -191,7 +192,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
         input_dtypes=testcase.flat_input_dtypes,
     )
     need_3party_outputs = any(s.token == "cross_check" for s in standards)  # noqa: S105  # token 为比对标准名，非口令
-    if need_3party_outputs:
+    if _needs_promote_golden(standards):  # cross_check 三方 / mixed·mix_tolerance 单标杆均升精度
         testcase.golden_mode_override = "Promote"
 
     # Generate golden (same as kernel mode, uses testcase.input_arrays)

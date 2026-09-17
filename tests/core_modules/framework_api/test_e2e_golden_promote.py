@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms of conditions of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
 """
@@ -12,7 +15,7 @@ Covers the three functions added when E2E golden gained `golden_mode=Promote`
 under a cross_check tolerance:
 
   * `golden_generation._promote_raw_inputs`    - dtype lift itself
-  * `profiling._needs_golden_promote`          - "is the standard cross_check?"
+  * `profiling._needs_golden_promote`          - "does the standard need Promote?"
   * `profiling._generate_golden_maybe_promote` - set / restore the override
 """
 
@@ -113,6 +116,32 @@ def test_needs_promote_true_for_cross_check():
         _prof, "resolve_tolerance", return_value=[_standard("cross_check")]
     ):
         assert needs_golden_promote(_Testcase(), _Switches(), [np.ones(2)]) is True
+
+
+def test_needs_promote_true_for_mix_tolerance():
+    """mix_tolerance（默认单标杆判据）与 CLI 简写 mixed 同样要求 golden 升精度。"""
+    for token in ("mix_tolerance", "mixed"):
+        with patch.object(_prof, "get_spec_attr", return_value=None), patch.object(
+            _prof, "resolve_tolerance", return_value=[_standard(token)]
+        ):
+            assert needs_golden_promote(_Testcase(), _Switches(), [np.ones(2)]) is True
+
+
+def test_needs_promote_false_for_non_promote_standards():
+    """stat_rel_err/binary_equal/isclose 判据不强制 golden 升精度。"""
+    for token in ("stat_rel_err", "binary_equal", "isclose"):
+        with patch.object(_prof, "get_spec_attr", return_value=None), patch.object(
+            _prof, "resolve_tolerance", return_value=[_standard(token)]
+        ):
+            assert needs_golden_promote(_Testcase(), _Switches(), [np.ones(2)]) is False
+
+
+def test_needs_promote_false_without_ref_nps():
+    """拿不到被测输出（ref_nps 空）时无法解析判据，不升精度。"""
+    with patch.object(_prof, "get_spec_attr", return_value=None), patch.object(
+        _prof, "resolve_tolerance", return_value=[_standard("mix_tolerance")]
+    ):
+        assert needs_golden_promote(_Testcase(), _Switches(), None) is False
 
 
 # ----------------------------------------------------------------------------
