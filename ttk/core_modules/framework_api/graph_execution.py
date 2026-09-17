@@ -88,17 +88,30 @@ def _compile_model_aclgraph(model, backend, fullgraph, super_kernel=False):
 
 
 class _SuperKernelScopeModel(torch.nn.Module):
-    """Wrap a model so its whole forward runs inside a torchair SuperKernel scope."""
+    """Mark the target forward with the scope understood by its graph backend."""
 
-    def __init__(self, model, scope_name):
+    def __init__(self, model, scope_name, is_aclgraph=False):
         super().__init__()
         self._model = model
         self._scope_name = scope_name
+        self._is_aclgraph = is_aclgraph
+        if is_aclgraph and not all(
+            callable(getattr(torch.npu, name, None)) for name in ("super_kernel_scope_begin", "super_kernel_scope_end")
+        ):
+            raise RuntimeError("--super-kernel with --aclgraph requires torch_npu SuperKernel scope APIs")
+        if not is_aclgraph:
+            import torchair
+
+            # Resolve the lazy module outside Dynamo's traced forward.
+            self._super_kernel_scope = torchair.scope.super_kernel
 
     def forward(self, *args, **kwargs):
-        import torchair
-
-        with torchair.scope.super_kernel(self._scope_name, ""):
+        if self._is_aclgraph:
+            torch.npu.super_kernel_scope_begin(self._scope_name)
+            result = self._model(*args, **kwargs)
+            torch.npu.super_kernel_scope_end(self._scope_name)
+            return result
+        with self._super_kernel_scope(self._scope_name, ""):
             return self._model(*args, **kwargs)
 
 
@@ -116,6 +129,7 @@ def _run_compiled(
     inplace_backups=None,
     inplace_kwargs_keys=None,
     deterministic_level=None,
+    is_aclgraph=False,
 ):
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
     if deterministic_level is None:
@@ -158,20 +172,21 @@ def _run_compiled(
 
     inplace_clones = {}
     original_tensors = {}
+    clone_count = 0 if is_aclgraph else run_count - 1
     if is_kwargs_mode:
         for idx, key in inplace_kwargs_keys.items():
             if key in kwargs and kwargs[key] is not None:
                 original_tensors[idx] = (key, kwargs[key])
-                inplace_clones[idx] = (key, [backend.clone(kwargs[key]) for _ in range(run_count - 1)])
+                inplace_clones[idx] = (key, [backend.clone(kwargs[key]) for _ in range(clone_count)])
     else:
         if inplace_backups:
             for idx in inplace_backups:
                 if idx < len(args) and args[idx] is not None:
                     original_tensors[idx] = args[idx]
-                    inplace_clones[idx] = [backend.clone(args[idx]) for _ in range(run_count - 1)]
+                    inplace_clones[idx] = [backend.clone(args[idx]) for _ in range(clone_count)]
         if is_inplace and inplace_backup is not None and 0 not in original_tensors and args and args[0] is not None:
             original_tensors[0] = args[0]
-            inplace_clones[0] = [backend.clone(args[0]) for _ in range(run_count - 1)]
+            inplace_clones[0] = [backend.clone(args[0]) for _ in range(clone_count)]
 
     profiler = get_profiler(
         api_name,
@@ -181,12 +196,19 @@ def _run_compiled(
             root_path=switches.root_path,
             dev_id=dev_id,
             enabled=profiling_enabled,
+            aclgraph=is_aclgraph,
         ),
     )
     md5_list = []
     with profiler:
         for i in range(run_count):
-            if i < run_count - 1:
+            if is_aclgraph:
+                # Mutated-input address changes force recapture inside the measured loop.
+                for idx, original in original_tensors.items():
+                    target = original[1] if is_kwargs_mode else original
+                    backup = (inplace_backups or {}).get(idx, inplace_backup)
+                    target.copy_(backup)
+            elif i < run_count - 1:
                 if is_kwargs_mode:
                     for _idx, (key, clones) in inplace_clones.items():
                         kwargs[key] = clones[i]
@@ -332,9 +354,10 @@ def _execute_graph(
         return [], None, None
 
     use_fullgraph = bool(switches.fullgraph)
-    if switches.super_kernel_enabled:
-        model = _SuperKernelScopeModel(model, testcase.api_name)
     try:
+        if switches.super_kernel_enabled:
+            logging.info("SuperKernel enabled: mode=%s scope=%s", mode_str, testcase.api_name)
+            model = _SuperKernelScopeModel(model, testcase.api_name, is_aclgraph=is_aclgraph)
         if is_aclgraph:
             compiled = _compile_model_aclgraph(model, npu_backend, use_fullgraph, switches.super_kernel_enabled)
         else:
@@ -353,6 +376,7 @@ def _execute_graph(
             inplace_backups=inplace_backups if inplace_input_indexes else None,
             inplace_kwargs_keys=inplace_kwargs_keys,
             deterministic_level=deterministic_level,
+            is_aclgraph=is_aclgraph,
         )
 
     except Exception as e:

@@ -354,7 +354,7 @@ class InstanceBase(metaclass=ABCMeta):
         if needs_comparison and not before_execution:
             logging.info(
                 "Level-3 phase one does not compare batch relations. After successful execution with "
-                "--dump out --dump-format bin and NPU_DUMP_PATH set, run scripts/fia_compare_batch_consistency.py "
+                "--dump out --dump-format bin and NPU_DUMP_PATH set, run scripts/compare_batch_consistency.py "
                 "with this result CSV to compare the output dumps."
             )
 

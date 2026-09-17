@@ -12,6 +12,7 @@ dtype utils
 """
 
 import copy
+import logging
 import re
 import struct
 from typing import Optional, Union
@@ -911,6 +912,13 @@ def numpy_to_torch_tensor(np_array: numpy.ndarray, is_complex32: bool = False):
             # torch_npu exposes some 4-bit identifiers as ACL enum integers,
             # not torch.dtype objects.  Keep their packed storage as uint8;
             # the operator's dtype attribute supplies the device semantics.
+            logging.warning(
+                "Torch dtype %s is unavailable for %s; using packed uint8 storage with shape %s. "
+                "The operator must supply the device dtype semantics.",
+                torch_dtype_name,
+                np_dtype,
+                packed_shape,
+            )
             return torch.from_numpy(packed)
         return torch.from_numpy(packed).view(torch_dtype)
     if "float8" in np_dtype:

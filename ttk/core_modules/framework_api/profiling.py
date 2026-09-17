@@ -389,8 +389,12 @@ def _ensure_deterministic_level_e2e(process_ctx, backend, testcase, deterministi
                 testcase.testcase_name,
             )
         except Exception as e:
-            logging.warning(f"Failed to set deterministic level: {e}")
-            return
+            process_ctx.storage.pop("_deterministic_level", None)
+            raise RuntimeError(
+                f"{testcase.testcase_name}: failed to set NPU deterministic level={deterministic_level}; "
+                "execution stopped. Check the sourced CANN environment, torch_npu/driver versions "
+                f"and device support. Original error: {e}"
+            ) from e
     process_ctx.storage["_deterministic_level"] = deterministic_level
 
 

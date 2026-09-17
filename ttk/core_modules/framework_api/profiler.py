@@ -56,6 +56,7 @@ class ProfilerConfig:
     dev_id: int = 0
     enabled: bool = True
     warmup_count: int = 0
+    aclgraph: bool = False
 
 
 class FrameworkProfiler(ABC):
@@ -97,11 +98,13 @@ class NpuProfiler(FrameworkProfiler):
     kernel_details.csv / operator_details.csv for device-side timing.
     """
 
-    def __init__(self, backend, testcase_name="", root_path=".", warmup_count=0):
+    def __init__(self, backend, testcase_name="", root_path=".", warmup_count=0, aclgraph=False):
         self._testcase_name = testcase_name or "unknown"
         self._outdir = os.path.join(root_path, "msprof", "e2e", self._testcase_name)
         os.makedirs(self._outdir, exist_ok=True)
         self._warmup_count = warmup_count
+        self._aclgraph = aclgraph
+        self._start_time_ns = 0
         self._prof = None
 
     def __enter__(self):
@@ -128,6 +131,7 @@ class NpuProfiler(FrameworkProfiler):
             schedule=schedule(wait=0, warmup=self._warmup_count, active=1, repeat=1),
             on_trace_ready=tensorboard_trace_handler(self._outdir),
         )
+        self._start_time_ns = time.time_ns()
         self._prof.start()
         return self
 
@@ -149,7 +153,11 @@ class NpuProfiler(FrameworkProfiler):
         total_cpu_us = 0.0
 
         if kernel_csv:
-            kernels, total_device_us = self._parse_kernel_details(kernel_csv)
+            kernels, total_device_us = self._parse_kernel_details(kernel_csv, aclgraph=self._aclgraph)
+            if not kernels and not self._aclgraph:
+                logging.warning(
+                    "NPU performance unavailable: no device kernel records with valid Step Id in %s", kernel_csv
+                )
         if operator_csv:
             total_cpu_us = self._parse_operator_cpu_time(operator_csv)
 
@@ -163,28 +171,31 @@ class NpuProfiler(FrameworkProfiler):
         )
 
     def _find_csv(self, filename):
-        """Find the latest-mtime CSV file in the profiler output directory tree.
-
-        torch_npu.profiler's tensorboard_trace_handler writes each trace into
-        a new timestamped subdir under _outdir, so multiple runs accumulate
-        multiple copies of kernel_details.csv / operator_details.csv. os.walk
-        yields subdirs in filesystem (os.listdir) order, not by time, so the
-        first match is not necessarily the newest — pick by mtime instead.
-        """
+        """Only consider CSVs written since this capture started, never old traces."""
         matches = []
         for root, _, files in os.walk(self._outdir):
             if filename in files:
-                matches.append(os.path.join(root, filename))
+                path = os.path.join(root, filename)
+                if os.stat(path).st_mtime_ns >= self._start_time_ns:
+                    matches.append(path)
         if not matches:
+            logging.warning(
+                "NPU profiler has no new %s for %s in %s; historical traces are not reused. "
+                "Check profiler export logs and directory permissions.",
+                filename,
+                self._testcase_name,
+                self._outdir,
+            )
             return None
         return max(matches, key=os.path.getmtime)
 
     @staticmethod
-    def _parse_kernel_details(csv_path):
+    def _parse_kernel_details(csv_path, aclgraph=False):
         """Parse kernel_details.csv for per-kernel device timing.
 
         Rows with empty Step Id belong to the profiler warmup phase and are
-        skipped so they don't skew the aggregated timing.
+        skipped so they don't skew the aggregated timing. ACLGraph timing
+        includes all captured models, but not graph-external input copies.
         """
         kernels_map = {}  # name -> {total_us, calls, max_us, min_us}
         total_device_us = 0.0
@@ -192,10 +203,21 @@ class NpuProfiler(FrameworkProfiler):
         try:
             with open(csv_path, newline="") as f:
                 reader = csv.DictReader(f)
+                if aclgraph and "Model ID" not in (reader.fieldnames or ()):
+                    logging.warning("ACLGraph performance unavailable: Model ID missing in %s", csv_path)
+                    return [], 0.0
                 for row in reader:
                     step_id = row.get("Step Id", "").strip()
                     if not step_id:
                         continue
+                    if aclgraph:
+                        try:
+                            model_id = int(row.get("Model ID", ""))
+                        except (ValueError, TypeError):
+                            continue
+                        # CANN uses UINT32_MAX for tasks outside a captured graph.
+                        if not 0 <= model_id < 0xFFFFFFFF:
+                            continue
                     name = row.get("Name", "").strip()
                     try:
                         duration = float(row.get("Duration(us)", 0))
@@ -218,6 +240,19 @@ class NpuProfiler(FrameworkProfiler):
         except Exception as e:
             logging.warning(f"Failed to parse {csv_path}: {e}")
 
+        if aclgraph:
+            if kernels_map:
+                logging.info(
+                    "ACLGraph device performance includes captured graph kernels only; "
+                    "graph-external tasks are excluded. Full trace: %s",
+                    csv_path,
+                )
+            else:
+                logging.warning(
+                    "ACLGraph performance unavailable: no captured graph kernels with valid Step Id/Model ID in %s; "
+                    "check graph capture and profiler output",
+                    csv_path,
+                )
         kernels = [
             KernelInfo(
                 name=name,
@@ -526,13 +561,23 @@ def get_profiler(
     if api_name.startswith("torch_npu."):
         if not backend.is_npu():
             raise RuntimeError(f"API '{api_name}' requires NPU backend, but current is '{backend.device_type()}'")
-        return NpuProfiler(backend, config.testcase_name, config.root_path, warmup_count=config.warmup_count)
+        return NpuProfiler(
+            backend, config.testcase_name, config.root_path, warmup_count=config.warmup_count, aclgraph=config.aclgraph
+        )
     if api_name.startswith("torch."):
         # NPU with builtin profiler -> NpuProfiler; otherwise TorchProfiler.
         if backend.is_npu() and backend.profile.get("profiler") == "builtin":
-            return NpuProfiler(backend, config.testcase_name, config.root_path, warmup_count=config.warmup_count)
+            return NpuProfiler(
+                backend,
+                config.testcase_name,
+                config.root_path,
+                warmup_count=config.warmup_count,
+                aclgraph=config.aclgraph,
+            )
         return TorchProfiler(backend)
 
     if backend.is_npu():
-        return NpuProfiler(backend, config.testcase_name, config.root_path, warmup_count=config.warmup_count)
+        return NpuProfiler(
+            backend, config.testcase_name, config.root_path, warmup_count=config.warmup_count, aclgraph=config.aclgraph
+        )
     return WallClockProfiler(backend)

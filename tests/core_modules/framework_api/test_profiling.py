@@ -129,13 +129,35 @@ class TestDeterministicContract:
         backend.is_npu.return_value = True
         backend.set_deterministic_level.side_effect = [RuntimeError("transient"), None, None]
         case = SimpleNamespace(testcase_name="case")
-        _ensure_deterministic_level_e2e(process, backend, case, 3)
+        with pytest.raises(RuntimeError, match="level=3.*execution stopped.*CANN.*transient"):
+            _ensure_deterministic_level_e2e(process, backend, case, 3)
         assert "_deterministic_level" not in process.storage
         _ensure_deterministic_level_e2e(process, backend, case, 3)
         _ensure_deterministic_level_e2e(process, backend, case, 3)
         _ensure_deterministic_level_e2e(process, backend, case, 0)
         assert [call.args[0] for call in backend.set_deterministic_level.call_args_list] == [3, 3, 0]
         assert process.storage["_deterministic_level"] == 0
+
+    @pytest.mark.parametrize("level", [0, 3])
+    def test_failed_level_stops_case_before_execution(self, level, caplog):
+        from ttk.core_modules.framework_api import profiling as module
+
+        process = MagicMock(storage={"_deterministic_level": 1})
+        backend = MagicMock()
+        backend.set_deterministic_level.side_effect = RuntimeError("unsupported runtime")
+        case = SimpleNamespace(is_valid=True, testcase_name="bad_environment", attributes={})
+        switches = _make_switches(no_memory_check=True, deterministic_level=level)
+        with patch.object(module, "get_global_storage", return_value=switches), patch.object(
+            module, "get_process_context", return_value=process
+        ), patch.object(module, "_get_or_create_backend", return_value=backend), patch.object(
+            module, "_do_profile"
+        ) as execute:
+            result = module.profile_process(case, {}, {}, 0)
+        execute.assert_not_called()
+        assert result.precision_status == "FAIL"
+        assert "execution stopped" in result.eager_precision
+        assert "CANN environment" in caplog.text
+        assert "_deterministic_level" not in process.storage
 
     @pytest.mark.parametrize("prepare", [False, True])
     @pytest.mark.parametrize("cli_level", [0, 1, 3])
@@ -168,10 +190,10 @@ class TestDeterministicContract:
         )
         with caplog.at_level("INFO"):
             InstanceBase._log_batch_execution_mode(instance, before_execution=True)
-            assert "fia_compare_batch_consistency.py" not in caplog.text
+            assert "scripts/compare_batch_consistency.py" not in caplog.text
             InstanceBase._log_batch_execution_mode(instance)
         active = cli_level != 1 and not prepare
-        assert ("fia_compare_batch_consistency.py" in caplog.text) == (not missing and active)
+        assert ("scripts/compare_batch_consistency.py" in caplog.text) == (not missing and active)
         warnings = [record for record in caplog.records if record.levelname == "WARNING"]
         assert len(warnings) == int(bool(missing) and active)
         if warnings:

@@ -434,12 +434,16 @@ class BatchProfile:
         for batch_index in batch_indices:
             storage_length = geometry["q_storage_lengths"][batch_index]
             effective_length = geometry["q_effective_lengths"][batch_index]
+            if effective_length == 0:
+                raise ValueError(f"{row['testcase_name']}: relation selects no effective Q output")
             if sequence_slice is not None:
                 if sequence_slice[1] > effective_length:
                     raise ValueError(f"{row['testcase_name']}: logical S slice exceeds Q effective length")
                 positions = slice_indices(sequence_slice)
             else:
-                # BSND indexers exclude padding; TND B relations retain the physical prefix span.
+                # BSND indexers omit padding, while TND output is physically packed
+                # by cu_seqlens.  Keep the complete TND span so relation geometry
+                # remains comparable across cases; seqused is validated separately.
                 positions = range(effective_length if bsnd else storage_length)
             lengths.append(len(positions))
             offset = batch_index * output_shape[1] if bsnd else geometry["q_prefix"][batch_index]
@@ -463,7 +467,8 @@ class BatchProfile:
         if row.get("precision_status", "").upper() != "PASS":
             raise ValueError(f"{testcase_name}: precision_status is not PASS")
         eager_precision = row.get("eager_precision") or ""
-        if "NO_OUTPU" in eager_precision:
+        # Covers both NO_OUTPUT and SIM_NO_OUTPUT phase-one markers.
+        if "NO_OUTPUT" in eager_precision:
             raise ValueError(f"{testcase_name}: phase one did not produce a device output")
         # ACLNN honors dump_file_prefix while the E2E dumper retains the testcase
         # name. Prefer the explicit prefix, then retain E2E/cache compatibility.
@@ -491,7 +496,9 @@ class MlaProfile(BatchProfile):
         "cu_seqlens_ori_kv_values",
         "cu_seqlens_cmp_kv_values",
     )
-    STATIC_SEQUENCE_ATTRIBUTE_NAMES = frozenset(("q_datarange", "ori_kv_datarange", "cmp_kv_datarange"))
+    BATCH_ATTRIBUTE_NAMES = frozenset(
+        ("seqused_q_values", "seqused_ori_kv_values", "seqused_cmp_kv_values", "cmp_residual_kv_values")
+    )
     BLOCK_COUNT_ATTRIBUTE_NAMES = frozenset(("block_num1", "block_num2"))
     PRIVATE_ATTRIBUTE_NAMES = frozenset(("batch_deterministic_level",))
 
@@ -566,11 +573,11 @@ class MlaProfile(BatchProfile):
                 continue
             if key in self.PREFIX_ATTRIBUTE_NAMES and isinstance(value, (list, tuple)):
                 normalized[key] = self._normalize_prefix(value, batch_indices)
-            elif key in self.STATIC_SEQUENCE_ATTRIBUTE_NAMES:
-                normalized[key] = normalize_value(value)
             elif key in self.BLOCK_COUNT_ATTRIBUTE_NAMES and attributes.get("layout_kv") != "PA_BBND":
                 continue
-            elif isinstance(value, (list, tuple)) and len(value) == batch_size:
+            elif key in self.BATCH_ATTRIBUTE_NAMES and value is not None:
+                if not isinstance(value, (list, tuple)) or len(value) != batch_size:
+                    raise ValueError(f"{row['testcase_name']}: {key} must contain B={batch_size} values")
                 normalized[key] = normalize_value([value[index] for index in batch_indices])
             else:
                 normalized[key] = normalize_value(value)
@@ -610,8 +617,8 @@ class IndexerProfile(BatchProfile):
         value = [int(item) for item in value]
         if len(value) != batch_size + 1 or value[0] != 0:
             raise ValueError(f"{name}_values must contain B + 1 prefix values")
-        if any(right <= left for left, right in zip(value, value[1:])):
-            raise ValueError(f"{name}_values must be strictly increasing")
+        if any(right < left for left, right in zip(value, value[1:])):
+            raise ValueError(f"{name}_values must be non-decreasing")
         return [right - left for left, right in zip(value, value[1:])]
 
     @classmethod
@@ -635,6 +642,9 @@ class IndexerProfile(BatchProfile):
         k_shape = tuple(shapes[1])
         layout_q = attributes.get("layout_q", "BSND")
         layout_k = attributes.get("layout_k", "BSND")
+        for name, shape, layout in (("Q", q_shape, layout_q), ("K", k_shape, layout_k)):
+            if layout in ("BSND", "TND", "PA_BBND") and len(shape) != (3 if layout == "TND" else 4):
+                raise ValueError(f"{row['testcase_name']}: {name} shape {shape} does not match layout={layout}")
         if layout_q == "BSND":
             batch_size, q_extent, q_heads, head_dim = q_shape
             q_prefix = None
@@ -668,7 +678,10 @@ class IndexerProfile(BatchProfile):
             k_storage_lengths = None
         else:
             raise ValueError(f"{row['testcase_name']}: unsupported layout_k={layout_k}")
-        topk = int(attributes.get("topk", attributes.get("sparse_count")))
+        topk = attributes.get("topk", attributes.get("sparse_count"))
+        if topk is None:
+            raise ValueError(f"{row['testcase_name']}: topk or sparse_count is required")
+        topk = int(topk)
         output_shape = (batch_size, q_extent, key_heads, topk) if layout_q == "BSND" else (q_extent, key_heads, topk)
         return {
             "attributes": attributes,
@@ -697,11 +710,14 @@ class IndexerProfile(BatchProfile):
             key: geometry[key]
             for key in ("layout_q", "layout_k", "q_heads", "key_heads", "head_dim", "topk", "block_size")
         }
-        for key in ("q_storage_lengths", "q_effective_lengths", "k_storage_lengths", "k_effective_lengths", "residual"):
+        # K padding changes storage offsets, not the effective keys being compared.
+        for key in ("q_storage_lengths", "q_effective_lengths", "k_effective_lengths", "residual"):
             values = geometry[key]
             context[key] = tuple(values[index] for index in batch_indices) if values is not None else None
         if relation.axes == (0, 1):
-            context["q_storage_lengths"] = context["q_effective_lengths"] = (len(slice_indices(relation.slices[1])),)
+            sequence_length = len(slice_indices(relation.slices[1]))
+            context["q_storage_lengths"] = (sequence_length,)
+            context["q_effective_lengths"] = (sequence_length,)
         return {
             **context,
             "input_dtypes": normalize_value(geometry["input_dtypes"]),
@@ -1180,16 +1196,20 @@ def compare_result_csv(result_path: Path, final_path: Path, dump_dir: Path):
     samples = []
     records = []
     for row in rows:
-        if not row.get("testcase_name") or not is_enabled(row) or complete_batch_metadata(row) is None:
-            continue
-        profile = find_profile(row.get("api_name", ""))
-        if profile is None:
-            records.append(report_record(row, "FAIL", "", ("unsupported FA API for unified batch comparison",), 1))
+        if not row.get("testcase_name"):
             continue
         try:
+            if not is_enabled(row) or complete_batch_metadata(row) is None:
+                continue
+            profile = find_profile(row.get("api_name", ""))
+            if profile is None:
+                raise ValueError("unsupported FA API for unified batch comparison")
             samples.extend(profile.make_samples(row, dump_dir))
-        except (OSError, ValueError) as error:
-            records.append(report_record(row, "FAIL", "", (str(error),), 1))
+        except (OSError, ValueError, TypeError, IndexError) as error:
+            message = str(error)
+            if not message.startswith(f"{row['testcase_name']}:"):
+                message = f"{row['testcase_name']}: {message}"
+            records.append(report_record(row, "FAIL", "", (message,), 1))
 
     grouped = defaultdict(list)
     for sample in samples:
