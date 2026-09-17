@@ -234,22 +234,16 @@ class Phase1ParamBuilder:
             else:
                 npu_ptr = self._dvc.get_device_mem_addr(acl_tensor)
                 if isinstance(tensor, numpy.ndarray):
-                    np_storage = tensor
-                    while np_storage.base is not None:
-                        if isinstance(np_storage.base, numpy.ndarray):
-                            np_storage = np_storage.base
-                            break
-                        if hasattr(np_storage.base, "__array_interface__"):
-                            np_storage = numpy.asarray(np_storage.base)
-                            break
-                        np_storage = np_storage.base
+                    # Device buffer is allocated from flat_storage_shape; read back the same numel.
                     # en_dtypes numpy storage is 1 byte/elem (unpacked view), but the
                     # aclTensor device storage for 4-bit dtypes is packed 2 values/byte.
                     csv_dtype = get(self._ctx.flat_tensor_dtypes, flat_idx)
+                    storage_shape = self._ctx.flat_storage_shape(flat_idx)
+                    numel = int(numpy.prod(storage_shape, dtype=numpy.int64)) if storage_shape else tensor.size
                     if csv_dtype and is_4bit_dtype(str(csv_dtype)):
-                        byte_size = int(math.ceil(np_storage.size / 2))
+                        byte_size = int(math.ceil(numel / 2))
                     else:
-                        byte_size = int(math.ceil(np_storage.size * get_dtype_width(np_storage.dtype)))
+                        byte_size = int(math.ceil(numel * get_dtype_width(tensor.dtype)))
                 else:
                     byte_size = tensor.storage().nbytes()
                 output_byte_arrays.append(self._dvc.get_data_from_hbm(npu_ptr, byte_size))
