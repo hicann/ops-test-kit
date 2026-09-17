@@ -567,7 +567,8 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
                         max_attempts,
                         result.get("error", ""),
                     )
-                    _device_locks[n].release()
+                    if n != "cpu":
+                        _device_locks[n].release()
                     n = None
                     if attempt + 1 >= max_attempts:
                         break

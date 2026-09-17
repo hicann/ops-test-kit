@@ -64,6 +64,7 @@ class ApiProfilingResult:
         oob: str = "UNKNOWN",
         deterministic_status: Optional[str] = None,
         npu_memory: Optional[float] = None,
+        execute_error: Optional[str] = None,
     ):
         self.api_prof: Union[str, List[dict]] = api_prof
         self.op_prof: Union[str, List[dict]] = op_prof
@@ -74,6 +75,8 @@ class ApiProfilingResult:
         self.deterministic_status: Optional[str] = deterministic_status
         # NPU device workspace memory (MB) requested via aclnn GetWorkspaceSize.
         self.npu_memory: Optional[float] = npu_memory
+        # Execute failure detail (plog errors / exception text), e.g. tiling interception.
+        self.execute_error: Optional[str] = execute_error
 
     @classmethod
     def fail(cls, fail_result: str) -> "ApiProfilingResult":

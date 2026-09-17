@@ -374,7 +374,7 @@ class AclOpExecutor:
         if skip_context_creation and stream is not None:
             if self._deterministic_level >= 1:
                 self._dvc.set_deterministic_level(self._deterministic_level)
-            output_byte_arrays, output_view_shapes, success, _, workspace = self._acl_sequence(
+            output_byte_arrays, output_view_shapes, success, _, workspace, execute_error = self._acl_sequence(
                 stream, skip_profiler=True
             )
             return ApiProfilingResult(
@@ -384,11 +384,14 @@ class AclOpExecutor:
                 output_byte_arrays,
                 output_view_shapes,
                 npu_memory=workspace / 1e6 if workspace is not None else None,
+                execute_error=execute_error,
             )
         with self.rts_context():
             self._dvc.warmup(self._switches)
             with self.rts_stream() as stm:
-                output_byte_arrays, output_view_shapes, success, det_status, npu_memory = self._acl_sequence(stm)
+                output_byte_arrays, output_view_shapes, success, det_status, npu_memory, execute_error = (
+                    self._acl_sequence(stm)
+                )
             # Cycle Analysis
             if self._dvc.is_model():
                 api_prof = "UNKNOWN"
@@ -403,6 +406,7 @@ class AclOpExecutor:
                 output_view_shapes,
                 deterministic_status=det_status,
                 npu_memory=npu_memory / 1e6 if npu_memory is not None else None,
+                execute_error=execute_error,
             )
 
     @staticmethod
@@ -425,6 +429,7 @@ class AclOpExecutor:
         output_byte_arrays = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         output_view_shapes = ["NO_OUTPUT"] * len(self._ctx.output_tensor_indexes)
         status = "NOK"
+        execute_error = None
         deterministic = self._deterministic_level > 0
         md5_list = []
         det_status = None
@@ -463,8 +468,9 @@ class AclOpExecutor:
                         status = self._dvc.acl_execute(self._ctx.api_name, workspace_size, c_executor, stream)
                     except Exception as e:
                         time.sleep(0.5)
-                        plog_errors = extract_plog_errors()
+                        plog_errors = extract_plog_errors(max_lines=10)
                         if plog_errors:
+                            execute_error = os.linesep.join(plog_errors)
                             logging.error(
                                 f"aclnn interface {self._ctx.api_name} execute failed: \n"
                                 f"***************************************************************************\n"
@@ -473,6 +479,7 @@ class AclOpExecutor:
                             )
                         else:
                             error_detail = str(e)
+                            execute_error = error_detail
                             logging.exception(f"aclnn interface {self._ctx.api_name} execute failed:\n{error_detail}")
                         status = "ACLNN_EXECUTE_FAILED"
 
@@ -495,6 +502,11 @@ class AclOpExecutor:
                             # copy output (tensor storage data) from device
                             output_byte_arrays = self._phase1_param_builder.copy_output_from_hbm()
                             output_view_shapes = self._phase1_param_builder.collect_output_view_shapes()
+                    elif execute_error is None:
+                        # phase-2 failure signaled via status string, no exception raised here
+                        time.sleep(0.5)
+                        plog_errors = extract_plog_errors(max_lines=10)
+                        execute_error = os.linesep.join(plog_errors) if plog_errors else status
                     self._dvc.free_all_memory()
                     if status != "OK":
                         break
@@ -512,7 +524,7 @@ class AclOpExecutor:
         elif deterministic > 0 and len(md5_list) == 1:
             det_status = "PASS"
 
-        return output_byte_arrays, output_view_shapes, status == "OK", det_status, npu_memory
+        return output_byte_arrays, output_view_shapes, status == "OK", det_status, npu_memory, execute_error
 
     def _process_total_cycles(self):
         """
@@ -1980,7 +1992,12 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
     if context.prof_result.failed():
         context.golden_tensors = context.prof_result.api_prof
         compare_result = ApiComparisonResult(None)
-        compare_result.set("N/A", "N/A")
+        execute_error = getattr(context.prof_result, "execute_error", None)
+        if execute_error:
+            one_line_error = " | ".join(line for line in execute_error.splitlines() if line.strip())
+            compare_result.set(f"ACLNN_EXECUTE_FAILED: {one_line_error}", "FAIL")
+        else:
+            compare_result.set("N/A", "N/A")
         process_ctx.notify_status("OnReturning")
         return_structure = ApiProfilingReturnStructure()
         return_structure.construct(context, compare_result)
