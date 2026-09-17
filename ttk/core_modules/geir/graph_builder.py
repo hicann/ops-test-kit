@@ -438,14 +438,19 @@ class GeirGraphBuilder:
             return {k: entry[k] for k in _DESC_KEYS if k in entry}
 
         input_desc_map = {}
+        # flat data_idx -> 所属 DYNAMIC_INPUT(TensorList)组的 elements 列表，
+        # 供 inplace 的 DYNAMIC_OUTPUT 逐元素继承输入 desc 使用。
+        dynamic_input_groups = {}
         for inp in inputs_json:
             if inp is None:
                 continue
             if inp.get("dynamic"):
-                for el in inp.get("elements", []):
+                elements = inp.get("elements", [])
+                for el in elements:
                     di = el.get("data_idx")
                     if di is not None:
                         input_desc_map[di] = _desc_of(el)
+                        dynamic_input_groups[di] = elements
             else:
                 di = inp.get("data_idx")
                 if di is not None:
@@ -512,6 +517,15 @@ class GeirGraphBuilder:
                             ),
                         }
                     )
+                # inplace 的 DYNAMIC_OUTPUT(TensorList)：逐元素继承对应输入组
+                # 元素的 desc（dtype 已知，不参与 InferDataType 推导触发）。
+                # 模板按 elements 逐个 update_dynamic_output_desc，若沿用
+                # DT_UNDEFINED 会触发 GE Unsupported_Operator(EZ3002)。
+                if inplace_idx is not None and inplace_idx in dynamic_input_groups:
+                    src_elements = dynamic_input_groups[inplace_idx]
+                    for j, el in enumerate(elems):
+                        if j < len(src_elements):
+                            el.update(_desc_of(src_elements[j]))
                 entry = {
                     "name": name,
                     "dynamic": True,
