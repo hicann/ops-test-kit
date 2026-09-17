@@ -354,3 +354,32 @@ def test_large_uniform_must_contain_values_present():
     # 崩溃与边界值淹没正常分布；uniform 本身也可能量化命中端点，故用 >=）
     for v in (-1.0, 1.0, 3.5):
         assert (arr == v).sum() >= 2048
+
+
+@pytest.mark.parametrize("dtype", ["int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64"])
+def test_integer_reaches_dtype_bounds(dtype):
+    """整型能取到自身值域的上下界。
+
+    原实现所有 dtype 统一走 uniform(float64) 再 astype：对 ≤32 位整型无损
+    （2^32 < 2^53），但 64 位整型值域超出 float64 的 53 位尾数——INT64_MAX 舍入到
+    2^63 后 astype 静默溢出成 INT64_MIN，声明的区间端点拿到的是符号相反的值。
+    """
+    info = np.iinfo(dtype)
+    arr = RandomData(dtype, (512,), (int(info.min), int(info.max))).generate()
+
+    assert arr.dtype == np.dtype(dtype)
+    assert (arr == info.max).any()
+    assert (arr == info.min).any()
+
+
+@pytest.mark.parametrize("high", [1 << 56, 1 << 60, 1 << 62, (1 << 63) - 1])
+def test_int64_high_range_is_not_grid_quantized(high):
+    """int64 高值域能生成任意值，而非落在 2 的幂格点上。
+
+    float64 在 2^60 量级的最小间隔是 2^(60-52)=256，经它生成的值全是 256 的倍数，
+    一个奇数都产不出——这会让"索引取大值"的用例实际只覆盖到格点上的少数取值。
+    """
+    arr = RandomData("int64", (2048,), (0, high)).generate()
+
+    assert (arr % 2 == 1).any(), "高值域生成不出奇数，说明仍经 float64 量化"
+    assert (arr == high).any(), "区间上端点未命中"

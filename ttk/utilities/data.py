@@ -28,6 +28,7 @@ __all__ = ["RandomData", "fixed_np_array"]
 
 
 # Standard Packages
+import math
 from typing import Union
 
 import numpy
@@ -54,6 +55,17 @@ def fixed_np_array(dtype, shape, init_value=1):
         imag = numpy.zeros(c_shape, dtype=numpy.float16)
         return numpy.concatenate((real, imag), axis=-1)
     return numpy.full(shape, init_value, dtype=dtype)
+
+
+def _is_native_integer(dtype) -> bool:
+    """是否为 numpy 原生整型(int8..int64 / uint8..uint64)。
+
+    自定义窄类型(int4/uint1 等)不在此列——它们没有原生 RNG，仍走 float64 路径。
+    """
+    try:
+        return numpy.issubdtype(numpy.dtype(dtype), numpy.integer)
+    except TypeError:
+        return False
 
 
 class RandomData:
@@ -121,7 +133,16 @@ class RandomData:
     def _get_must_contain_dataset(self, dtype, is_complex_imag: bool) -> tuple:
         # border value will always be included
         replace_list = list(set(self._data_range))
-        replace_np_array = numpy.array(replace_list, dtype="float64").astype(dtype)
+        if _is_native_integer(dtype):
+            # 整型端点不经 float64：INT64_MAX 经 float64 会舍入到 2^63 再溢出成 INT64_MIN，
+            # 声明的区间端点会拿到符号相反的值。
+            info = numpy.iinfo(dtype)
+            clamped = [
+                min(max(int(x), int(info.min)), int(info.max)) for x in replace_list if numpy.isfinite(numpy.float64(x))
+            ]
+            replace_np_array = numpy.array(clamped, dtype=dtype)
+        else:
+            replace_np_array = numpy.array(replace_list, dtype="float64").astype(dtype)
         # remove duplicate 0 in replace_np_array
         replace_list = list(set(replace_np_array))
         if "float" in str(dtype):
@@ -211,6 +232,24 @@ class RandomData:
             flat[start:end] = numpy.random.uniform(low, high, end - start)
         return out
 
+    @staticmethod
+    def _gen_integer_data(low, high, dtype, shape):
+        """原生整型直接用整型 RNG 生成，不经 float64。
+
+        其余 dtype 仍走 _gen_uniform_data(float64 再 astype)——那条路对 ≤32 位整型无损
+        (2^32 < 2^53)、对浮点也无损(往窄了转)，且能覆盖 bfloat16/float8/int4 这些 numpy
+        无原生 RNG 的类型。唯独 64 位整型的值域超出 float64 的 53 位尾数：
+          * > 2^53 的值只能落在 2 的幂格点上——一个奇数都生成不出来；
+          * INT64_MAX 舍入到 2^63，astype(int64) 后**静默溢出**成 INT64_MIN
+            (只有一条 RuntimeWarning)，声明的区间端点拿到的是符号相反的值。
+        """
+        info = numpy.iinfo(dtype)
+        lo = max(int(math.floor(low)), int(info.min))
+        hi = min(int(math.ceil(high)), int(info.max))
+        lo = min(lo, hi)
+        generator = numpy.random.default_rng()
+        return generator.integers(lo, hi, size=shape, endpoint=True, dtype=dtype)
+
     def _random(
         self, dtype, shape: Union[list, tuple], is_complex_imag: bool = False, distribution: str = "uniform"
     ) -> numpy.ndarray:
@@ -241,6 +280,8 @@ class RandomData:
                 array = numpy.random.uniform(low, high, shape).astype(dtype, copy=False)
             elif distribution == "uniform" and self._is_full_value_range(dtype, low, high):
                 array = self._gen_exponential_data(dtype, shape)
+            elif _is_native_integer(dtype):
+                array = self._gen_integer_data(low, high, dtype, shape)
             else:
                 array = self._gen_uniform_data(low, high, dtype, shape)
         return self._mix_expect_data(array, dtype, shape, is_complex_imag)
