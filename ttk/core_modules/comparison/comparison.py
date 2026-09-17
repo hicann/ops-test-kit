@@ -57,18 +57,24 @@ def compare(
         if isinstance(output, str):
             total_precision.append(f"{output}")
             total_pass.append(_filter_fake_fail(output))
+            total_log += f"Output {idx} Precision is {output} (kernel output sentinel)\n"
             continue
         if isinstance(golden, str):
             total_precision.append(f"{golden}")
             total_pass.append(_filter_fake_fail(golden))
+            total_log += f"Output {idx} Precision is {golden} (golden sentinel)\n"
             continue
         if golden is None:
+            # golden 显式为 None：该输出被抑制（如 shape 大小为 0 时插件返回 None），
+            # 判 SUPPRESSED/pass，但必须在 log 中留痕——否则比对日志里找不到该位置
             total_precision.append("SUPPRESSED")
             total_pass.append(True)
+            total_log += f"Output {idx} Precision is SUPPRESSED (golden is None)\n"
             continue
         if output is None:
             total_precision.append("NO_OUTPUT")
             total_pass.append(False)
+            total_log += f"Output {idx} Precision is NO_OUTPUT (no kernel output data)\n"
             continue
 
         token = standards[idx].token

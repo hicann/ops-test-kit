@@ -104,7 +104,11 @@ class CompareContext:
 
 
 def _can_customize(outputs, goldens):
-    return bool(outputs) and bool(goldens) and not any(isinstance(golden, str) for golden in goldens)
+    # golden 哨兵（str）与抑制（None，如 shape 大小为 0 的输出由插件返回 None）都不进钩子：
+    # 钩子拿到 None 必然误判（如 np.array_equal(out, None) -> False，把被抑制的位置判成
+    # FAIL），对 None 做算术则直接崩溃。哨兵场景禁用钩子，回落默认 compare——
+    # 抑制位置判 SUPPRESSED/pass，其余位置按 standards 正常比对。
+    return bool(outputs) and bool(goldens) and not any(isinstance(golden, (str, type(None))) for golden in goldens)
 
 
 def _fold_outputs(testcase, outputs, goldens):

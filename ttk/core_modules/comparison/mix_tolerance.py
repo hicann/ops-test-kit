@@ -50,7 +50,11 @@ class MixToleranceComparison(ComparisonBase):
             mismatch = (a_nan | g_nan | a_inf | g_inf) & ~same_nan & ~same_inf
             finite = np.isfinite(a) & np.isfinite(g)
             # 逐元素通过条件：|actual - golden| <= atol + rtol * |golden|（atol 天然避免除零）
-            elem_ok = same_nan | same_inf | (finite & (err <= atol + rtol * np.abs(g)))
+            # 且 |actual - golden| <= max_abs_error_limit（硬上限并入逐元素判定）。
+            # 硬上限不并入时，全部元素通过 rtol/atol 而绝对误差超硬上限的场景会得到
+            # matched_ratio=100% 却 FAIL，且 diff_index 为空——precision 误导、日志无出错明细。
+            # 并入后判定等价：硬上限未超时该条件恒真（ratio 不变）；超限时新旧判定均 FAIL。
+            elem_ok = same_nan | same_inf | (finite & (err <= atol + rtol * np.abs(g)) & (err <= max_err_limit))
             matched_ratio = float(elem_ok.sum()) / a.size
 
             # max_abs_error 取有限元素对的最大绝对误差；NaN/Inf 不一致视为无界误差 → 必超硬上限

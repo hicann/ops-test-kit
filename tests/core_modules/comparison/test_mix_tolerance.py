@@ -83,6 +83,36 @@ def test_max_abs_error_hard_limit_beats_ratio():
     assert "max_abs_error" in r.metrics["reason"]
 
 
+# —— 大值场景下 rtol 预算 > 硬上限，全部元素过逐元素容差但绝对误差超限 ——
+def test_hard_limit_exceeded_not_shown_as_100_percent():
+    """全部元素在 atol+rtol*|g| 预算内但 err > 硬上限 → FAIL 且 matched_ratio < 1（不误导性显示 100%）。"""
+    g = np.array([100.0, -100.0, 200.0, -200.0])
+    a = g + np.array([1.2, -1.1, 1.4, -1.3])  # 预算 ≈0.098*|g| 全过，err 均超 1e-2 硬上限
+    r = _impl(a, g, options=dict(FP32, rtol=1e-3, atol=1e-3))
+    assert r.is_pass is False
+    assert r.metrics["matched_ratio"] < 1.0
+    assert r.precision == r.metrics["matched_ratio"]
+
+
+def test_hard_limit_exceeded_diff_index_has_details():
+    """同场景 → 超限元素全部进入 diff_index（ttk-compare.log 可展示出错部分）。"""
+    g = np.array([100.0, -100.0, 200.0, -200.0])
+    a = g + np.array([1.2, -1.1, 1.4, -1.3])
+    r = _impl(a, g, options=dict(FP32, rtol=1e-3, atol=1e-3))
+    assert r.diff_index is not None
+    assert r.diff_index.size == 4
+
+
+def test_hard_limit_not_exceeded_ratio_unchanged():
+    """err <= 硬上限时并入条件恒真 → matched_ratio 与判定不变（判定等价性）。"""
+    g = np.ones(100)
+    a = g.copy()
+    a[0] = 1.0 + 5e-3  # 超元素预算（≈9.9e-4）、低于硬上限 1e-2
+    r = _impl(a, g)
+    assert r.metrics["matched_ratio"] == 0.99
+    assert r.is_pass is True
+
+
 # —— NaN/Inf 真值表 ——
 @pytest.mark.parametrize(
     ("a", "g", "expect_pass"),

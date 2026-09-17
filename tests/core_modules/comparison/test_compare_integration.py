@@ -97,3 +97,18 @@ def test_output_none_fails():
     )
     assert precision == "NO_OUTPUT"
     assert is_pass is False
+
+
+# —— SUPPRESSED（golden=None，shape 大小为 0 的输出）位置日志留痕 ——
+
+
+def test_suppressed_golden_logs_position():
+    """golden=None（如 shape 大小为 0 时插件返回 None）→ SUPPRESSED/PASS，且 log 有该位置记录。"""
+    outputs = [np.array([1.0]), np.array([], np.float32), np.array([3.0])]
+    goldens = [np.array([1.0]), None, np.array([3.0])]
+    standards = resolve_tolerance(None, None, None, ["float32"] * 3, None)
+    precision, log, is_pass, _m = compare(outputs, goldens, ("float32",) * 3, standards=standards)
+    assert precision.split(",")[1] == "SUPPRESSED"
+    assert is_pass is True
+    # 原先 SUPPRESSED 位置在 compare log 中完全消失
+    assert "Output 1 Precision is SUPPRESSED (golden is None)" in log
