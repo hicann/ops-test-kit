@@ -187,15 +187,37 @@ class RandomData:
                 tiny = float(numpy.finfo(numpy.float32).tiny)
             else:
                 tiny = float(numpy.finfo(numpy.float64).tiny)
-        arr = numpy.random.uniform(low=-1.0, high=1.0, size=shape)
         low_exp = int(numpy.log10(tiny)) + 1
         high_exp = int(numpy.log10(max_v)) + 1
-        if low_exp >= high_exp:
-            return arr.astype(dtype, copy=False)
-        arr_exp = numpy.random.randint(low=low_exp, high=high_exp, size=shape)
-        arr_pow = numpy.power(10.0, arr_exp.astype(numpy.float64))
-        result = numpy.multiply(arr, arr_pow)
-        return result.astype(dtype, copy=False)
+        elem_count = int(numpy.prod(shape)) if numpy.ndim(shape) else 1
+
+        # 全尺寸路径只对小张量保留：uniform/randint/power/multiply 四个全尺寸 float64|int64
+        # 临时量 = 32 倍元素数，dim0=2^30 的 fp32 用例要 34GB，容器 32G 必 OOM，主进程被
+        # 打掉后 heartbeat 报 "Parent died (ppid->1)"、rc 仍是 0，跑批**静默截断**(issue #169
+        # 同类问题，当时漏了这条路径)。阈值以下一个元素都不改，既有用例逐位不变。
+        if elem_count <= 2 * CHUNK_ELEMS:
+            arr = numpy.random.uniform(low=-1.0, high=1.0, size=shape)
+            if low_exp >= high_exp:
+                return arr.astype(dtype, copy=False)
+            arr_exp = numpy.random.randint(low=low_exp, high=high_exp, size=shape)
+            arr_pow = numpy.power(10.0, arr_exp.astype(numpy.float64))
+            result = numpy.multiply(arr, arr_pow)
+            return result.astype(dtype, copy=False)
+
+        # 大张量：分块算进预分配的目标类型缓冲，峰值 = 输出本身 + 一个分块的 float64 临时量。
+        # 注意分块后 RandomState 的消费次序由"先全量 uniform 再全量 randint"变成逐块交替，
+        # 取到的随机值与全尺寸路径不同(分布与"同 seed 同数据"的确定性都不变)。这条路径原本
+        # 100% OOM、一条结果都出不来，不存在需要对齐的历史基线。
+        out = numpy.empty(shape, dtype=dtype)
+        flat = out.ravel()
+        for start in range(0, elem_count, CHUNK_ELEMS):
+            end = min(start + CHUNK_ELEMS, elem_count)
+            chunk = numpy.random.uniform(low=-1.0, high=1.0, size=end - start)
+            if low_exp < high_exp:
+                chunk_exp = numpy.random.randint(low=low_exp, high=high_exp, size=end - start)
+                chunk = numpy.multiply(chunk, numpy.power(10.0, chunk_exp.astype(numpy.float64)))
+            flat[start:end] = chunk
+        return out
 
     @staticmethod
     def _gen_normal_data(gen, dtype, shape):

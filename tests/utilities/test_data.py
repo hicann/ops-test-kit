@@ -383,3 +383,77 @@ def test_int64_high_range_is_not_grid_quantized(high):
 
     assert (arr % 2 == 1).any(), "高值域生成不出奇数，说明仍经 float64 量化"
     assert (arr == high).any(), "区间上端点未命中"
+
+
+def test_exponential_small_tensor_keeps_single_shot_path():
+    """elem_count <= 2*CHUNK_ELEMS 时保持单次全量路径（逐位对齐改动前的实现）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS
+    tiny = float(np.finfo("float32").tiny)
+    max_v = float(np.finfo("float32").max)
+    low_exp = int(np.log10(tiny)) + 1
+    high_exp = int(np.log10(max_v)) + 1
+
+    np.random.seed(42)
+    arr = np.random.uniform(low=-1.0, high=1.0, size=(n,))
+    arr_exp = np.random.randint(low=low_exp, high=high_exp, size=(n,))
+    full = np.multiply(arr, np.power(10.0, arr_exp.astype(np.float64))).astype("float32", copy=False)
+
+    np.random.seed(42)
+    chunked = RandomData._gen_exponential_data("float32", (n,))
+    assert chunked.dtype == full.dtype
+    assert np.array_equal(chunked, full)
+
+
+def test_exponential_chunked_actually_splits(monkeypatch):
+    """大 tensor 必须真实走分块路径：uniform 调用次数 >= 2（防阈值被误改后静默退化为单发）。
+
+    单发路径对每个全值域浮点 tensor 要开 uniform/randint/power/multiply 四个全尺寸
+    float64|int64 临时量（32 倍元素数），dim0=2^30 时 34GB —— 容器内必 OOM，主进程被打掉
+    后 rc 仍是 0，跑批静默截断。
+    """
+    import numpy
+
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    calls = []
+    real_uniform = numpy.random.uniform
+
+    def counting_uniform(low, high, size):
+        calls.append(size)
+        return real_uniform(low, high, size)
+
+    monkeypatch.setattr("ttk.utilities.data.numpy.random.uniform", counting_uniform)
+    arr = RandomData._gen_exponential_data("float32", (2 * CHUNK_ELEMS + 1,))
+    assert len(calls) >= 2
+    assert max(calls) <= CHUNK_ELEMS  # 没有任何一次是全尺寸
+    assert arr.dtype == numpy.dtype("float32")
+
+
+@pytest.mark.parametrize("dtype", ["float16", "float32"])
+def test_exponential_chunked_dtype_and_magnitudes(dtype):
+    """分块路径的输出 dtype/shape 正确，且仍覆盖多个数量级（不是退化成单一量级或全 0）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS + 1024
+    arr = RandomData._gen_exponential_data(dtype, (n,))
+    assert arr.dtype == np.dtype(dtype)
+    assert arr.shape == (n,)
+
+    nonzero = np.abs(arr[np.isfinite(arr) & (arr != 0)])
+    assert nonzero.size > 0
+    magnitudes = np.unique(np.floor(np.log10(nonzero.astype(np.float64))))
+    assert magnitudes.size >= 3  # 指数分布应跨多个量级
+
+
+def test_exponential_chunked_is_seed_reproducible():
+    """同 seed 两次生成必须逐位相同（分块只改消费次序，不破坏确定性）。"""
+    from ttk.utilities.data import CHUNK_ELEMS
+
+    n = 2 * CHUNK_ELEMS + 7
+    np.random.seed(20260917)
+    first = RandomData._gen_exponential_data("float32", (n,))
+    np.random.seed(20260917)
+    second = RandomData._gen_exponential_data("float32", (n,))
+    assert np.array_equal(first, second)
