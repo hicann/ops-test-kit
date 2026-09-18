@@ -595,6 +595,7 @@ class GeirGraphBuilder:
             "ge.jit_compile": jit_compile,
             "ge.compile_dynamic_mode": compile_dynamic_mode,
             "ge.deterministicLevel": ge_deterministic_level,
+            "ge.deterministic": "1" if ge_deterministic_level == "1" else "0",
         }
 
         # ---- output shape-unknown indexes (kernel-route protocol) ----
