@@ -14,6 +14,7 @@ __all__ = ["OpInfoKeeper"]
 
 
 # Standard Packages
+import ast
 import glob
 import json
 import logging
@@ -26,6 +27,8 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from ...utilities import Singleton, camel_to_snake, is_main_process
 from ...utilities.platform import get_impl_base_paths, get_npu_hw_info, get_op_info_paths
 
+_ATTR_DTYPE_MAP = {"int": int, "float": float, "bool": bool, "str": str}
+
 
 class OpInfoKeeper(metaclass=Singleton):
     """
@@ -34,6 +37,7 @@ class OpInfoKeeper(metaclass=Singleton):
 
     def __init__(self):
         self._ops_info = None
+        self._alias_index = None
         self._op_func_cache = {}
         self._kernel_info_cache = {}
         self._binary_static_cache = {}
@@ -52,9 +56,26 @@ class OpInfoKeeper(metaclass=Singleton):
             return None
         return get_npu_hw_info(full_soc).get("short_soc_version")
 
+    @property
+    def alias_index(self) -> dict:
+        """Underscore-stripped lowercase alias -> canonical key.
+
+        Fallback lookup aid for info_of: alternative spellings of an
+        operator name (CamelCase op_type or snake names with different
+        underscore placements) resolve to the canonical registry key.
+        """
+        if self._alias_index is None:
+            self._alias_index = {k.replace("_", "").lower(): k for k in self.ops_info}
+        return self._alias_index
+
     def info_of(self, op_name: str) -> dict:
         """Return full op_info dict, or None if not found."""
-        return self.ops_info.get(op_name, None)
+        info = self.ops_info.get(op_name)
+        if info is None and op_name:
+            key = self.alias_index.get(op_name.replace("_", "").lower())
+            if key is not None:
+                info = self.ops_info.get(key)
+        return info
 
     def op_type_of(self, op_name: str) -> Optional[str]:
         """Return CamelCase op_type (e.g. 'GeGluV2') for a snake_case op_name (e.g. 'ge_glu_v2')."""
@@ -63,7 +84,8 @@ class OpInfoKeeper(metaclass=Singleton):
 
     def op_output_defined(self, op_name: str) -> bool:
         """Check if the operator has output definitions in op_info config."""
-        return op_name not in self.ops_info or self.ops_info[op_name]["outputs"]
+        info = self.info_of(op_name)
+        return info is None or bool(info["outputs"])
 
     def _resolve_path(self, relative_path: str, ki: dict) -> str:
         """Resolve a relative binary path to absolute, inserting ops_group automatically."""
@@ -273,7 +295,7 @@ class OpInfoKeeper(metaclass=Singleton):
 
             source_info = self._derive_op_source(f, source_type, vendor_name)
 
-            for op in op_info.keys():
+            for op in op_info:
                 op_interface = (
                     op_info[op]["opInterface.value"] if op_info[op]["opInterface.value"] else camel_to_snake(op)
                 )
@@ -370,9 +392,9 @@ class OpInfoKeeper(metaclass=Singleton):
                 if attr_type.startswith("list"):
                     if attr_type.endswith("Bool"):
                         attr_default = attr_default.replace("true", "True").replace("false", "False")
-                    attr_default = eval(attr_default)
+                    attr_default = ast.literal_eval(attr_default)
                 elif attr_type == "bool":
-                    attr_default = True if attr_default.lower() == "true" else False
+                    attr_default = attr_default.lower() == "true"
                 else:
                     typ = self._attr_dtype_str_to_type(attr_type)
                     attr_default = typ(attr_default)
@@ -390,15 +412,18 @@ class OpInfoKeeper(metaclass=Singleton):
 
     @staticmethod
     def _attr_dtype_str_to_type(s):
-        return list if s.startswith("list") else eval(s)
+        if s.startswith("list"):
+            return list
+        if s not in _ATTR_DTYPE_MAP:
+            raise ValueError(f"unsupported attr dtype: {s}")
+        return _ATTR_DTYPE_MAP[s]
 
 
 def _get_op_info_from_ini_file(file_path: str, keys: Union[list, tuple] = ("coreType.value",)):
     def _get_val(_cfp, _op, key, default=None):
         if _cfp.has_section(_op) and key.lower() in _cfp.options(_op):
             return _cfp.get(_op, key.lower())
-        else:
-            return default
+        return default
 
     cfp = ConfigParser()
     cfp.read(file_path, encoding="UTF-8")
