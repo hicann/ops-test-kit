@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for sending an requirement! Please fill in the following template to help quickly solve your problem.
+        Thanks for sending a requirement! Please fill in the following template to help quickly solve your problem.
   - type: textarea
     attributes:
       label: Background（背景信息）
