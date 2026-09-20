@@ -5,7 +5,7 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
-"""--core-limit 传递链测试：解析格式、kernel 侧按 core_type 生效分量、启动期物理上限校验。"""
+"""--core-limit 传递链测试：解析格式、kernel 侧按 core_type 生效分量、启动期物理上限校验、aclgraph 下发。"""
 
 from types import SimpleNamespace
 
@@ -107,3 +107,51 @@ def test_e2e_instance_validates_core_limit(monkeypatch):
 
     inst.backend = SimpleNamespace(device_name=lambda: "cpu", soc_series=lambda: "cpu", is_npu=lambda: False)
     inst.get_device_platform()  # CPU: 不校验不抛错
+
+
+def _setup_aclgraph_core_limit(monkeypatch, core_limit):
+    import torch
+
+    from ttk.core_modules.framework_api import graph_execution
+    from ttk.utilities.classes import SWITCHES
+    from ttk.utilities.container_utils import set_global_storage
+
+    sw = SWITCHES()
+    sw.core_limit = core_limit
+    set_global_storage(sw)
+    monkeypatch.setattr(graph_execution, "_aclgraph_core_limit_applied", False)
+    calls = []
+    monkeypatch.setattr(
+        torch.npu,
+        "set_device_limit",
+        lambda dev, cube_num=-1, vector_num=-1: calls.append((dev, cube_num, vector_num)),
+        raising=False,
+    )
+    return graph_execution, calls
+
+
+@pytest.mark.parametrize(
+    ("core_limit", "expected"),
+    [
+        ((8, None), (3, 8, -1)),
+        ((8, 48), (3, 8, 48)),
+        ((None, 48), (3, -1, 48)),
+    ],
+)
+def test_apply_aclgraph_core_limit_maps_values(monkeypatch, core_limit, expected):
+    graph_execution, calls = _setup_aclgraph_core_limit(monkeypatch, core_limit)
+    graph_execution._apply_aclgraph_core_limit(3)
+    assert calls == [expected]
+
+
+def test_apply_aclgraph_core_limit_once_per_process(monkeypatch):
+    graph_execution, calls = _setup_aclgraph_core_limit(monkeypatch, (8, 48))
+    graph_execution._apply_aclgraph_core_limit(0)
+    graph_execution._apply_aclgraph_core_limit(0)
+    assert calls == [(0, 8, 48)]
+
+
+def test_apply_aclgraph_core_limit_skips_when_unset(monkeypatch):
+    graph_execution, calls = _setup_aclgraph_core_limit(monkeypatch, None)
+    graph_execution._apply_aclgraph_core_limit(0)
+    assert calls == []

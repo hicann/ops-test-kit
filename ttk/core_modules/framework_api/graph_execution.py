@@ -63,6 +63,27 @@ def _get_npu_backend_aclgraph():
     return npu_backend
 
 
+_aclgraph_core_limit_applied = False
+
+
+def _apply_aclgraph_core_limit(dev_id):
+    """aclgraph 模式经 torch.npu.set_device_limit 下发 --core-limit。
+
+    npugraph_ex 后端无 CompilerConfig 通道（区别于 GE 图模式的 ge.aicoreNum）；
+    该接口每进程仅允许调用一次，多用例共享首次设置。
+    """
+    global _aclgraph_core_limit_applied
+    if _aclgraph_core_limit_applied:
+        return
+    _aclgraph_core_limit_applied = True
+    core_limit = get_global_storage().core_limit
+    if not core_limit or not isinstance(core_limit, tuple) or not any(core_limit):
+        return
+    ai_limit, vec_limit = core_limit
+    torch.npu.set_device_limit(dev_id, cube_num=ai_limit or -1, vector_num=vec_limit or -1)
+    logging.info(f"Applied --core-limit {core_limit} via torch.npu.set_device_limit on device {dev_id}")
+
+
 def _compile_model(model, backend, dynamic, fullgraph):
     """Compile model with torch.compile. Returns compiled callable or raises."""
     compiled = torch.compile(
@@ -290,6 +311,7 @@ def _execute_graph(
     torch_npu.npu.set_device(dev_id)
 
     if is_aclgraph:
+        _apply_aclgraph_core_limit(dev_id)
         mode_str = "aclgraph"
     elif dynamic:
         mode_str = "dynamic"
