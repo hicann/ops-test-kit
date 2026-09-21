@@ -379,6 +379,14 @@ class ParamPlan:
                 if param.is_tensor_like:
                     if tensor_queue:
                         kwargs[param.name] = tensor_queue.pop(0)
+                    elif param.name in attrs:
+                        # Tensor params beyond the shape-covered prefix may be
+                        # satisfied by scalar attributes (match_overload
+                        # scalar_cover). raw_ops attr params follow the
+                        # raw_ops convention of classifying every non-'name'
+                        # param as tensor. Values are passed raw — param.type
+                        # is "Tensor" and coercion would fail.
+                        kwargs[param.name] = attrs[param.name]
                 elif param.name in attrs:
                     kwargs[param.name] = coerce_value(attrs[param.name], param.type)
                 elif param.default is not None:

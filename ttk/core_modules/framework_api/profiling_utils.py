@@ -104,9 +104,9 @@ def prepare_device_args(testcase, backend, dev_id, plan, raw_inputs):
         dev_tensors = apply_format_cast(dev_tensors, testcase.flat_tensor_formats)
     const_values = getattr(testcase, "const_input_values", None) or {}
     if const_values and getattr(backend, "tf_device_type", None):
-        # TF const 位以记录的 Python 标量传入：tf.function 只把 Python 值折叠
-        # 为 Const 节点，EagerTensor（含 tf.constant）入参一律 trace 成
-        # Placeholder，GE infershape（如 CombinedNonMaxSuppression）读不到值
+        # TF const 位以记录的 Python 值传入：tf.function 只把 Python 值（0-D 标量 /
+        # N-D list）折叠为 Const 节点，EagerTensor（含 tf.constant）与 ndarray 入参
+        # 一律 trace 成 Placeholder，GE infershape 对 value-depend 输入读不到值
         dev_tensors = [const_values.get(i, t) for i, t in enumerate(dev_tensors)]
     dist = testcase.tensor_list_dist
     nested_tensors = apply_as_list(dev_tensors, dist) if dist else dev_tensors

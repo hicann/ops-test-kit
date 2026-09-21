@@ -247,11 +247,16 @@ def override_tensors_from_attributes(testcase, raw_inputs):
                 assign_tensor_value(sub_tensors[j], per_tensor_val[j], f"{param.name}[{j}]")
         else:
             assign_tensor_value(nested_np[idx], val, param.name)
-            # 0-D const 位记录归一化标量（attributes 值已按声明 dtype 落盘），
-            # 供调用边界直接以 Python 标量传入。有 TensorList 时不记录：
-            # 顶层参数下标与平铺下标错位，避免替换错位
-            if not any(d > 0 for d in dist) and nested_np[idx].ndim == 0:
-                testcase.const_input_values[idx] = nested_np[idx].item()
+            # const 位记录归一化 Python 值（attributes 值已按声明 dtype 落盘），
+            # 供调用边界直接以 Python 值传入：tf.function 只把 Python 标量/list
+            # 折叠为 Const 节点，EagerTensor（含 tf.constant）与 ndarray 入参一律
+            # trace 成 Placeholder，GE infershape 对 value-depend 输入读不到值。
+            # 有 TensorList 时不记录：顶层参数下标与平铺下标错位，避免替换错位
+            if not any(d > 0 for d in dist):
+                if nested_np[idx].ndim == 0:
+                    testcase.const_input_values[idx] = nested_np[idx].item()
+                else:
+                    testcase.const_input_values[idx] = nested_np[idx].tolist()
 
 
 def default_generate_inputs(testcase, switches):
