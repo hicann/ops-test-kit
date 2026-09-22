@@ -31,7 +31,7 @@ dependencies = [
     "decorator>=4",
     "six>=1.15",
     "sympy",
-    "pandas",
+    "jinja2",
     "openpyxl>=3.1",
 ]
 

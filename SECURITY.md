@@ -29,7 +29,6 @@
 | :------------: |:------------------------------------------------------------------------------------------:|:----------------------------------------------------------| :---------------------------------------------------------- |:-----------------------------------------|
 |  依赖  | 不涉及  | pyproject.toml | [https://pypi.org/project/numpy/](https://pypi.org/project/numpy/) | 从PyPI安装numpy，运行时依赖 |
 |  依赖  | 不涉及  | pyproject.toml | [https://pypi.org/project/psutil/](https://pypi.org/project/psutil/) | 从PyPI安装psutil，运行时依赖 |
-|  依赖  | 不涉及  | pyproject.toml | [https://pypi.org/project/pandas/](https://pypi.org/project/pandas/) | 从PyPI安装pandas，运行时依赖 |
 
 ---
 
