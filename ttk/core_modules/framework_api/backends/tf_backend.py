@@ -95,6 +95,25 @@ class TfBackend(Backend):
     def is_npu_only(self, api_name: str) -> bool:
         return api_name.startswith(("tf.npu_",))
 
+    def wrap_eager_callable(self, resolved, api_name=None):
+        """CPU eager: tf.raw_ops.Resource* 需要把 DT_RESOURCE 位的 tf.Variable
+        换成 .handle(Variable 在 op 边界被自动解引用为值, resource 类型校验
+        必挂); 无输出的有状态 raw op 在 eager 下本就返回 None, 无需处理。
+        非 Resource* API 原样返回, 不改变既有调用方式。
+        """
+        from ..tf_stateful import convert_variables_to_handles, get_resource_param_names
+
+        resource_names = set(get_resource_param_names(api_name)) if api_name else set()
+        if not resource_names:
+            return resolved
+
+        def wrapper(*args, **kwargs):
+            args = list(args)
+            convert_variables_to_handles(api_name, args, kwargs)
+            return resolved(*args, **kwargs)
+
+        return wrapper
+
     def supports_graph_mode(self) -> bool:
         return True
 

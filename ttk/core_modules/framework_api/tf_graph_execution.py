@@ -130,7 +130,11 @@ def _execute_tf_graph(
             sig_idx=sig_idx,
         )
 
-        from .tf_stateful import is_ref_variable
+        from .tf_stateful import (
+            collect_mutable_variables,
+            is_ref_variable,
+            read_mutable_values,
+        )
 
         # mutable-ref 变量经闭包捕获，resource 句柄在 trace 时固化，无法像 eager
         # 路径那样在窗口外换新克隆、窗口内纯引用替换。改为两阶段(基准测试常规
@@ -142,6 +146,17 @@ def _execute_tf_graph(
         def reset_mutable_refs():
             for var, backup in mutable_backups:
                 var.assign(backup)
+
+        def _collect_outputs(res, call_args, call_kwargs):
+            # 无输出有状态算子(TF raw Resource*): 输出 = mutable 变量位的更新后值
+            # (对齐 torch inplace 的"原地位即输出位"); 与 eager/golden 路径同序
+            # (mutable 下标升序)。有返回值时不回读(snake_case 封装已含 lazy-read)
+            nps = backend.result_to_numpy(res)
+            if res is None:
+                readbacks = read_mutable_values(collect_mutable_variables(testcase.api_name, call_args, call_kwargs))
+                if readbacks:
+                    nps = readbacks
+            return nps
 
         profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
         if deterministic_level is None:
@@ -175,7 +190,7 @@ def _execute_tf_graph(
                 result = wrapper(*args, **kwargs)
                 if deterministic:
                     backend.synchronize(dev_id)
-                    md5_list.append(compute_output_md5(backend.result_to_numpy(result)))
+                    md5_list.append(compute_output_md5(_collect_outputs(result, args, kwargs)))
             backend.synchronize(dev_id)
             # Phase 2 性能: 窗口内仅图执行
             if profiling_enabled and run_count:
@@ -189,12 +204,12 @@ def _execute_tf_graph(
                     result = wrapper(*args, **kwargs)
                     if deterministic:
                         backend.synchronize(dev_id)
-                        run_nps = backend.result_to_numpy(result)
+                        run_nps = _collect_outputs(result, args, kwargs)
                         md5_list.append(compute_output_md5(run_nps))
                 backend.synchronize(dev_id)
 
         perf = profiler.result(backend, run_count)
-        result_nps = backend.result_to_numpy(result)
+        result_nps = _collect_outputs(result, args, kwargs)
         det_status = finalize_det_status(md5_list, testcase.testcase_name)
     except Exception as e:
         logging.error(f"TF graph {mode_str} execution failed: {e}", exc_info=True)

@@ -153,7 +153,7 @@ class Backend(ABC):
 
         return nullcontext()
 
-    def wrap_eager_callable(self, resolved):
+    def wrap_eager_callable(self, resolved, api_name=None):
         """Wrap an API callable for eager execution. Default: no-op."""
         return resolved
 

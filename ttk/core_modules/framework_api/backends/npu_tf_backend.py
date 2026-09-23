@@ -115,7 +115,7 @@ class NpuTfBackend(TfBackend):
     def supports_graph_mode(self) -> bool:
         return True
 
-    def wrap_eager_callable(self, resolved):
+    def wrap_eager_callable(self, resolved, api_name=None):
         """Wrap API in tf.function so eager ops dispatch to NPU kernels.
 
         npu_device registers NPU as a custom device whose execute callback
@@ -129,10 +129,21 @@ class NpuTfBackend(TfBackend):
         positional inputs to the API's tensor parameter names at call time,
         so tf.function tracing passes them as kwargs. Non-tensor params use
         the API's own defaults.
+
+        tf.raw_ops.Resource* ops (DT_RESOURCE inputs) additionally need the
+        tf.Variable's .handle: at the op boundary a Variable is auto-
+        dereferenced to its value tensor, which fails the resource type
+        check. Conversion happens inside the traced wrapper so profiling
+        still sees Variables outside (per-round clones keep working).
+        No-output stateful ops return an Operation under tracing, which
+        tf.function rejects — downgraded to None (eager already returns
+        None).
         """
         import inspect
 
         import tensorflow as tf
+
+        from ..tf_stateful import get_resource_param_names
 
         try:
             sig = inspect.signature(resolved)
@@ -145,6 +156,8 @@ class NpuTfBackend(TfBackend):
         except (ValueError, TypeError):
             param_names = []
 
+        resource_names = set(get_resource_param_names(api_name)) if api_name else set()
+
         if param_names:
             names = param_names
 
@@ -154,7 +167,13 @@ class NpuTfBackend(TfBackend):
                     if i < len(args) and args[i] is not None:
                         call_kwargs[name] = args[i]
                 call_kwargs.update(kwargs)
-                return resolved(**call_kwargs)
+                if resource_names:
+                    for name in resource_names:
+                        v = call_kwargs.get(name)
+                        if isinstance(v, tf.Variable):
+                            call_kwargs[name] = v.handle
+                r = resolved(**call_kwargs)
+                return None if isinstance(r, tf.Operation) else r
         else:
             wrapper = resolved
 

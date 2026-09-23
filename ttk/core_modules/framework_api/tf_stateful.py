@@ -22,6 +22,12 @@ tensor" 拒绝)。CSV 的 api_name 应直接写 TF2 可调用接口(tf.compat.v1
 支持见 npu_supported_ops.json, 并以 lazy-read 返回更新后的完整张量);
 判定函数对 python snake_case 函数名做 CamelCase 归一化后查 OpDef。
 
+tf.raw_ops.Resource* 系(如 ResourceSparseApplyAdadelta)无 snake_case 公开
+封装, 只能直接调 raw op: 其 var/accum 等输入为 DT_RESOURCE(type=20),
+并非 is_ref —— mutable 判定需同时覆盖两类; 且 DT_RESOURCE 位要求 resource
+句柄, tf.Variable 在 op 边界会被自动解引用为值, 须显式传 .handle
+(snake_case 封装能工作正因其内部自行取 handle 分发)。
+
 变量放置 — 必须随默认设备落在 NPU, 不能用 context.device("/CPU:0") 之类
 强制 CPU 放置: CPU 变量会让消费它的算子被 TF placer colocate 到 CPU,
 npu_device 不触发 GE 编译, 算子静默跑 CPU(kernel 记录为空), 精度对比
@@ -32,6 +38,11 @@ libophost_custom.so 缺 TbeLoadSoAndSaveToRegistry 导出接口, 会使变量
 """
 
 import functools
+
+# tensorflow dtypes.DT_RESOURCE 的枚举值(OpDef input_arg.type 序列化值)。
+# type=0(DT_INVALID) 表示由 type_attr 描述, 显式 20 仅出现在 Resource* 系
+# raw op 的 handle 输入上, 与 is_ref 互斥。
+_DT_RESOURCE = 20
 
 
 @functools.lru_cache(maxsize=None)
@@ -55,8 +66,13 @@ def _lookup_op_def(api_name):
     return op_def
 
 
+def _is_mutable_input_arg(arg):
+    """is_ref(TF1 mutable-ref)或 DT_RESOURCE(Resource* raw op 的 handle 位)。"""
+    return arg.is_ref or arg.type == _DT_RESOURCE
+
+
 def get_mutable_param_indexes(api_name):
-    """返回该 TF 算子 OpDef 中 is_ref=True 的输入参数下标元组。
+    """返回该 TF 算子 OpDef 中可变输入参数(is_ref 或 DT_RESOURCE)的下标元组。
 
     下标与 api_info.tensors(张量参数列表)一一对位。无 OpDef 或解析失败
     返回空元组(普通 API 无 mutable 输入)。
@@ -64,7 +80,7 @@ def get_mutable_param_indexes(api_name):
     op_def = _lookup_op_def(api_name)
     if op_def is None:
         return ()
-    return tuple(i for i, arg in enumerate(op_def.input_arg) if arg.is_ref)
+    return tuple(i for i, arg in enumerate(op_def.input_arg) if _is_mutable_input_arg(arg))
 
 
 def get_mutable_param_names(api_name):
@@ -72,7 +88,75 @@ def get_mutable_param_names(api_name):
     op_def = _lookup_op_def(api_name)
     if op_def is None:
         return []
-    return [arg.name for arg in op_def.input_arg if arg.is_ref]
+    return [arg.name for arg in op_def.input_arg if _is_mutable_input_arg(arg)]
+
+
+def get_resource_param_names(api_name):
+    """返回该 TF 算子 OpDef 中 DT_RESOURCE 输入参数名(如 var/accum/handle)。
+
+    仅 Resource* 系 raw op 存在此类参数; snake_case 封装与 torch API 返回空。
+    """
+    op_def = _lookup_op_def(api_name)
+    if op_def is None:
+        return []
+    return [arg.name for arg in op_def.input_arg if arg.type == _DT_RESOURCE]
+
+
+def get_resource_param_indexes(api_name):
+    """返回该 TF 算子 OpDef 中 DT_RESOURCE 输入参数下标元组。"""
+    op_def = _lookup_op_def(api_name)
+    if op_def is None:
+        return ()
+    return tuple(i for i, arg in enumerate(op_def.input_arg) if arg.type == _DT_RESOURCE)
+
+
+def convert_variables_to_handles(api_name, args=None, kwargs=None):
+    """把 DT_RESOURCE 参数位的 tf.Variable 就地换成 .handle。
+
+    Resource* raw op 的 handle 位要求 resource 张量; tf.Variable 在 op 边界
+    会被自动解引用为值(dtype 不符直接报错), 必须显式传 .handle。args 按
+    input_arg 下标对位(raw op 的张量参数居签名前列, 与 input_arg 顺序一致),
+    kwargs 按参数名对位。非 Variable 值与非 resource 位不动。
+    """
+    indexes = get_resource_param_indexes(api_name) if args else ()
+    names = set(get_resource_param_names(api_name)) if kwargs else set()
+    if not indexes and not names:
+        return
+    import tensorflow as tf
+
+    for i in indexes:
+        if i < len(args) and isinstance(args[i], tf.Variable):
+            args[i] = args[i].handle
+    for name in names & set(kwargs):
+        if isinstance(kwargs[name], tf.Variable):
+            kwargs[name] = kwargs[name].handle
+
+
+def collect_mutable_variables(api_name, args=None, kwargs=None):
+    """收集 mutable 参数位(is_ref/DT_RESOURCE)的 tf.Variable, 按参数下标升序。
+
+    无输出有状态算子的输出语义支撑: 结果体现在变量原地更新里, 调用后回读
+    这些位取值(对齐 torch inplace 的"原地位即输出位")。args 按下标、kwargs
+    按名对位(与 convert_variables_to_handles 同一规则); 非 Variable 位跳过。
+    """
+    op_def = _lookup_op_def(api_name)
+    if op_def is None:
+        return []
+    import tensorflow as tf
+
+    variables = []
+    for i, arg in enumerate(op_def.input_arg):
+        if not _is_mutable_input_arg(arg):
+            continue
+        v = args[i] if args and i < len(args) else (kwargs or {}).get(arg.name)
+        if isinstance(v, tf.Variable):
+            variables.append(v)
+    return variables
+
+
+def read_mutable_values(variables):
+    """读取变量列表的当前值(原地更新后的结果), 返回 numpy 数组列表。"""
+    return [v.read_value().numpy() for v in variables]
 
 
 def is_ref_variable(value):

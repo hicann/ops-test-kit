@@ -444,7 +444,7 @@ def _execute_eager(
 ):
     """Build device tensors, run API in eager mode with profiling, return (result_nps, perf, det_status)."""
     backend.set_device(dev_id)
-    resolved = backend.wrap_eager_callable(resolved)
+    resolved = backend.wrap_eager_callable(resolved, testcase.api_name)
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
     if backend.is_npu():
@@ -480,7 +480,13 @@ def _execute_eager(
     inplace_idxs = set()
     if is_inplace and args and args[0] is not None:
         inplace_idxs.add(0)
-    from .tf_stateful import get_mutable_param_indexes, get_mutable_param_names, is_ref_variable
+    from .tf_stateful import (
+        collect_mutable_variables,
+        get_mutable_param_indexes,
+        get_mutable_param_names,
+        is_ref_variable,
+        read_mutable_values,
+    )
 
     # mutable-ref 算子(OpDef is_ref)原地修改变量, warmup/run 多轮需每轮换
     # 新变量, 否则前几轮的更新会叠加到测量轮结果上。按参数名遍历, 兼容
@@ -530,6 +536,9 @@ def _execute_eager(
                     run_nps = []
                     if r is not None:
                         run_nps.extend(backend.result_to_numpy(r))
+                    else:
+                        # 无输出有状态算子: 逐轮回读当轮变量(克隆)的更新值
+                        run_nps.extend(read_mutable_values(collect_mutable_variables(testcase.api_name, args, kwargs)))
                     if inplace_input_indexes:
                         for idx in sorted(inplace_input_indexes):
                             if idx < len(args) and args[idx] is not None:
@@ -543,6 +552,15 @@ def _execute_eager(
         result_nps = backend.result_to_numpy(result)
     else:
         result_nps = backend.result_to_numpy(r, copy=True) if r is not None else []
+
+    if not is_inplace and result is None:
+        # 无输出有状态算子(TF raw Resource*): 输出 = mutable 变量位的更新后值
+        # (对齐 torch inplace 的"原地位即输出位")。多轮克隆下 args 里是末轮
+        # 变量, 从初值起只施加一次更新。有返回值时不回读 —— snake_case 封装
+        # 的 lazy-read 已含更新结果, 重复回读会双倍输出。
+        readbacks = read_mutable_values(collect_mutable_variables(testcase.api_name, args, kwargs))
+        if readbacks:
+            result_nps = readbacks
 
     if inplace_input_indexes:
         if result_nps is None:

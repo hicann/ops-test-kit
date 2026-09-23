@@ -62,6 +62,16 @@ def _promote_raw_inputs(testcase, raw_inputs, switches=None):
     mode = getattr(testcase, "golden_mode_override", None) or getattr(switches, "golden_mode", None)
     if mode != "Promote":
         return raw_inputs
+    # 有状态算子(TF mutable 参数: is_ref/DT_RESOURCE)不做精度提升: golden 是
+    # 同 op 按被测 dtype 复算, 变量存储 dtype 由算子内核决定, 抬成 fp64 超出
+    # 内核 dtype 支持(npu_device 会把不支持的 dtype 路由到 GE 直接报错);
+    # 高精度真值对"同 op 复算"型 golden 也无意义。
+    api_name = getattr(testcase, "api_name", None)
+    if isinstance(api_name, str) and api_name.startswith(("tf.", "tensorflow.")):
+        from .tf_stateful import get_mutable_param_indexes
+
+        if get_mutable_param_indexes(api_name):
+            return raw_inputs
     # TestcaseE2e 暴露的是 flat_tensor_dtypes(与 raw_inputs 一一对齐);
     # flat_input_dtypes 在该类上并不存在,取到 None 会让本函数直接原样返回、Promote 空转。
     flat_dtypes = getattr(testcase, "flat_tensor_dtypes", None)
@@ -245,6 +255,14 @@ def _exec_and_convert(api_name, args, kwargs, overload_index=0, cpu_backend=None
     if cpu_backend is None:
         framework = detect_framework(api_name)
         cpu_backend = _get_cpu_backend(framework)
+    # tf.raw_ops.Resource* 的 DT_RESOURCE 位: tf.Variable 须显式传 .handle
+    # (op 边界会自动解引用为值); args 按下标、kwargs 按名对位, 就地替换。
+    # 无输出有状态算子的输出回读: 须在替换前快照变量(替换后 args/kwargs 里
+    # 只剩 handle, Variable 引用丢失), 调用后读取更新值 —— 与设备侧回读同序
+    from .tf_stateful import collect_mutable_variables, convert_variables_to_handles, read_mutable_values
+
+    mutable_vars = collect_mutable_variables(api_name, args, kwargs)
+    convert_variables_to_handles(api_name, args, kwargs)
     with cpu_backend.device_scope(0):
         if is_tensor_method:
             if args[0] is None:
@@ -252,4 +270,7 @@ def _exec_and_convert(api_name, args, kwargs, overload_index=0, cpu_backend=None
             result = call_api(api_name, overload_index, getattr(args[0], resolved), args[1:], kwargs)
         else:
             result = call_api(api_name, overload_index, resolved, args, kwargs)
-    return cpu_backend.result_to_numpy(result)
+    nps = cpu_backend.result_to_numpy(result)
+    if result is None and mutable_vars:
+        nps = read_mutable_values(mutable_vars)
+    return nps

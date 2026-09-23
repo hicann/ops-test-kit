@@ -39,16 +39,27 @@ class TfGraphWrapper:
     ):
         import tensorflow as tf
 
+        from .tf_stateful import get_resource_param_names
+
         self._api_func = api_func
         self._dynamic = dynamic
         self._api_name = api_name
         self._input_signature = input_signature
         self._param_names = self._extract_tensor_param_names(api_func, api_name)
         self._sig_param_names = None
+        # tf.raw_ops.Resource* 的 DT_RESOURCE 位: trace 内 tf.Variable 须显式
+        # 取 .handle(Variable 在 op 边界被解引用为值, resource 校验必挂)
+        self._resource_names = set(get_resource_param_names(api_name)) if api_name else set()
 
         if self._param_names and input_signature is not None:
             self._tf_func, sig_param_names = self._build_kw_function(
-                api_func, self._param_names, input_signature, call_args, call_kwargs, sig_idx
+                api_func,
+                self._param_names,
+                input_signature,
+                call_args,
+                call_kwargs,
+                sig_idx,
+                resource_names=self._resource_names,
             )
             self._sig_param_names = set(sig_param_names)
         elif input_signature is not None:
@@ -58,7 +69,9 @@ class TfGraphWrapper:
             self._tf_func = tf.function(api_func, autograph=False)
 
     @staticmethod
-    def _build_kw_function(api_func, param_names, input_signature, call_args=None, call_kwargs=None, sig_idx=None):
+    def _build_kw_function(
+        api_func, param_names, input_signature, call_args=None, call_kwargs=None, sig_idx=None, resource_names=None
+    ):
         """Build tf.function with explicit named params matching input_signature.
 
         tf.raw_ops.* require keyword args; we generate a wrapper with explicit
@@ -74,6 +87,10 @@ class TfGraphWrapper:
         index == tensor param position; mutable/const positions are excluded
         from the signature by the caller). Falls back to binding the first
         len(input_signature) params when absent.
+
+        resource_names (tf.raw_ops.Resource* 的 DT_RESOURCE 位): call 时把
+        tf.Variable 换成 .handle; 无输出 raw op 在 trace 下返回 Operation,
+        tf.function 拒绝 — 降级为 None(eager 下本就返回 None)。
         """
         import tensorflow as tf
 
@@ -96,7 +113,13 @@ class TfGraphWrapper:
         def wrapper(*args):
             kwargs = dict(zip(tensor_names, args))
             kwargs.update(closure_values)
-            return api_func(**kwargs)
+            if resource_names:
+                for name in resource_names:
+                    v = kwargs.get(name)
+                    if isinstance(v, tf.Variable):
+                        kwargs[name] = v.handle
+            r = api_func(**kwargs)
+            return None if isinstance(r, tf.Operation) else r
 
         tf_func = tf.function(wrapper, input_signature=input_signature, autograph=False)
         tf_func.get_concrete_function()
