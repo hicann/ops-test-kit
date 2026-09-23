@@ -483,8 +483,14 @@ def _apply_dump_config(dump_config, value):
     if value == "full":
         dump_config.enable_all()
         return
-    for raw_mode in value.lower().split(","):
-        mode = raw_mode.strip()
+    modes = [raw_mode.strip() for raw_mode in value.lower().split(",") if raw_mode.strip()]
+    valid_modes = {"in", "out", "golden", "xpu", "full"}
+    unknown_modes = [mode for mode in modes if mode not in valid_modes]
+    if unknown_modes:
+        raise ValueError(
+            "Unsupported --dump mode(s): " + ", ".join(unknown_modes) + "; use full, in, out, golden, or xpu"
+        )
+    for mode in modes:
         if mode == "in":
             dump_config.enable_input()
         elif mode == "out":
