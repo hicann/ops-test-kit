@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
@@ -27,8 +33,6 @@ class GeirReturnStructure:
         cst_gold = "cst_bin_precision" if is_binary else "cst_precision"
         dyn_gold = "dyn_bin_precision" if is_binary else "dyn_precision"
         return (
-            "testcase_name",
-            "op_name",
             "precision",
             "precision_status",
             cst_perf,
@@ -49,11 +53,7 @@ class GeirReturnStructure:
     def pick_data(self, case_result_title: tuple) -> tuple:
         data = []
         for title in case_result_title:
-            if title == "testcase_name":
-                data.append("")
-            elif title == "op_name":
-                data.append("")
-            elif title == "precision":
+            if title == "precision":
                 data.append(self.precision)
             elif title == "precision_status":
                 data.append(self.precision_status)
