@@ -43,7 +43,10 @@ def _handle_list(args):
         names, rows = [n for n, _ in kept], [r for _, r in kept]
 
     if args.operator:
-        op_filter = args.operator.split(",")
+        # Accept the spaces users commonly add after commas in a shell list.
+        # Empty entries are ignored so a trailing comma does not filter out
+        # every case unexpectedly.
+        op_filter = [item.strip() for item in args.operator.split(",") if item.strip()]
         if "op_name" in header:
             op_idx = header.index("op_name")
         elif "api_name" in header:

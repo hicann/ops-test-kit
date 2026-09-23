@@ -103,6 +103,21 @@ def test_list_op_filter_and_comma_multi(tmp_path):
     assert "a3" not in r.stdout
 
 
+def test_list_op_filter_strips_spaces_and_ignores_empty_entries(tmp_path):
+    f = tmp_path / "c.csv"
+    _write_csv(
+        f,
+        [
+            ["a1", "add", "true", "((2,3),)", "('float32',)"],
+            ["a2", "sub", "true", "((2,3),)", "('float32',)"],
+        ],
+    )
+    r = _run_list("-i", str(f), "--op", "add, sub,")
+    assert r.returncode == 0
+    assert "a1" in r.stdout
+    assert "a2" in r.stdout
+
+
 def test_list_op_filter_excludes_disabled_rows(tmp_path):
     # --op 与 is_enabled 叠加：禁用行即使 op 匹配也不出现（保持旧行为, testcase_manager.py:469 无条件过滤）
     f = tmp_path / "c.csv"
