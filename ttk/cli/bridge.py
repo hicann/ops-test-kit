@@ -67,7 +67,7 @@ def _apply_plugin_rerun_args(sw, args):
     if hasattr(args, "plugin") and args.plugin:
         sw.plugin_path = tuple(pathlib.Path(p.strip()).resolve() for p in args.plugin.split(",") if p.strip())
     if hasattr(args, "rerun") and args.rerun:
-        sw.rerun_targets = args.rerun.lower().split(",")
+        sw.rerun_targets = [item.strip().lower() for item in args.rerun.split(",") if item.strip()]
 
 
 def _apply_output_log_args(sw, args):
