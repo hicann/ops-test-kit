@@ -36,6 +36,8 @@ def extract_plog_errors(max_lines=10, pid=None):
     """
     if pid is None:
         pid = os.getpid()
+    if max_lines <= 0:
+        return []
     plog_home = os.path.expanduser("~/ascend/log/debug/plog")
     plog_pattern = f"plog-{pid}_*.log"
     candidates = glob.glob(f"{plog_home}/{plog_pattern}")
