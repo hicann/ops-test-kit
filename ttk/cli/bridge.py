@@ -28,7 +28,7 @@ def _apply_io_args(sw, args):
 
 def _apply_case_selection_args(sw, args):
     if hasattr(args, "testcase") and args.testcase:
-        sw.selected_testcases = args.testcase.split(",")
+        sw.selected_testcases = [item.strip() for item in args.testcase.split(",") if item.strip()]
     if hasattr(args, "testcase_index") and args.testcase_index:
         sw.selected_testcase_indexes = _parse_indexes(args.testcase_index)
     if hasattr(args, "testcase_count") and args.testcase_count is not None:
