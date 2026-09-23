@@ -63,7 +63,7 @@ from ...manual_data import (
     snapshot_manual_values,
 )
 from ...msprof import MsProfiler, TtkMsProfType
-from ...npu_preprocess import invoke_npu_preprocess, resolve_npu_preprocess
+from ...npu_preprocess import apply_aclnn_npu_preprocess_result, invoke_npu_preprocess, resolve_npu_preprocess
 from ...tbe_logging import build_single_log_dir, default_logging_config
 from ...tbe_multiprocessing import DeviceLock, MultiDeviceLock, get_process_context
 from ...testcase_manager import TestcaseAclnn
@@ -272,12 +272,15 @@ class Phase1ParamBuilder:
         csv_dtypes = self._ctx.flat_tensor_dtypes
         from ttk.utilities.dtypes import DATA_TYPE_DICT
 
-        for idx, tt in enumerate(self._ctx.flatten_tensors):
+        dynamic_slots = set(self._ctx.dyn_input_slot_indexes)
+        dynamic_tensors = getattr(self._ctx, "_aclnn_dynamic_tensors", {}) or {}
+        for idx, original_tt in enumerate(self._ctx.flatten_tensors):
+            tt = dynamic_tensors.get(idx, original_tt)
             if tt is None:
                 ptr_lst.append(None)
             else:
                 fmt = get(self._ctx.flat_tensor_formats, idx)
-                ss = self._ctx.flat_storage_shape(idx)
+                ss = tuple(tt.shape) if idx in dynamic_slots else self._ctx.flat_storage_shape(idx)
                 view_override = None
                 dtype_override = None
                 csv_dt = get(csv_dtypes, idx)
@@ -701,6 +704,10 @@ def __dump_input(context: TestcaseAclnn, force: bool = False):
     if force or get_global_storage().dump_config.is_input_enabled():
         logging.info("Dump Input Tensor data....")
         for idx, t in enumerate(context.flatten_tensors):
+            if t is None:
+                # Dynamic slots are NPU-side values and intentionally remain
+                # None on the CPU/golden/dump path.
+                continue
             if idx in context.pure_output_indexes:
                 continue
             __dump_to_file(t, f"{dump_input_name}_input_tensor_{idx}")
@@ -1812,7 +1819,7 @@ def _invoke_aclnn_npu_preprocess(context, switches, process_ctx, dev_id):
     """Run the optional hook inside the device lock before the main API."""
     func = resolve_npu_preprocess(context, switches)
     if func is None:
-        return False
+        return
     if getattr(switches, "backend", None) != "npusim":
         import torch_npu
 
@@ -1820,7 +1827,9 @@ def _invoke_aclnn_npu_preprocess(context, switches, process_ctx, dev_id):
     plan = context.get_param_plan()
     args, attributes = plan.build_args(context.tensors, context.scalars, context.attributes)
     process_ctx.notify_status("OnNpuPreprocess")
-    return invoke_npu_preprocess(context, switches, plan, args, attributes, func=func)
+    result = invoke_npu_preprocess(context, switches, plan, args, attributes, func=func)
+    if isinstance(result, dict):
+        apply_aclnn_npu_preprocess_result(context, plan, result)
 
 
 def _run_aclnn_npu_preprocess(context, switches, process_ctx, dev_id):
@@ -1861,12 +1870,19 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
         return prof_end(context, context.fail_reason)
     if not OpApiInfoKeeper().has_api(context.api_name):
         return prof_end(context, "OP_API_NOT_FOUND")
+    dyn_indexes = context.dyn_input_slot_indexes
+    if dyn_indexes and resolve_npu_preprocess(context, switches) is None:
+        return prof_end(context, "DYN_SHAPE_REQUIRES_NPU_PREPROCESS")
+    if dyn_indexes and is_multi_device:
+        return prof_end(context, "MULTI_DEVICE_UNSUPPORTED_FOR_DYN_SHAPE")
     if not switches.no_memory_check:
         process_ctx.notify_status("OnWaitingForMemory")
         waiting_for_memory()
     logging.debug(f"Expecting {context.tensor_bytes} bytes memory usage")
 
     manual_mode = getattr(switches, "manual_data_mode", None)
+    if dyn_indexes and manual_mode == "prepare":
+        return prof_end(context, "MANUAL_DATA_PREPARE_UNSUPPORTED_FOR_DYN_SHAPE")
     manual_case = None
     try:
         prepare_store = prepare_manual_data_store(context, "aclnn", switches)

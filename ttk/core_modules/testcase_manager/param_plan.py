@@ -345,40 +345,67 @@ class ParamPlan:
             (args_list, kwargs_dict, extra_attrs) where extra_attrs contains
             attributes not matched by any API parameter name.
         """
+        args, kwargs, extra_attrs, _bindings = self._build_args(nested_tensors)
+        return args, kwargs, extra_attrs
+
+    def tensor_param_bindings(self, nested_tensors):
+        """Return tensor parameter bindings produced by the normal argument builder.
+
+        Each value is a list of ``(top_index, container, key, is_vararg)``
+        entries.  Keeping this alongside ``build_args`` prevents dynamic-slot
+        patching from maintaining a second copy of the parameter-consumption
+        rules.
+        """
+        _args, _kwargs, _extra_attrs, bindings = self._build_args(nested_tensors)
+        return bindings
+
+    def _build_args(self, nested_tensors):
+        """Build call arguments and record where each tensor parameter lands."""
         out_indices = set(self.output_tensor_indexes or ())
         from ttk.core_modules.framework_api.framework_detector import is_inplace_tensor_method
 
         is_inplace = is_inplace_tensor_method(self.api_name) if self.api_name else False
         if is_inplace:
-            input_tensors = list(nested_tensors)
+            input_tensors = list(enumerate(nested_tensors))
         else:
-            input_tensors = [t for i, t in enumerate(nested_tensors) if i not in out_indices]
-        out_tensors = [nested_tensors[i] for i in sorted(out_indices)]
+            input_tensors = [(i, t) for i, t in enumerate(nested_tensors) if i not in out_indices]
+        out_tensors = [(i, nested_tensors[i]) for i in sorted(out_indices)]
         out_iter = iter(out_tensors)
 
         tensor_queue = list(input_tensors)
         attrs = dict(self.attributes) if self.attributes else {}
         args = []
         kwargs = {}
+        bindings = {}
+
+        def record_binding(param_name, top_index, container, key, is_vararg=False):
+            bindings.setdefault(param_name, []).append((top_index, container, key, is_vararg))
 
         for param in self.overload_params:
             if param.is_tensor_like and param.name == "out":
                 if param.is_tensor_list:
-                    collected = [t for t in out_iter if t is not None]
+                    collected_items = [(i, t) for i, t in out_iter if t is not None]
+                    collected = [t for _i, t in collected_items]
                     if collected:
                         kwargs["out"] = collected
+                        for top_index, _value in collected_items:
+                            record_binding(param.name, top_index, "kwargs", "out")
                     elif not param.is_keyword_only:
                         args.append(None)
                 else:
-                    val = next(out_iter, None)
+                    item = next(out_iter, None)
+                    top_index, val = item if item is not None else (None, None)
                     if val is not None:
                         kwargs["out"] = val
+                        record_binding(param.name, top_index, "kwargs", "out")
                     elif not param.is_keyword_only:
                         args.append(None)
             elif param.is_keyword_only:
                 if param.is_tensor_like:
                     if tensor_queue:
-                        kwargs[param.name] = tensor_queue.pop(0)
+                        top_index, value = tensor_queue.pop(0)
+                        kwargs[param.name] = value
+                        record_binding(param.name, top_index, "kwargs", param.name)
                     elif param.name in attrs:
                         # Tensor params beyond the shape-covered prefix may be
                         # satisfied by scalar attributes (match_overload
@@ -394,7 +421,10 @@ class ParamPlan:
                     kwargs[param.name] = val
             elif param.is_tensor_like:
                 if getattr(param, "is_var_positional", False):
-                    args.extend(tensor_queue)
+                    for top_index, value in tensor_queue:
+                        arg_index = len(args)
+                        args.append(value)
+                        record_binding(param.name, top_index, "args", arg_index, is_vararg=True)
                     tensor_queue.clear()
                 elif param.name in attrs and param.name != "self" and not tensor_queue:
                     raw = attrs[param.name]
@@ -407,10 +437,12 @@ class ParamPlan:
                         )
                         args.append(coerce_value(raw, "Number"))
                 elif tensor_queue:
-                    val = tensor_queue.pop(0)
+                    top_index, val = tensor_queue.pop(0)
                     if param.is_tensor and isinstance(val, list) and len(val) == 1:
                         val = val[0]
+                    arg_index = len(args)
                     args.append(val)
+                    record_binding(param.name, top_index, "args", arg_index)
                 elif param.is_optional:
                     args.append(None)
                 else:
@@ -428,7 +460,7 @@ class ParamPlan:
 
         param_names = {p.name for p in self.overload_params}
         extra_attrs = {k: v for k, v in attrs.items() if k not in param_names}
-        return args, kwargs, extra_attrs
+        return args, kwargs, extra_attrs, bindings
 
 
 def build_positional_args(

@@ -381,6 +381,10 @@ def _input_specs(testcase, case_type: str) -> List[Optional[Tuple[str, Tuple[int
     for index, shape in enumerate(shapes):
         if shape is None:
             result.append(None)
+        elif case_type in ("e2e", "aclnn") and any(int(dimension) == -1 for dimension in shape):
+            # Dynamic API slots are materialized by npu_preprocess, not restored
+            # from a CPU input file.  A replay store may carry a None marker.
+            result.append(None)
         elif case_type == "kernel":
             result.append(_physical_array_spec(dtypes[index], shape))
         else:

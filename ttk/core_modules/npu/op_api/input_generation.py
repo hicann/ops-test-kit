@@ -118,7 +118,7 @@ class InputGenerator:
         base_seed = getattr(self._switch, "random_seed", None)
         has_batch_relation = has_complete_batch_relation(self._ctx)
         for idx, vs in enumerate(flat_shapes):
-            if vs is None:
+            if vs is None or -1 in vs:
                 arrays.append(None)
                 actual_data_ranges.append((None, None))
                 continue

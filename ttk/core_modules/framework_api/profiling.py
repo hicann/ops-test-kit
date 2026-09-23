@@ -36,7 +36,12 @@ from ttk.core_modules.manual_data import (
     snapshot_manual_values,
 )
 from ttk.core_modules.npu.op.profiling_structure import _format_xpu_metrics
-from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
+from ttk.core_modules.npu_preprocess import (
+    apply_npu_preprocess_result,
+    invoke_npu_preprocess,
+    resolve_npu_preprocess,
+)
+from ttk.core_modules.plugin_loader import get_plugin_function
 from ttk.core_modules.tbe_logging import build_single_log_dir, default_logging_config
 from ttk.core_modules.tbe_multiprocessing import DeviceLock, MultiDeviceLock, get_process_context
 from ttk.test_spec import get_spec_attr
@@ -447,8 +452,9 @@ def _execute_eager(
     resolved = backend.wrap_eager_callable(resolved, testcase.api_name)
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
 
+    preprocess_result = None
     if backend.is_npu():
-        invoke_npu_preprocess(
+        preprocess_result = invoke_npu_preprocess(
             testcase,
             switches,
             plan,
@@ -456,6 +462,8 @@ def _execute_eager(
             kwargs,
             device_scope=lambda: backend.device_scope(dev_id),
         )
+    if preprocess_result is not None:
+        apply_npu_preprocess_result(testcase, plan, args, kwargs, preprocess_result)
 
     profiling_enabled = bool(getattr(switches, "TASK_PROFILING", True))
     if deterministic_level is None:
@@ -658,6 +666,19 @@ def _generate_golden_data(testcase, raw_inputs, switches, backend, dump=True):
     return golden_nps
 
 
+def _has_dynamic_golden_source(testcase, switches, manual_case=None):
+    """Return whether a dynamic-slot case can avoid the CPU default Golden."""
+    if switches.golden_mode == "Disable" or str(testcase.golden_api or "").lower() == "disable":
+        return True
+    if manual_case is not None and manual_case.has_goldens:
+        return True
+    # A non-disabled golden_api takes priority over plugins and receives the
+    # unresolved None slot, so it is not a valid dynamic-slot Golden source.
+    if testcase.golden_api:
+        return False
+    return get_plugin_function(testcase.api_name, "golden", "e2e", switches.plugin_path) is not None
+
+
 def _apply_pre_compare(testcase, result_nps, golden_nps, switches):
     """加载并调用 pre_compare, 变换 result_nps 和 golden_nps。
     无 spec / golden 无效时什么都不做。异常向上抛。"""
@@ -806,6 +827,12 @@ def _do_profile_multi_device(  # noqa: PLR0911
         return_struct.eager_precision = "PARAM_PLAN_FAILURE"
         return_struct.precision_status = "FAIL"
         logging.error(f"[{testcase.testcase_name}] Cannot resolve param plan for {testcase.api_name}")
+        return
+
+    if tuple(getattr(testcase, "dyn_input_slot_indexes", ()) or ()):
+        return_struct.eager_precision = "MULTI_DEVICE_UNSUPPORTED_FOR_DYN_SHAPE"
+        return_struct.precision_status = "FAIL"
+        logging.error(f"[{testcase.testcase_name}] -1 dynamic slots are not supported in multi-device mode")
         return
 
     resolved, is_tensor_method = None, False
@@ -1145,7 +1172,22 @@ def _do_profile(  # noqa: PLR0911
         logging.error(f"[{testcase.testcase_name}] Cannot resolve param plan for {testcase.api_name}")
         return
 
+    dyn_indexes = tuple(getattr(testcase, "dyn_input_slot_indexes", ()) or ())
+    if dyn_indexes and (not backend.is_npu() or resolve_npu_preprocess(testcase, switches) is None):
+        logging.error(
+            f"[{testcase.testcase_name}] tensor_view_shapes declares -1 slot(s) {dyn_indexes}, "
+            "but NPU execution with a registered npu_preprocess hook is required"
+        )
+        return_struct.eager_precision = "DYN_SHAPE_REQUIRES_NPU_PREPROCESS"
+        return_struct.precision_status = "FAIL"
+        return
+
     manual_mode = getattr(switches, "manual_data_mode", None)
+    if manual_mode == "prepare" and dyn_indexes:
+        logging.error(f"[{testcase.testcase_name}] manual-data prepare does not support -1 dynamic slots")
+        return_struct.construct("MANUAL_DATA_PREPARE_UNSUPPORTED_FOR_DYN_SHAPE", "FAIL", None)
+        _profiling_end_print(testcase, return_struct, switches=switches)
+        return
     manual_case = None
     try:
         prepare_store = prepare_manual_data_store(testcase, "e2e", switches)
@@ -1169,6 +1211,15 @@ def _do_profile(  # noqa: PLR0911
             return_struct.eager_precision = f"MANUAL_DATA_READ_FAILURE: {exc}"
             return_struct.precision_status = "FAIL"
             return
+
+    if dyn_indexes and not _has_dynamic_golden_source(testcase, switches, manual_case):
+        logging.error(
+            f"[{testcase.testcase_name}] dynamic slot(s) {dyn_indexes} remain None on the CPU path; "
+            "provide an E2E Golden plugin, replay saved Goldens, or disable Golden comparison"
+        )
+        return_struct.eager_precision = "DYN_SHAPE_REQUIRES_GOLDEN_SOURCE"
+        return_struct.precision_status = "FAIL"
+        return
 
     process_ctx.notify_status("OnGenInput")
     # 提前设定进程设备：TF 的 npu_device.open/as_default 必须先于首个

@@ -285,7 +285,7 @@ def generate_np_storages(testcase, switches):
     base_seed = getattr(switches, "random_seed", None)
     has_batch_relation = has_complete_batch_relation(testcase)
     for idx, view_shape in enumerate(flat_shapes):
-        if view_shape is None:
+        if view_shape is None or -1 in view_shape:
             np_storages.append(None)
             continue
 

@@ -11,6 +11,7 @@
 """Framework-neutral invocation contract for the optional NPU preprocess hook."""
 
 import inspect
+import logging
 from contextlib import nullcontext
 
 from ttk.core_modules.deterministic import BATCH_RELATION_FIELDS, batch_relation_kwargs
@@ -67,11 +68,11 @@ def invoke_npu_preprocess(
     func=None,
     device_scope=None,
 ):
-    """Invoke one context-free hook and enforce its public return contract."""
+    """Invoke one context-free hook and enforce its None-or-device-tensor-map contract."""
     if func is None:
         func = resolve_npu_preprocess(testcase, switches)
     if func is None:
-        return False
+        return None
 
     try:
         signature = inspect.signature(func)
@@ -97,6 +98,168 @@ def invoke_npu_preprocess(
         if str(exc).startswith("NPU_PREPROCESS_FAILURE:"):
             raise
         raise RuntimeError(f"NPU_PREPROCESS_FAILURE: {exc}") from exc
-    if result is not None:
-        raise RuntimeError("NPU_PREPROCESS_FAILURE: TestSpec.npu_preprocess must return None")
-    return True
+    if result is None:
+        return None
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            "NPU_PREPROCESS_FAILURE: TestSpec.npu_preprocess must return None or dict{param_name: tensor}"
+        )
+    for name, tensor in result.items():
+        if not isinstance(name, str) or tensor is None or not hasattr(tensor, "shape") or not hasattr(tensor, "device"):
+            raise RuntimeError(f"NPU_PREPROCESS_FAILURE: returned slot '{name}' is not a tensor")
+    return result
+
+
+def _tensor_param_bindings(testcase, plan, args, kwargs):
+    """Map tensor parameter names to flat slots and their built call locations."""
+    top_slots = []
+    flat_idx = 0
+    for shape in testcase.tensor_view_shapes or ():
+        count = len(shape) if shape and isinstance(shape[0], (tuple, list)) else 1
+        top_slots.append(tuple(range(flat_idx, flat_idx + count)))
+        flat_idx += count
+
+    bindings = {}
+    for name, entries in plan.tensor_param_bindings(testcase.tensor_view_shapes or ()).items():
+        if len(entries) != 1:
+            # A named *args region cannot be addressed by one dict key.
+            top_index, container, key, _is_vararg = entries[0]
+            bindings[name] = (top_slots[top_index], container, key, True)
+            continue
+        top_index, container, key, is_vararg = entries[0]
+        bindings[name] = (top_slots[top_index], container, key, is_vararg)
+    return bindings
+
+
+def _tensor_device(value):
+    if value is None:
+        return None
+    if isinstance(value, (tuple, list)):
+        for item in value:
+            device = _tensor_device(item)
+            if device is not None:
+                return device
+        return None
+    return getattr(value, "device", None)
+
+
+def apply_npu_preprocess_result(testcase, plan, args, kwargs, returned):
+    """Patch device-side call arguments materialized by npu_preprocess."""
+    if returned is None:
+        return []
+    bindings = _tensor_param_bindings(testcase, plan, args, kwargs)
+    dyn_indexes = set(testcase.dyn_input_slot_indexes)
+
+    dynamic_names = {
+        name
+        for name, (slots, _container, _key, is_vararg) in bindings.items()
+        if not is_vararg and len(slots) == 1 and slots[0] in dyn_indexes
+    }
+    for name in returned:
+        binding = bindings.get(name)
+        if binding is None or binding[3] or len(binding[0]) != 1 or binding[0][0] not in dyn_indexes:
+            raise RuntimeError(f"NPU_PREPROCESS_FAILURE: returned slot '{name}' is not declared as a supported -1 slot")
+    missing = sorted(dynamic_names - set(returned))
+    if missing:
+        raise RuntimeError(f"NPU_PREPROCESS_FAILURE: dynamic slots {missing} not materialized by npu_preprocess")
+    mapped_dyn = {
+        slots[0] for slots, _container, _key, is_vararg in bindings.values() if not is_vararg and len(slots) == 1
+    }
+    unmapped = sorted(dyn_indexes - mapped_dyn)
+    if unmapped:
+        raise RuntimeError(
+            "NPU_PREPROCESS_FAILURE: dynamic slot(s) "
+            f"{unmapped} have no supported API tensor parameter (TensorList and *args slots are unsupported)"
+        )
+
+    target_device = _tensor_device(args) or _tensor_device(tuple(kwargs.values()))
+    patched = []
+    for name, tensor in returned.items():
+        returned_device = _tensor_device(tensor)
+        if target_device is not None and returned_device is not None and str(returned_device) != str(target_device):
+            raise RuntimeError(
+                f"NPU_PREPROCESS_FAILURE: returned slot '{name}' is on {returned_device}, expected {target_device}"
+            )
+        slots, container, key, _is_vararg = bindings[name]
+        if container == "args":
+            args[key] = tensor
+        else:
+            kwargs[key] = tensor
+        patched.append((slots[0], name, tensor))
+
+    logging.info(
+        "[%s] npu_preprocess resolved dynamic shapes: %s",
+        getattr(testcase, "testcase_name", ""),
+        {name: tuple(tensor.shape) for _idx, name, tensor in patched},
+    )
+    return patched
+
+
+def _aclnn_tensor_param_bindings(testcase, plan):
+    """Map ACLNN tensor parameter names to top-level and flat testcase slots."""
+    bindings = {}
+    top = 0
+    flat = 0
+    for kind, name, _acl_type, _default in plan.param_layout:
+        if kind != "tensor":
+            continue
+        shape = testcase.tensor_view_shapes[top]
+        count = len(shape) if shape and isinstance(shape[0], (tuple, list)) else 1
+        bindings[name] = (top, tuple(range(flat, flat + count)))
+        top += 1
+        flat += count
+    return bindings
+
+
+def apply_aclnn_npu_preprocess_result(testcase, plan, returned):
+    """Materialize dynamic ACLNN inputs on host after their NPU preprocess."""
+    if returned is None:
+        return []
+
+    import torch
+
+    from ttk.utilities import str_to_torch_dtype
+
+    bindings = _aclnn_tensor_param_bindings(testcase, plan)
+    dyn_indexes = set(testcase.dyn_input_slot_indexes)
+    dynamic_names = {name for name, (_top, slots) in bindings.items() if len(slots) == 1 and slots[0] in dyn_indexes}
+    for name in returned:
+        binding = bindings.get(name)
+        if binding is None or len(binding[1]) != 1 or binding[1][0] not in dyn_indexes:
+            raise RuntimeError(
+                f"NPU_PREPROCESS_FAILURE: returned ACLNN slot '{name}' is not declared as a supported -1 slot"
+            )
+    missing = sorted(dynamic_names - set(returned))
+    if missing:
+        raise RuntimeError(f"NPU_PREPROCESS_FAILURE: dynamic ACLNN slots {missing} not materialized")
+    mapped_dyn = {slots[0] for _top, slots in bindings.values() if len(slots) == 1}
+    if dyn_indexes - mapped_dyn:
+        raise RuntimeError("NPU_PREPROCESS_FAILURE: dynamic ACLNN slot inside TensorList is not supported")
+
+    dynamic_tensors = {}
+    patched = []
+    for name, tensor in returned.items():
+        if not isinstance(tensor, torch.Tensor):
+            raise RuntimeError(f"NPU_PREPROCESS_FAILURE: returned ACLNN slot '{name}' is not a torch.Tensor")
+        top, slots = bindings[name]
+        flat = slots[0]
+        host_tensor = tensor.detach().to("cpu").contiguous()
+        expected_dtype = str_to_torch_dtype(testcase.flat_tensor_dtypes[flat])
+        if expected_dtype is None or host_tensor.dtype != expected_dtype:
+            raise RuntimeError(
+                f"NPU_PREPROCESS_FAILURE: returned ACLNN slot '{name}' has dtype {host_tensor.dtype}, "
+                f"expected {expected_dtype}"
+            )
+        dynamic_tensors[flat] = host_tensor
+        patched.append((flat, name, host_tensor))
+
+    # Keep the CPU-side None marker intact.  ACLNN needs a host copy only to
+    # create its device tensor; golden, dump, and third-party paths must not
+    # mistake a NPU-derived metadata buffer for a user input.
+    testcase._aclnn_dynamic_tensors = dynamic_tensors
+    logging.info(
+        "[%s] npu_preprocess resolved ACLNN dynamic shapes: %s",
+        getattr(testcase, "testcase_name", ""),
+        {name: tuple(tensor.shape) for _idx, name, tensor in patched},
+    )
+    return patched

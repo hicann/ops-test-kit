@@ -68,7 +68,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
     }
 
     tensor_property_headers = {
-        "tensor_view_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None),
+        "tensor_view_shapes": (FIELD_TYPES.SHAPELIKE_DYN_NESTED, None),
         "tensor_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None),
     }
 
@@ -374,6 +374,7 @@ class TestcaseE2e(TensorApiTestcaseBase):
         self._auto_fill_inplace_tensor_method()
         self._parse_device_ids_field()
         self._check_top_level_counts()
+        self._check_dyn_shape_slots()
         self._check_tensor_configuration()
         self._check_output_configuration()
         self._generate_batch_consistency_id()

@@ -160,6 +160,10 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "_multi_device_thread_contexts",
         "_multi_device_hccl_handles",
         "_hccl_handles",
+        # Host copies of dynamic inputs produced by npu_preprocess.  These are
+        # consumed only while constructing ACLNN tensors; CPU golden/XPU paths
+        # must continue to observe the CSV None marker.
+        "_aclnn_dynamic_tensors",
     )
 
     identity_headers: Dict[str, tuple] = {
@@ -169,7 +173,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         "my_rank": (FIELD_TYPES.INT, None, None),
     }
     tensor_property_headers: Dict[str, tuple] = {
-        "tensor_view_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
+        "tensor_view_shapes": (FIELD_TYPES.SHAPELIKE_DYN_NESTED, None, ()),
         "tensor_formats": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ("ND",)),
         "tensor_dtypes": (FIELD_TYPES.STRING_SCALAR_NESTED, None, ()),
         "tensor_storage_shapes": (FIELD_TYPES.SHAPELIKE_STC_NESTED, None, ()),
@@ -267,13 +271,14 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self.golden_mode_override = None
         self.xpu_metrics = {}
         self._multi_device_thread_contexts = None
+        self._aclnn_dynamic_tensors = {}
 
     @property
     def tensor_bytes(self):
         """Calculate total bytes of all flat tensors based on storage shape and dtype width."""
         bytes_lst: list = []
         for idx, vs in enumerate(self.flat_tensor_view_shapes):
-            if vs is None:
+            if vs is None or -1 in vs:
                 continue
             try:
                 bytes_lst.append(
@@ -503,6 +508,7 @@ class TestcaseAclnn(TensorApiTestcaseBase):
         self._check_scalar_list_configuration()
         self._auto_fill_output_inplace_indices()
         self._check_output_configuration()
+        self._check_dyn_shape_slots()
         self._parse_scalar_dtypes()
         self._check_params_count()
         self._generate_batch_consistency_id()

@@ -20,7 +20,7 @@ import logging
 import torch
 
 from ttk.core_modules.deterministic import resolve_deterministic_level
-from ttk.core_modules.npu_preprocess import invoke_npu_preprocess
+from ttk.core_modules.npu_preprocess import apply_npu_preprocess_result, invoke_npu_preprocess
 from ttk.test_spec import get_spec_attr
 from ttk.utilities.container_utils import get_global_storage
 
@@ -320,7 +320,7 @@ def _execute_graph(
     logging.info(f"Executing graph mode: {mode_str}")
 
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
-    invoke_npu_preprocess(
+    preprocess_result = invoke_npu_preprocess(
         testcase,
         switches,
         plan,
@@ -328,6 +328,8 @@ def _execute_graph(
         kwargs,
         device_scope=lambda: backend.device_scope(dev_id),
     )
+    if preprocess_result is not None:
+        apply_npu_preprocess_result(testcase, plan, args, kwargs, preprocess_result)
 
     inplace_backup = None
 

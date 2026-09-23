@@ -103,6 +103,9 @@ def _execute_tf_graph(
     if is_aclgraph:
         logging.warning("aclgraph mode not supported for TF, skipping")
         return [], None, None
+    if tuple(getattr(testcase, "dyn_input_slot_indexes", ()) or ()):
+        logging.error(f"TF graph mode does not support -1 dynamic slots: {testcase.testcase_name}")
+        return [], None, None
 
     mode_str = "dynamic" if dynamic else "static"
     logging.info(f"Executing TF graph mode: {mode_str}")
@@ -110,7 +113,7 @@ def _execute_tf_graph(
     try:
         args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
         if backend.is_npu():
-            invoke_npu_preprocess(
+            preprocess_result = invoke_npu_preprocess(
                 testcase,
                 switches,
                 plan,
@@ -118,6 +121,10 @@ def _execute_tf_graph(
                 kwargs,
                 device_scope=lambda: backend.device_scope(dev_id),
             )
+            if preprocess_result is not None:
+                raise RuntimeError(
+                    "NPU_PREPROCESS_FAILURE: TF graph mode does not support npu_preprocess tensor materialization"
+                )
 
         input_signature, sig_idx = _build_input_signature(testcase, dynamic)
         wrapper = TfGraphWrapper(

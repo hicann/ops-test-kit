@@ -15,7 +15,9 @@ Shared base class for aclnn (op_api) and framework_api (e2e) testcase structures
 __all__ = ["TensorApiTestcaseBase"]
 
 
-from ...utilities import shape_stride
+import logging
+
+from ...utilities import get, shape_stride
 from ...utilities.container_utils import deep_flatten, flatten_nested_sequence, infer_list_distribution_from_nesting
 from .testcase_base import TestcaseBase
 
@@ -148,6 +150,13 @@ class TensorApiTestcaseBase(TestcaseBase):
             return self.tensor_view_shapes
         self._flat_tensor_view_shapes = flatten_nested_sequence(self.tensor_view_shapes)
         return self._flat_tensor_view_shapes
+
+    @property
+    def dyn_input_slot_indexes(self):
+        """Flat tensor slots whose storage is materialized by npu_preprocess."""
+        return tuple(
+            idx for idx, shape in enumerate(self.flat_tensor_view_shapes or ()) if shape is not None and -1 in shape
+        )
 
     @property
     def flat_tensor_dtypes(self):
@@ -374,6 +383,78 @@ class TensorApiTestcaseBase(TestcaseBase):
             if val is not None:
                 return val
         return 0
+
+    def _check_dyn_shape_slots(self):
+        """Validate constraints shared by E2E and ACLNN dynamic input slots."""
+        if not self.is_valid:
+            return
+
+        flat_shapes = self.flat_tensor_view_shapes or ()
+        if any(shape is not None and -2 in shape for shape in flat_shapes):
+            self.is_valid = False
+            self.fail_reason = "DYN_SHAPE_INVALID"
+            logging.error(f"[{self.testcase_name}] -2 (unknown rank) is not supported in tensor_view_shapes")
+            return
+
+        dyn_indexes = self.dyn_input_slot_indexes
+        if not dyn_indexes:
+            return
+
+        top_of_flat = []
+        for top, shape in enumerate(self.tensor_view_shapes or ()):
+            count = len(shape) if shape and isinstance(shape[0], (tuple, list)) else 1
+            top_of_flat.extend([top] * count)
+
+        dist = self.tensor_list_dist
+        output_indexes = set(self.output_tensor_indexes or ())
+        inplace_indexes = set(
+            getattr(self, "output_inplace_indexes", None) or getattr(self, "inplace_input_indexes", None) or ()
+        )
+        flat_strides = self.flat_tensor_view_strides or ()
+        flat_offsets = self.flat_tensor_view_offsets or ()
+        flat_storages = self.flat_tensor_storage_shapes or ()
+        for idx in dyn_indexes:
+            top = top_of_flat[idx]
+            if dist and dist[top] > 0:
+                self.is_valid = False
+                self.fail_reason = "DYN_SHAPE_IN_TENSORLIST"
+                logging.error(f"[{self.testcase_name}] -1 slot inside TensorList is not supported (slot {top})")
+                return
+            if top in output_indexes:
+                self.is_valid = False
+                self.fail_reason = "DYN_SHAPE_ON_OUTPUT_SLOT"
+                logging.error(f"[{self.testcase_name}] -1 slot {top} is marked as an output")
+                return
+            if top in inplace_indexes:
+                self.is_valid = False
+                self.fail_reason = "DYN_SHAPE_ON_INPLACE_SLOT"
+                logging.error(f"[{self.testcase_name}] -1 slot {top} is marked as an inplace input/output")
+                return
+            if (
+                get(flat_strides, idx, out_of_range=())
+                or get(flat_offsets, idx, out_of_range=0)
+                or get(flat_storages, idx, out_of_range=())
+            ):
+                self.is_valid = False
+                self.fail_reason = "DYN_SHAPE_WITH_VIEW_OVERRIDE"
+                logging.error(
+                    f"[{self.testcase_name}] -1 flat slot {idx} must not configure "
+                    "tensor_view_strides/tensor_view_offsets/tensor_storage_shapes; "
+                    "singleton compressed values are broadcast to every slot, "
+                    "so use an explicit None placeholder for this dynamic slot"
+                )
+                return
+
+        from ttk.core_modules.framework_api.framework_detector import detect_framework
+        from ttk.utilities.dtypes import is_tf_native_dtype, is_torch_native_dtype
+
+        dtype_supported = is_tf_native_dtype if detect_framework(self.api_name) == "tf" else is_torch_native_dtype
+        dtypes = self.flat_tensor_dtypes or ()
+        unsupported = [idx for idx in dyn_indexes if idx >= len(dtypes) or not dtype_supported(dtypes[idx])]
+        if unsupported:
+            self.is_valid = False
+            self.fail_reason = "DYN_SHAPE_DTYPE_UNSUPPORTED"
+            logging.error(f"[{self.testcase_name}] -1 slot dtype is not framework-native: {unsupported}")
 
     # ========== Pure output indexes ==========
 
