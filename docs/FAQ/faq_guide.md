@@ -169,7 +169,7 @@ absolute_precision,1e-8
 > tolerance = {"float32": {"standard": "mix_tolerance", "rtol": 0.002, "atol": 1e-5}}
 > ```
 >
-> 可覆盖项：`rtol` / `atol` / `required_matched_ratio` / `max_abs_error_limit`，详见[精度比对方法](../Precision_Comparison.md)。
+> 可覆盖项：`rtol` / `atol` / `required_matched_ratio` / `max_abs_error_limit`（配置后将完全替代 ULP 动态上限，见[精度比对方法](../Precision_Comparison.md)）。
 
 # 插件问题
 

@@ -163,7 +163,7 @@ def customize_inputs(x, min_val, max_val, **kwargs):
 | `cosine` | 余弦相似度 | `cosine` |
 
 > 前五行为官方标准，可写入 `Spec.tolerance`；`isclose` 和 `cosine` 为 CLI 框架增强，仅通过 `--compare` 指定。CLI 可用值列中的名字均可直接用于 `--compare`。
-> `mix_tolerance` 可用 `rtol`/`atol`/`required_matched_ratio`/`max_abs_error_limit` 覆盖默认阈值表。
+> `mix_tolerance` 可用 `rtol`/`atol`/`required_matched_ratio`/`max_abs_error_limit` 覆盖默认阈值表。`max_abs_error_limit` 默认按 `max(兜底值, 32×ULP(最大误差点))` 动态计算；显式配置将完全替代动态计算（配置值即最终上限，不再叠加 ULP——大值域将失去值域自适应放行）。
 
 `torch_graph` Graph 模式（仅 E2E）：
 

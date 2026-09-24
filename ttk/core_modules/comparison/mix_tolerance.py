@@ -40,8 +40,34 @@ class MixToleranceComparison(ComparisonBase):
         atol = self.tol_options["atol"]
         required_ratio = self.tol_options["required_matched_ratio"]
         max_err_limit = self.tol_options["max_abs_error_limit"]
+        # resolve 未配置时传 None（哨兵）→ 走标准动态式；显式配置 → 完全替代（不叠加 ULP）
+        explicit_limit = max_err_limit is not None
+        if not explicit_limit:
+            max_err_limit = self.tol_options["max_abs_error_floor"]
 
-        with np.errstate(invalid="ignore", divide="ignore"):
+        with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
+            # 精度标准（cann/opbase docs/zh/ops_precision_standard/
+            # mixed_tolerance_standard.md §2.1.2/§2.3）：
+            # 1) inf-cast：actual=±inf 处 golden RNE 收窄到被测 dtype（超范围→±inf），
+            #    同号 ±inf 视为一致；同 dtype 收窄恒等。
+            # 2) 动态上限（未显式配置时）：max(floor, 32*ULP(g_low))，g_low 为最大
+            #    有限误差点 golden 收窄值——上限随被测 dtype 与值域自适应缩放。
+            if np.isinf(a).any():
+                g = np.where(np.isinf(a), golden.astype(actual.dtype).astype(T), g)
+            if not explicit_limit:
+                finite0 = np.isfinite(a) & np.isfinite(g)
+                if finite0.any():
+                    err0 = np.abs(a - g)
+                    i_star = int(np.argmax(np.where(finite0, err0, -np.inf)))
+                    g_low = np.asarray(golden).ravel()[i_star].astype(actual.dtype)
+                    ulp = np.spacing(np.abs(g_low))
+                    # 最大有限值处 spacing=inf，退一格取同 binade 前驱（binade 内
+                    # 格宽恒定，如 fp16 最大 binade 格宽=32）。锚点超 dtype 范围时
+                    # ulp=nan，max() 依赖 floor 在前回退（勿调换参数顺序），且该
+                    # 场景 rtol 腿先行拦截，limit 取值无影响。
+                    if np.isinf(ulp):
+                        ulp = np.spacing(np.nextafter(np.abs(g_low), g_low.dtype.type(0), dtype=g_low.dtype))
+                    max_err_limit = max(max_err_limit, 32.0 * float(np.asarray(ulp).astype(T)))
             err = np.abs(a - g)
             a_nan, g_nan = np.isnan(a), np.isnan(g)
             a_inf, g_inf = np.isinf(a), np.isinf(g)

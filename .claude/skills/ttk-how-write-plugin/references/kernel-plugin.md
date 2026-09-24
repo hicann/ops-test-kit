@@ -129,7 +129,7 @@ class MyOpTestSpec:
     tolerance = {"float32": {"standard": "mix_tolerance"}, "float16": {"standard": "mix_tolerance"}}
 ```
 
-> `mix_tolerance` 可用 `rtol` / `atol` / `required_matched_ratio` / `max_abs_error_limit` 覆盖默认阈值表；其余标准（`stat_rel_err`/`binary_equal`/`cross_check`/`quant`）见 SKILL.md tolerance 表。
+> `mix_tolerance` 可用 `rtol` / `atol` / `required_matched_ratio` / `max_abs_error_limit` 覆盖默认阈值表（`max_abs_error_limit` 配置后完全替代 ULP 动态上限，配置值即最终上限）；其余标准（`stat_rel_err`/`binary_equal`/`cross_check`/`quant`）见 SKILL.md tolerance 表。
 
 ## kwargs 字段
 

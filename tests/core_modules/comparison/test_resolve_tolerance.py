@@ -88,7 +88,8 @@ def test_mix_tolerance_table_defaults():
     assert p["rtol"] == 2**-9
     assert p["atol"] == 2**-9
     assert p["required_matched_ratio"] == 0.99
-    assert p["max_abs_error_limit"] == max(1e-1, 32 * 2**-10)
+    assert p["max_abs_error_limit"] is None  # 未配置 → None 哨兵（mix 内走动态 ULP）
+    assert p["max_abs_error_floor"] == 1e-1
 
 
 def test_mix_tolerance_unknown_dtype_falls_back_float32():
@@ -147,14 +148,16 @@ def test_mix_tolerance_fp8_table_defaults():
     p = _params(rs)
     assert p["rtol"] == 2**-2
     assert p["atol"] == 2**-4
-    assert p["max_abs_error_limit"] == max(1e-0, 32 * 2**-3)
+    assert p["max_abs_error_limit"] is None
+    assert p["max_abs_error_floor"] == 1e-0
 
 
-def test_mix_tolerance_hifloat32_has_ulp_part():
-    """hifloat32 的 max_abs_error_limit 含 32*ULP 部分（标准：1e-1 or 32*ULP）。"""
+def test_mix_tolerance_hifloat32_floor():
+    """hifloat32 兜底值 1e-1；ULP 部分由 mix 动态计算（PR: cann/opbase#924 §2.1.2）。"""
     rs = resolve_tolerance(None, None, None, ["hifloat32"], None)
     p = _params(rs)
-    assert p["max_abs_error_limit"] == max(1e-1, 32 * 2**-10)
+    assert p["max_abs_error_limit"] is None
+    assert p["max_abs_error_floor"] == 1e-1
 
 
 def test_fp8_cli_requant_still_works():

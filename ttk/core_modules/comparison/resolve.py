@@ -28,14 +28,15 @@ THRESHOLDS = {
 DEFAULT_THRESHOLD = 2**-13
 
 # 生态算子开源精度标准（混合容差）阈值表（resolve 唯一解析点）。
-# max_abs_error_limit 表值为 "1e-X or 32*ULP"——满足任一即不超限，等价取 max；ULP 取 1.0 处（即 eps）。
+# max_abs_error_floor 为绝对误差兜底值（表 2.2 的 "1e-X" 部分）；"or 32*ULP" 部分由
+# mix_tolerance 按最大误差点值域动态计算（PR: cann/opbase#924 §2.1.2），不在表内固化。
 MIX_TOLERANCE = {
-    "float16": {"rtol": 2**-9, "atol": 2**-9, "max_abs_error_limit": max(1e-1, 32 * 2**-10)},
-    "bfloat16": {"rtol": 2**-6, "atol": 2**-6, "max_abs_error_limit": max(1e-0, 32 * 2**-7)},
-    "float32": {"rtol": 2**-10, "atol": 2**-16, "max_abs_error_limit": max(1e-2, 32 * 2**-23)},
-    "hifloat32": {"rtol": 2**-9, "atol": 2**-10, "max_abs_error_limit": max(1e-1, 32 * 2**-10)},
-    "float8_e4m3fn": {"rtol": 2**-2, "atol": 2**-4, "max_abs_error_limit": max(1e-0, 32 * 2**-3)},
-    "float8_e5m2": {"rtol": 2**-1, "atol": 2**-3, "max_abs_error_limit": max(1e-1, 32 * 2**-2)},
+    "float16": {"rtol": 2**-9, "atol": 2**-9, "max_abs_error_floor": 1e-1},
+    "bfloat16": {"rtol": 2**-6, "atol": 2**-6, "max_abs_error_floor": 1e-0},
+    "float32": {"rtol": 2**-10, "atol": 2**-16, "max_abs_error_floor": 1e-2},
+    "hifloat32": {"rtol": 2**-9, "atol": 2**-10, "max_abs_error_floor": 1e-1},
+    "float8_e4m3fn": {"rtol": 2**-2, "atol": 2**-4, "max_abs_error_floor": 1e-0},
+    "float8_e5m2": {"rtol": 2**-1, "atol": 2**-3, "max_abs_error_floor": 1e-1},
 }
 MIX_REQUIRED_MATCHED_RATIO = 0.99
 DEFAULT_MIX_TOLERANCE = MIX_TOLERANCE["float32"]  # 表外浮点 dtype（float64 等）回落 float32 档
@@ -160,11 +161,13 @@ def _resolve_params(standard, tolerance, dtype_str) -> dict:
                 f"如需混合容差请移除 threshold，改用 rtol/atol/required_matched_ratio/max_abs_error_limit。"
             )
         row = MIX_TOLERANCE.get(dtype_str, DEFAULT_MIX_TOLERANCE)
+        # max_abs_error_limit: 显式配置 → 原值（mix 内完全替代动态式）；未配置 → None（动态式）
         return {
             "rtol": extra.get("rtol", row["rtol"]),
             "atol": extra.get("atol", row["atol"]),
             "required_matched_ratio": extra.get("required_matched_ratio", MIX_REQUIRED_MATCHED_RATIO),
-            "max_abs_error_limit": extra.get("max_abs_error_limit", row["max_abs_error_limit"]),
+            "max_abs_error_limit": extra.get("max_abs_error_limit"),
+            "max_abs_error_floor": row["max_abs_error_floor"],
         }
 
     if standard == "cross_check":
