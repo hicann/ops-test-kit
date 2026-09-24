@@ -787,6 +787,8 @@ def _resolve_numpy_custom_dtype(dtype_name: str):
 def resolve_custom_numpy_dtypes(container):
     """
     Convert custom numpy dtype strings (bfloat16/int4/fp8/fp4/hifloat) to numpy dtype objects.
+    TF quantized dtypes (quint8/qint8/...) are aliased to their numpy storage dtypes
+    (uint8/int8/...); the declared dtype string stays on the testcase for tf conversion.
     Supports nested structures (tuples within tuples).
     """
     if not container:
@@ -811,6 +813,8 @@ def resolve_custom_numpy_dtypes(container):
             for sd in special_dtypes:
                 if sd == item:
                     return _resolve_numpy_custom_dtype(sd)
+            if item in TF_QUANTIZED_DTYPE_NUMPY_STORAGE:
+                return TF_QUANTIZED_DTYPE_NUMPY_STORAGE[item]
         return item
 
     return _convert(container)
@@ -858,6 +862,29 @@ def encode_float8_e8m0(fp_array: numpy.ndarray):
         uint_array = fp_array.view(numpy.uint16)
         uint_array = (uint_array << 1) >> 8
     return uint_array.astype(numpy_float8_e8m0())
+
+
+# TF quantized dtypes (tf.quint8/qint8/...) have no numpy counterpart: numpy
+# storages hold the plain integer dtype below, and the quantized semantics are
+# restored at tf.convert_to_tensor time via dtype=tf.<name> (declared dtype
+# stays "quint8"/... in the testcase metadata).
+TF_QUANTIZED_DTYPE_NUMPY_STORAGE = {
+    "qint8": "int8",
+    "qint16": "int16",
+    "qint32": "int32",
+    "quint8": "uint8",
+    "quint16": "uint16",
+}
+
+
+def tf_quantized_dtype(declared_dtype):
+    """Return the tf quantized dtype object (tf.quint8/...) for a declared dtype string, or None."""
+    name = str(declared_dtype) if declared_dtype is not None else ""
+    if name in TF_QUANTIZED_DTYPE_NUMPY_STORAGE:
+        import tensorflow as tf
+
+        return getattr(tf, name)
+    return None
 
 
 def normalize_to_tf_dtype(np_array: numpy.ndarray):
@@ -1498,6 +1525,11 @@ _TF_DTYPE_MAP = {
     "bool": "bool",
     "complex64": "complex64",
     "complex128": "complex128",
+    "qint8": "qint8",
+    "qint16": "qint16",
+    "qint32": "qint32",
+    "quint8": "quint8",
+    "quint16": "quint16",
 }
 
 

@@ -154,7 +154,7 @@ def np_to_tf_inputs(testcase, raw_inputs):
     """
     import tensorflow as tf
 
-    from ttk.utilities.dtypes import normalize_to_tf_dtype
+    from ttk.utilities.dtypes import normalize_to_tf_dtype, tf_quantized_dtype
 
     from .tf_stateful import get_mutable_param_indexes
 
@@ -164,6 +164,7 @@ def np_to_tf_inputs(testcase, raw_inputs):
     # (dist 编码: 0=普通张量, >0=TensorList 子张量数)
     dist = testcase.tensor_list_dist or ()
     mutable_idx = set(get_mutable_param_indexes(testcase.api_name)) if not any(d > 0 for d in dist) else set()
+    flat_dtypes = getattr(testcase, "flat_tensor_dtypes", None) or ()
     result = []
     for idx, arr in enumerate(raw_inputs):
         if arr is None:
@@ -172,13 +173,16 @@ def np_to_tf_inputs(testcase, raw_inputs):
         # 0-D 本就连续；ascontiguousarray 会把标量提升为 (1,)，破坏 TF 0-D 参数校验
         contiguous = np.ascontiguousarray(arr) if arr.ndim else arr
         contiguous = normalize_to_tf_dtype(contiguous)
+        # TF 量化 dtype 的 numpy 存储是普通整型(uint8/int8/...)，仅凭存储 dtype
+        # 会推断成 tf.uint8 等；须按声明 dtype 显式传 dtype=tf.quint8 恢复语义
+        tf_dtype = tf_quantized_dtype(get(flat_dtypes, idx))
         if idx in const_indexes:
-            result.append(tf.constant(contiguous))
+            result.append(tf.constant(contiguous, dtype=tf_dtype))
         elif idx in mutable_idx:
             # tf.Variable 随默认设备放置; 勿强制 CPU 放置(见 tf_stateful 模块 docstring)
-            result.append(tf.Variable(contiguous))
+            result.append(tf.Variable(contiguous, dtype=tf_dtype))
         else:
-            result.append(tf.convert_to_tensor(contiguous))
+            result.append(tf.convert_to_tensor(contiguous, dtype=tf_dtype))
     return result
 
 

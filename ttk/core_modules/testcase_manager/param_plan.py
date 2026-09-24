@@ -435,7 +435,12 @@ class ParamPlan:
                             f"{self.api_name}: scalar fallback for param '{param.name}' "
                             f"(declared type={param.type}, value={raw!r})"
                         )
-                        args.append(coerce_value(raw, "Number"))
+                        try:
+                            args.append(coerce_value(raw, "Number"))
+                        except (ValueError, TypeError):
+                            # TF 无注解签名里的枚举/字符串参数(如 dequantize 的 mode)会被
+                            # 归类为 Tensor，数值强转也失败时按原值透传，由 API 自行校验
+                            args.append(raw)
                 elif tensor_queue:
                     top_index, val = tensor_queue.pop(0)
                     if param.is_tensor and isinstance(val, list) and len(val) == 1:

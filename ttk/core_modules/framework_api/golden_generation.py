@@ -178,7 +178,25 @@ def _run_api_on_cpu(api_name, raw_inputs, testcase, dist, api_info=None, cpu_bac
     if cpu_backend is None:
         framework = detect_framework(api_name)
         cpu_backend = _get_cpu_backend(framework)
-    cpu_inputs = [cpu_backend.from_numpy(x.copy()) if x is not None else None for x in raw_inputs]
+    from ttk.utilities import get
+
+    flat_dtypes = getattr(testcase, "flat_tensor_dtypes", None) or ()
+    cpu_inputs = []
+    for idx, x in enumerate(raw_inputs):
+        if x is None:
+            cpu_inputs.append(None)
+            continue
+        # TF 量化 dtype 的 numpy 存储是普通整型，golden 侧同样须按声明 dtype 显式转换
+        if hasattr(cpu_backend, "tf_device_type"):
+            from ttk.utilities.dtypes import tf_quantized_dtype
+
+            tf_dtype = tf_quantized_dtype(get(flat_dtypes, idx))
+            if tf_dtype is not None:
+                import tensorflow as tf
+
+                cpu_inputs.append(tf.convert_to_tensor(x.copy(), dtype=tf_dtype))
+                continue
+        cpu_inputs.append(cpu_backend.from_numpy(x.copy()))
     from .tf_stateful import get_mutable_param_indexes
 
     # is_ref 下标与张量参数对位; TensorList 会造成 flat 下标偏移, 此时不用启用
