@@ -37,6 +37,7 @@ _ACLGRAPH_SUPER_KERNEL_OPTIONS = {
     "static_kernel_compile": True,
     "super_kernel_optimize": True,
     "super_kernel_debug_options": {"debug_per_op_max_core_num": 1},
+    "clone_input": False,
 }
 
 
