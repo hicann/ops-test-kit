@@ -30,6 +30,7 @@ _DTYPE_TO_GE_ENUM = {
     "int32": "DT_INT32",
     "int16": "DT_INT16",
     "int8": "DT_INT8",
+    "int4": "DT_INT4",
     "uint8": "DT_UINT8",
     "uint16": "DT_UINT16",
     "uint32": "DT_UINT32",
@@ -38,6 +39,7 @@ _DTYPE_TO_GE_ENUM = {
     "float64": "DT_DOUBLE",
     "double": "DT_DOUBLE",
     "bool": "DT_BOOL",
+    "uint1": "DT_UINT1",
     "float8_e4m3fn": "DT_FLOAT8_E4M3FN",
     "float8_e5m2": "DT_FLOAT8_E5M2",
     "float8_e8m0": "DT_FLOAT8_E8M0",
@@ -66,12 +68,15 @@ _DTYPE_SIZE_BY_ENUM = {
     "DT_BOOL": 1,
     "DT_FLOAT8_E4M3FN": 1,
     "DT_FLOAT8_E5M2": 1,
+    "DT_FLOAT8_E8M0": 1,
+    "DT_HIFLOAT8": 1,
+    "DT_UINT1": 1,
     "DT_COMPLEX32": 4,
     "DT_COMPLEX64": 8,
     "DT_COMPLEX128": 16,
 }
 
-_PACKED_FLOAT4_ENUMS = ("DT_FLOAT4_E2M1", "DT_FLOAT4_E1M2", "DT_HIFLOAT4")
+_PACKED_FLOAT4_ENUMS = ("DT_FLOAT4_E2M1", "DT_FLOAT4_E1M2", "DT_HIFLOAT4", "DT_INT4")
 
 _FORMAT_TO_GE_ENUM = {
     "ND": "FORMAT_ND",

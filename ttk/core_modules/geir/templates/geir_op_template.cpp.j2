@@ -392,7 +392,8 @@ int main(int argc, char* argv[]) {
 {% elif attr.cpp_type == "ge_dtype" %}
     if (attrs_cfg.has("{{ attr.name }}")) {
         const JsonValue& __v = attrs_cfg.at("{{ attr.name }}");
-        op_inst.set_attr_{{ attr.name }}((__v.type == JsonValue::String) ? StringToDataType(__v.getString()) : static_cast<ge::DataType>(__v.getInt()));
+        const int64_t __dt = (__v.type == JsonValue::String) ? static_cast<int64_t>(StringToDataType(__v.getString())) : __v.getInt();
+        op_inst.Operator::SetAttr("{{ attr.name }}", __dt);
     }
 {% elif attr.cpp_type == "ge_format" %}
     if (attrs_cfg.has("{{ attr.name }}")) {
