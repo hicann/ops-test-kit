@@ -694,7 +694,9 @@ class InstanceBase(metaclass=ABCMeta):
         status = str(row[idx]).upper()
         if status == "PASS":
             self.pass_count += 1
-        elif status == "FAIL":
+        elif status in {"FAIL", "FAILURE", "PROFILE_CRASH", "COMPILE_FAILURE", "TIMEOUT"} or status.startswith(
+            "CRASHED AT PROFILING STAGE:"
+        ):
             self.fail_count += 1
         else:
             self.other_count += 1

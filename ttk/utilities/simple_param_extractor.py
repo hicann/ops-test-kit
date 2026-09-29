@@ -2421,7 +2421,7 @@ def _extract_params_from_pyi(api_name: str):
     return primary, source, all_overloads
 
 
-def _resolve_function(api_name: str):
+def _resolve_function(api_name: str, *, raise_on_error: bool = False):
     try:
         parts = api_name.split(".")
         if len(parts) < 2:
@@ -2453,6 +2453,8 @@ def _resolve_function(api_name: str):
         mod = importlib.import_module(mod_name)
         return getattr(mod, func_name, None)
     except (ImportError, AttributeError):
+        if raise_on_error:
+            raise
         return None
 
 

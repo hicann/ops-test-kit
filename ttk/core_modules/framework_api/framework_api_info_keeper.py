@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 
 """
 FrameworkApiInfoKeeper — cached API parameter info for torch/torch_npu/tf.
@@ -13,7 +19,7 @@ import logging
 from typing import Dict, Optional
 
 from ttk.utilities import Singleton
-from ttk.utilities.simple_param_extractor import APIParamInfo, get_api_params, register_api_params
+from ttk.utilities.simple_param_extractor import APIParamInfo, _resolve_function, get_api_params, register_api_params
 from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
 
@@ -32,14 +38,21 @@ class FrameworkApiInfoKeeper(metaclass=Singleton):
             else:
                 TorchOpsPackageLoader.ensure_registered(api_name)
                 info = get_api_params(api_name)
+                if info is None:
+                    # Normal extraction probes may suppress import errors; recover
+                    # the original exception only after every signature fallback failed.
+                    obj = _resolve_function(api_name, raise_on_error=True)
+                    if obj is None:
+                        raise AttributeError(f"API callable not found: {api_name}")
+                    raise ValueError(f"No supported API signature could be extracted: {api_name}")
         except Exception as e:
-            logging.warning(f"Parse {api_name} signature failed: {type(e).__name__}: {e}")
+            logging.exception("API signature parsing failed: %s: %s: %s", api_name, type(e).__name__, e)
             info = None
         self._cache[api_name] = info
         if info:
             logging.debug(f"Parsed {api_name}: {len(info.params)} params from {info.source}")
-        else:
-            logging.debug(f"Could not parse {api_name}")
+        elif info is None:
+            logging.debug("Could not parse %s; see API signature parsing errors above", api_name)
         return info
 
     def register(self, api_name: str, params, source="manual"):

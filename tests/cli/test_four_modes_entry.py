@@ -3,7 +3,7 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
@@ -167,7 +167,7 @@ class TestE2eMode:
 
 class TestRunWithSwitchesDispatch:
     @pytest.mark.parametrize(
-        "test_mode, instance_path",
+        ("test_mode", "instance_path"),
         [
             ("op", "ttk.core_modules.npu.instance_refactor.NpuInstance"),
             ("aclnn", "ttk.core_modules.npu.instance_refactor.NpuInstance"),
@@ -175,7 +175,8 @@ class TestRunWithSwitchesDispatch:
             ("framework-api", "ttk.core_modules.framework_api.instance.FrameworkApiInstance"),
         ],
     )
-    def test_dispatches_to_correct_instance(self, test_mode, instance_path, monkeypatch):
+    @pytest.mark.parametrize("fail_count", [0, 1])
+    def test_dispatches_to_correct_instance(self, test_mode, instance_path, monkeypatch, fail_count):
         """run_with_switches 按 test_mode 分派到对应 Instance 类并调用 profile()。"""
         sw = MagicMock()
         sw.test_mode = test_mode
@@ -189,6 +190,12 @@ class TestRunWithSwitchesDispatch:
         monkeypatch.setattr("ttk.cli.bridge._detect_framework_from_csv", lambda files, sheet=None: "torch")
 
         with patch(instance_path) as mock_cls:
-            run_with_switches(sw)
+            mock_cls.return_value.fail_count = fail_count
+            if fail_count:
+                with pytest.raises(SystemExit) as exc:
+                    run_with_switches(sw)
+                assert exc.value.code == 1
+            else:
+                run_with_switches(sw)
             mock_cls.assert_called_once()
             mock_cls.return_value.profile.assert_called_once()

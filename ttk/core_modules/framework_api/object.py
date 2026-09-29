@@ -13,6 +13,7 @@
 FrameworkApiProfileObject — ProfileObject implementation for framework_api tests.
 """
 
+import logging
 from typing import Any, Iterable, Optional
 
 from ttk.core_modules.comparison.compare_log import (
@@ -70,12 +71,24 @@ class FrameworkApiProfileObject(ProfileObject):
         if isinstance(result, FrameworkApiReturnStructure):
             results = result.pick_data(self.possible_result_titles())
             return results, False
-        return (str(result),) + (None,) * (len(self.possible_result_titles()) - 1), False
+        failure = FrameworkApiReturnStructure()
+        logging.error(
+            "[%s] INVALID_WORKER_RESULT: unexpected worker result type %s",
+            testcase.testcase_name,
+            type(result).__name__,
+        )
+        failure.construct("INVALID_WORKER_RESULT", "FAIL", None)
+        return self.apply_profile_success_result(testcase, failure)
+
+    def handle_task_result_none(self, task):
+        failure = FrameworkApiReturnStructure()
+        logging.error("[%s] NO_WORKER_RESULT: worker returned no result", task.testcase.testcase_name)
+        failure.construct("NO_WORKER_RESULT", "FAIL", None)
+        return self._profile_normal_complete(task, failure)[0]
 
     def _print_new_compare_failures(self, testcase_name: Optional[str] = None):
         # Read mismatches appended since the last check and print them, so
         # failures surface as each case completes instead of only at the end.
         diff_lines, end_size = read_compare_log_failures(self._compare_log_read_size)
-        if end_size > self._compare_log_read_size:
-            self._compare_log_read_size = end_size
+        self._compare_log_read_size = max(self._compare_log_read_size, end_size)
         print_compare_log_failures(diff_lines, testcase_name)

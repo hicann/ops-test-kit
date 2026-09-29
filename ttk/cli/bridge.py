@@ -455,6 +455,8 @@ def run_with_switches(sw):
         ins = NpuInstance()
 
     ins.profile()
+    if ins.fail_count:
+        raise SystemExit(1)
 
 
 def _parse_indexes(spec):

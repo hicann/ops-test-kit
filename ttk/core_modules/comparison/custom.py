@@ -10,6 +10,8 @@
 """Shared TestSpec pre-compare and custom-compare execution."""
 
 import inspect
+import logging
+import reprlib
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping, Optional
@@ -178,6 +180,27 @@ def _compare_context(testcase):
     )
 
 
+def _format_failure_detail(value):
+    """Bound nested plugin diagnostics before sending them to logs or the terminal."""
+    if isinstance(value, str):
+        text = value[:512].replace("\n", "\\n")
+        return text + (f"... (total chars={len(value)})" if len(value) > 512 else "")
+    formatter = reprlib.Repr()
+    formatter.maxlevel = 3
+    formatter.maxlist = formatter.maxtuple = formatter.maxdict = formatter.maxset = 20
+    formatter.maxstring = formatter.maxother = 512
+    text = formatter.repr(value)
+    if len(text) > 2048:
+        text = text[:2048] + "... (truncated)"
+    try:
+        count = len(value)
+    except TypeError:
+        count = None
+    if count is not None and count > 20:
+        text += f" (total={count})"
+    return text
+
+
 def try_custom_compare(testcase, outputs, goldens, func):
     """Run a TestSpec compare function and normalize its public result contract."""
     if func is None or not _can_customize(outputs, goldens):
@@ -221,8 +244,17 @@ def try_custom_compare(testcase, outputs, goldens, func):
         precision = item["precision"]
         precisions.append(f"{precision}%" if isinstance(precision, (int, float)) else str(precision))
         passes.append(bool(item["pass"]))
-        if item.get("error_info"):
-            log_lines.append(f"Output {index}: {item['error_info']}")
+        reason = item.get("error_info")
+        if not item["pass"] and not reason:
+            reason = "Custom comparison returned pass=False without error_info"
+        if reason:
+            detail = f"Output {index}: {_format_failure_detail(reason)} (precision={precision})"
+            for key in ("diff_indices", "metrics"):
+                if key in item:
+                    detail += f"; {key}={_format_failure_detail(item[key])}"
+            log_lines.append(detail)
+            if not item["pass"]:
+                logging.error("[%s] %s", testcase.testcase_name, detail)
 
     log_data = "\n".join(log_lines) + ("\n" if log_lines else "")
     return ",".join(precisions), log_data, all(passes)

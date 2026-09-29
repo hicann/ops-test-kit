@@ -32,8 +32,8 @@ class ProfileObject(metaclass=ABCMeta):
         self.task_keeper = task_keeper
         self.mp_context = mp_context
         self.switches = get_global_storage()
-        self.case_result_title: Tuple[str] = tuple()
-        self.case_input_title: Tuple[str] = tuple()
+        self.case_result_title: Tuple[str] = ()
+        self.case_input_title: Tuple[str] = ()
         self.skipped_cases: int = 0
         self._front_input_count: int = 0
 
@@ -44,7 +44,6 @@ class ProfileObject(metaclass=ABCMeta):
     @abstractmethod
     def possible_result_titles(self) -> tuple:
         """return all possible result titles"""
-        pass
 
     @abstractmethod
     def init_tasks(self, testcases: Iterable[TestcaseBase]):
@@ -77,24 +76,21 @@ class ProfileObject(metaclass=ABCMeta):
         if task.type == TaskType.COMPILE:
             self._compile_crash(task, result, last_stage, pid)
             return self.compile_done(task.testcase)
-        else:
-            return self._profile_crash(task, result, last_stage, pid)
+        return self._profile_crash(task, result, last_stage, pid)
 
     def handle_task_result_runtime_error(self, task: TaskA, result: RuntimeError, pid: int) -> Optional[tuple]:
         """return output content to csv"""
         if task.type == TaskType.COMPILE:
             self._compile_fail(task, result, pid)
             return self.compile_done(task.testcase)
-        else:
-            return self._profile_fail(task, result, pid)
+        return self._profile_fail(task, result, pid)
 
     def handle_task_result_complete(self, task: TaskA, result: object) -> Optional[tuple]:
         """return output content to csv & whether kill current process."""
         if task.type == TaskType.COMPILE:
             self._compile_normal_complete(task, result)
             return self.compile_done(task.testcase), False
-        else:
-            return self._profile_normal_complete(task, result)
+        return self._profile_normal_complete(task, result)
 
     def handle_task_result_none(self, task) -> Optional[tuple]:  # noqa: B027
         pass
@@ -177,6 +173,9 @@ class ProfileObject(metaclass=ABCMeta):
         results = [main] * len(self.case_result_title)
         if len(results) > 0:
             results[0] = details  # store details.
+        for index, title in enumerate(self.case_result_title):
+            if title == "precision_status":
+                results[index] = "FAIL"
         return tuple(results)
 
     def _profile_crash(self, task: TaskA, result: SystemError, last_stage: str, pid: int) -> tuple:

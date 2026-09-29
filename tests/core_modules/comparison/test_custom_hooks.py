@@ -62,3 +62,32 @@ def test_custom_compare_runs_when_all_goldens_real():
     precision, log, passed = try_custom_compare(_Case(), list(outputs), list(goldens), _cmp)
     assert precision == "100%,100%"
     assert passed is True
+
+
+def test_failed_custom_compare_has_bounded_diagnostics(caplog):
+    item = {
+        "pass": False,
+        "precision": 0,
+        "error_info": "LSE mismatch",
+        "diff_indices": list(range(10000)),
+        "metrics": {f"metric_{i}": list(range(1000)) for i in range(100)},
+    }
+    _, detail, passed = try_custom_compare(_Case(), [np.zeros(1)], [np.ones(1)], lambda *args: item)
+    assert passed is False
+    assert "LSE mismatch" in detail
+    assert "total=10000" in detail
+    assert "9999" not in detail
+    assert "total=100" in detail
+    assert len(detail) < 5000
+    assert len(caplog.records) == 1
+    assert detail.strip() in caplog.text
+
+
+def test_failed_custom_compare_without_reason_is_visible(caplog):
+    _, detail, passed = try_custom_compare(
+        _Case(), [np.zeros(1)], [np.ones(1)], lambda *args: {"pass": False, "precision": 0}
+    )
+    assert not passed
+    assert "without error_info" in detail
+    assert "case_x" in caplog.text
+    assert len(caplog.records) == 1

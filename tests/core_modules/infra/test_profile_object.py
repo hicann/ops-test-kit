@@ -3,7 +3,7 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
@@ -133,3 +133,68 @@ def test_output_titles_filters_by_custom_columns(switches):
     assert "precision" in header
     assert "op_name" not in header
     assert "dyn_perf_us" not in header
+
+
+def test_e2e_crash_keeps_failure_status(switches):
+    po = _make_po(switches)
+    po.case_result_title = ("precision_status", "eager_precision")
+    assert po._profile_fail_result("PROFILE_CRASH", "exit -9") == ("FAIL", "PROFILE_CRASH")
+
+
+def test_e2e_failure_keeps_schema_without_duplicate_parent_error(monkeypatch, caplog):
+    from ttk.core_modules.framework_api.object import FrameworkApiProfileObject
+    from ttk.core_modules.framework_api.result import FrameworkApiReturnStructure
+
+    obj = object.__new__(FrameworkApiProfileObject)
+    monkeypatch.setattr(obj, "_print_new_compare_failures", lambda *args: None)
+    result = FrameworkApiReturnStructure()
+    result.construct("0%", "FAIL", None)
+    values, _ = obj.apply_profile_success_result(_make_case(), result)
+    row = dict(zip(result.get_titles(), values))
+    assert row["precision_status"] == "FAIL"
+    assert "error_info" not in row
+    assert not caplog.records
+
+
+def test_e2e_missing_and_invalid_worker_results(monkeypatch, caplog):
+    from ttk.core_modules.framework_api.object import FrameworkApiProfileObject
+    from ttk.core_modules.framework_api.result import FrameworkApiReturnStructure
+
+    obj = object.__new__(FrameworkApiProfileObject)
+    monkeypatch.setattr(obj, "_print_new_compare_failures", lambda *args: None)
+    task = TaskA(_make_case(), int, (), type=TaskType.PROFILE)
+    values, _ = obj.apply_profile_success_result(task.testcase, object())
+    row = dict(zip(FrameworkApiReturnStructure.get_titles(), values))
+    assert row["precision_status"] == "FAIL"
+    assert row["eager_precision"] == "INVALID_WORKER_RESULT"
+    assert len(caplog.records) == 1
+    caplog.clear()
+    monkeypatch.setattr(obj, "_profile_normal_complete", lambda task, result: (result, False))
+    result = obj.handle_task_result_none(task)
+    assert result.precision_status == "FAIL"
+    assert result.eager_precision == "NO_WORKER_RESULT"
+    assert len(caplog.records) == 1
+
+
+@pytest.mark.parametrize("status", ["FAIL", "FAILURE", "PROFILE_CRASH", "COMPILE_FAILURE", "TIMEOUT"])
+def test_failure_summary_does_not_repeat_diagnostics(status, caplog):
+    import csv
+    import io
+    from types import SimpleNamespace
+
+    from ttk.core_modules.infra.instance_base import InstanceBase
+
+    stream = io.StringIO()
+    obj = SimpleNamespace(
+        result_csv_writer=csv.writer(stream),
+        result_csv_file=stream,
+        _header_flushed=True,
+        _precision_status_idx=0,
+        pass_count=0,
+        fail_count=0,
+        other_count=0,
+    )
+    obj._update_summary = lambda row: InstanceBase._update_summary(obj, row)
+    InstanceBase._flush(obj, (status,))
+    assert obj.fail_count == 1
+    assert not caplog.records
