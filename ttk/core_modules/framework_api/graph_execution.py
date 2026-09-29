@@ -16,6 +16,11 @@ Wraps API in GraphNetwork + torch.compile for GE graph mode testing.
 
 import functools
 import logging
+import os
+import shlex
+import subprocess
+from contextlib import contextmanager
+from unittest.mock import patch
 
 import torch
 
@@ -39,6 +44,45 @@ _ACLGRAPH_SUPER_KERNEL_OPTIONS = {
     "super_kernel_debug_options": {"debug_per_op_max_core_num": 1},
     "clone_input": False,
 }
+
+
+@contextmanager
+def _require_super_kernel_compile(enabled):
+    """Track this worker's compiler calls, including failures followed by fallback.
+
+    The backend catches CalledProcessError and may return valid binary outputs.
+    Remember that failure independently so precision cannot turn it into a PASS.
+    No compiler invocation is required: a valid compiled cache may be reused.
+    """
+    if not enabled:
+        yield
+        return
+
+    original_run = subprocess.run
+    failures = []
+
+    def checked_run(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args", ())
+        parts = shlex.split(command) if isinstance(command, str) else command
+        tracked = bool(parts) and os.path.basename(os.fsdecode(parts[0])) == "op_compiler"
+        tracked = tracked and "--enable_super_kernel" in parts
+        if not tracked:
+            return original_run(*args, **kwargs)
+        output_dir = parts[parts.index("-o") + 1] if "-o" in parts else "(not specified)"
+        try:
+            result = original_run(*args, **kwargs)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            failures.append(f"{exc}; compile output: {output_dir}")
+            raise
+        if result.returncode:
+            failures.append(f"op_compiler exit code {result.returncode}; compile output: {output_dir}")
+        return result
+
+    # Each TTK graph worker executes one case at a time. Restore even on errors.
+    with patch.object(subprocess, "run", checked_run):
+        yield
+    if failures:
+        raise RuntimeError("SUPER_KERNEL_COMPILE_FAILURE: " + "; ".join(failures))
 
 
 @functools.lru_cache(maxsize=1)
@@ -387,22 +431,23 @@ def _execute_graph(
             compiled = _compile_model_aclgraph(model, npu_backend, use_fullgraph, switches.super_kernel_enabled)
         else:
             compiled = _compile_model(model, npu_backend, dynamic, use_fullgraph)
-        result_nps, perf, det_status = _run_compiled(
-            compiled,
-            run_args,
-            run_kwargs,
-            backend,
-            dev_id,
-            switches,
-            run_inplace,
-            inplace_backup if run_inplace else None,
-            testcase.api_name,
-            testcase_name=testcase.testcase_name,
-            inplace_backups=inplace_backups if inplace_input_indexes else None,
-            inplace_kwargs_keys=inplace_kwargs_keys,
-            deterministic_level=deterministic_level,
-            is_aclgraph=is_aclgraph,
-        )
+        with _require_super_kernel_compile(switches.super_kernel_enabled):
+            result_nps, perf, det_status = _run_compiled(
+                compiled,
+                run_args,
+                run_kwargs,
+                backend,
+                dev_id,
+                switches,
+                run_inplace,
+                inplace_backup if run_inplace else None,
+                testcase.api_name,
+                testcase_name=testcase.testcase_name,
+                inplace_backups=inplace_backups if inplace_input_indexes else None,
+                inplace_kwargs_keys=inplace_kwargs_keys,
+                deterministic_level=deterministic_level,
+                is_aclgraph=is_aclgraph,
+            )
 
     except Exception as e:
         logging.error(f"Graph {mode_str} execution failed: {e}", exc_info=True)

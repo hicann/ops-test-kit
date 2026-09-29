@@ -7,10 +7,14 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """--super-kernel 传递链测试：旗标接线、启动期校验、aclgraph options 透传、GE 模式 scope 包装。"""
 
+import subprocess
+from contextlib import suppress
 from types import SimpleNamespace
 
 import pytest
 import torch
+
+from ttk.core_modules.framework_api.graph_execution import _require_super_kernel_compile
 
 
 def _args(**kwargs):
@@ -111,3 +115,47 @@ def test_compile_model_aclgraph_passes_super_kernel_options(monkeypatch):
 
     graph_execution._compile_model_aclgraph(m, "npugraph_ex", 0, False)
     assert "options" not in captured["kwargs"]
+
+
+_SUPER_KERNEL_COMMAND = ["op_compiler", "-p", "/case", "--enable_super_kernel", "-o", "/compile-output"]
+
+
+@pytest.mark.parametrize("raises", [True, False])
+def test_compiler_failure_cannot_be_hidden_by_successful_fallback(monkeypatch, raises):
+    def run(command, **kwargs):
+        if raises:
+            raise subprocess.CalledProcessError(1, command)
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    def execute_with_fallback():
+        with _require_super_kernel_compile(True), suppress(subprocess.CalledProcessError):
+            subprocess.run(_SUPER_KERNEL_COMMAND, check=raises)
+
+    with pytest.raises(RuntimeError, match="SUPER_KERNEL_COMPILE_FAILURE.*compile-output"):
+        execute_with_fallback()
+    assert subprocess.run is run
+
+
+def test_success_cache_and_unrelated_commands_are_allowed(monkeypatch):
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0 if command == _SUPER_KERNEL_COMMAND else 1)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with _require_super_kernel_compile(True):
+        subprocess.run(_SUPER_KERNEL_COMMAND, check=False)
+        subprocess.run(["other-tool"], check=False)
+    with _require_super_kernel_compile(True):
+        pass  # Existing compiled cache: no new invocation.
+    assert subprocess.run is run
+
+
+def test_disabled_guard_preserves_existing_behavior(monkeypatch):
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with _require_super_kernel_compile(False):
+        assert subprocess.run(_SUPER_KERNEL_COMMAND, check=False).returncode == 1
+    assert subprocess.run is run

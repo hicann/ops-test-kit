@@ -15,6 +15,8 @@
 
 > **仿真**：E2E 支持 `--backend npusim` 无卡仿真，但仅 **eager** 执行（graph/aclgraph/fullgraph 禁用），且仅支持 aclnn 算子——非 aclnn 的 legacy 自定义算子（如 `torch_npu.npu_conv2d`）会被 torch_npu 拒绝。详见 `npusim-params.md`。
 
+使用 `--aclgraph --super-kernel` 时，SuperKernel 在线编译失败会将用例标记为失败，并在日志中报告 `SUPER_KERNEL_COMPILE_FAILURE` 和编译产物目录；即使后端回退到已有二进制并通过精度比较，也不能作为 SuperKernel 验证通过。允许复用已有的有效编译缓存。
+
 ## 后端依赖
 
 | 后端 | 依赖 |
