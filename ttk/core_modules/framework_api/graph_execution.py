@@ -19,7 +19,7 @@ import logging
 import os
 import shlex
 import subprocess
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from unittest.mock import patch
 
 import torch
@@ -108,25 +108,36 @@ def _get_npu_backend_aclgraph():
     return npu_backend
 
 
-_aclgraph_core_limit_applied = False
+def _get_aclgraph_scope():
+    """Load the graph scope API lazily so CPU/GE users need no torch_npu import."""
+    try:
+        from torch_npu.npu.npugraph_ex import scope
+    except (ImportError, AttributeError) as exc:
+        raise RuntimeError(
+            "--core-limit with --aclgraph requires torch_npu.npu.npugraph_ex.scope.limit_core_num"
+        ) from exc
+    return scope
 
 
-def _apply_aclgraph_core_limit(dev_id):
-    """aclgraph 模式经 torch.npu.set_device_limit 下发 --core-limit。
-
-    npugraph_ex 后端无 CompilerConfig 通道（区别于 GE 图模式的 ge.aicoreNum）；
-    该接口每进程仅允许调用一次，多用例共享首次设置。
-    """
-    global _aclgraph_core_limit_applied
-    if _aclgraph_core_limit_applied:
-        return
-    _aclgraph_core_limit_applied = True
-    core_limit = get_global_storage().core_limit
+def _resolve_aclgraph_core_limit(core_limit, dev_id):
+    """Fill an omitted side of --core-limit with that device's physical count."""
     if not core_limit or not isinstance(core_limit, tuple) or not any(core_limit):
-        return
+        return None
     ai_limit, vec_limit = core_limit
-    torch.npu.set_device_limit(dev_id, cube_num=ai_limit or -1, vector_num=vec_limit or -1)
-    logging.info(f"Applied --core-limit {core_limit} via torch.npu.set_device_limit on device {dev_id}")
+    props = torch.npu.get_device_properties(dev_id)
+    return (
+        ai_limit if ai_limit is not None else props.cube_core_num,
+        vec_limit if vec_limit is not None else props.vector_core_num,
+    )
+
+
+def _aclgraph_core_limit_context(core_limit, dev_id):
+    """Limit eager companion calls (for example metadata) on the active stream."""
+    resolved = _resolve_aclgraph_core_limit(core_limit, dev_id)
+    if resolved is None:
+        return nullcontext()
+    ai_limit, vec_limit = resolved
+    return _get_aclgraph_scope().limit_core_num(ai_limit, vec_limit)
 
 
 def _compile_model(model, backend, dynamic, fullgraph):
@@ -178,6 +189,24 @@ class _SuperKernelScopeModel(torch.nn.Module):
             torch.npu.super_kernel_scope_end(self._scope_name)
             return result
         with self._super_kernel_scope(self._scope_name, ""):
+            return self._model(*args, **kwargs)
+
+
+class _AclGraphCoreLimitModel(torch.nn.Module):
+    """Encode an explicit core limit in every ACLGraph capture."""
+
+    def __init__(self, model, core_limit, dev_id):
+        super().__init__()
+        self._model = model
+        resolved = _resolve_aclgraph_core_limit(core_limit, dev_id)
+        if resolved is None:
+            raise ValueError("ACLGraph core-limit wrapper requires a non-empty core limit")
+        self._ai_limit, self._vec_limit = resolved
+        # Resolve this outside Dynamo tracing; the scope call itself is a graph marker.
+        self._limit_core_num = _get_aclgraph_scope().limit_core_num
+
+    def forward(self, *args, **kwargs):
+        with self._limit_core_num(self._ai_limit, self._vec_limit):
             return self._model(*args, **kwargs)
 
 
@@ -356,7 +385,6 @@ def _execute_graph(
     torch_npu.npu.set_device(dev_id)
 
     if is_aclgraph:
-        _apply_aclgraph_core_limit(dev_id)
         mode_str = "aclgraph"
     elif dynamic:
         mode_str = "dynamic"
@@ -365,14 +393,16 @@ def _execute_graph(
     logging.info(f"Executing graph mode: {mode_str}")
 
     args, kwargs = prepare_device_args(testcase, backend, dev_id, plan, raw_inputs)
-    preprocess_result = invoke_npu_preprocess(
-        testcase,
-        switches,
-        plan,
-        args,
-        kwargs,
-        device_scope=lambda: backend.device_scope(dev_id),
-    )
+    # Companion operators such as metadata run eagerly before ACLGraph capture.
+    with _aclgraph_core_limit_context(switches.core_limit if is_aclgraph else None, dev_id):
+        preprocess_result = invoke_npu_preprocess(
+            testcase,
+            switches,
+            plan,
+            args,
+            kwargs,
+            device_scope=lambda: backend.device_scope(dev_id),
+        )
     if preprocess_result is not None:
         apply_npu_preprocess_result(testcase, plan, args, kwargs, preprocess_result)
 
@@ -427,6 +457,13 @@ def _execute_graph(
         if switches.super_kernel_enabled:
             logging.info("SuperKernel enabled: mode=%s scope=%s", mode_str, testcase.api_name)
             model = _SuperKernelScopeModel(model, testcase.api_name, is_aclgraph=is_aclgraph)
+        if is_aclgraph and switches.core_limit:
+            logging.info(
+                "ACLGraph core limit enabled: aicore=%s vectorcore=%s",
+                switches.core_limit[0] or "physical",
+                switches.core_limit[1] or "physical",
+            )
+            model = _AclGraphCoreLimitModel(model, switches.core_limit, dev_id)
         if is_aclgraph:
             compiled = _compile_model_aclgraph(model, npu_backend, use_fullgraph, switches.super_kernel_enabled)
         else:

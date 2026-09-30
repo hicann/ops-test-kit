@@ -1882,8 +1882,6 @@ def profile_process(  # noqa: PLR0911  # 测试编排主入口，各失败路径
     logging.debug(f"Expecting {context.tensor_bytes} bytes memory usage")
 
     manual_mode = getattr(switches, "manual_data_mode", None)
-    if dyn_indexes and manual_mode == "prepare":
-        return prof_end(context, "MANUAL_DATA_PREPARE_UNSUPPORTED_FOR_DYN_SHAPE")
     manual_case = None
     try:
         prepare_store = prepare_manual_data_store(context, "aclnn", switches)

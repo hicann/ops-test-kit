@@ -1172,21 +1172,26 @@ def _do_profile(  # noqa: PLR0911
         logging.error(f"[{testcase.testcase_name}] Cannot resolve param plan for {testcase.api_name}")
         return
 
+    manual_mode = getattr(switches, "manual_data_mode", None)
     dyn_indexes = tuple(getattr(testcase, "dyn_input_slot_indexes", ()) or ())
-    if dyn_indexes and (not backend.is_npu() or resolve_npu_preprocess(testcase, switches) is None):
+    if dyn_indexes and resolve_npu_preprocess(testcase, switches) is None:
         logging.error(
             f"[{testcase.testcase_name}] tensor_view_shapes declares -1 slot(s) {dyn_indexes}, "
-            "but NPU execution with a registered npu_preprocess hook is required"
+            "but no npu_preprocess hook is registered"
         )
         return_struct.eager_precision = "DYN_SHAPE_REQUIRES_NPU_PREPROCESS"
         return_struct.precision_status = "FAIL"
         return
-
-    manual_mode = getattr(switches, "manual_data_mode", None)
-    if manual_mode == "prepare" and dyn_indexes:
-        logging.error(f"[{testcase.testcase_name}] manual-data prepare does not support -1 dynamic slots")
-        return_struct.construct("MANUAL_DATA_PREPARE_UNSUPPORTED_FOR_DYN_SHAPE", "FAIL", None)
-        _profiling_end_print(testcase, return_struct, switches=switches)
+    # Prepare only generates host inputs and records None for dynamic slots.  It
+    # must work on CPU; the hook is invoked later during NPU replay.  Direct and
+    # replay execution still require an NPU backend to materialize the slots.
+    if dyn_indexes and manual_mode != "prepare" and not backend.is_npu():
+        logging.error(
+            f"[{testcase.testcase_name}] dynamic slot(s) {dyn_indexes} require an NPU backend "
+            "during replay or direct execution"
+        )
+        return_struct.eager_precision = "DYN_SHAPE_REQUIRES_NPU_PREPROCESS"
+        return_struct.precision_status = "FAIL"
         return
     manual_case = None
     try:
@@ -1212,7 +1217,11 @@ def _do_profile(  # noqa: PLR0911
             return_struct.precision_status = "FAIL"
             return
 
-    if dyn_indexes and not _has_dynamic_golden_source(testcase, switches, manual_case):
+    # Input-only prepare deliberately has no Golden and therefore no source
+    # that can consume the unresolved None slot.  Full prepare and replay keep
+    # the existing Golden-source validation.
+    needs_dynamic_golden = manual_mode != "prepare" or switches.dump_config.is_golden_enabled()
+    if dyn_indexes and needs_dynamic_golden and not _has_dynamic_golden_source(testcase, switches, manual_case):
         logging.error(
             f"[{testcase.testcase_name}] dynamic slot(s) {dyn_indexes} remain None on the CPU path; "
             "provide an E2E Golden plugin, replay saved Goldens, or disable Golden comparison"

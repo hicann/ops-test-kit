@@ -7,9 +7,11 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 """--core-limit 传递链测试：解析格式、kernel 侧按 core_type 生效分量、启动期物理上限校验、aclgraph 下发。"""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 
 @pytest.mark.parametrize(
@@ -109,49 +111,35 @@ def test_e2e_instance_validates_core_limit(monkeypatch):
     inst.get_device_platform()  # CPU: 不校验不抛错
 
 
-def _setup_aclgraph_core_limit(monkeypatch, core_limit):
-    import torch
-
+def test_aclgraph_core_limit_scopes_preprocess_and_captured_model(monkeypatch):
     from ttk.core_modules.framework_api import graph_execution
-    from ttk.utilities.classes import SWITCHES
-    from ttk.utilities.container_utils import set_global_storage
 
-    sw = SWITCHES()
-    sw.core_limit = core_limit
-    set_global_storage(sw)
-    monkeypatch.setattr(graph_execution, "_aclgraph_core_limit_applied", False)
-    calls = []
+    events = []
+
+    class FakeScope:
+        @staticmethod
+        @contextmanager
+        def limit_core_num(ai_limit, vec_limit):
+            events.append(("enter", ai_limit, vec_limit))
+            yield
+            events.append(("exit", ai_limit, vec_limit))
+
+    monkeypatch.setattr(graph_execution, "_get_aclgraph_scope", lambda: FakeScope)
     monkeypatch.setattr(
-        torch.npu,
-        "set_device_limit",
-        lambda dev, cube_num=-1, vector_num=-1: calls.append((dev, cube_num, vector_num)),
-        raising=False,
+        graph_execution.torch.npu,
+        "get_device_properties",
+        lambda _dev_id: SimpleNamespace(cube_core_num=20, vector_core_num=40),
     )
-    return graph_execution, calls
 
+    with graph_execution._aclgraph_core_limit_context((1, None), 0):
+        events.append(("preprocess",))
 
-@pytest.mark.parametrize(
-    ("core_limit", "expected"),
-    [
-        ((8, None), (3, 8, -1)),
-        ((8, 48), (3, 8, 48)),
-        ((None, 48), (3, -1, 48)),
-    ],
-)
-def test_apply_aclgraph_core_limit_maps_values(monkeypatch, core_limit, expected):
-    graph_execution, calls = _setup_aclgraph_core_limit(monkeypatch, core_limit)
-    graph_execution._apply_aclgraph_core_limit(3)
-    assert calls == [expected]
-
-
-def test_apply_aclgraph_core_limit_once_per_process(monkeypatch):
-    graph_execution, calls = _setup_aclgraph_core_limit(monkeypatch, (8, 48))
-    graph_execution._apply_aclgraph_core_limit(0)
-    graph_execution._apply_aclgraph_core_limit(0)
-    assert calls == [(0, 8, 48)]
-
-
-def test_apply_aclgraph_core_limit_skips_when_unset(monkeypatch):
-    graph_execution, calls = _setup_aclgraph_core_limit(monkeypatch, None)
-    graph_execution._apply_aclgraph_core_limit(0)
-    assert calls == []
+    model = graph_execution._AclGraphCoreLimitModel(torch.nn.Identity(), (1, 2), 0)
+    assert torch.equal(model(torch.tensor([3])), torch.tensor([3]))
+    assert events == [
+        ("enter", 1, 40),
+        ("preprocess",),
+        ("exit", 1, 40),
+        ("enter", 1, 2),
+        ("exit", 1, 2),
+    ]

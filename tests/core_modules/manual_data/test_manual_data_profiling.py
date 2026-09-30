@@ -149,6 +149,49 @@ def test_e2e_prepare_stops_before_api_resolution_and_device_execution(monkeypatc
     )
 
 
+def test_e2e_dynamic_input_only_prepare_records_none_for_replay(monkeypatch, tmp_path):
+    """E2E prepare keeps a dynamic slot unresolved until NPU replay."""
+    case = _e2e_case("e2e_dynamic_prepare")
+    case.tensor_view_shapes = ((2,), (-1,), (2,))
+    case.tensor_dtypes = ("float32", "int32", "float32")
+    case.tensor_formats = ("ND", "ND", "ND")
+    case.tensor_storage_shapes = ((2,), None, (2,))
+    case.tensor_view_offsets = (0, 0, 0)
+    case.tensor_view_strides = ((1,), None, (1,))
+    case.output_tensor_indexes = (2,)
+    case.input_data_ranges = ((-1, 1), (None, None), (-1, 1))
+    case._tensor_list_dist = (0, 0, 0)
+    case._pure_output_indexes = [2]
+    inputs = [np.ones(2, np.float32), None, np.zeros(2, np.float32)]
+    switches = _switches(tmp_path, "prepare")
+    switches.dump_config.mode = 0
+    switches.dump_config.enable_input()
+
+    def generate(testcase, *_args, **_kwargs):
+        testcase.np_storages = list(inputs)
+        return list(inputs)
+
+    monkeypatch.setattr(e2e_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(e2e_profiling, "generate_inputs", generate)
+    monkeypatch.setattr(e2e_profiling, "resolve_npu_preprocess", lambda *_args: object())
+    monkeypatch.setattr(e2e_profiling, "_profiling_end_print", lambda *_args, **_kwargs: None)
+    backend = SimpleNamespace(
+        is_npu=lambda: False,
+        device_type=lambda: "cpu",
+        set_device=lambda *_: None,
+        inputs_from_numpy=lambda _case, values: values,
+    )
+    result = FrameworkApiReturnStructure()
+
+    e2e_profiling._do_profile(case, backend, {}, {}, 0, switches, result)
+
+    assert result.precision_status == "PASS"
+    assert result.eager_precision == "MANUAL_DATA_PREPARED"
+    case_dir = ManualDataStore(tmp_path).case_dir(case.testcase_name)
+    assert (case_dir / "input_1_none.bin").stat().st_size == 0
+    assert ManualDataStore(tmp_path).load_case(case, "e2e").inputs[1] is None
+
+
 def test_e2e_failed_reprepare_invalidates_previous_case(monkeypatch, tmp_path):
     """e2e 重准备输入失败时标记 FAIL 并清除已有用例目录。"""
     case = _e2e_case("e2e_failed_reprepare")
@@ -388,6 +431,51 @@ def test_aclnn_prepare_stops_before_device_execution(monkeypatch, tmp_path):
         np.array([1.0, 2.0], np.float32),
     )
     assert loaded.scalars[0] == np.array(0.5, np.float32)
+
+
+def test_aclnn_dynamic_input_only_prepare_records_none_for_replay(monkeypatch, tmp_path):
+    """ACLNN prepare persists a None marker without running npu_preprocess."""
+    case = _aclnn_case("aclnn_dynamic_prepare")
+    case.tensor_view_shapes = ((2,), (-1,), (2,))
+    case.tensor_dtypes = ("float32", "int32", "float32")
+    case.tensor_formats = ("ND", "ND", "ND")
+    case.tensor_storage_shapes = ((2,), None, (2,))
+    case.tensor_view_offsets = (0, 0, 0)
+    case.tensor_view_strides = ((1,), None, (1,))
+    case.output_tensor_indexes = (2,)
+    case.input_data_ranges = ((-1, 1), (None, None), (-1, 1))
+    case._tensor_list_dist = (0, 0, 0)
+    case._pure_output_indexes = [2]
+    switches = _switches(tmp_path, "prepare")
+    switches.dump_config.mode = 0
+    switches.dump_config.enable_input()
+    preprocess = MagicMock(side_effect=AssertionError("npu_preprocess must wait for replay"))
+
+    class Inputs:
+        def __init__(self, context):
+            self.context = context
+
+        def gen(self):
+            values = [np.ones(2, np.float32), None, np.zeros(2, np.float32)]
+            self.context.np_storages = values
+            self.context.tensors = values
+            self.context.scalars = (np.array(0.5, np.float32),)
+
+    monkeypatch.setattr(aclnn_profiling, "get_global_storage", lambda: switches)
+    monkeypatch.setattr(aclnn_profiling, "get_process_context", _process_context)
+    monkeypatch.setattr(aclnn_profiling, "OpApiInfoKeeper", lambda: SimpleNamespace(has_api=lambda *_: True))
+    monkeypatch.setattr(aclnn_profiling, "InputGenerator", Inputs)
+    monkeypatch.setattr(aclnn_profiling, "resolve_npu_preprocess", lambda *_args: preprocess)
+    monkeypatch.setattr(aclnn_profiling, "__profiling_end_print", lambda *_: None)
+
+    result = aclnn_profiling.profile_process(case, {}, {}, 0)
+
+    assert result.precision_status == "PASS"
+    assert result.precision == "MANUAL_DATA_PREPARED"
+    assert not preprocess.called
+    case_dir = ManualDataStore(tmp_path).case_dir(case.testcase_name)
+    assert (case_dir / "input_1_none.bin").stat().st_size == 0
+    assert ManualDataStore(tmp_path).load_case(case, "aclnn", require_goldens=False).inputs[1] is None
 
 
 def test_aclnn_failed_reprepare_invalidates_previous_case(monkeypatch, tmp_path):

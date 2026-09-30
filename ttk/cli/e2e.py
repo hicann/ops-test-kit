@@ -77,8 +77,8 @@ def _add_e2e_args(parser):
         "--core-limit",
         dest="core_limit",
         default=None,
-        help="Cap core count visible to GE graph compilation (ge.aicoreNum). Single int caps AI cores, "
-        "'a,v' caps AI and vector cores separately; unset side falls back to physical count. Graph mode only",
+        help="Cap graph core count. Single int caps AI cores, 'a,v' caps AI and vector cores separately; "
+        "unset side falls back to physical count. Static/dynamic GE and ACLGraph modes",
     )
     parser.add_argument(
         "--super-kernel",
