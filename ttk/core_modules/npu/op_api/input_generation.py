@@ -20,6 +20,7 @@ from typing import List, Optional
 
 import numpy
 
+from ....remote import input_recipe
 from ....utilities import (
     RandomData,
     apply_as_list,
@@ -117,6 +118,11 @@ class InputGenerator:
         ranges = self._ctx.flat_input_data_ranges or ()
         base_seed = getattr(self._switch, "random_seed", None)
         has_batch_relation = has_complete_batch_relation(self._ctx)
+        # 免上传：登记"怎么造出来的"而不是数据本身。派发给三方的是 np_storages 本体
+        # (见 _aclnn_xpu_inputs, 不是视图), 故按 storage_shape 登记即可精确复算。
+        # 登记必须播种, 否则服务端无从复算; 不登记时保持原有行为逐字不变。
+        recipes = {} if getattr(self._switch, "xpu_zero_upload", False) else None
+        distribution = self._switch.input_distribution
         for idx, vs in enumerate(flat_shapes):
             if vs is None or -1 in vs:
                 arrays.append(None)
@@ -127,12 +133,22 @@ class InputGenerator:
             dtype = get(dtypes, idx)
             if idx not in self._ctx.pure_output_indexes:
                 # pure input & inplace output
+                seed = None
                 if base_seed and has_batch_relation:
                     # batch consistency compare different case support same shape tensor has same value
-                    numpy.random.seed(base_seed + idx)
+                    seed = base_seed + idx
+                    numpy.random.seed(seed)
+                elif recipes is not None:
+                    seed = input_recipe.seed_for(getattr(self._ctx, "testcase_name", ""), idx)
+                    numpy.random.seed(seed)
                 rd = RandomData(dtype, ss, data_range)
-                arrays.append(rd.generate(self._switch.input_distribution))
+                arr = rd.generate(distribution)
+                arrays.append(arr)
                 actual_data_ranges.append(tuple(rd.data_range))
+                if recipes is not None and seed is not None:
+                    recipes[input_recipe.digest_of(arr)] = input_recipe.build_recipe(
+                        dtype, ss, rd.data_range, distribution, seed
+                    )
             else:
                 # pure output. initial it as dtype(1)
                 from ttk.utilities.data import fixed_np_array
@@ -142,6 +158,7 @@ class InputGenerator:
                 actual_data_ranges.append(data_range)
         self._ctx.np_storages = arrays
         self._ctx.actual_input_data_ranges = actual_data_ranges
+        self._ctx.input_recipes = recipes
 
     def _realtime_random_scalars(self):
         flat_scalar_dtypes = self._ctx.flat_scalar_dtypes

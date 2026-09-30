@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
 """Golden/callable dispatch helpers: framework classification + name-based binding.
 
 Note: bind_by_name mirrors ttk/remote/server/execution_container.py:bind_params in
@@ -110,12 +117,38 @@ def resolve_callable_str(s: str):
         import torch
 
         ns["torch"] = torch
-    elif s == "tf" or s == "tensorflow" or s.startswith("tf.") or s.startswith("tensorflow."):
+    elif s in {"tf", "tensorflow"} or s.startswith(("tf.", "tensorflow.")):
         import tensorflow as tf
 
         ns["tf"] = tf
         ns["tensorflow"] = tf
+    elif s.startswith(("npu_device.", "npu_bridge.")):
+        # TF Adapter 暴露的 NPU 自定义算子。这些包把 npu_device.compat 重映射到
+        # npu_device._api.compat, 从根包逐级 getattr 取不到(_api 下没有 tbe), 所以改成
+        # "导入最深的可导入模块, 余下部分再 getattr"。
+        import importlib
+
+        parts = s.split(".")
+        for k in range(len(parts) - 1, 1, -1):
+            try:
+                mod = importlib.import_module(".".join(parts[:k]))
+            except ImportError:
+                continue
+            obj = mod
+            try:
+                for attr in parts[k:]:
+                    obj = getattr(obj, attr)
+            except AttributeError:
+                continue
+            return obj
+        raise ValueError(f"Cannot resolve golden callable {s!r}: no importable module prefix")
     try:
-        return eval(s, ns)
+        # 逐级 getattr 解析点分名(与上面 npu_device 分支同一套做法)。
+        # 不用 eval: 名字来自用例 CSV, 用表达式求值既无必要也把任意代码执行引进来。
+        parts = s.split(".")
+        obj = ns[parts[0]]
+        for attr in parts[1:]:
+            obj = getattr(obj, attr)
+        return obj
     except Exception as e:
         raise ValueError(f"Cannot resolve golden callable {s!r}: {e}") from e

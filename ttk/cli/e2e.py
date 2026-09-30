@@ -66,6 +66,14 @@ def _add_e2e_args(parser):
         "Requires remote XPU config (ttk.conf.yaml or --config). PERF-only.",
     )
     parser.add_argument(
+        "--xpu-zero-upload",
+        dest="xpu_zero_upload",
+        action="store_true",
+        help="Send input generation recipes + per-tensor sha256 instead of the input data itself; "
+        "the server regenerates and verifies each digest. Saves the upload over slow links. "
+        "Falls back to full upload automatically when a digest does not match.",
+    )
+    parser.add_argument(
         "--core-limit",
         dest="core_limit",
         default=None,

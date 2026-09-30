@@ -1448,6 +1448,7 @@ def _do_profile(  # noqa: PLR0911
             switches=switches,
             need_data=need_3party,
             input_dtypes=_e2e_xpu_input_dtypes(testcase),
+            input_recipes=getattr(testcase, "input_recipes", None),
         )
         if need_3party and third_parties is None:
             logging.warning(

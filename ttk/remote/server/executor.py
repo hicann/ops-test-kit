@@ -1046,6 +1046,8 @@ def execute_request(
     op_type=None,
     runtime=3,
     param_order=None,
+    input_recipes=None,
+    input_digests=None,
     **_extra,
 ):
     """Run one request. Returns an envelope dict (never raises for 4xx/5xx)."""
@@ -1079,7 +1081,21 @@ def execute_request(
             _TORCH_DEV_MODULE = getattr(torch, lib)
 
         named = {}
-        if input_count and tmp_in_path:
+        if input_count and input_recipes and not tmp_in_path:
+            # 免上传：客户端没发数据，只发了生成配方 + 每片叶子的内容指纹。
+            # 按配方重算后逐片核对摘要，对不上就回 409 让客户端整包重发
+            # —— 绝不在"两端数据可能不同"的前提下继续算。
+            try:
+                # ttk-free 部署（只 scp 了 server/ 目录）里没有 ttk 包，重算不可用：
+                # 这里连同 ImportError 一起吃掉，回 409 让客户端整包重发即可，
+                # 不能让免上传把这种部署直接打挂。
+                from ttk.remote.input_recipe import regenerate_and_verify
+
+                flat = regenerate_and_verify(input_recipes, input_digests or [])
+            except Exception as e:
+                return _err(409, f"zero-upload regeneration mismatch: {e}", api=api or spec_class)
+            named = match_params_v1(input_schema, flat)
+        elif input_count and tmp_in_path:
             npz = np.load(tmp_in_path)
             flat = [npz[f"a{i}"] for i in range(input_count)]
             named = match_params_v1(input_schema, flat)
@@ -1151,6 +1167,29 @@ def execute_request(
         return _err(500, _client_error(e), api=api or spec_class)
 
 
+def _die_with_parent():
+    """向内核注册"父进程一死就杀掉我"(PR_SET_PDEATHSIG)。
+
+    每个请求一个子进程, 若服务端被 ``kill -9``/段错误终止, 这些子进程会被 reparent
+    而继续活着(atexit 之类的钩子在 SIGKILL 下不会执行), 历史上出现过孤儿堆积吃满内存。
+    PDEATHSIG 是内核级保证, 不依赖父进程还能执行任何代码。
+
+    这里用它是安全的: 子进程入口是单线程, 不存在"注册线程先退出导致误杀"的那个已知坑。
+    不可用(非 Linux / prctl 缺失)时静默跳过, 绝不影响请求处理。
+    """
+    try:
+        import ctypes
+        import signal as _signal
+
+        PR_SET_PDEATHSIG = 1
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(PR_SET_PDEATHSIG, _signal.SIGKILL)
+        # 注册与父进程退出之间存在竞态: 若父已先死, 现在补一次自检。
+        if os.getppid() == 1:
+            os._exit(1)
+    except Exception as e:  # noqa: BLE001  仅为兜底清理, 失败不应影响正常请求
+        logging.debug("PDEATHSIG unavailable (%s); orphan cleanup falls back to parent-side kill", e)
+
+
 def child_main(conn, kwargs):
     """Child-process entry point: run execute_request, send the envelope back.
 
@@ -1161,6 +1200,7 @@ def child_main(conn, kwargs):
     # assigned device via env; if it leaked through, **_extra would silently
     # swallow it and isolation would silently fail. os imported
     # at module top.
+    _die_with_parent()
     os.environ.update(kwargs.pop("env", {}))
     try:
         conn.send(execute_request(**kwargs))

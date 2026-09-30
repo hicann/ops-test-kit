@@ -25,7 +25,6 @@ from ttk.remote.server.executor import _outputs_to_numpy
 # torch_npu._C + tensorflow C extension 在同一进程 import 时符号冲突 → segfault。
 _has_torch_npu = importlib.util.find_spec("torch_npu") is not None
 _has_tf = importlib.util.find_spec("tensorflow") is not None
-_TORCH_NPU_TF_CONFLICT = _has_torch_npu and _has_tf
 
 
 def _sample():
@@ -96,7 +95,6 @@ def _complex32_storage():
     return arr
 
 
-@pytest.mark.skipif(_TORCH_NPU_TF_CONFLICT, reason="torch_npu._C + tensorflow C extension conflict → segfault")
 def test_complex32_input_direction(tmp_path):
     """complex32 输入方向：schema logical_dtype → server 还原 torch.complex32 逻辑张量。"""
     torch = pytest.importorskip("torch")
@@ -122,7 +120,6 @@ def test_complex32_input_direction(tmp_path):
     assert tuple(t_plain.shape) == (2, 3, 2)
 
 
-@pytest.mark.skipif(_TORCH_NPU_TF_CONFLICT, reason="torch_npu._C + tensorflow C extension conflict → segfault")
 def test_complex32_output_direction():
     """complex32 输出方向：server 转 fp16 [...,2] 交错布局回传（与 golden/NPU 输出对齐）。"""
     torch = pytest.importorskip("torch")

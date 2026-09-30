@@ -45,6 +45,8 @@ class TensorApiTestcaseBase(TestcaseBase):
         "output_tensor_indexes",
         "inplace_input_indexes",
         "np_storages",
+        # 免上传：{内容指纹: 生成配方}，供三方腿免传输入（未开启时为 None）
+        "input_recipes",
         "prof_result",
         "_tensor_list_dist",
         "_output_dist",
@@ -89,6 +91,7 @@ class TensorApiTestcaseBase(TestcaseBase):
         self.output_tensor_indexes = ()
         self.inplace_input_indexes = ()
         self.np_storages = None
+        self.input_recipes = None
         self.prof_result = None
         self._tensor_list_dist = None
         self._output_dist = None

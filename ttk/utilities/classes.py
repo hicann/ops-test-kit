@@ -164,6 +164,8 @@ class SWITCHES:
         "golden_mode",
         "compare_method",
         "xpu_perf",
+        "xpu_zero_upload",
+        "geir_serve",
         "precision_report",
         "reuse_hbm",
         "reserve_hbm",
@@ -312,6 +314,8 @@ class SWITCHES:
         self.golden_mode: str = "Enable"
         self.compare_method = None
         self.xpu_perf: bool = False
+        self.xpu_zero_upload: bool = False
+        self.geir_serve: bool = False
         self.precision_report: Optional[str] = None
         self.reuse_hbm: bool = False
         self.reserve_hbm: int = 0

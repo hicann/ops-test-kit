@@ -12,6 +12,7 @@ GEIR profiling entry — runs in a subprocess.
 Generates inputs in Python, writes to files, executes C++ binary, compares.
 """
 
+import atexit
 import contextlib
 import gc
 import logging
@@ -70,6 +71,123 @@ def _geir_profiling_end_print(result):
         f"PRECISION_STATUS: {result.precision_status.ljust(20)} PASSED: {passed_str}\n"
         "########################\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# geir 常驻执行进程(可选, --geir-serve 开启)
+#
+# 默认每个用例起一个 C++ 进程, 于是 GEInitialize 每例重做一次 —— 实测 8.5 秒,
+# 而逐例真正必须做的 AddGraph/RunGraph 只要 4.3 秒, 初始化占了单例耗时近一半。
+# 常驻模式下进程跨用例存活(argv[5]="-", 从 stdin 逐行收用例), GEInitialize 只做一次。
+#
+# 代价是隔离性: 一个用例把进程搞崩会影响后续。故 run_case 出错即丢弃进程,
+# 下个用例自动重建 —— 退化成原行为, 不会静默串下去。
+_SERVE_PROCS: dict = {}
+
+
+class _GeirServeProc:
+    """持有一个常驻的 geir 执行进程, 按用例收发。"""
+
+    def __init__(self, binary, dev_id, cwd):
+        # argv[4] 传空: 常驻进程不绑定任何一例的 profiling 路径,
+        # 改由每例随 stdin 那一行下发(见 run_case)。
+        self._data_r, data_w = os.pipe()
+        self._proc = subprocess.Popen(
+            [binary, str(dev_id), "", str(data_w), "", "-"],
+            pass_fds=(data_w,),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+        )
+        os.close(data_w)
+        self._err_chunks = []
+        self._out_chunks = []
+        for stream, sink in ((self._proc.stderr, self._err_chunks), (self._proc.stdout, self._out_chunks)):
+            t = threading.Thread(target=self._drain, args=(stream, sink), daemon=True)
+            t.start()
+
+    @staticmethod
+    def _drain(stream, sink):
+        """必须持续排空, 否则管道写满会把子进程卡死。"""
+        for line in iter(stream.readline, b""):
+            sink.append(line)
+
+    def _read_exactly(self, n):
+        buf = b""
+        while len(buf) < n:
+            chunk = os.read(self._data_r, n - len(buf))
+            if not chunk:
+                raise RuntimeError("geir serve process closed data channel")
+            buf += chunk
+        return buf
+
+    def run_case(self, config_path, input_prefix, prof_path=""):
+        """跑一个用例, 返回 (data_bytes, stdout_bytes, stderr_bytes)。
+
+        prof_path 逐例下发: msprof 产物要求按用例分目录, 而 aclgrphProfInit
+        绑定的是进程级输出路径, 故子进程每例 init/finalize 一次。
+        """
+        if self._proc.poll() is not None:
+            raise RuntimeError(f"geir serve process already exited (rc={self._proc.returncode})")
+        self._err_chunks.clear()
+        self._out_chunks.clear()
+        self._proc.stdin.write(f"{config_path}\t{input_prefix}\t{prof_path}\n".encode())
+        self._proc.stdin.flush()
+        # 协议自描述: [8B num_outputs]([8B byte_count][data])*, 按帧精确读一个用例的量
+        head = self._read_exactly(8)
+        num_outputs = int(np.frombuffer(head, dtype=np.int64)[0])
+        frame = [head]
+        for _ in range(num_outputs):
+            cnt_raw = self._read_exactly(8)
+            frame.append(cnt_raw)
+            frame.append(self._read_exactly(int(np.frombuffer(cnt_raw, dtype=np.int64)[0])))
+        return b"".join(frame), b"".join(self._out_chunks), b"".join(self._err_chunks)
+
+    def close(self):
+        try:
+            if self._proc.stdin and not self._proc.stdin.closed:
+                self._proc.stdin.close()
+            self._proc.wait(timeout=10)
+        except Exception:
+            self._proc.kill()
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(self._data_r)
+
+
+def _get_serve_proc(binary, dev_id, cwd):
+    # 键只按 (可执行文件, 设备)。曾把逐例不同的 prof_path 也纳入键, 导致每例必然
+    # miss、每例新起一个进程且旧的不回收 —— 复用从未发生, 还泄漏持卡的子进程。
+    key = (binary, dev_id)
+    proc = _SERVE_PROCS.get(key)
+    if proc is None or proc._proc.poll() is not None:
+        if proc is not None:
+            # 复用失败必须留痕: 否则"每例重起一个"和"整批复用一个"在日志上长得一样。
+            logging.warning(
+                "geir serve process died (rc=%s), recreating; stderr tail: %s",
+                proc._proc.returncode,
+                b"".join(proc._err_chunks)[-400:].decode(errors="replace"),
+            )
+            proc.close()
+        proc = _GeirServeProc(binary, dev_id, cwd)
+        _SERVE_PROCS[key] = proc
+        logging.info("geir serve process started: dev=%s", dev_id)
+    return proc
+
+
+def _drop_serve_proc(binary, dev_id):
+    proc = _SERVE_PROCS.pop((binary, dev_id), None)
+    if proc is not None:
+        proc.close()
+
+
+def close_geir_serve_procs():
+    for key in list(_SERVE_PROCS):
+        _drop_serve_proc(*key)
+
+
+atexit.register(close_geir_serve_procs)
 
 
 def geir_profile_process(testcase, device_grant_events, device_granted_indices, dev_id):
@@ -246,6 +364,7 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
             param_order=_geir_param_order(testcase),
             input_formats=getattr(testcase, "input_formats", None),
             input_dtypes=getattr(testcase, "input_dtypes", None),
+            input_recipes=getattr(testcase, "input_recipes", None),
         )
 
     # Build op-level source (cached) + per-case config + compile (cached)
@@ -321,6 +440,37 @@ def _geir_run(testcase, dev_id, switches, process_ctx, mode="const"):
                 path = f"{input_prefix}_{data_idx}.bin"
                 _write_input_bin(arr, path)
                 data_idx += 1
+
+        if getattr(switches, "geir_serve", False):
+            # 常驻模式: 复用长驻进程, GEInitialize 整批只做一次
+            try:
+                sp = _get_serve_proc(binary, dev_id, compiler.build_dir)
+                data_bytes, stdout_bytes, stderr_bytes = sp.run_case(config_path, input_prefix, prof_path)
+            except Exception as e:
+                # 常驻进程出问题就丢弃重建, 本例退化走原来的一次性进程路径
+                _drop_serve_proc(binary, dev_id)
+                logging.warning("geir serve failed (%s), falling back to one-shot for this case", e)
+            else:
+                # 常驻分支此前不解析 msprof, cst_bin_perf_us 恒为 CST_OFF ——
+                # 因为 serve 下 profiling 本来就没逐例落盘, 缺口一直没暴露。
+                if prof_path:
+                    device_perf_us = _parse_msprof_task_duration(prof_path)
+                run_outputs = _parse_stdout(
+                    data_bytes,
+                    testcase.flat_output_dtypes,
+                    testcase.flat_output_shapes,
+                    case_name=testcase.testcase_name,
+                )
+                if stderr_bytes:
+                    for line in stderr_bytes.decode("utf-8", errors="replace").splitlines():
+                        if line.strip():
+                            logging.debug("[GEIR] %s", line)
+                output_arrays = run_outputs
+                if deterministic > 0:
+                    import hashlib
+
+                    md5_list.append(hashlib.md5(data_bytes).hexdigest())  # noqa: S324
+                continue
 
         data_r, data_w = os.pipe()
         data_holder = []

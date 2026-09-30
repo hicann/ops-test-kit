@@ -108,6 +108,8 @@ class TestcaseOp(TestcaseBase):
         "dyn_func_params",
         "input_arrays",
         "original_input_arrays",
+        # 免上传：{内容指纹: 生成配方}，供三方腿免传输入（未开启时为 None）
+        "input_recipes",
         "golden_arrays",
         "output_arrays",
         "dyn_workspace_arrays",
@@ -1443,6 +1445,7 @@ class TestcaseOp(TestcaseBase):
         # End of testcase valid configurations
         self.input_arrays = None
         self.original_input_arrays = None
+        self.input_recipes = None
         self.golden_arrays = None
         self.output_arrays = None
         self.dyn_workspace_arrays: Tuple[numpy.ndarray, ...] = ()

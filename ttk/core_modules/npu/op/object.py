@@ -93,9 +93,15 @@ class OpProfileObject(ProfileObject):
         self._print_new_compare_failures()
         if self.kb:
             self.kb.data["switch"] = False
+            # 与 _launch_knowledge_server 同理: 固定 sleep(1) 轮询让**收尾**也平白多等数秒。
+            # 这段在每次跑批结束时都会执行, 属与用例数无关的固定开销。
+            poll_s, waited = 0.01, 0.0
             while self.kb.status == self.kb.status.RUNNING:
                 self.kb.update()
-                time.sleep(1)
+                time.sleep(poll_s)
+                waited += poll_s
+                poll_s = min(poll_s * 1.5, 0.2)
+            logging.info("OPT_MARK kb_stop_wait=%.2f", waited)  # TEMP
             self.kb.close()
 
     def apply_compile_fail_result(self, testcase: TestcaseOp, fail_info: str, task_sub_type: str):
@@ -118,8 +124,7 @@ class OpProfileObject(ProfileObject):
         # Read mismatches appended since the last check and print them, so
         # failures surface as each case completes instead of only at the end.
         diff_lines, end_size = read_compare_log_failures(self._compare_log_read_size)
-        if end_size > self._compare_log_read_size:
-            self._compare_log_read_size = end_size
+        self._compare_log_read_size = max(self._compare_log_read_size, end_size)
         print_compare_log_failures(diff_lines, testcase_name)
 
     def compile_done(self, testcase: TestcaseOp):
@@ -130,23 +135,33 @@ class OpProfileObject(ProfileObject):
         if task.type == TaskType.COMPILE:
             self._compile_invalid_case(task)
             return self.compile_done(task.testcase)
-        else:
-            raise RuntimeError("Profile result is None which should not happen. Maybe it is a BUG of TTK !!!")
+        raise RuntimeError("Profile result is None which should not happen. Maybe it is a BUG of TTK !!!")
 
     def _launch_knowledge_server(self, mp_context: BaseContext):
         logging.info("Launching knowledge base Server process")
         self.kb = SimpleCommandProcess(mp_context, name="KBS")
         self.kb.data["switch"] = True
         self.kb.send_action(knowledge_base_sequence, (), {})
-        while not self.kb.status == self.kb.status.RUNNING:
-            logging.info(f"Process KnowledgeBaseServer status is {self.kb.status} !!! Update ...")
+        # 等它就绪。原先是固定 sleep(1) 轮询: 进程实测几十毫秒就 RUNNING, 却要等到下一个
+        # 整秒才被发现 —— 实测空等 4~5 秒, 且**每次跑批都付**(与用例数无关的固定开销)。
+        # 改为短间隔起步、逐步放大到 0.2s 封顶: 就绪快时几乎零等待, 就绪慢时也不会忙等烧 CPU。
+        # 日志仍按约 1 秒节流打印, 保留原有的可观测性。
+        poll_s, next_log = 0.01, 0.0
+        waited = 0.0
+        while self.kb.status != self.kb.status.RUNNING:
+            if waited >= next_log:
+                logging.info(f"Process KnowledgeBaseServer status is {self.kb.status} !!! Update ...")
+                next_log = waited + 1.0
             self.kb.update()
             if self.kb.is_dead():
                 raise RuntimeError(
                     "Process KnowledgeBaseServer is DEAD. Please check exception raised by KnowledgeBaseServer."
                 )
-            time.sleep(1)
-        logging.info(f"Knowledge base Server Pid: {self.kb.get_pid()}")
+            time.sleep(poll_s)
+            waited += poll_s
+            poll_s = min(poll_s * 1.5, 0.2)
+        logging.info(f"Knowledge base Server Pid: {self.kb.get_pid()} (ready in {waited:.2f}s)")
+        logging.info("OPT_MARK kb_launch_wait=%.2f", waited)  # TEMP
 
     @staticmethod
     def _compile_invalid_case(task: TaskA):

@@ -39,6 +39,24 @@ from .process_group import ProcessGroup
 from .profile_object import ProfileObject
 from .task import TaskA, TaskKeeper, TaskType
 
+# 跑批 worker 是 forkserver 子进程 —— 它们从一个极简进程起, **不继承父进程已导入的模块**,
+# 于是每个 worker 都要自己 import 一遍重模块。本机实测: torch 2.37s、tbe 0.64s、te 0.67s,
+# 这笔开销与用例数无关, 每次跑批都付(小批量调试时占比最高)。
+# ``set_forkserver_preload`` 让 forkserver 进程自己先导入一次, 子进程 fork 出来即已具备,
+# 实测同一机制在 xpu_server 上把子进程启动从 2.3s 压到 0.03s。
+# 安全性: CPython 的 forkserver 对 preload 列表里的模块是 ``try: __import__ except ImportError: pass``,
+# 模块缺失只会被忽略, 不会让跑批起不来; 故这里只列"装了就该预载"的重模块。
+_WORKER_PRELOAD = ("numpy", "torch", "tbe", "te")
+
+
+def _preload_worker_modules(ctx: BaseContext) -> None:
+    """给 worker 的 forkserver 设预载模块。必须在任何子进程启动**之前**调用。"""
+    try:
+        ctx.set_forkserver_preload(list(_WORKER_PRELOAD))
+        logging.info("OPT_MARK worker_preload=%s", list(_WORKER_PRELOAD))  # TEMP
+    except Exception as e:  # noqa: BLE001  预载只是提速, 失败绝不该让跑批不可用
+        logging.debug("set_forkserver_preload skipped: %s", e)
+
 
 class InstanceBase(metaclass=ABCMeta):
     """
@@ -65,6 +83,7 @@ class InstanceBase(metaclass=ABCMeta):
         self.case_result_titles: Tuple[str] = ()
         # Multiprocessing
         self.mp_context: BaseContext = multiprocessing.get_context("forkserver")
+        _preload_worker_modules(self.mp_context)
         self.mp_manager = None
         self.device_locks = ()
         self.used_device = []
@@ -135,6 +154,8 @@ class InstanceBase(metaclass=ABCMeta):
         self._open_result_file()
         self.prepare_subprocesses()
         self._prepare_tasks()
+        self._reset_xpu_breaker()
+        breaker_reason = ""
         # loop and push processes
         while True:
             self._supervise_heartbeat()  # respawn HB if it died; None-safe + throttled ~1s
@@ -143,6 +164,10 @@ class InstanceBase(metaclass=ABCMeta):
             self._push_task_to_process()
             self._close_idle_processes()
             self._summary_print(self.print_cycle)
+            breaker_reason = self._xpu_breaker_reason()
+            if breaker_reason:
+                logging.critical("三方腿熔断, 中止跑批: %s", breaker_reason)
+                break
             if self.total_case_count == self.completed_case_count:
                 logging.info("ttk Profiling complete")
                 break
@@ -154,6 +179,29 @@ class InstanceBase(metaclass=ABCMeta):
         self._log_batch_execution_mode()
         # clean up
         self._pre_exit()
+        if breaker_reason:
+            from ttk.remote.xpu_breaker import XpuLegBrokenError
+
+            # 已跑的用例照常落盘(_pre_exit 关了 csv), 再以非零退出码告诉跑批脚本
+            # 这一轮的三方数据不可用 —— 别让"跑完了"和"跑对了"看起来一样。
+            raise XpuLegBrokenError(breaker_reason)
+
+    def _reset_xpu_breaker(self):
+        from ttk.remote import xpu_breaker
+
+        try:
+            xpu_breaker.reset(self.switches.root_path)
+        except OSError as e:
+            logging.warning("xpu breaker reset failed (ignored): %s", e)
+
+    def _xpu_breaker_reason(self) -> str:
+        from ttk.remote import xpu_breaker
+
+        try:
+            return xpu_breaker.tripped(self.switches.root_path)[1]
+        except OSError as e:
+            logging.warning("xpu breaker check failed (ignored): %s", e)
+            return ""
 
     def prepare_subprocesses(self):
         self._prepare_device_locks()
@@ -309,13 +357,23 @@ class InstanceBase(metaclass=ABCMeta):
         self._print_final_summary()
 
     def _print_final_summary(self):
+        from ttk.core_modules.testcase_manager.testcase_manager import LOAD_STATS
+
         total = self.pass_count + self.fail_count + self.other_count
         if total <= 0:
             return
         pass_rate = (self.pass_count / total * 100) if total else 0.0
+        # Total 是**载入条数**。喂入多于载入时把差额显式列出来 —— 否则喂 200 跑 181
+        # 也报 PassRate 98.34%, 覆盖被砍掉却看不出来(2026-09-26 实测 19 例 is_enabled=FALSE)。
+        dropped_lines = ""
+        dropped = LOAD_STATS.get("dropped", 0)
+        if dropped:
+            dropped_lines = (
+                f"  FED      : {LOAD_STATS.get('fed', 0)}  (输入文件条数)\n"
+                f"  DROPPED  : {dropped}  (未载入, 未执行; 原因见上文 'Testcase load:' 行)\n"
+            )
         summary = (
-            "\n==================== TTK Test Summary ===================\n"
-            f"  Total    : {total}\n"
+            "\n==================== TTK Test Summary ===================\n" + dropped_lines + f"  Total    : {total}\n"
             f"  PASS     : {self.pass_count}\n"
             f"  FAIL     : {self.fail_count}\n"
             f"  SKIP/NA  : {self.other_count}\n"

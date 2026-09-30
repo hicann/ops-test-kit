@@ -1,3 +1,12 @@
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """executor.execute_request — direct in-process unit tests (DATA path).
 
 本模块对 ``ttk.remote.server.executor`` 的核心路径做单测，覆盖：
@@ -6,7 +15,6 @@
 """
 
 import http.client
-import importlib.util
 import io
 import json
 import os
@@ -21,10 +29,6 @@ import pytest
 
 # torch_npu._C + tensorflow C extension 在同一进程 import 时符号冲突 → segfault。
 # 仅当两者共存时跳过；XPU server 环境（有 torch/tf 无 torch_npu）正常通过。
-_has_torch_npu = importlib.util.find_spec("torch_npu") is not None
-_has_tf = importlib.util.find_spec("tensorflow") is not None
-if _has_torch_npu and _has_tf:
-    pytestmark = pytest.mark.skip(reason="torch_npu._C + tensorflow C extension conflict → segfault")
 
 
 def _npz(path, **arrs):
@@ -33,22 +37,22 @@ def _npz(path, **arrs):
 
 
 def _kw(**over):
-    base = dict(
-        tenant_sync_dir="",
-        exec_type="api",
-        provider="numpy",
-        api=None,
-        spec_module=None,
-        spec_class=None,
-        mode=1,
-        input_schema=[],
-        attrs={},
-        tmp_in_path=None,
-        input_count=0,
-        device_id=0,
-        use_device=False,
-        output_dir=None,
-    )
+    base = {
+        "tenant_sync_dir": "",
+        "exec_type": "api",
+        "provider": "numpy",
+        "api": None,
+        "spec_module": None,
+        "spec_class": None,
+        "mode": 1,
+        "input_schema": [],
+        "attrs": {},
+        "tmp_in_path": None,
+        "input_count": 0,
+        "device_id": 0,
+        "use_device": False,
+        "output_dir": None,
+    }
     base.update(over)
     return base
 
@@ -72,7 +76,9 @@ class TestApiData:
                 output_dir=str(tmp_path),
             )
         )
-        assert env["ok"] and env["http_status"] == 200 and env["output_count"] == 1
+        assert env["ok"]
+        assert env["http_status"] == 200
+        assert env["output_count"] == 1
         np.testing.assert_array_equal(np.load(env["output_path"])["a0"], np.array([4.0, 6.0]))
 
     def test_api_missing_module_is_500(self, tmp_path):
@@ -81,7 +87,8 @@ class TestApiData:
         from ttk.remote.server import executor
 
         env = executor.execute_request(**_kw(api="definitely_not_a_module_xyz.fn", mode=DATA, output_dir=str(tmp_path)))
-        assert env["ok"] is False and env["http_status"] == 500
+        assert env["ok"] is False
+        assert env["http_status"] == 500
         assert env["missing"] is None  # not a syncable 424
 
 
@@ -92,7 +99,7 @@ class TestSpecData:
         path.write_text(body)
 
     @pytest.mark.parametrize(
-        "mode, body, x1, x2, expected",
+        ("mode", "body", "x1", "x2", "expected"),
         [
             pytest.param(
                 "b",
@@ -171,7 +178,8 @@ class TestSpecData:
                     output_dir=str(tmp_path),
                 )
             )
-            assert env["ok"] is False and env["http_status"] == 424
+            assert env["ok"] is False
+            assert env["http_status"] == 424
             assert env["missing"] == "no_such_spec"
         else:  # unknown_param_400
             self._write(
@@ -196,7 +204,8 @@ class TestSpecData:
                     output_dir=str(tmp_path),
                 )
             )
-            assert env["ok"] is False and env["http_status"] == 400
+            assert env["ok"] is False
+            assert env["http_status"] == 400
             assert "bogus" in env["error"]
 
     def test_op_failure_error_is_sanitized_no_traceback(self, tmp_path):
@@ -229,7 +238,8 @@ class TestSpecData:
                 output_dir=str(tmp_path),
             )
         )
-        assert env["ok"] is False and env["http_status"] == 500
+        assert env["ok"] is False
+        assert env["http_status"] == 500
         assert env["error"] == "RuntimeError: op exploded"
         assert "Traceback" not in env["error"]
         assert ".py" not in env["error"]  # no server/spec file path leaked
@@ -254,9 +264,11 @@ class TestPerfPath:
                 output_dir=str(tmp_path),
             )
         )
-        assert env["ok"] and env["output_count"] == 1
+        assert env["ok"]
+        assert env["output_count"] == 1
         perf = env["perf"]
-        assert perf["device_us"] == "NA" and perf["peak_memory_mb"] == "NA"
+        assert perf["device_us"] == "NA"
+        assert perf["peak_memory_mb"] == "NA"
 
 
 class TestViaSubprocess:
@@ -281,7 +293,8 @@ class TestViaSubprocess:
             ),
             deadline=60,
         )
-        assert env["ok"] and env["output_count"] == 1
+        assert env["ok"]
+        assert env["output_count"] == 1
         np.testing.assert_array_equal(np.load(env["output_path"])["a0"], np.array([4.0, 6.0]))
 
     def test_child_crash_returns_500(self, tmp_path):
@@ -312,7 +325,8 @@ class TestViaSubprocess:
             ),
             deadline=60,
         )
-        assert env["ok"] is False and env["http_status"] == 500
+        assert env["ok"] is False
+        assert env["http_status"] == 500
         assert "139" in env["error"]
 
 

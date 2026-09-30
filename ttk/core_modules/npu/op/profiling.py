@@ -200,6 +200,7 @@ def _do_xpu_profiling(context, xpu_mode):
         switches=sw,
         need_data=need_data,
         param_order=_kernel_param_order(op_info),
+        input_recipes=getattr(context, "input_recipes", None),
     )
     context.xpu_results = xpu_results
     return priority

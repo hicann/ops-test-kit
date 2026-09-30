@@ -9,9 +9,16 @@
 # ----------------------------------------------------------------------------
 """Shared pytest fixtures for the test suite."""
 
+# 必须最先执行: 用 RTLD_DEEPBIND 把 tensorflow 装进来, 之后 torch/torch_npu 再导入
+# 就不会与它抢弱符号。对照实验(本机 torch 2.10 + torch_npu + tf 2.21):
+#   A) import torch_npu -> import tensorflow            → dumped core
+#   B) import 本 shim   -> import torch_npu/tensorflow  → 两者都可用
+# 不做这一步, 任何在同一进程里同时碰到两个框架的用例都只能 skip 掉。
 from pathlib import Path
 
 import pytest
+
+import ttk.remote.server._framework_preload  # noqa: F401  仅为触发受控预载
 
 
 @pytest.fixture(autouse=True)
@@ -61,4 +68,3 @@ def _load_default_config():
     from ttk.config.loader import load_config
 
     load_config()
-    yield

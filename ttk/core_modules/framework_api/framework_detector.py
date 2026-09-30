@@ -12,17 +12,22 @@
 
 from typing import Optional
 
+# TF 通路的 api_name 前缀。npu_device/npu_bridge 是 TF Adapter 暴露的 NPU 自定义算子
+# (如 npu_device.compat.v1.tbe.npu_vector_ops.lamb_apply_optimizer_assign) —— 它们本质是
+# TF 图算子, 必须按 TF 路由, 否则会落进 torch 分支解析失败。
+TF_API_PREFIXES = ("tf.", "tensorflow.", "npu_device.", "npu_bridge.")
+
 
 def detect_framework(api_name: str) -> str:
     """Detect framework ('torch' or 'tf') from api_name prefix.
 
     Routing rule:
-        "tf." / "tensorflow." prefix -> "tf"
+        TF_API_PREFIXES 前缀 -> "tf"
         everything else (torch., torch_npu., torch.ops., torch.Tensor.) -> "torch"
     """
     if not api_name:
         return "torch"
-    if api_name.startswith(("tf.", "tensorflow.")):
+    if api_name.startswith(TF_API_PREFIXES):
         return "tf"
     return "torch"
 

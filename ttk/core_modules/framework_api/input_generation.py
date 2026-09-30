@@ -20,6 +20,7 @@ import numpy as np
 
 from ttk.core_modules.deterministic import batch_relation_kwargs, has_complete_batch_relation
 from ttk.core_modules.plugin_loader import get_plugin_function
+from ttk.remote import input_recipe
 from ttk.utilities import get
 from ttk.utilities.container_utils import apply_as_list
 from ttk.utilities.data import RandomData, resolve_custom_numpy_dtypes
@@ -287,6 +288,8 @@ def generate_np_storages(testcase, switches):
     flat_dtypes = resolve_custom_numpy_dtypes(testcase.flat_tensor_dtypes)
     ranges = testcase.flat_input_data_ranges or ()
     base_seed = getattr(switches, "random_seed", None)
+    # 免上传：登记"怎么造出来的"而不是数据本身(见 ttk/remote/input_recipe.py)
+    recipes = {} if getattr(switches, "xpu_zero_upload", False) else None
     has_batch_relation = has_complete_batch_relation(testcase)
     for idx, view_shape in enumerate(flat_shapes):
         if view_shape is None or -1 in view_shape:
@@ -302,17 +305,31 @@ def generate_np_storages(testcase, switches):
         data_range = ranges[idx] if idx < len(ranges) else (None, None)
 
         if idx not in pure_output_indexes:
+            seed = None
             if base_seed and has_batch_relation:
                 # batch consistency compare different case support same shape tensor has same value
-                np.random.seed(base_seed + idx)
+                seed = base_seed + idx
+                np.random.seed(seed)
+            elif recipes is not None:
+                # 登记配方必须播种, 否则服务端无从复算; 不登记时保持原有行为逐字不变
+                seed = input_recipe.seed_for(getattr(testcase, "testcase_name", ""), idx)
+                np.random.seed(seed)
             rd = RandomData(dtype, s_shape, data_range)
-            np_storages.append(rd.generate(distribution))
+            arr = rd.generate(distribution)
+            np_storages.append(arr)
+            if recipes is not None and seed is not None:
+                # 按 storage 登记: 派发给三方的是视图, 视图内容与 storage 一致(连续全量)
+                # 时指纹自然命中; 非连续视图查不到 → dispatcher 自动回落整包上传。
+                recipes[input_recipe.digest_of(arr)] = input_recipe.build_recipe(
+                    dtype, s_shape, rd.data_range, distribution, seed
+                )
         else:
             from ttk.utilities.data import fixed_np_array
 
             init_val = 0 if testcase.api_name in ("torch.ones", "tf.ones") else 1
             np_storages.append(fixed_np_array(dtype, s_shape, init_value=init_val))
     testcase.np_storages = np_storages
+    testcase.input_recipes = recipes
 
 
 def build_views_from_storages(testcase):

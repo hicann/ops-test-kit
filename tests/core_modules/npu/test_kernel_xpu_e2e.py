@@ -3,7 +3,7 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
@@ -53,7 +53,10 @@ if has_tf:
     # find_spec 只看包存在；CI 的 tf 可能装了但 import 崩溃（protobuf 不兼容 / C 扩展 segfault）
     try:
         has_tf = (
-            subprocess.run([sys.executable, "-c", "import tensorflow"], capture_output=True, timeout=90).returncode == 0
+            subprocess.run(
+                [sys.executable, "-c", "import tensorflow"], capture_output=True, timeout=90, check=False
+            ).returncode
+            == 0
         )
     except Exception:
         has_tf = False
@@ -85,8 +88,10 @@ def xpu_server():
     proc = subprocess.Popen(
         [sys.executable, "-m", "server.xpu_server", "--port", str(port), "--devices", "cpu"],
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # 服务端输出丢弃, 不能用 PIPE: 没人读时管道缓冲区(64 KB)写满会让服务端
+        # **永久阻塞**(框架预载一次就能吐 100 KB+), 表现为请求超时而非报错。
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     # Task 6 removed /health; readiness now probes GET /v1/heartbeat (merged
     # health+detect+register). tenant_id=e2e_xpu matches collect_xpu_results.

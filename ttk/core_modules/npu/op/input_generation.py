@@ -16,6 +16,7 @@ import logging
 
 import numpy
 
+from ....remote import input_recipe
 from ....utilities import (
     RandomData,
     deep_flatten,
@@ -81,9 +82,7 @@ def __need_transform(ori_format, format_, ori_shape, shape):
                 f"ori_shape and shape must be both None or both not None, got ori_shape={ori_shape}, shape={shape}"
             )
         return False
-    if tuple(ori_shape) == tuple(shape) and (ori_format == "ND" or format_ == "ND"):
-        return False
-    return True
+    return not (tuple(ori_shape) == tuple(shape) and (ori_format == "ND" or format_ == "ND"))
 
 
 def __transform_single_to_ori(context, arr, nested_ori, group_idx, sub_idx):
@@ -210,6 +209,21 @@ def __transform_to_original_format(context: TestcaseOp):
     context.original_input_arrays = tuple(input_apply_as_list(ori_arrays, context.input_distribution))
 
 
+def _seed_if_recording(recipes, context, idx):
+    """登记配方时必须播种（否则无从复算）；不登记时保持原有行为不变。"""
+    if recipes is None:
+        return None
+    seed = input_recipe.seed_for(getattr(context, "testcase_name", ""), idx)
+    numpy.random.seed(seed)
+    return seed
+
+
+def _record_recipe(recipes, array, dtype, shape, rd, distribution, seed):
+    if recipes is None or seed is None:
+        return
+    recipes[input_recipe.digest_of(array)] = input_recipe.build_recipe(dtype, shape, rd.data_range, distribution, seed)
+
+
 def __realtime_random_input(context: TestcaseOp):
     """Realtime Input Data Generation (Default)"""
     switches = get_global_storage()
@@ -220,6 +234,8 @@ def __realtime_random_input(context: TestcaseOp):
     input_arrays = []
     ori_input_arrays = []
     actual_input_data_ranges = []
+    # 免上传：登记 {内容指纹: 生成配方}，供三方腿判断哪些叶子可以不传（关着开关时为 None）。
+    recipes = {} if getattr(switches, "xpu_zero_upload", False) else None
 
     for idx, shape in enumerate(flat_shapes):
         dtype = get(flat_dtypes, idx)
@@ -240,8 +256,11 @@ def __realtime_random_input(context: TestcaseOp):
                     f"Can not transform from [{ori_format}] to [{format_}]. "
                     f"Please check `input_ori_formats` and `input_formats`."
                 )
+            seed = _seed_if_recording(recipes, context, idx)
             rd = RandomData(dtype, ori_shape, data_range)
             ori_arr = rd.generate(switches.input_distribution)
+            # 送往三方腿的是 ori_arr（run-format 那份在非 NPU 设备上用不了）
+            _record_recipe(recipes, ori_arr, dtype, ori_shape, rd, switches.input_distribution, seed)
             transformed = format_transformation.transform(
                 ori_arr, ori_format, format_, shape, groups=context.attributes.get("groups")
             )
@@ -254,8 +273,10 @@ def __realtime_random_input(context: TestcaseOp):
             input_arrays.append(transformed)
             ori_input_arrays.append(ori_arr)
         else:
+            seed = _seed_if_recording(recipes, context, idx)
             rd = RandomData(dtype, shape, data_range)
             arr = rd.generate(switches.input_distribution)
+            _record_recipe(recipes, arr, dtype, shape, rd, switches.input_distribution, seed)
             input_arrays.append(arr)
             ori_input_arrays.append(arr)
         actual_input_data_ranges.append(tuple(rd.data_range))
@@ -263,6 +284,7 @@ def __realtime_random_input(context: TestcaseOp):
     context.input_arrays = tuple(input_apply_as_list(input_arrays, context.input_distribution))
     context.original_input_arrays = tuple(input_apply_as_list(ori_input_arrays, context.input_distribution))
     context.actual_input_data_ranges = tuple(input_apply_as_list(actual_input_data_ranges, context.input_distribution))
+    context.input_recipes = recipes
 
 
 def __gen_input(context: TestcaseOp, stored_inputs=None):

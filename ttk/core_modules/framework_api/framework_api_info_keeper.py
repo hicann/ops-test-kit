@@ -22,6 +22,8 @@ from ttk.utilities import Singleton
 from ttk.utilities.simple_param_extractor import APIParamInfo, _resolve_function, get_api_params, register_api_params
 from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
+from .framework_detector import TF_API_PREFIXES
+
 
 class FrameworkApiInfoKeeper(metaclass=Singleton):
     def __init__(self):
@@ -31,7 +33,7 @@ class FrameworkApiInfoKeeper(metaclass=Singleton):
         if api_name in self._cache:
             return self._cache[api_name]
         try:
-            if api_name.startswith(("tf.", "tensorflow.")):
+            if api_name.startswith(TF_API_PREFIXES):
                 from ttk.utilities.tf_param_extractor import extract_tf_params
 
                 info = extract_tf_params(api_name)

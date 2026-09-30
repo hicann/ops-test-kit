@@ -17,6 +17,8 @@ Also supports TF APIs (tf.raw_ops.Add, tf.nn.relu, etc.).
 
 from ttk.utilities.torch_ops_package_loader import TorchOpsPackageLoader
 
+from .framework_detector import TF_API_PREFIXES
+
 _MODULE_ALIAS = {}
 
 
@@ -39,7 +41,7 @@ def resolve_api(api_name: str):
         raise ValueError(f"Invalid api_name: {api_name}, expected format: module.func")
 
     # TF: use resolve_callable_str (lazy import tensorflow)
-    if api_name.startswith(("tf.", "tensorflow.")):
+    if api_name.startswith(TF_API_PREFIXES):
         from ttk.utilities.func_dispatch import resolve_callable_str
 
         return resolve_callable_str(api_name), False

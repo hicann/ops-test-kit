@@ -331,17 +331,6 @@ int main(int argc, char* argv[]) {
         return FAILED;
     }
 
-    JsonValue config = jsonParseFile(config_path);
-    if (config.isNull()) {
-        fprintf(stderr, "[TTK-GEIR] Failed to parse config: %s\n", config_path);
-        return FAILED;
-    }
-
-    const JsonValue& inputs_cfg  = config.at("inputs");
-    const JsonValue& outputs_cfg = config.at("outputs");
-    const JsonValue& attrs_cfg   = config.at("attrs");
-    const JsonValue& build_cfg   = config.at("build_options");
-
     string device_id_str = to_string(device_id);
     map<AscendString, AscendString> global_options;
     global_options["ge.exec.deviceId"] = device_id_str.c_str();
@@ -351,26 +340,93 @@ int main(int argc, char* argv[]) {
         return FAILED;
     }
 
+    const bool ttk_serve_mode = (config_path[0] == '-' && config_path[1] == '\0');
 {% if ge_prof_ok %}
     bool prof_init_done = false;
     bool prof_started = false;
     aclgrphProfConfig* prof_cfg = nullptr;
-    if (prof_path[0] != '\0') {
+    // 一次性模式: 路径由 argv[4] 给定, 整进程 init 一次。
+    // 常驻模式: profiling 产物要求逐例分目录, 而 aclgrphProfInit 绑定的是进程级
+    // 输出路径 —— 故这里不 init, 改为每例进来时按该例的路径 init、跑完即 finalize。
+    if (!ttk_serve_mode && prof_path[0] != '\0') {
         if (aclgrphProfInit(prof_path, (uint32_t)strlen(prof_path)) == GE_PROF_SUCCESS) {
             prof_init_done = true;
         } else {
             fprintf(stderr, "[TTK-GEIR] aclgrphProfInit failed, profiling disabled\n");
         }
     }
-{% endif %}
-    auto finalize_all = [&]() {
-{% if ge_prof_ok %}
+    auto prof_teardown = [&]() {
         if (prof_started && prof_cfg) { aclgrphProfStop(prof_cfg); prof_started = false; }
         if (prof_cfg) { aclgrphProfDestroyConfig(prof_cfg); prof_cfg = nullptr; }
         if (prof_init_done) { aclgrphProfFinalize(); prof_init_done = false; }
+    };
+{% else %}
+    auto prof_teardown = [&]() {};
 {% endif %}
+    auto finalize_all = [&]() {
+        prof_teardown();
         GEFinalize();
     };
+
+    // ---------- 常驻模式 ----------
+    // argv[5] 为 "-" 时进入常驻: 从 stdin 逐行读 "config_path<TAB>input_prefix",
+    // 每读一行跑一个用例, 读到 EOF 退出。GEInitialize 因此**整批只做一次**
+    // —— 实测它要 8.5 秒, 而逐例真正必须做的 AddGraph/RunGraph 只要 4.3 秒。
+    // 传具体路径时行为与原来完全一致(跑一个用例就退出)。
+    bool ttk_first_round = true;
+    string ttk_cfg_path;
+    string ttk_prof_buf;
+    string ttk_prefix_buf = input_prefix ? string(input_prefix) : string();
+
+    while (true) {
+    if (ttk_serve_mode) {
+        char ttk_line[4096];
+        if (fgets(ttk_line, sizeof(ttk_line), stdin) == nullptr) break;   // EOF -> 正常收工
+        string entry(ttk_line);
+        while (!entry.empty() && (entry.back() == '\n' || entry.back() == '\r')) entry.pop_back();
+        if (entry.empty()) continue;
+        // 每行: config_path<TAB>input_prefix[<TAB>prof_path]
+        size_t tab = entry.find('\t');
+        ttk_prof_buf.clear();
+        if (tab == string::npos) {
+            ttk_cfg_path = entry;
+        } else {
+            ttk_cfg_path = entry.substr(0, tab);
+            string rest = entry.substr(tab + 1);
+            size_t tab2 = rest.find('\t');
+            if (tab2 == string::npos) {
+                ttk_prefix_buf = rest;
+            } else {
+                ttk_prefix_buf = rest.substr(0, tab2);
+                ttk_prof_buf   = rest.substr(tab2 + 1);
+            }
+        }
+{% if ge_prof_ok %}
+        if (!ttk_prof_buf.empty()) {
+            if (aclgrphProfInit(ttk_prof_buf.c_str(), (uint32_t)ttk_prof_buf.size()) == GE_PROF_SUCCESS) {
+                prof_init_done = true;
+            } else {
+                fprintf(stderr, "[TTK-GEIR] aclgrphProfInit failed, profiling disabled\n");
+            }
+        }
+{% endif %}
+    } else {
+        if (!ttk_first_round) break;
+        ttk_first_round = false;
+        ttk_cfg_path = config_path;
+    }
+    const char* input_prefix = ttk_prefix_buf.c_str();
+
+    JsonValue config = jsonParseFile(ttk_cfg_path.c_str());
+    if (config.isNull()) {
+        fprintf(stderr, "[TTK-GEIR] Failed to parse config: %s\n", ttk_cfg_path.c_str());
+        finalize_all();
+        return FAILED;
+    }
+    const JsonValue& inputs_cfg  = config.at("inputs");
+    const JsonValue& outputs_cfg = config.at("outputs");
+    const JsonValue& attrs_cfg   = config.at("attrs");
+    const JsonValue& build_cfg   = config.at("build_options");
 
     Graph graph("ttk_geir_test");
     vector<Tensor>    input_tensors, output_tensors;
@@ -709,6 +765,9 @@ int main(int argc, char* argv[]) {
     fflush(data_out);
 
     delete session;
+    if (ttk_serve_mode) prof_teardown();   // 逐例收尾, 让下一例能 init 到自己的路径
+    }  // ---------- 常驻模式循环结束 ----------
+
     finalize_all();
     return SUCCESS;
 }

@@ -3,24 +3,15 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 """Tests for server-side _resolve_3party_api (KERNEL dual-form port).
 
-torch/tf are available on the XPU server. Skip when torch_npu + tensorflow
-coexist: torch_npu._C and tensorflow C extensions conflict on import → segfault.
+torch/tf are available on the XPU server. torch_npu 与 tensorflow 的 C 扩展曾在同进程导入时冲突崩溃;
+现由 tests/conftest.py 的受控预载(RTLD_DEEPBIND 装 tensorflow)消除, 无需再跳过。
 """
-
-import importlib.util
-
-import pytest
-
-_has_torch_npu = importlib.util.find_spec("torch_npu") is not None
-_has_tf = importlib.util.find_spec("tensorflow") is not None
-if _has_torch_npu and _has_tf:
-    pytestmark = pytest.mark.skip(reason="torch_npu._C + tensorflow C extension conflict → segfault")
 
 
 def test_torch_resolve_snake():

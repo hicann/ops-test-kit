@@ -61,6 +61,10 @@ def _apply_compare_dump_args(sw, args):
         sw.dump_config.dump_on_fail = True
     if hasattr(args, "xpu_perf") and args.xpu_perf:
         sw.xpu_perf = True
+    if getattr(args, "xpu_zero_upload", False):
+        sw.xpu_zero_upload = True
+    if getattr(args, "geir_serve", False):
+        sw.geir_serve = True
 
 
 def _apply_plugin_rerun_args(sw, args):

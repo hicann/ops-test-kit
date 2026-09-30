@@ -15,6 +15,7 @@ __all__ = ["UniversalTestcaseFactory"]
 
 
 # Standard Packages
+import collections
 import logging
 import random
 from typing import Any, Dict, List, Optional, Set, TextIO
@@ -32,12 +33,37 @@ class PLACEHOLDER:
     """
 
 
+# 载入阶段被丢弃的用例统计（喂入 − 载入）。解析与最终汇总都在主进程, 不跨进程共享。
+# 为什么要有它: 用例被跳过只按 reason 各自 debug 一行, 默认日志级看不见, 而 Summary 的
+# Total 是**载入条数**不是**喂入条数** —— 喂 200 跑 181 也会报 PassRate 98.34%,
+# 分母悄悄变小且毫无提示（2026-09-26 实测 19 例 is_enabled=FALSE 被静默丢弃）。
+LOAD_STATS: "collections.Counter" = collections.Counter()
+
+_SKIP_REASON_DESC = {
+    "disabled": "is_enabled=FALSE",
+    "soc": "当前 soc 不在 soc_series 内",
+    "name_filter": "不在 --testcase-name 选择范围",
+    "index_filter": "不在 --testcase-index 选择范围",
+    "op_filter": "不在 --op-name 选择范围",
+    "priority_filter": "不在 --priority 选择范围",
+    "rerun_filter": "不在 rerun 范围",
+}
+
+
 class UniversalTestcaseFactory:
     """
     Universal Testcase Factory
     """
 
-    __slots__ = ["raw_data", "header", "real_header_indexes", "testcase_instance", "testcases"]
+    __slots__ = [
+        "raw_data",
+        "header",
+        "real_header_indexes",
+        "testcase_instance",
+        "testcases",
+        "skip_stats",
+        "skip_names",
+    ]
 
     def __init__(self, file: TextIO):
         """
@@ -70,6 +96,9 @@ class UniversalTestcaseFactory:
         self.testcase_instance: Optional[TestcaseBase] = None
         # testcase.
         self.testcases: List[TestcaseBase] = []
+        # 各跳过原因的计数 + 被跳过的用例名（用于载入后一次性汇报, 而不是每条 debug 一行）
+        self.skip_stats: collections.Counter = collections.Counter()
+        self.skip_names: Dict[str, List[str]] = {}
 
         set_process_name("TestcaseManager")
         set_thread_name("Initialization")
@@ -190,10 +219,11 @@ class UniversalTestcaseFactory:
         return False
 
     @staticmethod
-    def _check_testcase_enabled(testcase_struct: TestcaseBase) -> bool:
+    def _check_testcase_enabled(testcase_struct: TestcaseBase) -> Optional[str]:
+        """返回 None 表示保留；返回字符串表示跳过原因（键见 _SKIP_REASON_DESC）。"""
         if not testcase_struct.is_enabled:
             logging.debug(f"Testcase {testcase_struct.testcase_name} skipped bcz it's disabled")
-            return False
+            return "disabled"
         # Skip testcase if it is disabled in current soc
         current_soc = get_global_storage().short_soc_version
         if testcase_struct.soc_series and current_soc:
@@ -211,8 +241,8 @@ class UniversalTestcaseFactory:
                 logging.debug(
                     f"Testcase {testcase_struct.testcase_name} skipped bcz it's disabled in current soc {current_soc}."
                 )
-            return enabled
-        return True
+                return "soc"
+        return None
 
     @staticmethod
     def _check_testcase_name_selection(testcase_name: str) -> bool:
@@ -435,23 +465,28 @@ class UniversalTestcaseFactory:
                     unidentified_headers.append(header)
             if unidentified_headers:
                 raise KeyError(f"TestcaseManager header not match. Report Bug to us: {unidentified_headers}")
-            # Skip testcase if it is disabled
-            if not self._check_testcase_enabled(testcase_struct):
-                continue
-            # Skip testcase if it is not in global testcase_name selector range
-            if not self._check_testcase_name_selection(testcase_struct.testcase_name):
-                continue
-            # Skip testcase if it is not in global testcase_index selector range
-            if not self._check_testcase_indexes_selection(testcase_idx):
-                continue
-            # Skip testcase if it is not in global testcase_op_name selector range
-            if not self._check_testcase_operator_selection(testcase_struct.op_name):
-                continue
-            # Skip testcase if it is not in specified priority
-            if not self._check_testcase_priority_selection(testcase_struct.priority):
-                continue
-            # Skip testcase if it is not in rerun range
-            if not self._check_testcase_rerun(testcase_struct):
+            # 逐条记下"为什么没跑"，载入后一次性汇报。判定顺序与取值保持原样：
+            # 各 lambda 惰性求值，第一个判否即短路，不会多跑后面的过滤器。
+            reason = self._check_testcase_enabled(testcase_struct)
+            if reason is None:
+                # lambda 用默认参数**绑定**当轮的 struct/idx: 闭包按引用捕获循环变量的话,
+                # 惰性求值时拿到的是最后一轮的值(ruff B023)。
+                for key, keep in (
+                    ("name_filter", lambda ts=testcase_struct: self._check_testcase_name_selection(ts.testcase_name)),
+                    ("index_filter", lambda ti=testcase_idx: self._check_testcase_indexes_selection(ti)),
+                    ("op_filter", lambda ts=testcase_struct: self._check_testcase_operator_selection(ts.op_name)),
+                    (
+                        "priority_filter",
+                        lambda ts=testcase_struct: self._check_testcase_priority_selection(ts.priority),
+                    ),
+                    ("rerun_filter", lambda ts=testcase_struct: self._check_testcase_rerun(ts)),
+                ):
+                    if not keep():
+                        reason = key
+                        break
+            if reason is not None:
+                self.skip_stats[reason] += 1
+                self.skip_names.setdefault(reason, []).append(testcase_struct.testcase_name)
                 continue
             set_thread_name(testcase_struct.testcase_name)
             testcase_struct.validate()
@@ -470,4 +505,31 @@ class UniversalTestcaseFactory:
             all_indexes = random.sample(
                 tuple(range(len(self.testcases))), k=get_global_storage().selected_testcase_count
             )
+            sampled = len(self.testcases) - get_global_storage().selected_testcase_count
             self.testcases = [testcase for idx, testcase in enumerate(self.testcases) if idx in all_indexes]
+            self.skip_stats["count_selector"] += sampled
+        self._report_load_stats()
+
+    def _report_load_stats(self):
+        """把"喂入 − 载入"的差额在 INFO 级讲清楚，并交给最终 Summary 复述一遍。
+
+        原来每种跳过只在 DEBUG 打一行：默认日志级下, 喂 200 跑 181 与喂 181 跑 181
+        在输出上**完全一样**, 覆盖被砍掉毫无提示。分母不可信是最难发现的一类问题
+        （同类坑还有 CSV 逗号未转义丢例、跑批 OOM 静默中断）。
+        """
+        LOAD_STATS.clear()
+        LOAD_STATS["fed"] = len(self.raw_data)
+        LOAD_STATS["loaded"] = len(self.testcases)
+        dropped = len(self.raw_data) - len(self.testcases)
+        if dropped <= 0:
+            return
+        LOAD_STATS["dropped"] = dropped
+        for reason, cnt in self.skip_stats.items():
+            LOAD_STATS[reason] = cnt
+        detail = "; ".join(f"{_SKIP_REASON_DESC.get(r, r)}: {c}" for r, c in sorted(self.skip_stats.items()) if c)
+        logging.info(
+            f"Testcase load: fed {len(self.raw_data)} → loaded {len(self.testcases)}, dropped {dropped} ({detail})"
+        )
+        for reason, names in sorted(self.skip_names.items()):
+            head = ", ".join(names[:5]) + (f" ... (+{len(names) - 5})" if len(names) > 5 else "")
+            logging.info(f"  dropped[{_SKIP_REASON_DESC.get(reason, reason)}]: {head}")

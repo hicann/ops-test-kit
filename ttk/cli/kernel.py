@@ -116,6 +116,14 @@ def _add_kernel_args(parser):
         help="Collect 3rd-party (XPU) performance per case. "
         "Requires remote XPU config (ttk.conf.yaml or --config). PERF-only.",
     )
+    parser.add_argument(
+        "--xpu-zero-upload",
+        dest="xpu_zero_upload",
+        action="store_true",
+        help="Send input generation recipes + per-tensor sha256 instead of the input data itself; "
+        "the server regenerates and verifies each digest. Saves the upload over slow links. "
+        "Falls back to full upload automatically when a digest does not match.",
+    )
 
 
 def _handle_kernel(args):

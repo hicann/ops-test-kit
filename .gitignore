@@ -18,6 +18,8 @@ log/
 
 # TTK runtime outputs
 kernel_meta/
+# 三方腿熔断器状态 + 各 endpoint 健康快照, 每次跑批重写
+/.ttk/
 /geir/
 msprof/
 sim_output/

@@ -149,6 +149,79 @@ def _dump_xpu_outputs(xpu_results, testcase_name: str, switches) -> None:
             logging.info("[%s] Dumped XPU output: %s/%s", testcase_name or "testcase", target_dir, file_name)
 
 
+# 端点短暂不可用时的恢复等待: 默认最多等 3 分钟, 环境变量可调(0 表示不等, 恢复旧行为)。
+ENDPOINT_RECOVERY_WAIT_S = float(os.environ.get("TTK_ENDPOINT_RECOVERY_WAIT_S", "180"))
+# 本进程内是否曾经成功解析过端点 —— 区分"链路瞬断"(值得等)与"从未可用"(不值得等)
+_ENDPOINT_EVER_RESOLVED = False
+
+
+def _probe_endpoints_alive(ev) -> bool:
+    """绕过 health 文件直接探一次各端点, 任一活着就返回 True。
+
+    health 文件由心跳子进程周期性刷新; 链路抖动期间它会如实写 alive=false。
+    但"此刻读到不可用"不等于"这一整批都不可用" —— 直接探一次, 让恢复立刻被看见,
+    而不是干等下一次心跳。
+    """
+    import http.client
+
+    for ep in getattr(ev, "_endpoints", []) or []:
+        try:
+            conn = http.client.HTTPConnection(ep.host, ep.port, timeout=10)
+            try:
+                conn.request("GET", "/v1/heartbeat")
+                if 200 <= conn.getresponse().status < 300:
+                    return True
+            finally:
+                conn.close()
+        except OSError:
+            continue
+    return False
+
+
+def _resolve_with_recovery(ev, spec_providers, cli_providers, label):
+    """解析 provider; 端点暂时不可用时退避等待其恢复, 而不是把用例判死。
+
+    背景(2026-09-23 实测): 跨公网跳板的链路会瞬时中断。端点一旦判死, 后续每个用例
+    都会快速失败并被**消耗掉** —— 等链路几分钟后恢复时, 这些用例已经记成 FAIL,
+    整批只能重跑。更糟的是这种 FAIL 与"算子精度真的不达标"在 precision_status 上
+    无法区分, 得翻 xpu_metrics 才看得出是基础设施问题。
+    一次 72 例的跑批因此废掉 55 例。
+    """
+    import time as _time
+
+    # 只对**曾经解析成功过**的端点等待恢复。理由: 等待是为了扛住"跑批中途链路瞬断"
+    # (端点原本活着, 掉线几分钟后会回来); 而"一开始就不可用"是永久状态 —— 配置没写、
+    # 服务没起、端口不通, 等多久都不会变, 每个用例空等只是把跑批拖死。
+    global _ENDPOINT_EVER_RESOLVED
+    if not _ENDPOINT_EVER_RESOLVED:
+        try:
+            providers = ev.resolve_providers(spec_providers, cli_providers)
+        except RuntimeError as e:
+            logging.error("[%s] XPU resolve failed: %s", label, e)
+            return None
+        _ENDPOINT_EVER_RESOLVED = True
+        return providers
+
+    deadline = _time.monotonic() + ENDPOINT_RECOVERY_WAIT_S
+    delay = 5.0
+    while True:
+        try:
+            providers = ev.resolve_providers(spec_providers, cli_providers)
+            _ENDPOINT_EVER_RESOLVED = True
+            return providers
+        except RuntimeError as e:
+            if _time.monotonic() >= deadline:
+                logging.error("[%s] XPU resolve failed (endpoint down >%.0fs): %s", label, ENDPOINT_RECOVERY_WAIT_S, e)
+                return None
+            if _probe_endpoints_alive(ev):
+                logging.warning("[%s] endpoint reachable again, retrying provider resolution", label)
+                _time.sleep(1.0)  # 给心跳一点时间刷新 health 文件
+                continue
+            logging.warning("[%s] endpoint unavailable, waiting %.0fs before retry: %s", label, delay, e)
+            _time.sleep(delay)
+            delay = min(delay * 2, 30.0)
+
+
 def dispatch_xpu(
     *,
     op_name: str,
@@ -162,6 +235,7 @@ def dispatch_xpu(
     switches,
     need_data: bool,
     param_order: Optional[list] = None,
+    input_recipes: Optional[dict] = None,
 ):
     """Run XPU dispatch，返回 (xpu_results, priority_provider)。
 
@@ -186,10 +260,9 @@ def dispatch_xpu(
     spec_providers = extract_spec_providers(tp)
     cli_providers = _parse_provider_filter(getattr(switches, "provider_filter", None))
 
-    try:
-        providers = ev.resolve_providers(spec_providers, cli_providers)
-    except RuntimeError as e:
-        logging.error("[%s] XPU resolve failed: %s", testcase_name or op_name, e)
+    providers = _resolve_with_recovery(ev, spec_providers, cli_providers, testcase_name or op_name)
+    if providers is None:
+        _record_breaker(switches, ok=False, reason="no usable provider (endpoint not resolvable)")
         return {}, None
 
     specs = [build_spec(p, tp, spec_file, spec_class) for p in providers]
@@ -220,9 +293,29 @@ def dispatch_xpu(
         runtime=getattr(switches, "run_time", 3),
         param_order=param_order,
         dump_xpu=switches.dump_config.is_xpu_enabled(),
+        input_recipes=input_recipes,
     )
+    _record_breaker(switches, **_judge_xpu_results(xpu_results))
     _dump_xpu_outputs(xpu_results, testcase_name, switches)
     return xpu_results, (specs[0].provider if specs else None)
+
+
+def _judge_xpu_results(xpu_results: dict) -> dict:
+    """本例三方腿算成功还是失败(喂给熔断器)。任一 provider PASS 即成功。"""
+    if any((r or {}).get("status") == "PASS" for r in xpu_results.values()):
+        return {"ok": True, "reason": ""}
+    errors = [(r or {}).get("error", "") for r in xpu_results.values()]
+    return {"ok": False, "reason": next((e for e in errors if e), "empty xpu_results")}
+
+
+def _record_breaker(switches, *, ok: bool, reason: str) -> None:
+    """记一例三方腿结果；熔断器自身出问题绝不能影响跑批。"""
+    from ttk.remote import xpu_breaker
+
+    try:
+        xpu_breaker.record(getattr(switches, "root_path", None) or os.getcwd(), ok=ok, reason=reason)
+    except OSError as e:
+        logging.warning("xpu breaker record failed (ignored): %s", e)
 
 
 def collect_third_party(
@@ -238,6 +331,7 @@ def collect_third_party(
     param_order: Optional[list] = None,
     input_formats: Optional[list] = None,
     input_dtypes: Optional[list] = None,
+    input_recipes: Optional[dict] = None,
 ) -> Tuple[Optional[str], Optional[list], Optional[dict]]:
     """门面：采集第三方输出，返回 (priority_provider, flat_third_parties, xpu_results)。
 
@@ -271,6 +365,7 @@ def collect_third_party(
         testcase_name=testcase_name,
         switches=switches,
         need_data=need_data,
+        input_recipes=input_recipes,
         param_order=param_order,
         input_formats=input_formats,
         input_dtypes=input_dtypes,

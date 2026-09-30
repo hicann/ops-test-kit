@@ -269,7 +269,10 @@ class RandomData:
         lo = max(int(math.floor(low)), int(info.min))
         hi = min(int(math.ceil(high)), int(info.max))
         lo = min(lo, hi)
-        generator = numpy.random.default_rng()
+        # 种子取自**已播种的全局 legacy RNG**，而不是 default_rng() 的 OS 熵：
+        # 后者让原生整型输入无视 np.random.seed，同一用例每次跑数据都不同
+        # （batch_seed 的可复现承诺对整型形同虚设，免上传的配方也无从复算）。
+        generator = numpy.random.default_rng(numpy.random.randint(0, 2**32))
         return generator.integers(lo, hi, size=shape, endpoint=True, dtype=dtype)
 
     def _random(

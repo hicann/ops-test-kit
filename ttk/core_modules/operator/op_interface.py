@@ -159,20 +159,35 @@ class OperatorInterface(metaclass=Singleton):
                         "shape": sub_shape,
                         "ori_shape": sub_ori,
                         "range": sub_range,
-                        "dtype": sub_dtype,
+                        "dtype": OperatorInterface._ge_tiling_dtype(sub_dtype),
                         "format": sub_fmt,
                         "ori_format": sub_ori_fmt,
                     }
                 )
         return tuple(group)
 
-    @staticmethod
-    def _build_tensor_dict(shape, ori_shape, dtype, fmt, ori_fmt, range_):
+    # GE 的 op_tiling 接口按**字符串**解析 dtype, 其词表用 "double" 而非 numpy 风格的
+    # "float64"; 传 "float64" 会解析成 DT_UNDEFINED, 算子 tiling 里 GetSizeByDataType
+    # 返回 0 → 报 "invalid x dtype size" → OPTILING_FAILURE。
+    # 实测(NonZeroWithValue 128x65, 同 shape 只改拼写):
+    #   float64 → OPTILING_FAILURE + 日志 "data_type not support [DT_UNDEFINED]"
+    #   double  → PASS, tilingKey 1020
+    # 这类失败形态极易被误判成"算子不支持该 dtype", 故在喂给 tiling 前统一归一。
+    _GE_TILING_DTYPE_ALIAS = {"float64": "double"}
+
+    @classmethod
+    def _ge_tiling_dtype(cls, dtype):
+        if isinstance(dtype, (tuple, list)):
+            return type(dtype)(cls._ge_tiling_dtype(d) for d in dtype)
+        return cls._GE_TILING_DTYPE_ALIAS.get(dtype, dtype)
+
+    @classmethod
+    def _build_tensor_dict(cls, shape, ori_shape, dtype, fmt, ori_fmt, range_):
         return {
             "shape": shape,
             "ori_shape": ori_shape,
             "range": range_,
-            "dtype": dtype,
+            "dtype": cls._ge_tiling_dtype(dtype),
             "format": fmt,
             "ori_format": ori_fmt,
         }
@@ -195,7 +210,7 @@ class OperatorInterface(metaclass=Singleton):
             "shape": tuple(map(int, my_value.shape)),
             "ori_shape": tuple(map(int, my_value.shape)),
             "range": get(self._stc_input_ranges, ip_n),
-            "dtype": my_dtype,
+            "dtype": self._ge_tiling_dtype(my_dtype),
             "format": get(self._input_formats, ip_n),
             "ori_format": get(self._input_ori_formats, ip_n),
             "name": key,

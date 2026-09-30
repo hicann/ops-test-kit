@@ -24,8 +24,10 @@ import pytest
 def xpu_server():
     proc = subprocess.Popen(
         [sys.executable, "-m", "server.xpu_server", "--port", "19092", "--dry-run"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # 服务端输出丢弃, 不能用 PIPE: 没人读时管道缓冲区(64 KB)写满会让服务端
+        # **永久阻塞**(框架预载一次就能吐 100 KB+), 表现为请求超时而非报错。
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     for _ in range(20):
         time.sleep(0.5)

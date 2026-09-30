@@ -103,6 +103,17 @@ def _build_device_opts(handler, n):
     return opts
 
 
+def _parse_json_header(raw):
+    """解析可选 JSON 头；缺失或非法一律当作没有（调用方自然走老路）。"""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logging.warning("ignoring malformed JSON header")
+        return None
+
+
 def _parse_mode(raw):
     """X-Mode: int bitmask (new protocol) or legacy 'data'/'perf' string."""
     raw = (raw or "").strip()
@@ -169,6 +180,107 @@ def _is_device_healthy(device_id, cooldown_s):
     return ts is None or (time.time() - ts) >= cooldown_s
 
 
+SERVER_FEATURES = ["zero_upload", "keepalive"]
+_FORKSERVER_CTX = None
+
+
+def _probe_child(framework):
+    """预载自检子进程: 验证"从这个预载过的 forkserver fork 出来的子进程,
+    仍能 import 指定框架"。
+
+    每个请求的子进程只 import **一个**框架(它要服务的那个 provider), 所以自检
+    也要一个框架起一个子进程 —— 在一个子进程里 import 全部框架是更严苛的条件,
+    本机(装了 torch_npu)那样必然 core dump, 会把"不预载"也误判成不可用。
+
+    预载 torch 之后子进程再 import tensorflow 可能撞 C 扩展冲突(本机实测),
+    这种组合就该被这道自检挡下来并降级。
+    """
+    import importlib
+
+    importlib.import_module(framework)
+
+
+def _forkserver_ctx(provider_hint: str = ""):
+    """返回**预载过框架**的 forkserver 上下文(全进程复用一个)。
+
+    forkserver 默认只带极小的模块集, 于是每个请求 fork 出的子进程都要自己
+    ``import torch`` —— 实测 2.3 秒/请求, 而请求本身的 GPU 计算往往只有几百微秒。
+    预载后子进程启动成本降到 ~0.03 秒(实测降 97%)。
+
+    预载哪些模块**不做任何硬编码假设, 按候选表逐级实测降级**:
+    个别环境里某些框架无法共存(如装了 torch_npu 的机器上 torch 与 tensorflow
+    的 C 扩展同进程会 core dump), 但这是环境特性不是通例 —— 与其写死规则,
+    不如每次启动拿一个空子进程试出来, 谁能起来用谁。
+
+    另: ``set_forkserver_preload`` 必须在 forkserver 启动**之前**调用, 一旦启动
+    就改不了; 所以每次降级都要在全新进程上下文里重试(通过 _spawn_ctx 重建)。
+    """
+    global _FORKSERVER_CTX
+    if _FORKSERVER_CTX is not None:
+        return _FORKSERVER_CTX
+    with _FORKSERVER_LOCK:
+        if _FORKSERVER_CTX is None:  # 双检: 等锁期间可能已被别的线程选好
+            _FORKSERVER_CTX = _select_forkserver_ctx(provider_hint)
+    return _FORKSERVER_CTX
+
+
+def _select_forkserver_ctx(provider_hint: str = ""):
+    """真正的选档过程。必须在 _FORKSERVER_LOCK 内调用 —— 服务端是多线程 HTTP,
+    两个 provider 会并发打进来; 若不串行化, 一个线程正用着 forkserver, 另一个
+    在降级时把它 _stop 掉, 请求就会永久挂住(实测: 并发双 provider 的用例超时)。"""
+    import importlib.util
+
+    # 框架统一由 _framework_preload 这个 shim 加载: 它用 RTLD_DEEPBIND 导入 tensorflow,
+    # 从机制上切断"弱符号跨库合并"(torch 由 GCC 编、tf 由 clang 编, 88 个同名模板实例化
+    # 被合并后 tf 在 .so 静态初始化阶段即段错误)。详见该模块 docstring 的实测与对照实验。
+    # 因此这里**不再依赖加载顺序**, 也不需要按 provider 重排。
+    installed = [m for m in ("torch", "tensorflow") if importlib.util.find_spec(m) is not None]
+    del provider_hint  # 顺序无关, 保留形参以免调用方改动
+    base = ["ttk.remote.server.executor", "ttk.remote.server._framework_preload"]
+    # 候选从"全部预载"逐级退到"什么都不预载"
+    # 最后一档是"什么都不预载": ttk.remote.server.executor 本身会拉起 torch,
+    # 所以在 torch/tf 不能共存的机器上, 连 base 档都过不了自检, 必须能退到空。
+    # 候选只有两档: 预载(executor + shim) -> 什么都不预载。
+    # 框架由 shim 内部按需加载, 不再用"逐个丢框架"的降级阶梯 —— 那个阶梯的前提是
+    # "框架之间必然冲突", 而 DEEPBIND 已经消除了冲突; 万一某环境仍然崩, 自检会把
+    # 整档判失败并退到空预载(等价于改动前的行为)。
+    candidates = [base, []]
+    for preload in candidates:
+        # forkserver 进程是 multiprocessing 的**模块级单例**: 一旦以某组 preload 起来,
+        # 后续 set_forkserver_preload 改不动它(新建 context 对象也没用)。不显式停掉,
+        # 降级就是假的 —— 实测会出现"连空预载档都自检失败", 因为用的还是第一档那个进程。
+        _stop_forkserver()
+        ctx = multiprocessing.get_context("forkserver")
+        try:
+            ctx.set_forkserver_preload(preload)
+            for framework_name in installed or ["ttk.remote.server.executor"]:
+                proc = ctx.Process(target=_probe_child, args=(framework_name,))
+                proc.start()
+                proc.join(120)
+                if proc.exitcode != 0:
+                    raise RuntimeError(f"warm-up child for {framework_name} exitcode={proc.exitcode}")
+            logging.info("forkserver preload ready: %s", preload)
+            return ctx
+        except Exception as e:  # noqa: BLE001  预载失败只降级, 绝不让服务不可用
+            logging.warning("forkserver preload %s failed (%s), degrading", preload, e)
+    _stop_forkserver()  # 全部档位失败: 退回干净的 forkserver(等价于改动前的行为)
+    return multiprocessing.get_context("forkserver")
+
+
+_FORKSERVER_LOCK = threading.Lock()
+
+
+def _stop_forkserver():
+    """停掉已启动的 forkserver 单例, 使下一次 set_forkserver_preload 能真正生效。"""
+    try:
+        from multiprocessing import forkserver as _fs
+
+        _fs._forkserver._stop()
+    except Exception as e:  # noqa: BLE001  没起来过 / 内部结构变化, 都不该影响服务
+        # 首次调用(forkserver 还没起)必然走到这里, 属正常路径, 故只记 debug。
+        logging.debug("stop forkserver skipped: %s", e)
+
+
 def _run_in_subprocess(kwargs: dict, deadline: float) -> dict:
     """Run execute_request in a FRESH forkserver child process; return envelope.
 
@@ -176,7 +288,7 @@ def _run_in_subprocess(kwargs: dict, deadline: float) -> dict:
     kills only that child. A hard crash (segfault/OOM) means the child exits
     with nonzero code and sends nothing -> 500. Timeout -> kill -> 500.
     """
-    ctx = multiprocessing.get_context("forkserver")
+    ctx = _forkserver_ctx(kwargs.get("provider") or "")
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     proc = ctx.Process(target=executor.child_main, args=(child_conn, kwargs))
     logging.info("_run_in_subprocess: starting child for provider=%s", kwargs.get("provider"))
@@ -269,6 +381,15 @@ def _atomic_write_file(abs_path: str, content: bytes) -> None:
 
 
 class XpuRequestHandler(BaseHTTPRequestHandler):
+    # 持久连接: 客户端可复用同一条 TCP —— 在 SSH 隧道上就是复用同一条 channel。
+    # 实测经公网跳板时每请求新建 channel 的成本随使用逐步劣化
+    # (同隧道连续探测 18ms→57ms→290ms→752ms), 复用则恒为即时。
+    # 前提是每条响应都带准确 Content-Length(本文件两处出口 + send_error 均满足)。
+    protocol_version = "HTTP/1.1"
+    # 空闲读超时: 超时后 handle_one_request 置 close_connection, 线程退出、连接关闭。
+    # 这是**不依赖客户端清理**的那道保险 —— 客户端被 SIGKILL 时内核虽关了 fd,
+    # 但隧道侧 channel 可能滞留在 CLOSE-WAIT(实测), 服务端不能干等着占线程。
+    timeout = 30
     tenant_manager: TenantManager
     dry_run: bool = False
     device_count: int = 1
@@ -337,6 +458,11 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
                     "device_count": self.device_count,
                     "hardware": self.hardware,
                     "providers": providers,
+                    # 能力声明: 客户端据此决定是否启用。免传输对旧服务端**不向后兼容**
+                    # —— 客户端不发 body, 旧服务端看到 Content-Length:0 却有 input_count>0,
+                    # 会报出一个看起来像参数绑定 bug 的 400(实测 SFL 性能档 200 例因此全废),
+                    # 所以必须先协商再启用, 不能靠"试了再回落"。
+                    "features": SERVER_FEATURES,
                 },
             )
         else:
@@ -517,6 +643,9 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
             attrs = json.loads(attrs_raw)
         except json.JSONDecodeError:
             attrs = {}
+        # 免上传：客户端只发生成配方 + 每片叶子的内容指纹，本端按配方重算再校验。
+        input_recipes = _parse_json_header(self._get_header("X-Input-Recipes", ""))
+        input_digests = _parse_json_header(self._get_header("X-Input-Digests", ""))
         param_order_raw = self._get_header("X-Param-Order", "")
         param_order = None
         if param_order_raw:
@@ -525,6 +654,8 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 param_order = None
         return {
+            "input_recipes": input_recipes,
+            "input_digests": input_digests,
             "tenant_id": tenant_id,
             "mode": mode,
             "exec_type": exec_type,
@@ -593,6 +724,8 @@ class XpuRequestHandler(BaseHTTPRequestHandler):
             "attrs": parsed["attrs"],
             "tmp_in_path": tmp_in,
             "input_count": parsed["input_count"],
+            "input_recipes": parsed.get("input_recipes"),
+            "input_digests": parsed.get("input_digests"),
             "device_id": opts["device_id"],
             "use_device": self.use_device,
             "output_dir": req_dir,

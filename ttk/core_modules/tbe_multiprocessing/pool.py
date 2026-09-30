@@ -23,6 +23,7 @@ import multiprocessing as mp
 import os
 import re
 import sys
+import threading
 import time
 import traceback
 from enum import Enum, auto
@@ -290,8 +291,35 @@ def worker_bootstrap(global_storage):
     _preload_plugin_frameworks(getattr(global_storage, "plugin_path", None))
 
 
+ORPHAN_GUARD_INTERVAL_S = 2.0
+
+
+def _start_orphan_guard() -> None:
+    """守护线程: 父进程一死就自杀, 避免 worker 变孤儿长期残留。
+
+    已有保护只覆盖**空闲态** —— worker 阻塞在 ``pipe.recv()`` 时父死会让 recv 抛错从而自杀;
+    但正在跑长任务(编译/派发, 可达数百秒)时感知不到, 要等任务结束才发现。历史上出现过
+    孤儿 worker/forkserver 堆积吃满内存(``kill -9`` 下 atexit 钩子不会执行)。
+
+    判据用"ppid 是否变化"而非 ``== 1``: 容器/systemd 这类 subreaper 会接管孤儿, ppid 不会变成 1
+    (与 ttk/remote/heartbeat.py 的做法一致)。检查本身极廉价(实测 os.getppid() 约 0.09 微秒),
+    2 秒间隔一天累计开销不到 10 毫秒。
+    """
+    original_ppid = os.getppid()
+
+    def _guard():
+        while True:
+            if os.getppid() != original_ppid:
+                # 父已死: 不走清理钩子(它们可能依赖已断的管道而卡住), 直接退出。
+                os._exit(1)
+            time.sleep(ORPHAN_GUARD_INTERVAL_S)
+
+    threading.Thread(target=_guard, name="orphan-guard", daemon=True).start()
+
+
 def intermediate_func(pipe: "mp.connection.Connection", global_storage) -> NoReturn:
     global process_context
+    _start_orphan_guard()
     process_context = ProcessContext(pipe)
     process_context.report_status(PROCESS_STATUS_CODE.LAUNCHED)  # 0x0114 -> Launched
     worker_bootstrap(global_storage)

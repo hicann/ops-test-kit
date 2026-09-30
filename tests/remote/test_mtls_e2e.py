@@ -1,3 +1,12 @@
+# ----------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------
 """E2E mTLS handshake test: gen cert + subprocess tls server + client real connect.
 
 Verifies the full mTLS path (server wrap_socket CERT_REQUIRED + client
@@ -68,7 +77,7 @@ def _set_tls(ca, cert="", key=""):
 
     import yaml
 
-    import ttk.config.loader as loader
+    from ttk.config import loader
 
     remote = {
         "endpoints": [{"host": "127.0.0.1", "port": 0}],  # placeholder; _create_connection uses args
@@ -88,7 +97,7 @@ def _set_tls(ca, cert="", key=""):
 
 def _reset_tls():
     """恢复默认 config（清缓存后重新 load 默认链）。"""
-    import ttk.config.loader as loader
+    from ttk.config import loader
 
     loader._config = None
     loader.load_config()  # 恢复默认
@@ -120,26 +129,29 @@ def mtls_env(tmp_path_factory):
     sync = tmp_path_factory.mktemp("sync")
     tmp = tmp_path_factory.mktemp("tmp")
     yaml_path = tmp_path_factory.mktemp("config") / "tls.yaml"
-    yaml.dump(
-        {
-            "server": {"bind": "127.0.0.1", "port": port, "max_concurrent": 4},
-            "execution": {"sandbox": "none"},
-            "storage": {"sync_dir": str(sync), "tmp_dir": str(tmp)},
-            "tls": {
-                "enabled": True,
-                "ca_cert": str(certs / "ca.crt"),
-                "server_cert": str(certs / "server.crt"),
-                "server_key": str(certs / "server.key"),
+    with open(yaml_path, "w") as fh:
+        yaml.dump(
+            {
+                "server": {"bind": "127.0.0.1", "port": port, "max_concurrent": 4},
+                "execution": {"sandbox": "none"},
+                "storage": {"sync_dir": str(sync), "tmp_dir": str(tmp)},
+                "tls": {
+                    "enabled": True,
+                    "ca_cert": str(certs / "ca.crt"),
+                    "server_cert": str(certs / "server.crt"),
+                    "server_key": str(certs / "server.key"),
+                },
             },
-        },
-        open(yaml_path, "w"),
-    )
+            fh,
+        )
 
     proc = subprocess.Popen(
         [sys.executable, "-m", _SERVER_MOD, "--port", str(port), "--devices", "cpu", "--config", str(yaml_path)],
         env=os.environ.copy(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        # 服务端输出丢弃, 不能用 PIPE: 没人读时管道缓冲区(64 KB)写满会让服务端
+        # **永久阻塞**(框架预载一次就能吐 100 KB+), 表现为请求超时而非报错。
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     try:
         _wait_server("127.0.0.1", port)

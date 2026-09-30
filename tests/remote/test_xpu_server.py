@@ -3,7 +3,7 @@
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
-# THIS FILE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
@@ -22,8 +22,10 @@ def xpu_server():
     """启动 dry-run xpu_server 子进程（端口 19090），等待 heartbeat 就绪。"""
     proc = subprocess.Popen(
         [sys.executable, "-m", "server.xpu_server", "--port", "19090", "--dry-run"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # 服务端输出丢弃, 不能用 PIPE: 没人读时管道缓冲区(64 KB)写满会让服务端
+        # **永久阻塞**(框架预载一次就能吐 100 KB+), 表现为请求超时而非报错。
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     # Wait for server to become ready (framework detection may be slow)
     import http.client
@@ -70,7 +72,8 @@ class TestV1HeartbeatEndpoint:
         assert resp.status == 200
         assert body["status"] == "ok"
         assert isinstance(body["providers"], list)
-        assert "hardware" in body and "device_count" in body
+        assert "hardware" in body
+        assert "device_count" in body
 
     def test_old_endpoints_are_gone(self, xpu_server, http_conn):
         """旧端点 /health /v1/detect /heartbeat 已移除（404）。"""

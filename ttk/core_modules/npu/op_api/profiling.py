@@ -683,6 +683,7 @@ def _collect_xpu(context: TestcaseAclnn, switches, process_ctx, need_data: bool)
         need_data=need_data,
         param_order=_aclnn_param_order(context),
         input_dtypes=_aclnn_xpu_input_dtypes(context),
+        input_recipes=getattr(context, "input_recipes", None),
     )
     if need_data and third_parties is None:
         logging.warning(
