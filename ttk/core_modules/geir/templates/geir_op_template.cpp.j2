@@ -40,6 +40,7 @@ REG_OP(Const)
 #include <cstdint>
 #include <cstring>
 #include <cerrno>
+#include <cmath>
 #include <map>
 #include <new>
 #include <string>
@@ -182,9 +183,34 @@ private:
     }
     JsonValue parseNumber() {
         JsonValue v;
+        // Python json.dump(allow_nan=True) 对非有限浮点输出 Infinity/-Infinity/NaN
+        // （非严格 JSON 数字语法）。不识别这三个 token 时 strtoll("") 静默置 0 且
+        // 指针停滞，导致其后键值对（build_options 等）整体丢失。
+        if (p_ < end_ && (*p_ == 'I' || *p_ == 'N')) {
+            if (p_ + 8 <= end_ && strncmp(p_, "Infinity", 8) == 0) {
+                p_ += 8;
+                v.type = JsonValue::Double;
+                v.d = HUGE_VAL;
+                return v;
+            }
+            if (p_ + 3 <= end_ && strncmp(p_, "NaN", 3) == 0) {
+                p_ += 3;
+                v.type = JsonValue::Double;
+                v.d = NAN;
+                return v;
+            }
+        }
         const char* start = p_;
         bool isFloat = false;
-        if (p_ < end_ && *p_ == '-') p_++;
+        if (p_ < end_ && *p_ == '-') {
+            p_++;
+            if (p_ + 8 <= end_ && strncmp(p_, "Infinity", 8) == 0) {
+                p_ += 8;
+                v.type = JsonValue::Double;
+                v.d = -HUGE_VAL;
+                return v;
+            }
+        }
         while (p_ < end_ && ((*p_>='0'&&*p_<='9')||*p_=='.'||*p_=='e'||*p_=='E'||*p_=='+'||*p_=='-')) {
             if (*p_=='.'||*p_=='e'||*p_=='E') isFloat = true;
             p_++;

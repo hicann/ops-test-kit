@@ -40,6 +40,7 @@ def _write_config(
     output_inplace_indexes=(),
     dynamic_inputs=None,
     dynamic_outputs=None,
+    attributes=None,
 ):
     tc = MagicMock()
     tc.op_name = "Add"
@@ -57,7 +58,7 @@ def _write_config(
     tc.output_ori_shapes = ()
     tc.output_inplace_indexes = output_inplace_indexes
     tc.output_shape_unknown_indexes = ()
-    tc.attributes = {}
+    tc.attributes = {} if attributes is None else attributes
 
     switches = MagicMock()
     switches.root_path = str(tmp_path)
@@ -136,3 +137,12 @@ def test_inplace_dynamic_output_elements_inherit_input_desc(tmp_path):
     assert out["inplace_input_idx"] == 0
     assert [el["dtype"] for el in out["elements"]] == ["DT_FLOAT", "DT_INT32"]
     assert [el["desc_shape"] for el in out["elements"]] == [[8, 8], [4, 4]]
+
+
+def test_inf_attr_serialization_roundtrip(tmp_path):
+    """非有限浮点属性经 json.dump 写出 Infinity（Python 默认 allow_nan），
+    需能被读回为 inf（C++ 侧解析由模板 parseNumber 的 Infinity/NaN 分支支持）。"""
+    cfg = _write_config(tmp_path, "const", attributes={"value": float("inf")})
+    assert cfg["attrs"]["value"] == float("inf")
+    raw = (_config_path(tmp_path, "const")).read_text(encoding="utf-8")
+    assert "Infinity" in raw
