@@ -22,12 +22,12 @@ TTK 内部自带 Profiling 采集流程，与 msopprof 的数据采集存在冲�
 
 ## 安装 MindStudio 算子工具
 
-下载安装 MindStudio RUN包（建议使用 7 月以后的RUN包，之前的包可能存在适配问题）：
+下载与目标平台架构匹配的 MindStudio RUN包（建议使用 7 月以后的RUN包，之前的包可能存在适配问题）。将下方命令中的 `${arch}` 替换为下载包的架构标识（如 `x86` 或 `aarch64`）：
 
 安装命令：
 
 ```shell
-bash ascend-mindstudio-operator-tools_26.2.0_x86.run --install-path=/home/xxx/Ascend/cann-9.1.0/ --run
+bash ascend-mindstudio-operator-tools_26.2.0_${arch}.run --install-path=/home/xxx/Ascend/cann-9.1.0/ --run
 ```
 
 设置环境变量：
