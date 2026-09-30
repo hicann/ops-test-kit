@@ -1,8 +1,8 @@
 # GEIR 用例编写
 
-适用于 `python3 -m ttk geir`，使用 `GeirTestcase`，继承自 Kernel 的 `TestcaseOp`。共 27 个字段（Kernel 的 26 个字段 + GEIR 专属 1 个字段）。
+适用于 `python3 -m ttk geir`，使用 `GeirTestcase`，继承自 Kernel 的 `TestcaseOp`。基础 CSV 示例复用 Kernel 的 27 列；需要精确指定图编译动态维度时，可选在末尾追加 GEIR 专属的 `dyn_input_shapes` 列。
 
-Kernel 模式的 26 个字段说明详见 [Kernel用例编写](./Kernel_Case_Writing.md)。
+Kernel 标准示例列及可选字段说明详见 [Kernel用例编写](./Kernel_Case_Writing.md)。
 
 ## GEIR 专属字段
 

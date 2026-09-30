@@ -55,7 +55,7 @@ python3 -m ttk info
 
 确认设备信息正常后再执行测试。
 
-> **GEIR 复用 Kernel 的 CSV 用例与 TestSpec 插件**：GEIR 模式以 `op_name` 为注册名，与 Kernel 共用同一套 CSV 字段（26 个字段）和 Golden/插件资产，无需为 GEIR 单独编写用例或 golden。
+> **GEIR 复用 Kernel 的 CSV 用例与 TestSpec 插件**：GEIR 模式以 `op_name` 为注册名，可直接复用 Kernel 的基础 CSV 示例（27 列）和 Golden/插件资产，无需为 GEIR 单独编写用例或 golden。需要精确控制图编译动态维度时，可选在末尾追加 `dyn_input_shapes` 列。
 
 # 测试用例编写
 
@@ -64,8 +64,8 @@ GEIR 模式CSV字段说明详见 [GEIR用例编写](./GEIR_Case_Writing.md)。
 以 `add.csv` 为例（与 Kernel 指南同一份文件）：
 
 ```csv
-testcase_name,network_name,op_name,input_shapes,input_dtypes,input_formats,output_shapes,output_dtypes,output_formats,input_ori_shapes,input_ori_formats,output_ori_shapes,output_ori_formats,attributes,input_data_ranges,precision_tolerances,absolute_precision,output_inplace_indexes,output_shape_unknown_indexes,is_enabled,remark,soc_series,priority,dump_file_prefix,manual_input_binaries,manual_golden_binaries
-add_01,,add,"((128, 1024), (1, 1024))","('float32', 'float32')","('ND',)","((128, 1024),)","('float32',)","('ND',)","((128, 1024), (1, 1024))","('ND',)","((128, 1024),)","('ND',)",{},"((0, 0), (0, 0))","((0.001, 0.001),)",1e-8,(),(),True,,,0,,(),()
+testcase_name,network_name,op_name,input_shapes,input_dtypes,input_formats,output_shapes,output_dtypes,output_formats,input_ori_shapes,input_ori_formats,output_ori_shapes,output_ori_formats,attributes,input_data_ranges,precision_tolerances,absolute_precision,output_inplace_indexes,output_shape_unknown_indexes,is_enabled,remark,soc_series,priority,dump_file_prefix,manual_input_binaries,manual_golden_binaries,manual_xpu_binaries
+add_01,,add,"((128, 1024), (1, 1024))","('float32', 'float32')","('ND',)","((128, 1024),)","('float32',)","('ND',)","((128, 1024), (1, 1024))","('ND',)","((128, 1024),)","('ND',)",{},"((0, 0), (0, 0))","((0.001, 0.001),)",1e-8,(),(),True,,,0,,(),(),()
 ```
 
 # 精度测试

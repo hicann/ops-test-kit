@@ -1,6 +1,8 @@
 # Kernel 用例编写
 
-适用于 `python3 -m ttk kernel` / `python3 -m ttk geir`，使用 `TestcaseOp`，共 26 个字段（含[公共字段](../Test_Case_Generation.md#公共字段所有模式通用)）。
+适用于 `python3 -m ttk kernel` / `python3 -m ttk geir`，使用 `TestcaseOp`。Kernel 标准 CSV 示例包含 27 列（含[公共字段](../Test_Case_Generation.md#公共字段所有模式通用)）。
+
+这里的列数指标准示例表头，不代表 `TestcaseOp` 可接受字段的总数；例如，可按需追加 `attributes1`～`attributes9` 等可选列。GEIR 还可选用 `dyn_input_shapes` 列。
 
 具体shape通过 `input_shapes` / `output_shapes` 直接指定，动态shape由框架自动推导（将正数维度替换为 `-1`）。输入/输出的**数量和顺序**由算子定义文件决定，必须严格一一对应。TensorList 分组通过 shape 字段的嵌套结构表达，如 `(((3,3),(3,2)),(3,5))` 表示 TensorList(2) + 单个张量。**何时使用 TensorList 格式**：当算子信息库中 ParamType = DYNAMIC 时，即使只包含 1 个张量也必须用 TensorList 嵌套格式。
 
