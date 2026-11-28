@@ -481,6 +481,28 @@ class TestcaseAclnn(ApiTestcaseBase):
             self._pure_output_indexes = sorted(flat_output - flat_inplace)
         return self._pure_output_indexes
 
+    @property
+    def pure_output_slot_indexes(self) -> frozenset:
+        """pure_output_indexes（flat 索引）映射回的顶层参数槽位集合。
+
+        槽的 flat 首索引命中即整槽计入，与 _aclnn_xpu_inputs 的整槽剔除
+        口径一致；无 tensor_list_dist 时 flat 与槽位恒等，原样返回。
+        input_names / param_order / golden 名值池按顶层槽位过滤时使用。
+        """
+        pure_outputs = set(self.pure_output_indexes)
+        if not pure_outputs:
+            return frozenset()
+        dist = self.tensor_list_dist
+        if not dist:
+            return frozenset(pure_outputs)
+        slots = set()
+        flat_idx = 0
+        for slot, count in enumerate(dist):
+            if flat_idx in pure_outputs:
+                slots.add(slot)
+            flat_idx += max(count, 1)
+        return frozenset(slots)
+
     # ========== npu_preprocess absorption ==========
 
     def absorb_preprocess(self, result, plan, args=None, kwargs=None):

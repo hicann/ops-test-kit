@@ -228,19 +228,29 @@ def _aclnn_xpu_output_dtypes(context: TestcaseAclnn) -> list:
 
 
 def _aclnn_xpu_input_names(context: TestcaseAclnn) -> list:
-    """Input tensor param names (pure outputs filtered) for XPU schema."""
+    """Input tensor param names (pure outputs filtered) for XPU schema.
+
+    纯输出按 pure_output_slot_indexes 顶层槽位整槽剔除，与 _aclnn_xpu_inputs
+    的槽位一一对应。
+    """
     op_api_info = OpApiInfoKeeper().info_of(context.api_name)
     if op_api_info is None:
         return []
-    return [n for i, n in enumerate(op_api_info.tensors) if i not in context.pure_output_indexes]
+    pure_slots = context.pure_output_slot_indexes
+    return [n for i, n in enumerate(op_api_info.tensors) if i not in pure_slots]
 
 
 def _aclnn_param_order(context: TestcaseAclnn) -> list:
-    """C header param order (excluding pure outputs) for server-side pool merge."""
+    """C header param order (excluding pure outputs) for server-side pool merge.
+
+    纯输出名按 pure_output_slot_indexes 顶层槽位求取，与 input_names 同口径。
+    """
     op_api_info = OpApiInfoKeeper().info_of(context.api_name)
     if op_api_info is None:
         return []
-    pure_output_names = {op_api_info.tensors[i] for i in context.pure_output_indexes if i < len(op_api_info.tensors)}
+    pure_output_names = {
+        op_api_info.tensors[i] for i in context.pure_output_slot_indexes if i < len(op_api_info.tensors)
+    }
     return [
         name
         for name in op_api_info.params
